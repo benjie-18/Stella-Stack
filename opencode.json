@@ -5,14 +5,69 @@
     "ollama": {
       "name": "Ollama",
       "package": "aisdk:@ai-sdk/openai-compatible",
-      "settings": { "baseURL": "http://host.docker.internal:11434/v1" },
+      "settings": {
+        "baseURL": "http://host.docker.internal:11434/v1"
+      },
       "models": {
         "qwen3.5:9b-64k": {
           "name": "Qwen 3.5 9B 64K",
-          "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] },
-          "limit": { "context": 65536, "output": 8192 }
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 65536,
+            "output": 8192
+          }
         }
       }
     }
-  }
+  },
+  "permission": {
+    "bash": {
+      "bin/escalate.sh *": "allow",
+      "/workspace/bin/escalate.sh *": "allow",
+      "claude *--model opus*": "deny",
+      "claude *--model=opus*": "deny",
+      "claude *--model haiku*": "deny",
+      "claude *--model=haiku*": "deny",
+      "claude *opusplan*": "deny",
+      "claude *--dangerously-skip-permissions*": "deny",
+      "claude *--allow-dangerously-skip-permissions*": "deny",
+      "claude setup-token*": "deny",
+      "claude *--model sonnet*": "deny",
+      "claude *--model=sonnet*": "deny",
+      "claude *--model claude-*": "deny",
+      "claude *--model=claude-*": "deny",
+      "claude -p*": "deny",
+      "claude *-p *": "deny",
+      "claude *--print*": "deny"
+    },
+    "skill": {
+      "built-in-browser": "deny",
+      "chrome-browser": "deny",
+      "deep-research": "deny",
+      "docs": "deny",
+      "import-memory": "deny",
+      "morning": "deny",
+      "pptx": "deny",
+      "setup-writing-style": "deny",
+      "skill-creator": "deny",
+      "brainstorming": "deny",
+      "computer-use": "deny",
+      "docx": "deny",
+      "google-workspace": "deny",
+      "pdf": "deny",
+      "xlsx": "deny"
+    }
+  },
+  "plugins": [
+    "superpowers@git+https://github.com/obra/superpowers.git#2ce8aa15d05bd57213e6f746f953aafb7ded7a8b"
+  ]
 }

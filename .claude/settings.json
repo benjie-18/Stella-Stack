@@ -1,4 +1,8 @@
 {
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "haiku",
+    "CLAUDE_CODE_SUBAGENT_MODEL_FORCE": "1"
+  },
   "permissions": {
     "allow": [
       "Bash(npm test)",
@@ -8,6 +12,9 @@
       "Bash(npm run lint *)",
       "Bash(npm run build)",
       "Bash(npm run build *)"
+    ],
+    "deny": [
+      "Skill(superpowers:brainstorming)"
     ]
   },
   "hooks": {
@@ -24,5 +31,16 @@
         ]
       }
     ]
+  },
+  "extraKnownMarketplaces": {
+    "superpowers-dev": {
+      "source": {
+        "source": "github",
+        "repo": "obra/superpowers"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "superpowers@superpowers-dev": true
   }
 }

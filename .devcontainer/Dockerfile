@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   tmux \
   bubblewrap \
   socat \
+  cron \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Ensure default node user has access to /usr/local/share
@@ -114,11 +115,20 @@ RUN npx -y playwright@${PLAYWRIGHT_VERSION} install chromium
 ENV PATH=$PATH:/home/node/.local/bin
 RUN uv tool install pre-commit==4.6.2
 
+# Runtime tools at their Stage 2 pins, baked so a rebuild no longer drops them
+RUN npm install -g @opencode/cli@2.0.26 ctx7@0.6.0 chrome-devtools-mcp@1.10.1 \
+  agent-browser@0.39.0 codebase-memory-mcp@0.11.0
+RUN uv tool install "git+https://github.com/NVIDIA/skillspector.git@v2.12.0"
+# Chisle ruleset, skills and plugin for OpenCode (~/.config/opencode)
+RUN npx -y chisle@3.7.0 --only opencode --no-color
+
 
 # Copy and set up firewall script
 COPY init-firewall.sh /usr/local/bin/
 USER root
 RUN chmod +x /usr/local/bin/init-firewall.sh && \
   echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/node-firewall && \
-  chmod 0440 /etc/sudoers.d/node-firewall
+  chmod 0440 /etc/sudoers.d/node-firewall && \
+  echo "node ALL=(root) NOPASSWD: /usr/sbin/service cron start" > /etc/sudoers.d/node-cron && \
+  chmod 0440 /etc/sudoers.d/node-cron
 USER node

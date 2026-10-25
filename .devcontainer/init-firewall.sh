@@ -74,7 +74,8 @@ for domain in \
     "update.code.visualstudio.com" \
     "pypi.org" \
     "files.pythonhosted.org" \
-    "nodejs.org"; do
+    "nodejs.org" \
+    "hermes-agent.nousresearch.com"; do
     echo "Resolving $domain..."
     ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}' | sort -u)
     if [ -z "$ips" ]; then

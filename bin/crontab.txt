@@ -1,0 +1,2 @@
+# build watchdog (Stage 4 item 3): test, lint, build every 15 min; alerts discord:#alerts on failure
+*/15 * * * * WATCHDOG_TRIGGER=cron /workspace/bin/watchdog.sh >/dev/null 2>&1

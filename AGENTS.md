@@ -4,7 +4,7 @@ Rules for every agent working in this repository (Claude Code, OpenCode, Hermes,
 
 ## Workflow
 
-1. **One branch per task.** Branch from `main` as `task/<id>-<short-name>`, where `<id>` matches the task in `PLAN.md`.
+1. **One branch per task.** Branch from `main` as `<project-slug>/<card-id>-<title-slug>` (for this repo, `stella/<card-id>-<title-slug>`), where `<card-id>` is the Kanban card id recorded in `PLAN.md`. Create cards with `--project stella --workspace worktree` and Hermes names the branch this way; never use the auto `wt/<card-id>` fallback, which is deleted with its worktree.
 2. **Tests first.** Write or update the failing test that captures the acceptance criteria before changing implementation code. Run it and confirm it fails for the expected reason.
 3. **Small commits.** Each commit does one thing and leaves the tests passing (except the commit that adds the new failing test). Commit messages say what changed and why.
 4. **Never edit or weaken a test to make it pass.** Do not delete, skip, loosen assertions, raise timeouts, or mark a test as expected-to-fail to get green. If a test is wrong, stop and raise it in the task's notes in `PLAN.md` for a human to decide.
