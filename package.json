@@ -1,0 +1,8 @@
+{
+  "name": "workspace",
+  "private": true,
+  "scripts": {
+    "test": "node --test",
+    "lint": "bash -n .devcontainer/init-firewall.sh && jq empty opencode.json package.json .devcontainer/managed-settings.json .devcontainer/devcontainer.json"
+  }
+}

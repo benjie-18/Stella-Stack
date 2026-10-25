@@ -1,0 +1,11 @@
+# gitleaks runs from the binary installed in the devcontainer image (no Go toolchain needed).
+repos:
+  - repo: local
+    hooks:
+      - id: gitleaks
+        name: gitleaks (staged changes)
+        entry: gitleaks git --pre-commit --staged --redact --no-banner --verbose
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]

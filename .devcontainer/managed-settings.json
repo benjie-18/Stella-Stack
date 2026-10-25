@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(//workspace/.env)",
+      "Read(//workspace/.env.*)",
+      "Read(//workspace/**/.env)",
+      "Read(//workspace/**/.env.*)",
+      "Read(~/.hermes/.env)",
+      "Read(**/*.pem)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Bash(rm -rf *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)"
+    ],
+    "disableBypassPermissionsMode": "disable"
+  }
+}
