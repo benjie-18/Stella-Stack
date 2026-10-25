@@ -73,7 +73,8 @@ for domain in \
     "vscode.blob.core.windows.net" \
     "update.code.visualstudio.com" \
     "pypi.org" \
-    "files.pythonhosted.org"; do
+    "files.pythonhosted.org" \
+    "nodejs.org"; do
     echo "Resolving $domain..."
     ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}' | sort -u)
     if [ -z "$ips" ]; then

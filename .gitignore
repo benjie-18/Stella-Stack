@@ -1,2 +1,5 @@
 .playwright-mcp/
 .claude/settings.local.json
+.scratch/
+.supervisor/status.json
+.supervisor/logs/
