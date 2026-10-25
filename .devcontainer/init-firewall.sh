@@ -64,6 +64,10 @@ while read -r cidr; do
 done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
 
 # Resolve and add other allowed domains
+# Stage 5 additions (exact hosts, no wildcards; resolved once at start, so a Cloudflare/Google IP rotation needs a restart):
+#   api.osv.dev        - `hermes security audit` and SkillSpector OSV lookups (failed: "[Errno 113] No route to host")
+#   discord.com        - Discord REST, discord.py Route.BASE https://discord.com/api (failed: connect to discord.com:443)
+#   gateway.discord.gg - Discord websocket, discord.py DEFAULT_GATEWAY wss://gateway.discord.gg/
 for domain in \
     "registry.npmjs.org" \
     "api.anthropic.com" \
@@ -75,7 +79,10 @@ for domain in \
     "pypi.org" \
     "files.pythonhosted.org" \
     "nodejs.org" \
-    "hermes-agent.nousresearch.com"; do
+    "hermes-agent.nousresearch.com" \
+    "api.osv.dev" \
+    "discord.com" \
+    "gateway.discord.gg"; do
     echo "Resolving $domain..."
     ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}' | sort -u)
     if [ -z "$ips" ]; then

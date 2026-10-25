@@ -76,3 +76,49 @@ Never edit or delete an old entry; mark it superseded by adding a new one.
 - anti-ai-slop-writing for Claude Code: PASS. Installed byte-for-byte from `jalaalrd/anti-ai-slop-writing@63255f9` at `~/.claude/skills/anti-ai-slop-writing`; the Skill call was verified; on a slop sample it flagged banned openers, banned vocabulary, the rule of three and lack of specifics, and correctly cleared a single em dash.
 - superpowers context cost: about +1.3k tokens (about 8%) at session start, under the 25% threshold; the SessionStart hook stays unchanged. The denied brainstorming skill is still listed (about 80 tokens): the deny blocks calling, not listing.
 - Stage 5 bundle: amended, proposal only, not applied (`.scratch/proposed/stage5-bundle.diff`). postStart will call `bin/container-start.sh`, which stays in `.scratch/proposed/` until Stage 5; it reinstalls the crontab, regenerates the OpenCode user config from repo `opencode.json` (model, provider, all 14 skill denies), and restores anti-ai-slop-writing from the ~/.hermes volume.
+
+## D16. chrome-devtools-mcp runs Chrome with --no-sandbox
+- Date: 2026-10-25
+- Supersedes: the exact Stage 4 pin of the chrome-devtools entry in .mcp.json.
+- .mcp.json chrome-devtools is now the Stage 4 pin plus one arg: `npx -y chrome-devtools-mcp@1.10.1 --headless --isolated --slim --chromeArg=--no-sandbox`.
+- Reason: Docker's default seccomp filter (mode 2) blocks the namespaces Chrome's sandbox needs (`Failed to move to new namespace … errno = Operation not permitted`, then the zygote exits). The setuid fallback (`/opt/google/chrome/chrome-sandbox`, setuid root, plus `--disable-namespace-sandbox`) fails the same way. As a diagnostic, `google-chrome --no-sandbox` renders the local test page. Option B (loosening seccomp or adding capabilities) was rejected.
+- The container and the egress firewall remain the security boundary. chrome-devtools is for local test pages and trusted automation only, never for logging into personal accounts.
+
+## D17. Stella's Discord toolsets: only what works here, plus kanban
+- Date: 2026-10-25
+- Discord (`platform_toolsets.discord`, default profile) is now: clarify, code_execution, cronjob, delegation, discord, discord_admin, file, kanban, memory, session_search, skills, terminal, todo, vision.
+- Removed, because they cannot work in this container: browser, computer_use, image_gen (Hermes's own `check_fn … returned False` after the Stage 5 rebuild); web (keyless Keenable search, api.keenable.ai blocked by the firewall); tts (provider edge, speech.platform.bing.com blocked); connections (hosted connectors, "The Nous service couldn't be reached").
+- Added: kanban. The default profile is the board orchestrator (`kanban.orchestrator_profile: ""` = default), so Stella gets the board tools (kanban_create, kanban_list, kanban_unblock, …) as well as the lifecycle tools.
+- Kept: discord_admin (discord.com is allowed now) and code_execution (not shown broken on the gateway; it is off on the CLI because the 9B misroutes shell commands to it in one-shot mode). The CLI platform is unchanged.
+
+## D18. Supervisor reply path: in-channel replies use no tools
+- Date: 2026-10-25
+- Rule (SUPERVISOR.md "Supervisor reply path"): when Stella is asked to say, repeat, or post something in the channel she is already in, she replies directly there with no tool call; her reply IS the Discord message. No tool_search, discord MCP tools, terminal curl to discord.com/api, or manage_connections for an in-channel reply. search_members, fetch_messages and create_thread are only for acting elsewhere when explicitly asked.
+- Reason: on 2026-10-25 a "send back" request went through tool_search, tool_describe, a terminal curl to the Discord API that tried to read `~/.cache/discord/oauth2.json`, and manage_connections. After the rule was added to Stella's SOUL, the live #supervisor tests ("repeat this back: hello", "say Hey, stargazer!") replied with the text, 1 API call and 0 tool turns each.
+- Enforcement lives outside the repo: `/home/node/.hermes/SOUL.md` (default profile, the "Supervisor (Stella) rules" block). It is in the `~/.hermes` Docker volume, so it survives a rebuild but not a volume reset, and it is not committed.
+
+## D19. Reviewer browser: read only
+- Date: 2026-10-25
+- Rule (SUPERVISOR.md R1.5, amended in place): the reviewer gets browser-read only (navigate, snapshot, screenshot, read-only evaluate, search/fetch for research) to test features live, compare live against the worktree, and research fixes. No browser-write: no click to submit, no form fill, no delete, and no file edit, push, or deploy. Same read access as builders, different write access, to keep the reviewer independent under R1.5.
+- Status: policy only, not applied. The reviewer toolset (`/home/node/.hermes/profiles/reviewer/config.yaml`, `platform_toolsets.cli`, line 1415: clarify, file, terminal, session_search, skills, todo; hooks `deny-write.sh` and `test-only-terminal.sh` under `profiles/reviewer/hooks/`) has no browser. The Hermes browser toolset does not work in this container (D17) and bundles write actions (browser_click, browser_type), and web search/fetch is blocked by the firewall (D17). Enabling it first needs a fail-closed pre_tool_call deny hook for the write actions, verified by a write attempt, and that change would be local-only in the `~/.hermes` volume.
+
+## D20. Secrets and sign-ins only through a secrets broker
+- Date: 2026-10-25
+- Rule (SUPERVISOR.md "Secrets and sign-ins"): agents never see password, token, or API key values. The broker is host-side, loopback only, never in the devcontainer. Reads from already-connected services may be automatic; writes, posts, payments, deletes, and sign-ins to a new service need a per-action Discord approval in #escalations, never blanket.
+- Status: the broker is a post-go-live prerequisite and must exist before any agent gets secret access. Not built.
+
+## D21. Global vs per-card tools
+- Date: 2026-10-25
+- Rule (SUPERVISOR.md "Global vs per-card tools"): infrastructure tools, hooks, and MCP servers registered at project scope (Chisle, Ponytail, Playwright, chrome-devtools) are global to that project. Content skills are enabled per card, not preloaded globally, to save context. The reviewer gets the same read tools as builders, not the same write tools (D19).
+- Generalizes D7, which applied the per-card rule to find-skills; D7 is not superseded.
+
+## D22. Reuse of skills and tools created in a worktree
+- Date: 2026-10-25
+- Rule (SUPERVISOR.md "Reuse of created skills and tools"): other agents in other worktrees can reuse such a skill or tool only after it is committed (worktrees see committed config only) and after triage (SkillSpector scan, show-me, supervisor review, recorded in decisions.md). Automatic reuse without Benji's approval only for low-risk, read-only, no-network, no-secret tools; network, write, or secret tools need Benji's approval in #escalations first.
+
+## D23. Account creation (post-go-live only; rules recorded now)
+- Date: 2026-10-25
+- Rule (SUPERVISOR.md "Account creation"): a per-project vault in the broker, host-side only, never in a card or repo file; Benji provides one project email once per project. The broker generates a unique password per service and stores it in the vault (no single reused password per project). Agents never see password values; the broker performs create and login actions and returns only a result or a short-lived session. A host-side ledger records project, service, account email, creation date, card id, purpose, and last used, with no passwords; Benji can ask the supervisor to list accounts per project from it.
+- Auto-create without Benji is allowed only for free, low-risk services with no payment method, no phone verification, and no ID verification; every creation is logged immediately. If an account already exists for that service in that project, the agent stops and opens an #escalations thread comparing the existing and proposed accounts; Benji replies Use existing, Create new, or Deny. Paid, phone, ID, or high-risk services also escalate, even when no account exists.
+- Never: agent-led signup from credentials Benji supplies in chat, a paid tier, personal email reused for a business account, or terms acceptance without approval for that specific service. iCloud Keychain is not a direct write target from the Windows broker; the broker vault is the source of truth, with 1Password or Vaultwarden as a sync backend if Benji wants the credentials on his iPhone.
+- Status: not built; depends on D20.

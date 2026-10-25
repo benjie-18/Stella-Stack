@@ -87,12 +87,13 @@ A thin or uncertain discovery result is an escalation trigger, not a green light
 - Dependencies are `depends_on` card ids (Hermes parent links); dispatch skips cards whose dependencies are not `done`.
 - Crash recovery re-reads all non-done cards and resumes from recorded state, never from conversation memory.
 - A daily sweep compares card states against worktree and branch reality and corrects mismatches.
-- A card in `ready` for more than 30 minutes is reported (usually the gateway dispatcher is down: it exits after 600 s idle).
+- A card in `ready` for more than 30 minutes is reported (usually the gateway dispatcher is down). The gateway runs in tmux session `hermes` under `bin/hermes-gateway-loop.sh` (restarted on exit, no idle-exit), started by postStartCommand; after a plain `docker start` the Windows recovery tasks in `docs/recovery.md` restore it.
 
 ## R1.5 Reviewer hardening
 
 - The `reviewer` profile is read-only plus test-running: toolsets `file, terminal, clarify, session_search, skills, todo`, with fail-closed `pre_tool_call` hooks that block `write_file`/`patch` and allow `terminal` only for `npm test`, `npm run test`, `npm run lint`, `node --test`. The `process` tool is blocked. Enforced in config and verified by a write attempt.
 - High-risk cards get adversarial tests that try to break the change.
+- **Browser (D19):** the reviewer gets browser-read only: navigate, snapshot, screenshot, read-only evaluate, and search/fetch for research, to test features live, compare live against the worktree, and research fixes. No browser-write: no click to submit, no form fill, no delete; and no file edit, push or deploy. The reviewer has the same read access as builders and different write access, to keep it independent. **Not enforced yet:** the Hermes browser toolset does not work in this container (D17) and bundles write actions, and web search/fetch is blocked by the firewall. Before the reviewer gets a browser, add a fail-closed `pre_tool_call` deny hook for the write actions and verify it with a write attempt, as above.
 
 ## R2.4 Decision log
 
@@ -106,7 +107,40 @@ A thin or uncertain discovery result is an escalation trigger, not a green light
 - Untrusted pages are summarized in a no-write profile (`reviewer`): read and summarize only, no shell-write, no broker calls.
 - Any credential-looking string in tool output is redacted from card evidence and logs.
 
+## Supervisor reply path (D18)
+
+When Stella is asked to say, repeat, or post something in the channel she is already in, she replies directly in that channel with no tool call. Her reply IS the Discord message. She must not use tool_search, discord MCP tools, a terminal curl to discord.com/api, or manage_connections for an in-channel reply. The Discord tools (search_members, fetch_messages, create_thread) are only for acting elsewhere when explicitly asked: searching for a user, reading another channel, or creating a thread.
+
+## Secrets and sign-ins (D20)
+
+- Only through the secrets broker. Agents never see password, token, or API key values.
+- The broker is host-side, loopback only, never in the devcontainer.
+- Reads from already-connected services can be automatic. Writes, posts, payments, deletes, and sign-ins to a new service need a Discord approval in #escalations, per action, never blanket.
+- The broker is a post-go-live prerequisite: it must exist before any agent gets secret access. It is not built yet.
+
+## Global vs per-card tools (D21)
+
+- Infrastructure tools, hooks, and MCP servers registered at project scope (Chisle, Ponytail, Playwright, chrome-devtools) are global to that project.
+- Content skills are enabled per card, not preloaded globally, to save context (as already applied to find-skills, D7).
+- The reviewer gets the same read tools as builders, not the same write tools (R1.5, D19).
+
+## Reuse of created skills and tools (D22)
+
+- A skill or tool created in a worktree can be reused by other agents in other worktrees only after it is committed (worktrees see committed config only), and after triage: SkillSpector scan, show-me, and supervisor review, recorded in decisions.md.
+- Automatic reuse, with no Benji approval, is allowed only for low-risk, read-only, no-network, no-secret tools. Network, write, or secret tools need Benji's approval in #escalations before other agents can use them.
+
+## Account creation (D23, post-go-live only)
+
+- A per-project vault in the broker, host-side only, never in a card or repo file. Benji provides one project email, once per project.
+- The broker generates a unique password per service and stores it in the vault (never one reused password per project). Agents never see password values; the broker performs create and login actions and returns only a result or a short-lived session.
+- The broker keeps a host-side ledger: project, service, account email, creation date, card id, purpose, last used. No passwords in the ledger. Benji can ask the supervisor to list accounts per project from it.
+- Auto-create with no Benji interaction is allowed only for free, low-risk services with no payment method, no phone verification, and no ID verification. Every creation is logged immediately.
+- If an account already exists for that service in that project, the agent stops and raises an #escalations thread comparing the existing account with the proposed new one. Benji replies Use existing, Create new, or Deny. Paid, phone, ID, or high-risk services also escalate, even if no account exists yet.
+- No agent-led signup from credentials Benji supplies in chat, no paid tier, no personal email reused for a business account, and no terms acceptance without approval for that specific service.
+- iCloud Keychain is not a direct write target from the Windows broker. The broker vault is the source of truth, with 1Password or Vaultwarden as a sync backend if Benji wants those credentials on his iPhone automatically.
+
 ## Memory
 
 Hermes freezes `MEMORY.md` and `USER.md` into the system prompt at session start and never refreshes them mid-session, so run `/new` at natural breaks on Discord.
 Keep `MEMORY.md` under 2,200 chars and `USER.md` under 1,375 chars.
+Supervisor rules live in this file and the Kanban board description, never in Hermes memory: gateway memory may not inject on messaging channels (open issue 96134).

@@ -5,7 +5,7 @@
     "dockerfile": "Dockerfile",
     "args": {
       "TZ": "${localEnv:TZ:America/Toronto}",
-      "CLAUDE_CODE_VERSION": "latest",
+      "CLAUDE_CODE_VERSION": "2.1.310",
       "GIT_DELTA_VERSION": "0.18.2",
       "ZSH_IN_DOCKER_VERSION": "1.2.0"
     }
@@ -52,6 +52,6 @@
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
   "workspaceFolder": "/workspace",
-  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh && sudo /usr/sbin/service cron start",
+  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh && sudo /usr/sbin/service cron start && /workspace/bin/container-start.sh && (tmux has-session -t hermes 2>/dev/null || tmux new-session -d -s hermes /workspace/bin/hermes-gateway-loop.sh)",
   "waitFor": "postStartCommand"
 }

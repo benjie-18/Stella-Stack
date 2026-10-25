@@ -21,7 +21,8 @@
         "chrome-devtools-mcp@1.10.1",
         "--headless",
         "--isolated",
-        "--slim"
+        "--slim",
+        "--chromeArg=--no-sandbox"
       ]
     }
   }

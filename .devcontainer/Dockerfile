@@ -80,6 +80,16 @@ RUN npx -y playwright@${PLAYWRIGHT_VERSION} install-deps chromium && \
 COPY managed-settings.json /etc/claude-code/managed-settings.json
 RUN chmod 0644 /etc/claude-code/managed-settings.json
 
+# Google Chrome stable for chrome-devtools-mcp, which expects /opt/google/chrome/chrome.
+# dl.google.com is reached at build time only (the runtime firewall does not allow it), so drop the
+# apt source and the cron job that would re-add it.
+RUN [ "$(dpkg --print-architecture)" = amd64 ] && \
+  wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
+  apt-get update && apt-get install -y --no-install-recommends /tmp/chrome.deb && \
+  rm -f /tmp/chrome.deb /etc/apt/sources.list.d/google-chrome.list /etc/cron.daily/google-chrome && \
+  apt-get clean && rm -rf /var/lib/apt/lists/* && \
+  google-chrome --version
+
 # Set up non-root user
 USER node
 
@@ -113,6 +123,8 @@ RUN npx -y playwright@${PLAYWRIGHT_VERSION} install chromium
 
 # pre-commit framework (uv tools land in ~/.local/bin)
 ENV PATH=$PATH:/home/node/.local/bin
+# hermes launcher lives in the ~/.hermes volume; the ~/.local/bin symlink is lost on every rebuild.
+ENV PATH=$PATH:/home/node/.hermes/hermes-agent/.hermes/bin
 RUN uv tool install pre-commit==4.6.2
 
 # Runtime tools at their Stage 2 pins, baked so a rebuild no longer drops them
