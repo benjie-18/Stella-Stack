@@ -9,6 +9,10 @@
       "Read(**/*.pem)",
       "Read(~/.ssh/**)",
       "Read(~/.aws/**)",
+      "Bash(*/.env*)",
+      "Bash(* .env*)",
+      "Bash(*\".env*)",
+      "Bash(*'.env*)",
       "Bash(rm -rf *)",
       "Bash(git push --force *)",
       "Bash(git push -f *)"
