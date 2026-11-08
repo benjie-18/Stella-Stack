@@ -1,2 +1,5 @@
 # build watchdog (Stage 4 item 3): test, lint, build every 15 min; alerts discord:#alerts on failure
-*/15 * * * * WATCHDOG_TRIGGER=cron /workspace/bin/watchdog.sh >/dev/null 2>&1
+# WATCHDOG_STEP_TIMEOUT=1200: the suite takes 11-13 min, above the 600 s default (RU-07, D69); a run still active at the next tick makes that tick skip
+*/15 * * * * WATCHDOG_STEP_TIMEOUT=1200 WATCHDOG_TRIGGER=cron /workspace/bin/watchdog.sh >/dev/null 2>&1
+# T16 #escalations thread replies: record and unblock (D28), every minute
+* * * * * /workspace/bin/escalation-reply-poll.sh >/dev/null 2>&1

@@ -1,0 +1,34 @@
+{
+  "about": "Settings for bin/watchdog.sh (D47), read by bin/watchdog_settings.py; check with `bin/watchdog_settings.py --check`. gateway: how the watchdog decides whether Stella's gateway is down, active, quiet or unknown. The process must exist (process_match, a pgrep -f pattern). The newest connection line (connected_marker / disconnected_marker, regexes) over all activity_logs decides a disconnect; a log written within activity_window_minutes counts as activity. A quiet log alone is never an alert. Log lines start with a timestamp in log_time_format and log_timezone (\"owner\" = the owner's zone, or an IANA name). pause_file: while it exists the gateway is not checked. test_rerun: when the test step fails, failed_check_line (one capture group = the check name) finds the failed checks in its output, failed_detail_line the first failing line; each failed check runs once more as rerun_command ({check}), and only a second failure alerts.",
+  "schema_version": 1,
+  "gateway": {
+    "process_match": "gateway run --external-supervisor",
+    "pause_file": "~/.hermes/ESTOP",
+    "activity_logs": [
+      "~/.hermes/logs/gateway.log"
+    ],
+    "activity_window_minutes": 60,
+    "connected_marker": "\\[Discord\\] Connected as|discord (re)?connected",
+    "disconnected_marker": "\\[Discord\\] Disconnected|Reconnect(ing)? discord|Fatal discord adapter error|queued for background reconnection",
+    "marker_scan_bytes": 16777216,
+    "log_time_format": "%Y-%m-%d %H:%M:%S",
+    "log_timezone": "owner",
+    "state_file": "~/.hermes/gateway_state.json",
+    "state_max_age_minutes": 10
+  },
+  "test_rerun": {
+    "failed_check_line": "^FAIL ([A-Za-z0-9._-]+)$",
+    "failed_detail_line": "^ +FAIL (.+)$",
+    "rerun_command": "bin/{check}.sh"
+  },
+  "model_watch": {
+    "_comment": "K4: a running card whose worker's model calls fail with no tool progress (bin/model_watch.py). error_line counts each failed call once (a stall also logs Stream stale just before it, B2V-07); a stall lasts 900 s, so a 30-minute window holds at most 2: min_errors 2",
+    "window_minutes": 30,
+    "min_errors": 2,
+    "error_line": "API call failed",
+    "progress_line": "agent\\.tool_executor: tool \\S+ completed",
+    "log_time_format": "%Y-%m-%d %H:%M:%S",
+    "log_timezone": "owner",
+    "loaded_models_path": "/api/ps"
+  }
+}

@@ -7,3 +7,6 @@
 .supervisor/stage4-report.md
 .supervisor/escalations.log
 .supervisor/state/
+config/owner.env
+.hermes/
+__pycache__/

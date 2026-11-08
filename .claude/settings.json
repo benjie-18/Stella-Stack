@@ -1,8 +1,4 @@
 {
-  "env": {
-    "CLAUDE_CODE_SUBAGENT_MODEL": "haiku",
-    "CLAUDE_CODE_SUBAGENT_MODEL_FORCE": "1"
-  },
   "permissions": {
     "allow": [
       "Bash(npm test)",
@@ -14,7 +10,22 @@
       "Bash(npm run build *)"
     ],
     "deny": [
-      "Skill(superpowers:brainstorming)"
+      "Skill(superpowers:brainstorming)",
+      "Edit(//workspace/config/**)",
+      "Write(//workspace/config/**)",
+      "Bash(*owner.env*)",
+      "Bash(*/.env*)",
+      "Bash(* .env*)",
+      "Bash(*.pem*)",
+      "Bash(*/*.key*)",
+      "Bash(*.hermes/auth.json*)",
+      "Bash(*.claude/.credentials*)",
+      "Bash(*opencode/auth.json*)",
+      "Bash(*/.ssh/*)",
+      "Bash(*~/.ssh*)",
+      "Bash(*/.aws/*)",
+      "Bash(*~/.aws*)",
+      "Bash(*.config/gh*)"
     ]
   },
   "hooks": {
