@@ -7,19 +7,24 @@ sed -e 's/^HAIKU_MAX_PER_DAY=.*/HAIKU_MAX_PER_DAY=2/' /workspace/.supervisor/lim
 cat >"$T/bin/claude" <<'S'
 #!/usr/bin/env bash
 ok='{"type":"result","is_error":false,"total_cost_usd":0.001,"modelUsage":{"claude-haiku-5-5":{}}}'
+echo $(( $(cat "$ESCALATE_SUP_DIR/claude_n" 2>/dev/null || echo 0) + 1 )) > "$ESCALATE_SUP_DIR/claude_n"
 cat >/dev/null; sleep "${FAKE_SLEEP:-0}"; printf '%s\n' "${FAKE_OUT:-$ok}"; exit "${FAKE_RC:-0}"
 S
 cat >"$T/bin/hermes" <<'S'
 #!/usr/bin/env bash
+[ "$1 $2" = "kanban --board" ] && set -- "$1" "${@:4}"   # scripts name the board (F4)
 case "$1 $2" in
-  "kanban show") [ "$3" = t_00000000 ] && exit 1; printf '{"task":{"body":"%s"}}\n' "${FAKE_BODY:-}";;
+  "kanban show") { [ "$3" = t_00000000 ] || [ -n "${FAKE_SHOW_FAIL:-}" ]; } && exit 1; printf '{"task":{"body":"%s","status":"%s"}}\n' "${FAKE_BODY:-}" "${FAKE_STATUS:-running}";;
   "kanban comment") echo "$*" >>"$ESCALATE_SUP_DIR/comments";;
-  send*) exit 1;;
+  send*) echo "$*" >>"$ESCALATE_SUP_DIR/sends"
+    # FAKE_SEND_HOLD=<path>: a slow alert. Says it arrived (<path>.in), then waits for <path>.go, at most 30 s.
+    [ -z "${FAKE_SEND_HOLD:-}" ] || { touch "$FAKE_SEND_HOLD.in"; for _ in $(seq 300); do [ -e "$FAKE_SEND_HOLD.go" ] && break; sleep 0.1; done; }
+    exit 1;;
 esac
 S
 chmod +x "$T/bin/"*
 export PATH="$T/bin:$PATH" ESCALATE_SUP_DIR="$T/sup"
-E=/workspace/bin/escalate.sh fails=0
+E=${ESCALATE:-/workspace/bin/escalate.sh} fails=0   # ESCALATE=<copy>: a staged copy while it is being replaced
 check() { local want=$1 desc=$2; shift 2; "$@" >/dev/null 2>"$T/err"; local rc=$?
   if [ "$rc" = "$want" ]; then echo "ok   $desc (exit $rc)"; else echo "FAIL $desc: want $want got $rc: $(cat "$T/err")"; fails=$((fails+1)); fi; }
 last() { tail -1 "$T/sup/escalations.log" | jq -r "$1"; }
@@ -44,5 +49,82 @@ check 75 "real pool string, high risk" env FAKE_OUT="Claude AI usage limit reach
 check 1 "non-JSON exit 0"      env FAKE_OUT='garbage' sh -c "echo hi | $E t_12345678 sonnet review why"
 check 1 "is_error result"       env FAKE_OUT='{"is_error":true,"modelUsage":{}}' sh -c "echo hi | $E t_12345678 sonnet review why"
 grep -q "fallback: true" "$T/sup/comments" || { echo "FAIL fallback not noted on card"; fails=$((fails+1)); }
+
+# Queue (F15, F28, F29, T13, T15): a LIMIT refusal and every POOL_EXHAUSTED write one queue entry and one #alerts line;
+# the caller keeps its exit code. bin/escalate-drain.sh replays an entry once, with limits and pool checked again.
+ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
+Q="$T/sup/state/queue.jsonl" D=/workspace/bin/escalate-drain.sh
+q() { jq -r --arg c "$1" 'select(.card == $c) | .state' "$Q" 2>/dev/null | tr '\n' ,; }
+qid() { jq -r --arg c "$1" 'select(.card == $c) | .id' "$Q" | head -1; }
+nalerts() { grep -c -- "$1" "$T/sup/sends" 2>/dev/null || true; }
+runs() { cat "$T/sup/claude_n" 2>/dev/null || echo 0; }
+setlimit() { sed -i "s/^$1=.*/$1=$2/" "$T/sup/limits.env"; }
+setlimit HAIKU_MAX_PER_DAY 0
+check 3 "T13: zeroed HAIKU_MAX_PER_DAY refused" sh -c "echo hi | $E t_aaaa0001 haiku judge zeroed"
+pf=$(jq -r 'select(.card == "t_aaaa0001") | .prompt_file' "$Q" 2>/dev/null)
+ok '[ "$(q t_aaaa0001)" = "queued," ] && [ "$(nalerts t_aaaa0001)" = 1 ] && grep -B1 "Claude Haiku for card t_aaaa0001" "$T/sup/sends" | grep -q "\[STL-LIM-401\]\*\*$" && grep -q "t_aaaa0001 escalate.sh LIMIT.*recorded in the queue as q_.*; run bin/escalate-drain.sh" "$T/sup/comments"' "F28: zeroed limit: one queue entry, one #alerts line, the card comment names the drain"
+ok '[ -s "$pf" ] && jq -s -e "any(.[]; .card == \"t_aaaa0001\" and .reason == \"LIMIT\" and .model == \"haiku\" and .purpose == \"judge\" and .call_reason == \"zeroed\" and (.created | length > 0))" "$Q" >/dev/null' "F28: the entry records card, role, arguments, reason LIMIT, created; its prompt file is kept"
+id=$(qid t_aaaa0001); n=$(runs)
+$D --replay "$id" >/dev/null 2>&1
+ok '[ "$(q t_aaaa0001)" = "queued," ] && [ "$(nalerts t_aaaa0001)" = 1 ] && [ "$(runs)" = "$n" ] && [ -s "$pf" ]' "drain while the limit is still zero: left queued, no run, no new entry, no new alert"
+setlimit HAIKU_MAX_PER_DAY 40
+FAKE_SLEEP=1 $D --replay "$id" >/dev/null 2>&1 & sleep 0.3; $D --replay "$id" >/dev/null 2>&1; wait
+$D --replay "$id" >/dev/null 2>&1
+ok '[ "$(runs)" = $((n + 1)) ] && [ "$(q t_aaaa0001)" = "replayed," ] && [ ! -e "$pf" ] && [ "$(nalerts t_aaaa0001)" = 1 ]' "double replay (two at once, then a third): one run, state replayed, prompt removed, still one alert"
+check 75 "T15: forced pool, low-risk card" env ESCALATE_FORCE_POOL_EXHAUSTED=1 sh -c "echo hi | $E t_aaaa0002 sonnet review lowrisk"
+ok '[ "$(q t_aaaa0002)" = "queued," ] && [ "$(nalerts t_aaaa0002)" = 1 ] && grep -B1 "a Sonnet request for card t_aaaa0002" "$T/sup/sends" | grep -q "\[STL-LIM-402\]\*\*$" && jq -s -e "any(.[]; .card == \"t_aaaa0002\" and .event == \"QUEUED\") and any(.[]; .card == \"t_aaaa0002\" and .event == \"NO_REROUTE\")" "$T/sup/escalations.log" >/dev/null' "F29: forced pool exhaustion on a low-risk card: QUEUED (NO_REROUTE kept), one #alerts line"
+jq -c 'if .card == "t_aaaa0002" then .created = "2026-10-01T00:00:00Z" else . end' "$Q" > "$Q.tmp" && mv "$Q.tmp" "$Q"
+check 75 "forced pool, card that is done before the drain" env ESCALATE_FORCE_POOL_EXHAUSTED=1 sh -c "echo hi | $E t_aaaa0003 sonnet review done-later"
+n=$(runs); pf2=$(jq -r 'select(.card == "t_aaaa0002") | .prompt_file' "$Q")
+$D --replay "$(qid t_aaaa0002)" >/dev/null 2>&1; FAKE_STATUS=done $D --replay "$(qid t_aaaa0003)" >/dev/null 2>&1
+ok '[ "$(q t_aaaa0002)" = "stale," ] && [ "$(q t_aaaa0003)" = "stale," ] && [ "$(runs)" = "$n" ] && [ ! -e "$pf2" ]' "stale: older than QUEUE_MAX_AGE_HOURS, or the card is done: marked stale, skipped, prompt removed"
+setlimit HAIKU_MAX_PER_DAY 0; setlimit QUEUE_MAX "$(jq -s '[.[] | select(.state == "queued")] | length' "$Q")"
+check 3 "queue full: refused" sh -c "echo hi | $E t_aaaa0004 haiku judge full"
+check 3 "queue full: refused again" sh -c "echo hi | $E t_aaaa0005 haiku judge full"
+ok '[ -z "$(q t_aaaa0004)$(q t_aaaa0005)" ] && [ "$(nalerts "\[STL-LIM-403\]\*\*$")" = 1 ] && ! ls "$T/sup/state"/prompt-*-t_aaaa000[45]-* >/dev/null 2>&1' "queue cap: beyond QUEUE_MAX refused unqueued, one alert, no prompt file left"
+setlimit QUEUE_MAX 50
+check 3 "for the drop" sh -c "echo hi | $E t_aaaa0006 haiku judge drop"
+pf3=$(jq -r 'select(.card == "t_aaaa0006") | .prompt_file' "$Q")
+ok '$D --list | grep -q "$(qid t_aaaa0006).*queued.*LIMIT.*t_aaaa0006"' "--list shows id, state, reason and card"
+$D --drop "$(qid t_aaaa0006)" >/dev/null 2>&1
+ok '[ "$(q t_aaaa0006)" = "dropped," ] && [ ! -e "$pf3" ]' "--drop: dropped, prompt removed"
+ok '( for f in "$T/sup/state"/prompt-*.txt; do [ -e "$f" ] || continue; jq -s -e --arg f "$f" "any(.[]; .prompt_file == \$f and .state == \"queued\")" "$Q" >/dev/null || exit 1; done )' "F16: no prompt file outlives its call (FAIL and OK paths) except a queued entry's"
+ok '[ "$(ESCALATE_SUP_DIR=$T/sup bash -c "$D --replay nosuch; echo \$?" 2>/dev/null | tail -1)" = 2 ] && [ "$($D 2>/dev/null; echo $?)" = 2 ]' "drain: unknown id or no arguments is a usage error"
+# Review M2: a replay that fails for a transient reason (kanban show fails: exit 2) keeps the entry and its prompt.
+setlimit HAIKU_MAX_PER_DAY 0
+check 3 "for the transient replay" sh -c "echo hi | $E t_aaaa0007 haiku judge transient"
+setlimit HAIKU_MAX_PER_DAY 40; pf7=$(jq -r 'select(.card == "t_aaaa0007") | .prompt_file' "$Q")
+FAKE_SHOW_FAIL=1 $D --replay "$(qid t_aaaa0007)" >/dev/null 2>&1
+ok '[ "$(q t_aaaa0007)" = "queued," ] && [ -s "$pf7" ]' "M2: exit 2 on replay: left queued with its prompt"
+# Review H2: extra claude args can never override escalate.sh's model, budget or permissions.
+n=$(runs)
+for a in "--model opus" "--model=opus" "--fallback-model haiku" "--max-budget-usd 100" "--permission-mode bypassPermissions" "--dangerously-skip-permissions" "--settings {}" "--add-dir /" "--allowedTools Bash"; do
+  check 2 "extra arg refused: $a" sh -c "echo hi | $E t_12345678 sonnet review why -- $a"
+done
+ok '[ "$(runs)" = "$n" ]' "H2: no claude run for any of them"
+check 0 "an ordinary extra arg is passed on" sh -c "echo hi | $E t_12345678 sonnet review why -- --verbose"
 echo "events: $(jq -r .event "$T/sup/escalations.log" | sort | uniq -c | tr -s ' \n' ' ')"
+# D42: `timeout 0` disables the timeout, so CALL_TIMEOUT 0, empty or non-numeric must fall back to 600 with a warning.
+mkdir -p "$T/tbin"; printf '#!/bin/sh\necho "$1" >> "%s/timeout_args"\nshift\nexec "$@"\n' "$T" > "$T/tbin/timeout"; chmod +x "$T/tbin/timeout"
+for v in 0 "" abc -5 5x; do
+  setlimit CALL_TIMEOUT "$v"; : > "$T/timeout_args"
+  ok '[ "$(PATH="$T/tbin:$PATH" sh -c "echo hi | $E t_12345678 haiku judge to 2>$T/err1" >/dev/null; echo $?)" = 0 ] && [ "$(cat "$T/timeout_args")" = 600 ] && grep -q "warning: CALL_TIMEOUT=.$v. is not a positive duration" "$T/err1" && [ "$(last .event)" = OK ] && jq -s -e "any(.[]; .event == \"WARN\" and (.detail | test(\"CALL_TIMEOUT\")))" "$T/sup/escalations.log" >/dev/null' "D42: CALL_TIMEOUT='$v' uses 600 and warns on stderr and in the log"
+done
+for v in 30 10m; do
+  setlimit CALL_TIMEOUT "$v"; : > "$T/timeout_args"; : > "$T/err1"
+  ok '[ "$(PATH="$T/tbin:$PATH" sh -c "echo hi | $E t_12345678 haiku judge to 2>$T/err1" >/dev/null; echo $?)" = 0 ] && [ "$(cat "$T/timeout_args")" = "$v" ] && ! grep -q CALL_TIMEOUT "$T/err1"' "D42: CALL_TIMEOUT=$v is passed to timeout unchanged, no warning"
+done
+setlimit CALL_TIMEOUT 600
+
+# Ultrareview finding 3: an over-limit Haiku call releases haiku.lock before its alert and card comment.
+setlimit HAIKU_MAX_PER_DAY 0; setlimit QUEUE_MAX 50
+H="$T/hold"
+FAKE_SEND_HOLD="$H" sh -c "echo hi | $E t_bbbb0001 haiku judge slow-alert" >/dev/null 2>&1 & a=$!
+for _ in $(seq 100); do [ -e "$H.in" ] && break; sleep 0.1; done
+ok '[ -e "$H.in" ]' "control: the over-limit call reached its alert"
+ok 'flock -n "$T/sup/state/haiku.lock" true' "the Haiku lock is free while the alert is being sent"
+timeout 10 sh -c "echo hi | $E t_bbbb0002 haiku judge second" >/dev/null 2>&1; rc=$?
+ok '[ "$rc" = 3 ]' "a second over-limit Haiku call is refused at once, not held behind the slow alert (exit $rc)"
+touch "$H.go"; wait "$a"; rc=$?
+ok '[ "$rc" = 3 ]' "control: the slow call still ends refused once its alert returns (exit $rc)"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

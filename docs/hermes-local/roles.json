@@ -1,0 +1,115 @@
+{
+  "_comment": [
+    "The role table (D46). Every guard and the apply scripts read this file; none of them names a profile, model or display name.",
+    "profiles: one row per Hermes profile (\"default\" is Hermes's own name for the root profile). dir: the profile's folder under",
+    "~/.hermes (default \"profiles/<name>\"); soul: its rules file in docs/hermes-local/soul/; worker: the worker kind it runs (one of",
+    "its role's workers); display_name: what the owner calls it, used only to spot cards that target its own configuration.",
+    "roles: the permissions the guards enforce (assignable, workspace, may_*, allowed_overrides), background_review and config",
+    "(hermes config keys set at apply), and what apply installs: platform_toolsets, skills_disabled and hooks (pre_tool_call,",
+    "fail-closed; file = a repo hook copied to <profile dir>/hooks/<file name>, command = a /workspace/bin hook run in place;",
+    "workers = only for profiles whose worker is listed). A profile with no row gets fallback_role, which opens nothing.",
+    "Add a profile: one row under profiles, then bin/apply-hermes-local.sh. Add a role: one entry under roles, then the same."
+  ],
+  "fallback_role": "unlisted",
+  "protected": {
+    "_comment": "The one protected-path list (D40, D46): the builders' write guard and the card guard both read it.",
+    "repo": ["config", "bin", ".supervisor", "docs", ".git", "SUPERVISOR.md", "decisions.md"],
+    "home": [".hermes", ".claude", ".config/opencode", ".local/share/opencode"]
+  },
+  "owner_settings": ["config/owner.env"],
+  "self_config_kinds": ["soul", "souls", "hook", "hooks", "toolset", "toolsets", "roles", "role table", "guard", "guards", "skill", "skills"],
+  "profiles": {
+    "default": {"role": "dispatcher", "dir": "", "soul": "default.md", "display_name": "Stella"},
+    "builder-local": {"role": "builder", "worker": "opencode", "soul": "builder-local.md", "capability_fallback": "builder-claude"},
+    "builder-claude": {"role": "builder", "worker": "claude-code", "soul": "builder-claude.md"},
+    "reviewer": {"role": "reviewer", "soul": "reviewer.md"}
+  },
+  "roles": {
+    "dispatcher": {
+      "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
+      "may_delegate": false, "may_create_cards": true, "may_review": false, "allowed_overrides": [], "background_review": false,
+      "config": {"kanban.auto_subscribe_on_create": false, "gateway.strict": true, "gateway.trust_recent_files": false},
+      "platform_toolsets": {
+        "cli": ["clarify", "cronjob", "delegation", "file", "memory", "session_search", "skills", "terminal", "todo", "vision"],
+        "discord": ["clarify", "cronjob", "delegation", "discord", "file", "kanban", "memory", "session_search", "skills", "terminal", "todo", "vision"]
+      },
+      "skills_disabled": ["built-in-browser", "chrome-browser", "deep-research", "docs", "import-memory", "morning", "pptx",
+                          "setup-writing-style", "skill-creator", "computer-use", "docx", "google-workspace", "pdf", "xlsx",
+                          "local-project-setup"],
+      "hooks": [
+        {"matcher": "^kanban_block$", "file": "docs/hermes-local/hooks/default/deny-kanban-block.sh"},
+        {"matcher": "^(write_file|patch|execute_code|skill_manage|cronjob_manage)$", "file": "docs/hermes-local/hooks/default/deny-write.sh"},
+        {"matcher": "^(read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"},
+        {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/default/read-only-terminal.py"}
+      ]
+    },
+    "builder": {
+      "git_identity": {"name": "WORKER_GIT_NAME", "email": "WORKER_GIT_EMAIL"},
+      "assignable": true, "workspace": "git-worktree", "may_complete": true, "may_unblock": true, "may_claim": true,
+      "may_delegate": true, "may_create_cards": false, "may_review": false, "allowed_overrides": [],
+      "complete_needs_review": true,
+      "workers": ["opencode", "claude-code"],
+      "platform_toolsets": {
+        "cli": ["clarify", "delegation", "file", "memory", "session_search", "skills", "terminal", "todo", "vision"]
+      },
+      "hooks": [
+        {"matcher": "^kanban_complete$", "command": "/workspace/bin/false-close-guard.py", "timeout": 30, "workers": ["opencode"]},
+        {"matcher": "^(kanban_request_review|kanban_complete)$", "command": "/workspace/bin/check-guard.py", "timeout": 30},
+        {"matcher": "^kanban_complete$", "command": "/workspace/bin/complete-gate.py", "timeout": 30},
+        {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/git-guard.py"},
+        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20},
+        {"matcher": "^(terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"},
+        {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/model-guard.py"},
+        {"matcher": "^skill_manage$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
+      ]
+    },
+    "reviewer": {
+      "git_identity": {"name": "WORKER_GIT_NAME", "email": "WORKER_GIT_EMAIL"},
+      "assignable": true, "workspace": "read-parent-worktree", "may_complete": true, "may_unblock": true, "may_claim": true,
+      "may_delegate": false, "may_create_cards": false, "may_review": true, "allowed_overrides": [],
+      "complete_metadata": {"review": "approved"},
+      "platform_toolsets": {
+        "cli": ["clarify", "file", "session_search", "skills", "terminal", "todo"]
+      },
+      "hooks": [
+        {"matcher": "^kanban_complete$", "command": "/workspace/bin/complete-gate.py", "timeout": 30},
+        {"matcher": "^(write_file|patch|skill_manage)$", "file": "docs/hermes-local/hooks/reviewer/deny-write.sh"},
+        {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/reviewer/test-only-terminal.sh"},
+        {"matcher": "^(read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"}
+      ]
+    },
+    "unlisted": {
+      "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
+      "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
+      "hooks": [
+        {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/git-guard.py"},
+        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20},
+        {"matcher": "^(terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"},
+        {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/model-guard.py"},
+        {"matcher": "^skill_manage$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
+      ]
+    }
+  },
+  "sandbox": {
+    "schema_version": 1,
+    "backend": "os_box",
+    "unboxed_backend": "local",
+    "boxed_profiles": ["builder-local", "reviewer", "builder-claude"],
+    "plugin_dir": "docs/hermes-local/plugins/os-box",
+    "tmp_dir": "{profile_dir}/box-tmp",
+    "home_ro": [".local/bin", ".local/share/uv"],
+    "home_protect": [".local/bin/", ".local/lib/", ".bash_profile", ".bash_login", ".profile", ".bashrc", ".gitconfig", ".config/git/", ".jq", ".pip/", ".config/pip/", ".hermes/"],
+    "hide": [".scratch"],
+    "sibling_dirs": [".worktrees"],
+    "canary": "boxcanary/canary.txt",
+    "profile_overrides": {
+      "builder-claude": {
+        "claude_config_dir": "{home}/.claude",
+        "ro_over": ["settings.json", "settings.local.json", "CLAUDE.md", "agents", "skills", "hooks", "commands", "plugins"]
+      }
+    },
+    "env": {
+      "LC_ALL": "C.UTF-8"
+    }
+  }
+}

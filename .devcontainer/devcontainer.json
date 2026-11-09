@@ -10,7 +10,12 @@
       "ZSH_IN_DOCKER_VERSION": "1.2.0"
     }
   },
-  "runArgs": ["--cap-add=NET_ADMIN", "--cap-add=NET_RAW"],
+  "runArgs": [
+    "--cap-add=NET_ADMIN",
+    "--cap-add=NET_RAW",
+    "--security-opt", "seccomp=${localWorkspaceFolder}/.devcontainer/seccomp-userns.json",
+    "--security-opt", "systempaths=unconfined"
+  ],
   "customizations": {
     "vscode": {
       "extensions": [
@@ -52,6 +57,6 @@
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
   "workspaceFolder": "/workspace",
-  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh && sudo /usr/sbin/service cron start && /workspace/bin/container-start.sh && (tmux has-session -t hermes 2>/dev/null || tmux new-session -d -s hermes /workspace/bin/hermes-gateway-loop.sh)",
+  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh && { rc=0; sudo /usr/sbin/service cron start || rc=1; /workspace/bin/container-start.sh || rc=1; tmux has-session -t hermes 2>/dev/null || tmux new-session -d -s hermes /workspace/bin/hermes-gateway-loop.sh || rc=1; exit $rc; }",
   "waitFor": "postStartCommand"
 }

@@ -9,3 +9,12 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
+      # Workers commit only in their own card worktree, on their card branch; no empty or test@test.com author (D36).
+      # Absolute path: a worktree runs STACK main's guard, never a copy the worker could edit.
+      - id: commit-guard
+        name: commit guard (D36)
+        entry: /workspace/bin/commit-guard.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]

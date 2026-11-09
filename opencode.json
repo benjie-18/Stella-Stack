@@ -47,7 +47,38 @@
       "claude *--model=claude-*": "deny",
       "claude -p*": "deny",
       "claude *-p *": "deny",
-      "claude *--print*": "deny"
+      "claude *--print*": "deny",
+      "*owner.env*": "deny",
+      "*/.env*": "deny",
+      "* .env*": "deny",
+      "*.pem*": "deny",
+      "*/*.key*": "deny",
+      "*.hermes/auth.json*": "deny",
+      "*.claude/.credentials*": "deny",
+      "*opencode/auth.json*": "deny",
+      "*/.ssh/*": "deny",
+      "*~/.ssh*": "deny",
+      "*/.aws/*": "deny",
+      "*~/.aws*": "deny",
+      "*.config/gh*": "deny"
+    },
+    "edit": {
+      "*owner.env*": "deny"
+    },
+    "read": {
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.pem": "deny",
+      "*.key": "deny",
+      "*/.hermes/auth.json": "deny",
+      "*/.claude/.credentials*": "deny",
+      "*/.local/share/opencode/auth.json": "deny",
+      "*/.ssh/*": "deny",
+      "*/.aws/*": "deny",
+      "*/.config/gh/*": "deny",
+      "*.env.example": "allow",
+      "*.env.sample": "allow",
+      "*.env.template": "allow"
     },
     "skill": {
       "built-in-browser": "deny",

@@ -1,0 +1,3 @@
+name: os-box
+version: "1.0"
+description: Terminal backend that runs each command in a bubblewrap box (option A).
