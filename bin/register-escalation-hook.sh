@@ -32,6 +32,7 @@ GUARDS = [("pre_tool_call", "^(kanban_create|kanban_complete|kanban_unblock|kanb
            "/workspace/bin/role-guard.py", 30)]
 sys.path.insert(0, "/workspace/bin")
 import roles
+GUARDS = [(e, m, roles.hook_command(c), t) for e, m, c, t in GUARDS]   # RT-A-01: python guards run as python3 -I
 try:
     R = roles.load()
 except roles.RolesError as e:   # a broken role table registers nothing: never guess at access (D46)
@@ -50,12 +51,21 @@ for name, folder, role, listed in roles.profiles(R, H):
     d = json.load(open(al)) if os.path.exists(al) else {"approvals": []}
     d0 = json.dumps(d)
     listed = {h[2] for h in HOOKS + GUARDS + PROFILE}
+    listed |= {c[len("python3 -I "):] for c in listed if c.startswith("python3 -I ")}   # RT-A-01: the bare form is migrated below, not stale
     for cmd in re.findall(r'\n\s*(?:- )?command: "([^"]*)"', s):
         if cmd not in listed:
             print(f"{name}: UNLISTED hook {cmd} (registered, not in this script; remove it by hand if stale)")
     added = []
     for event, matcher, cmd, timeout, closed in ([h + (10, False) for h in HOOKS]
                                                   + [h + (True,) for h in GUARDS + PROFILE]):
+        # RT-A-01: a python hook registered as a bare path runs without -I; rewrite it in place (matcher, timeout and fail_closed stay)
+        bare = cmd[len("python3 -I "):] if cmd.startswith("python3 -I ") else None
+        if bare and f'command: "{bare}"' in s:
+            if check:
+                print(f"{name}: NOT ISOLATED {bare} (registered without python3 -I)"); drift += 1; continue
+            s = s.replace(f'command: "{bare}"', f'command: "{cmd}"')
+            d["approvals"] = [a for a in d["approvals"] if not (isinstance(a, dict) and a.get("event") == event and a.get("command") == bare)]   # Hermes may add keys (approved_at)
+            added.append(f"{event} {os.path.basename(bare)} -> python3 -I")
         # Hermes fullmatches the matcher (agent/shell_hooks.py): a registered command with a different matcher is
         # corrected in place, never skipped (D31 matcher fix: "^kanban_" matched no tool).
         old = re.search(r'- matcher: "([^"]*)"\n      command: "' + re.escape(cmd) + '"', s)

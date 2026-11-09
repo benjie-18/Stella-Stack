@@ -4,6 +4,7 @@
 # one message in #supervisor. Both carry the deliverable's Windows path when the card created files (F4). Only for cards that have an escalation thread and are `done`.
 # usage: escalation-complete.sh <card-id> [summary from the kanban_task_completed hook]
 # Called by bin/escalation-on-complete.sh (hook) and by bin/escalation-reply-poll.sh (cron backstop).
+jq() { env -u HOME jq "$@"; }  # RT-RTA-02: ~/.jq is worker-writable and jq has no flag to skip it
 set -uo pipefail
 card="${1:-}"
 hook_summary="${2:-}"

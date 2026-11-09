@@ -2,6 +2,9 @@
 # Hermes kanban_task_blocked shell hook: every card that ends up `blocked` gets its #escalations thread, whoever
 # blocked it (worker, Stella in chat, or the CLI). Runs detached so the block call never waits on Discord;
 # escalation-thread.sh logs the outcome (THREAD_OPENED / THREAD_FAIL) to .supervisor/escalations.log.
+jq() { env -u HOME jq "$@"; }  # RT-RTA-02: ~/.jq is worker-writable and jq has no flag to skip it
+acct_home=$(getent passwd "$(id -u)" | cut -d: -f6)
+[ -n "$acct_home" ] && export HOME=$acct_home  # RT-RTA-01: hermes reads pip.conf, ~/.hermes and git config under HOME, a folder the worker writes; run as cron does
 set -uo pipefail
 export PATH="$PATH:/home/node/.local/bin:/home/node/.hermes/hermes-agent/.hermes/bin:/usr/local/share/npm-global/bin:/usr/local/bin:/usr/bin:/bin"
 export LC_ALL=C.UTF-8   # F19: the inherited en_US.UTF-8 is not installed, so bash falls back to C and ${s:0:N} cuts bytes

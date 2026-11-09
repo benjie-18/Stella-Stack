@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Reviewer role (D46) may run tests, nothing else: allow an exact test command on `terminal`, block everything else (exit 2).
+jq() { env -u HOME jq "$@"; }  # RT-RTA-02: ~/.jq is worker-writable and jq has no flag to skip it
 cmd=$(jq -r 'if .tool_name == "terminal" then .tool_input.command // "" else "" end')
 case "$cmd" in
   "npm test"|"npm run test"|"npm run lint"|"node --test") exit 0 ;;

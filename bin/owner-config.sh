@@ -9,6 +9,7 @@
 # Run:     owner-config.sh --check    offline: keys present, ids are 17-20 digits, path non-empty (exit 1 if not)
 #          owner-config.sh --verify   --check, then read-only Discord GETs through Hermes's own token loader: both
 #                                     channels exist in the guild and the owner is a member of it
+jq() { env -u HOME jq "$@"; }  # RT-RTA-02: ~/.jq is worker-writable and jq has no flag to skip it
 [ -n "${OWNER_CONFIG_SH:-}" ] && return 0; OWNER_CONFIG_SH=1
 OWNER_ID_RE='^[0-9]{17,20}$'
 . /workspace/bin/alert.sh   # alert_text (D44): for the missing-config alert here and alert() in escalation-discord.sh

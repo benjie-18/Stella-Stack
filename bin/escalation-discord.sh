@@ -1,4 +1,5 @@
 # Shared by escalation-thread.sh and escalation-reply-poll.sh (sourced, not run): environment, log(), discord_action.
+jq() { env -u HOME jq "$@"; }  # RT-RTA-02: ~/.jq is worker-writable and jq has no flag to skip it
 export PATH="$PATH:/home/node/.local/bin:/home/node/.hermes/hermes-agent/.hermes/bin:/usr/local/share/npm-global/bin:/usr/local/bin:/usr/bin:/bin"
 export LC_ALL=C.UTF-8   # F19: the inherited en_US.UTF-8 is not installed, so bash falls back to C and ${s:0:N} cuts bytes
 # The Discord bot (token and config) belongs to the default profile, which runs Stella's gateway. A worker calls

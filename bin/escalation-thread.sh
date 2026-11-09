@@ -7,6 +7,7 @@
 # Replies in the thread are recorded against the card by bin/escalation-reply-poll.sh (cron, every minute).
 # Only a human decision gets a thread (F2): a capability block, or any block of a card already answered twice, goes to
 # #alerts and a card comment instead, and stays blocked for triage.
+jq() { env -u HOME jq "$@"; }  # RT-RTA-02: ~/.jq is worker-writable and jq has no flag to skip it
 set -uo pipefail
 card=""
 . /workspace/bin/escalation-discord.sh

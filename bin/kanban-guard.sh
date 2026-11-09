@@ -7,6 +7,9 @@
 #     The one exception is the clause the dispatcher's SOUL puts in every decision card ("starts with 'UNBLOCK: escalation reply'").
 #  3. Re-block of an answered decision: kanban_block on a card whose thread reply is already recorded, for a reason whose
 #     normalized fingerprint was already escalated, is refused, so the worker uses the answer instead of looping (D29).
+jq() { env -u HOME jq "$@"; }  # RT-RTA-02: ~/.jq is worker-writable and jq has no flag to skip it
+acct_home=$(getent passwd "$(id -u)" | cut -d: -f6)
+[ -n "$acct_home" ] && export HOME=$acct_home  # RT-RTA-01: hermes reads pip.conf, ~/.hermes and git config under HOME, a folder the worker writes; run as cron does
 set -uo pipefail
 export LC_ALL=C.UTF-8   # F19: the inherited en_US.UTF-8 is not installed, so bash falls back to C and ${s:0:N} cuts bytes
 p=$(cat)

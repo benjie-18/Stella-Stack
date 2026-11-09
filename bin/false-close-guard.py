@@ -17,6 +17,7 @@ GUARD_STATE_DB overrides the session store path (tests).
 """
 import json, os, pwd, re, sqlite3, sys, time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # python3 -I does not put the script folder on the path
 import owner_config  # bin/owner_config.py, next to this file (D39)
 
 DELEGATE = "opencode run --standalone --auto"

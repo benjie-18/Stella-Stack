@@ -61,7 +61,9 @@ for c in "git config user.name x" "git config --global user.email a@b" "git -c u
          "git fetch --update-head-ok --refmap='+refs/heads/*:refs/heads/*' origin" "git fetch --refmap +refs/heads/card:heads/main origin card" \
          "git fetch --refm=+refs/heads/card:heads/main origin card" "git push --mir origin" "git push --al origin" "git push --m origin" "git push --mirror origin" \
          "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.push GIT_CONFIG_VALUE_0=HEAD:refs/heads/main git push origin" \
-         "env GIT_CONFIG_PARAMETERS=x git push" "GIT_CONFIG_GLOBAL=/dev/null git status"; do
+         "env GIT_CONFIG_PARAMETERS=x git push" "GIT_CONFIG_GLOBAL=/dev/null git status" \
+         "HOME=/tmp/h git commit -m x" "env HOME=/tmp/h git commit -m x" "XDG_CONFIG_HOME=/tmp/h git commit -m x" "cd /tmp && HOME=. git commit -m x" \
+         "bash -c 'HOME=/tmp/h git commit -m x'" "git add f && HOME=/tmp/h git commit -m x"; do   # HH-06: a config planted under another HOME/XDG folder switches the commit hook off
   ok '[ "$(term $G "$c")" = 2 ] && grep -q "git guard" "$T/out"' "builder terminal refused: $c"
 done
 for c in "git add phase4-test.md && git commit -m 'Add phase4-test.md'" "git push -u origin HEAD" \
@@ -71,7 +73,7 @@ for c in "git add phase4-test.md && git commit -m 'Add phase4-test.md'" "git pus
          "git fetch origin" "git fetch origin '+refs/heads/*:refs/remotes/origin/*'" "git fetch origin main" \
          "git push origin HEAD:Mainline" "git push origin HEAD:refs/heads/card-Main-x" "git push --set-upstream origin HEAD" "git fetch --all" "git pull" \
          "git pull origin" "git pull origin card-branch" "git pull --rebase origin card-branch" "git push --atomic origin HEAD" "git push --follow-tags origin HEAD" \
-         "git fetch --refmap='+refs/heads/*:refs/remotes/origin/*' origin" "git fetch --prune origin"; do
+         "git fetch --refmap='+refs/heads/*:refs/remotes/origin/*' origin" "git fetch --prune origin" "HOME=/tmp/x npm test" "git commit -m 'HOME=x'"; do
   ok '[ "$(term $G "$c")" = 0 ]' "builder terminal allowed: $c"
 done
 ok '[ "$(echo not-json | $G >/dev/null 2>&1; echo $?)" = 2 ]' "git guard fails closed on a garbage payload"
@@ -97,6 +99,32 @@ done
 for c in "git diff --output=/tmp/x" "GIT_DIR=/workspace/.git git log -1"; do
   ok '[ "$(term $G "$c")" = 0 ]' "builder terminal allowed (K1c): $c"
 done
+# RT-RTA-01 (source side): the hook runs unboxed with HOME = a folder the worker writes, and its own git calls (_is_main,
+# output_into_main) must not read a planted ~/.gitconfig or ~/.config/git/config. trace2 settings are read only from the
+# global/system config, so any git run that reads the planted file appends to the marker. hterm <home> <hook> <cmd>: the hook's
+# exit code with HOME (and XDG_CONFIG_HOME) set to <home>; the payload is built with the real HOME.
+hterm() { jq -nc --arg c "$3" '{hook_event_name: "pre_tool_call", tool_name: "terminal", tool_input: {command: $c}}' \
+  | env HOME="$1" XDG_CONFIG_HOME="$1/.config" "$2" >"$T/out" 2>/dev/null; echo $?; }
+PG=$T/plant-g; PX=$T/plant-x; mkdir -p "$PG" "$PX/.config/git"
+printf '[trace2]\n\tnormalTarget = %s\n' "$T/trace-g" >"$PG/.gitconfig"
+printf '[trace2]\n\tnormalTarget = %s\n' "$T/trace-x" >"$PX/.config/git/config"
+rm -f "$T/trace-g" "$T/trace-x"
+env HOME="$PG" XDG_CONFIG_HOME="$PG/.config" git -C "$GR/main" rev-parse --git-dir >/dev/null; env HOME="$PX" XDG_CONFIG_HOME="$PX/.config" git -C "$GR/main" rev-parse --git-dir >/dev/null
+ok '[ -s "$T/trace-g" ] && [ -s "$T/trace-x" ]' "RT-RTA-01: premise: a planted ~/.gitconfig and ~/.config/git/config are read by a plain git run (trace2 writes the marker)"
+for h in g x; do
+  for c in "git -C $GR/main merge --ff-only x" "git diff --output=$GR/main/x"; do   # _is_main, output_into_main: refused
+    rm -f "$T/trace-g" "$T/trace-x"
+    ok '[ "$(hterm $T/plant-$h $G "$c")" = 2 ] && grep -q "git guard" "$T/out" && [ ! -e "$T/trace-$h" ]' "RT-RTA-01: planted $h config ignored, main checkout still refused: $c"
+  done
+  for c in "git -C $GR/wt commit -m x" "git diff --output=$T/nonrepo-out"; do   # the same two calls: allowed
+    rm -f "$T/trace-g" "$T/trace-x"
+    ok '[ "$(hterm $T/plant-$h $G "$c")" = 0 ] && [ ! -e "$T/trace-$h" ]' "RT-RTA-01: planted $h config ignored, linked worktree / non-repo output still allowed: $c"
+  done
+done
+# The stack's own safe.directory list lived in the profile's ~/.gitconfig, which the hook no longer reads (only /etc/gitconfig applies).
+# A repo git calls "dubious ownership" must therefore be judged as _is_main judges it: a main checkout, refused (fail closed).
+# GIT_TEST_ASSUME_DIFFERENT_OWNER=1 makes git treat every repo as foreign-owned, as a root-owned project checkout would be.
+ok '[ "$(GIT_TEST_ASSUME_DIFFERENT_OWNER=1 hterm $T/plant-g $G "git diff --output=$GR/wt/x")" = 2 ] && [ "$(GIT_TEST_ASSUME_DIFFERENT_OWNER=1 hterm $T/plant-g $G "git diff --output=$T/nonrepo-out")" = 0 ]' "RT-RTA-01: a repo git calls dubious ownership: --output into it is refused, an output outside any repo is still allowed"
 
 # F14 model guard: builders run Claude Code only as Sonnet; Opus and Haiku go through bin/escalate.sh. A bare claude -p
 # is refused too: the builder's default model is not Sonnet (~/.claude/settings.json "model": "opus").
@@ -348,6 +376,62 @@ fi
 rc=$(ap)
 ok 'has profiles/reviewer/ test-only-terminal.sh "" 2>/dev/null; grep -q "test-only-terminal.sh" "$HA/profiles/reviewer/config.yaml" && [ -s "$HA/profiles/builder-local/hooks/secret-guard.py" ] && [ -s "$HA/hooks/secret-guard.py" ] && [ -s "$HA/profiles/reviewer/hooks/secret-guard.py" ] && [ -x "$HA/profiles/builder-claude/hooks/deny-skill-manage.sh" ]' "S4: a failing hermes config get no longer stops apply before the hook and toolset steps (exit $rc)"
 ok '[ "$(head -1 "$HA/profiles/reviewer/SOUL.md")" = "My own first line" ] && [ "$(head -1 "$HA/SOUL.md")" = "You are Hermes Agent, a helpful assistant." ] && grep -q "stella-rules:begin" "$HA/profiles/reviewer/SOUL.md"' "S24: an unmarked SOUL keeps its first line (the persona line as before, or a hand-written one)"
+# RT-A-01 (red-team of option A): a hook runs unboxed with HOME = the profile home, which a boxed worker can write. A .pth file
+# in that home's python user site would run inside the next hook. So every registered .py hook command is `python3 -I <path>`
+# (isolated mode ignores the user site and PYTHON* variables); a bare-path registration from before is rewritten in place by
+# apply, and --check reports it. The driver runs every registered .py command with a planted .pth: bare = control (it must
+# fire), iso = the registered form (it must not, and the hook must still import its modules).
+cat >"$T/isorun.py" <<'PY'
+import glob, os, re, shlex, subprocess, sys
+H, home, mode = sys.argv[1], sys.argv[2], sys.argv[3]
+hb, hd = os.environ["HB"], os.environ["HD"]
+marker = home + "/marker"
+site = subprocess.run(["python3", "-I", "-c", "import site; print(site.getusersitepackages())"], env={"PATH": os.environ["PATH"], "HOME": home},
+                      capture_output=True, text=True).stdout.strip()
+os.makedirs(site, exist_ok=True)
+open(site + "/evil.pth", "w").write("import pathlib; pathlib.Path(%r).write_text('x')\n" % marker)
+cmds = set()
+for cfg in [H + "/config.yaml"] + glob.glob(H + "/profiles/*/config.yaml"):
+    cmds |= set(re.findall(r'command: "([^"]*\.py)"', open(cfg).read()))
+if os.path.exists(marker):
+    os.unlink(marker)
+runs = hit = imp = 0
+env = {"PATH": os.environ["PATH"], "HOME": home, "HERMES_HOME": H, "ESCALATE_SUP_DIR": home + "/sup"}
+payload = '{"hook_event_name": "pre_tool_call", "tool_name": "no_such_tool", "tool_input": {}}'
+for c in sorted(cmds):
+    argv = shlex.split(c)
+    if mode == "bare":
+        argv = ["python3", argv[-1]]   # what python3 does with the script's shebang line, minus the file mode
+    argv = [a.replace("/workspace/bin/", hb + "/") for a in argv]
+    if not os.path.exists(argv[-1]):   # a profile copy the register step does not create: use the repo source
+        argv[-1] = glob.glob(hd + "/*/" + os.path.basename(argv[-1]))[0]
+    r = subprocess.run(argv, input=payload, env=env, capture_output=True, text=True, timeout=30)
+    runs += 1
+    imp += bool(re.search(r"ModuleNotFoundError|ImportError", r.stderr))
+    if os.path.exists(marker):
+        hit += 1; os.unlink(marker)
+print(f"runs={runs} marker={hit} importerr={imp}")
+PY
+HB=$T/hb; mkdir -p "$HB"; for f in /workspace/bin/*.py; do ln -sf "$f" "$HB/$(basename "$f")"; done; ln -sf "${FCG:-/workspace/bin/false-close-guard.py}" "$HB/false-close-guard.py"
+IH="$T/iso/.hermes"; mkdir -p "$IH/profiles/builder-local" "$IH/profiles/builder-claude" "$IH/profiles/reviewer"
+for p in "" profiles/builder-local/ profiles/builder-claude/ profiles/reviewer/; do printf 'model: x\n' > "$IH/${p}config.yaml"; done
+HOME="$T/iso" "$REG" >/dev/null
+isorun() { HB=$HB HD=$D python3 -I "$T/isorun.py" "$IH" "$T/iso" "$1"; }
+ok '[ -z "$(grep -h "command: \".*\.py\"" "$IH"/config.yaml "$IH"/profiles/*/config.yaml | grep -v "command: \"python3 -I /")" ] && [ "$(grep -h "command: \"python3 -I /.*\.py\"" "$IH"/config.yaml "$IH"/profiles/*/config.yaml | wc -l)" -ge 12 ]' "RT-A-01: every registered .py hook command is python3 -I <path> (none bare)"
+ok '[ "$(grep -h "command: \"python3 -I " "$IH"/profiles/builder-local/config.yaml | wc -l)" = "$(grep -c "python3 -I " "$IH/profiles/builder-local/shell-hooks-allowlist.json")" ] && ! grep -q "\"command\": \"/[^\"]*\.py\"" "$IH"/shell-hooks-allowlist.json "$IH"/profiles/*/shell-hooks-allowlist.json' "RT-A-01: the allowlist approves the same python3 -I commands, none bare"
+ok 'isorun bare | grep -qv "marker=0 "' "RT-A-01 control: the same hooks started bare do run a planted user-site .pth"
+ok '[ "$(isorun iso | sed "s/runs=[0-9]* //")" = "marker=0 importerr=0" ] && [ "$(isorun iso | sed "s/ marker.*//; s/runs=//")" -ge 12 ]' "RT-A-01: every registered hook, started as registered with a planted .pth: the .pth does not run and no hook fails to import its modules"
+# the pre-fix volume state: bare registrations (config and allowlist). --check reports them, apply rewrites in place (one entry, matcher, timeout and fail_closed kept)
+MG="$T/mig"; MH="$MG/.hermes"; mkdir -p "$MH/profiles/builder-local" "$MH/profiles/builder-claude" "$MH/profiles/reviewer"
+for p in "" profiles/builder-local/ profiles/builder-claude/ profiles/reviewer/; do printf 'model: x\n' > "$MH/${p}config.yaml"; done
+HOME="$MG" "$REG" >/dev/null; cp "$MH/profiles/builder-local/config.yaml" "$T/fresh.yaml"; jq -S ".approvals | sort_by(.command)" "$MH/profiles/builder-local/shell-hooks-allowlist.json" >"$T/fresh.json"
+for f in "$MH"/config.yaml "$MH"/profiles/*/config.yaml "$MH"/shell-hooks-allowlist.json "$MH"/profiles/*/shell-hooks-allowlist.json; do [ -f "$f" ] && sed -i 's#"python3 -I /#"/#' "$f"; done
+jq '.approvals |= map(if (.command | test("\\.py$")) then . + {approved_at: "2026-01-01T00:00:00Z"} else . end)' "$MH/profiles/builder-local/shell-hooks-allowlist.json" >"$T/al.json" && mv "$T/al.json" "$MH/profiles/builder-local/shell-hooks-allowlist.json"   # V-RTA-06: Hermes adds keys to an approval it recorded
+nc=$(grep -c "fail_closed: true" "$MH/profiles/builder-local/config.yaml"); nw=$(grep -c "write-guard.py" "$MH/profiles/builder-local/config.yaml")
+ok '[ "$(HOME="$MG" "$REG" --check >"$T/out" 2>&1; echo $?)" = 1 ] && grep -q "NOT ISOLATED.*write-guard.py" "$T/out"' "RT-A-01: --check reports a bare-path .py registration as drift"
+HOME="$MG" "$REG" >/dev/null
+ok '[ "$(HOME="$MG" "$REG" --check >/dev/null 2>&1; echo $?)" = 0 ] && [ "$(grep -c "write-guard.py" "$MH/profiles/builder-local/config.yaml")" = "$nw" ] && [ "$(grep -c "fail_closed: true" "$MH/profiles/builder-local/config.yaml")" = "$nc" ] && [ -z "$(grep -h "command: \".*\.py\"" "$MH"/config.yaml "$MH"/profiles/*/config.yaml | grep -v "command: \"python3 -I /")" ] && cmp -s "$MH/profiles/builder-local/config.yaml" "$T/fresh.yaml"' "RT-A-01: apply rewrites bare registrations in place (no duplicate, same fail_closed count, identical to a fresh registration)"
+ok '[ "$(jq -S ".approvals | sort_by(.command)" "$MH/profiles/builder-local/shell-hooks-allowlist.json")" = "$(cat "$T/fresh.json")" ]' "RT-A-01: the migrated allowlist equals the fresh one (no stale bare approvals)"
 ok 'ls "$HA"/backups/*/reviewer.SOUL.md >/dev/null 2>&1 && ls "$HA"/backups/*/reviewer.config.yaml >/dev/null 2>&1 && ls "$HA"/backups/*/reviewer.shell-hooks-allowlist.json >/dev/null 2>&1 && [ -z "$(find "$HA" -name "*.tmp*")" ]' "F25/S25: SOUL.md, config.yaml and the allowlist are backed up before the first change; no temp file left"
 printf '\n' >> "$HA/config.yaml"; sed -i 's#^hooks:$#hooks:\n  pre_tool_call:\n    - matcher: "^x$"\n      command: "/tmp/stale-hook.sh"\n      timeout: 10#' "$HA/config.yaml"
 sed -i '/deny-kanban-block/,+2d' "$HA/config.yaml"
@@ -397,10 +481,38 @@ for c in "git diff --output=x" "git diff --output=x HEAD" "git diff --name-only 
 done
 ok '[ "$(term $RT "git diff --output=x")" = 2 ] && grep -q "git diff --name-only" "$T/out" && grep -q "git log --oneline" "$T/out"' "K9: the refusal lists the allowed read-only git forms"
 ok '[ "$(echo not-json | $RT >/dev/null 2>&1; echo $?)" = 2 ] && [ "$(run $RT read_file "{\"path\":\"x\"}")" = 2 ]' "K9: the reviewer terminal hook fails closed on a garbage payload and on a tool that is not terminal"
+# RT-RTA-02 (source side): the reviewer's terminal hook runs jq with HOME = a folder the worker writes, and jq always loads
+# ~/.jq. A planted file with a syntax error breaks every jq program; the hook must decide as it does with a clean HOME.
+PJ=$T/plant-jq; mkdir -p "$PJ"; printf 'this is not jq\n' >"$PJ/.jq"
+ok '[ "$(echo "{}" | env HOME="$PJ" jq -c . >/dev/null 2>&1; echo $?)" != 0 ]' "RT-RTA-02: premise: a planted ~/.jq with a syntax error breaks a plain jq run"
+ok '[ "$(hterm $PJ $RT "npm test")" = 0 ] && [ "$(hterm $PJ $RT "node --test")" = 0 ]' "RT-RTA-02: reviewer terminal hook: allowed commands stay allowed under a planted ~/.jq"
+ok '[ "$(hterm $PJ $RT "rm -rf x")" = 2 ] && grep -q "the reviewer role" "$T/out"' "RT-RTA-02: reviewer terminal hook: a refused command is still refused, with its own message, under a planted ~/.jq"
 # Why the --output refusals matter, and that the allowed forms really are read-only: run them in a scratch repo.
 GR="$T/gitrepo"; git init -q -b main "$GR"; git -C "$GR" -c core.hooksPath=/dev/null -c user.name=s -c user.email=s@example.invalid commit -q --allow-empty -m base
 printf 'a\n' >"$GR/a.txt"; git -C "$GR" add a.txt; git -C "$GR" -c core.hooksPath=/dev/null -c user.name=s -c user.email=s@example.invalid commit -q -m "add a"
 git -C "$GR" diff --output="$T/leak" HEAD~1 HEAD; ok '[ -f "$T/leak" ]' "K9: premise: git diff --output=<file> does write a file, so an option-looking revision must be refused"
 rm -f "$T/leak"; h0=$(git -C "$GR" rev-parse HEAD)
 ok '( for c in "git -C $GR diff --name-only main...HEAD" "git -C $GR show --stat HEAD" "git -C $GR log --oneline -n 5" "git -C $GR diff --stat HEAD~1..HEAD" "git -C $GR show --name-only HEAD~1"; do [ "$(term $RT "$c")" = 0 ] && bash -c "$c" >/dev/null 2>&1 || exit 1; done ) && [ -z "$(git -C $GR status --porcelain)" ] && [ "$(git -C $GR rev-parse HEAD)" = "$h0" ] && [ "$(ls -A $GR | grep -vx .git | wc -l)" = 1 ]' "K9: the allowed git forms run for real in a scratch repo and change nothing"
+# RT-RTA-02 (source side), every script a registered hook runs or sources defines the no-HOME jq wrapper before its first jq
+# call: jq has no flag to skip ~/.jq, and the hook's HOME is writable by the worker. A new jq script fails here until it does
+# the same or is named below as outside the hook chain (cron, the poller, the owner's CLI, git's own pre-commit hook).
+JQB=${JQB:-/workspace/bin}
+jqw_ok() { awk -v w='jq() { env -u HOME jq "$@"; }' '/^[[:space:]]*#/ {next} index($0, w) == 1 {if (!d) d = NR; next} /(^|[^[:alnum:]_.-])jq([[:space:]]|$)/ {if (!u) u = NR} END {exit !(d && (!u || d < u))}' "$1"; }
+# no jq call that bypasses the wrapper (a function is not seen through env/timeout/xargs/command/flock/nice/exec/sudo/bash -c)
+jqb_ok() { ! grep -vE '^[[:space:]]*#' "$1" | grep -vF 'jq() { env -u HOME jq' | grep -qE '(^|[^[:alnum:]_.-])(env|timeout|xargs|command|flock|nice|exec|sudo|bash -c|sh -c)[^|;&]*[^[:alnum:]_.-]jq([[:space:]]|$)'; }
+# RT-RTA-01/02 (hermes children): the five registered shell hooks start `hermes`, which reads files under HOME (pip.conf, a ~/.hermes
+# symlink, the git config of its own `git rev-parse HEAD`) and HOME is a folder the worker writes. Each sets HOME to the account home
+# (as cron runs the same scripts) before its first hermes/kanban call. The shared scripts the hooks source or exec do NOT: that broke
+# `git config --global` in container-start.sh (owner-config.sh) and the identity of a rescue commit (escalate.sh).
+home_ok() { awk '/^[[:space:]]*#/ {next} /^acct_home=.*getent passwd/ {a = NR; next} /^\[ -n "\$acct_home" \] && export HOME=\$acct_home/ {d = NR; next} /(^|[^[:alnum:]_.-])(hermes|kanban)[[:space:]]/ {if (!u) u = NR} END {exit !(a && d && a < d && (!u || d < u))}' "$1"; }
+for f in "$JQB"/*.sh "$RT"; do
+  b=${f##*/}
+  case "$b" in *selftest*) continue;; escalate-drain.sh|escalation-reply-poll.sh|escalations-status.sh|merge-card.sh|watchdog.sh|container-start.sh|register-toolsets.sh|commit-guard.sh) continue;; esac
+  grep -vE '^[[:space:]]*#' "$f" | grep -qE '(^|[^[:alnum:]_.-])jq([[:space:]]|$)' || continue
+  ok 'jqw_ok "$f" && jqb_ok "$f"' "RT-RTA-02: $b runs jq through the no-HOME wrapper (defined before the first call, none bypasses it)"
+  case "$b" in kanban-guard.sh|escalation-reply-hook.sh|escalation-on-block.sh|escalation-on-complete.sh|escalation-on-claim.sh) ok 'home_ok "$f"' "RT-RTA-01: $b sets HOME to the account home before it starts hermes";; esac
+  case "$b" in escalate.sh|owner-config.sh|escalation-discord.sh|escalation-thread.sh|escalation-complete.sh) ok '! grep -qE "^export (HOME|GIT_CONFIG_GLOBAL)" "$f"' "RT-RTA-01: $b (shared, sourced or run by workers and cron) sets no HOME and no GIT_CONFIG_GLOBAL for its caller";; esac
+done
+# the regression the red-team found: sourcing owner-config.sh must leave `git config --global` working
+ok '[ "$(env HOME=$T/plant-g bash -c ". $JQB/owner-config.sh; git config --global --add safe.directory /x" >/dev/null 2>&1; echo $?)" = 0 ] && grep -q "directory = /x" $T/plant-g/.gitconfig' "RT-RTA-01: sourcing owner-config.sh does not stop git config --global (container-start.sh)"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

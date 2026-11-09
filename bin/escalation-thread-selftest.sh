@@ -11,9 +11,10 @@ cat > "$T/bin/hermes" <<'S'
 #!/usr/bin/env bash
 [ "$1 $2" = "kanban --board" ] && set -- "$1" "${@:4}"   # scripts name the board (F4)
 case "$1 $2" in
+# the stubs below play hermes and the Discord helper: they must not read the planted ~/.jq of the RT-RTA-02 row either
   "send "*)       shift; printf '%s\n---\n' "$*" >> "$ESCALATE_SUP_DIR/sends";;
   "kanban comment") echo "$*" >> "$ESCALATE_SUP_DIR/comments";;
-  "kanban show")  jq -nc --arg k "${FAKE_KIND:-needs_input}" --argjson n "${FAKE_NBLOCKS:-1}" --arg a "${FAKE_ASSIGNEE:-builder-claude}" \
+  "kanban show")  env -u HOME jq -nc --arg k "${FAKE_KIND:-needs_input}" --argjson n "${FAKE_NBLOCKS:-1}" --arg a "${FAKE_ASSIGNEE:-builder-claude}" \
                     --arg t "${FAKE_TITLE:-}" '{task: {status: "blocked", assignee: $a, title: $t}, events: [range($n) | {kind: "blocked", payload: {kind: $k}}]}';;
 esac
 exit 0
@@ -27,8 +28,8 @@ case "$3" in
                 [ -z "${FAKE_LINK_FAIL:-}" ] || { echo '{"error": "Discord API error 403: Missing Permissions"}'; exit 0; }
                 echo '{"success": true, "message_id": "m1"}';;
   create_thread) sleep "${FAKE_CREATE_SLEEP:-0}"; [ -z "${FAKE_CREATE_FAIL:-}" ] || { echo '{"error": "Discord API error 503: Service Unavailable", "stage": "create_thread"}'; exit 0; }
-                jq -nc --arg n "$5" --arg t "${FAKE_THREAD_ID:-555}" '{success: true, thread_id: $t, name: $n}';;
-  *)            jq -nc --arg n "$5" '{success: true, thread_id: "555", name: $n}';;
+                env -u HOME jq -nc --arg n "$5" --arg t "${FAKE_THREAD_ID:-555}" '{success: true, thread_id: $t, name: $n}';;
+  *)            env -u HOME jq -nc --arg n "$5" '{success: true, thread_id: "555", name: $n}';;
 esac
 S
 chmod +x "$T/bin/"*
@@ -126,6 +127,12 @@ ok 'utf8_title t_0000000b' "F19: escalation-thread.sh keeps an ä that starts on
 echo '{"extra": {"task_id": "t_0000000c", "reason": "Decision needed: pick (A) or (B)."}}' | LC_ALL=C FAKE_TITLE="$U" /workspace/bin/escalation-on-block.sh >/dev/null 2>&1
 for _ in $(seq 1 50); do grep -q t_0000000c "$T/sup/state/escalation-threads.tsv" && break; sleep 0.1; done
 ok 'utf8_title t_0000000c' "F19: escalation-on-block.sh hands the thread script a whole ä too"
+# RT-RTA-02 (source side): the hook and the thread script run jq with HOME = a folder the worker writes; a planted ~/.jq
+# (here a syntax error) must not stop the thread from opening.
+PJ=$T/plant-jq; mkdir -p "$PJ"; printf 'this is not jq\n' >"$PJ/.jq"
+echo '{"extra": {"task_id": "t_000000f0", "reason": "Decision needed: pick (A) or (B)."}}' | HOME="$PJ" LC_ALL=C FAKE_TITLE="$U" /workspace/bin/escalation-on-block.sh >/dev/null 2>&1
+for _ in $(seq 1 50); do grep -q t_000000f0 "$T/sup/state/escalation-threads.tsv" && break; sleep 0.1; done
+ok 'utf8_title t_000000f0' "RT-RTA-02: escalation-on-block.sh and escalation-thread.sh open the thread under a planted ~/.jq"
 
 # F7: two runs for one card at once (two blocks inside the create window) open one thread, post once and link once.
 : > "$T/sup/sends"

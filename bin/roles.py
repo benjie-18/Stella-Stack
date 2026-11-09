@@ -21,6 +21,13 @@ WORKSPACES = ("git-worktree", "read-parent-worktree", "none")
 OVERRIDES = ("model", "provider")
 NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 KEY = re.compile(r"[A-Z][A-Z0-9_]*")   # an owner config key (config/owner.env)
+BACKEND = re.compile(r"[a-z0-9_]+")   # a Hermes terminal.backend name
+SANDBOX_KEYS = {"schema_version", "backend", "unboxed_backend", "boxed_profiles", "plugin_dir", "tmp_dir", "home_ro", "hide",
+                "sibling_dirs", "canary", "env", "home_protect", "profile_overrides"}
+BOX_OWNED_ENV = {"HOME", "TMPDIR", "TMP", "TEMP", "CLAUDE_CONFIG_DIR", "HERMES_KANBAN_WORKSPACE", "HERMES_KANBAN_BRANCH",
+                 "PATH", "BASH_ENV", "ENV", "IFS", "SHELL"}   # set by the box itself, or able to run code before the command
+BOX_DENY_ENV_PREFIX = ("LD_", "PYTHON")   # dynamic loader and interpreter start-up variables
+OVERRIDE_KEYS = {"claude_config_dir", "ro_over"}
 ROOT_PROFILE = "default"   # Hermes's own name for the profile that lives in the root of ~/.hermes
 
 
@@ -112,7 +119,65 @@ def validate(d):
     if not (isinstance(os_, list) and os_ and all(isinstance(x, str) and x and not x.startswith("/") and ".." not in x.split("/")
                                                    for x in os_)):
         errs.append("owner_settings needs a non-empty list of paths relative to the stack repo")
+    return errs + validate_sandbox(d)
+
+
+def _rel(x):
+    return isinstance(x, str) and bool(x) and not x.startswith("/") and all(seg not in ("", ".", "..") for seg in x.split("/"))   # a . or empty segment aliases another path
+
+
+def validate_sandbox(d):
+    """Problems with the optional `sandbox` block (option A, the OS box), as validate(); no block = no problems."""
+    sb = d.get("sandbox")
+    if sb is None:
+        return []
+    if not isinstance(sb, dict):
+        return ["sandbox must be an object"]
+    errs = [f"sandbox: unknown key {k!r}" for k in sb if k not in SANDBOX_KEYS]
+    if sb.get("schema_version") != 1:
+        errs.append("sandbox: schema_version must be 1")
+    names = [sb.get(k) for k in ("backend", "unboxed_backend")]
+    if not all(isinstance(n, str) and BACKEND.fullmatch(n) for n in names) or names[0] == names[1]:
+        errs.append("sandbox: backend and unboxed_backend must be different names matching [a-z0-9_]+")
+    bp, profs = sb.get("boxed_profiles"), d.get("profiles", {})
+    if not isinstance(bp, list) or not all(isinstance(p, str) and p for p in bp):   # a name without a row is a coverage gap (roles.py check), not a table error
+        errs.append("sandbox: boxed_profiles must be a list of profile names")
+    t = sb.get("tmp_dir")
+    if not (isinstance(t, str) and t.startswith("{profile_dir}/") and _rel(t[len("{profile_dir}/"):])):
+        errs.append("sandbox: tmp_dir must be a path template starting with {profile_dir}/ and no ..")
+    hp = sb.get("home_protect", [])   # profile-home entries bound read-only in the box (a trailing / marks a folder)
+    if not (isinstance(hp, list) and all(isinstance(x, str) and _rel(x.rstrip("/")) for x in hp)):
+        errs.append("sandbox: home_protect must be a list of relative paths without . or ..")
+    for k in ("home_ro", "hide"):
+        if not (isinstance(sb.get(k), list) and all(_rel(x) for x in sb[k])):
+            errs.append(f"sandbox: {k} must be a list of relative paths without ..")
+    sd = sb.get("sibling_dirs")
+    if not (isinstance(sd, list) and all(_rel(x) and "/" not in x for x in sd)):
+        errs.append("sandbox: sibling_dirs must be a list of folder names")
+    for k in ("canary", "plugin_dir"):
+        if not _rel(sb.get(k)):
+            errs.append(f"sandbox: {k} must be a relative path without ..")
+    ev = sb.get("env", {})   # extra environment for every boxed command (for example a locale that exists in the image)
+    if not (isinstance(ev, dict) and all(KEY.fullmatch(k) and k not in BOX_OWNED_ENV and not k.startswith(BOX_DENY_ENV_PREFIX) and isinstance(v, str) and "\0" not in v
+                                         for k, v in ev.items())):
+        errs.append(f"sandbox: env must be an object of string values with upper-case names, none of {', '.join(sorted(BOX_OWNED_ENV))}")
+    po = sb.get("profile_overrides")
+    if not isinstance(po, dict) or not all(p in profs and isinstance(o, dict) for p, o in po.items()):
+        return errs + ["sandbox: profile_overrides must be an object keyed by profiles that have a row"]
+    for p, o in po.items():
+        errs += [f"sandbox: profile_overrides.{p}: unknown key {k!r}" for k in o if k not in OVERRIDE_KEYS]
+        c = o.get("claude_config_dir")
+        if c is not None and not (isinstance(c, str) and c.startswith("{home}/") and _rel(c[len("{home}/"):])):
+            errs.append(f"sandbox: profile_overrides.{p}.claude_config_dir must start with {{home}}/ and have no ..")
+        ro = o.get("ro_over", [])
+        if not (isinstance(ro, list) and all(_rel(x) and "/" not in x for x in ro)):
+            errs.append(f"sandbox: profile_overrides.{p}.ro_over must be a list of names inside the folder")
     return errs
+
+
+def sandbox(d):
+    """The validated `sandbox` block, or None when the table has none."""
+    return d.get("sandbox")
 
 
 def homes():
@@ -161,6 +226,8 @@ def coverage(d, H):
             if not listed]
     gaps += [f"roles.json row {n} names a profile that does not exist ({folder}/config.yaml missing)"
              for n, folder, _, listed in profiles(d, H) if listed and folder not in have]
+    gaps += [f"sandbox.boxed_profiles names {n}, which has no row in roles.json: it is NOT boxed"
+             for n in (d.get("sandbox") or {}).get("boxed_profiles", []) if n not in d["profiles"]]
     return gaps
 
 
@@ -171,6 +238,11 @@ def role_of(d, profile):
     return name, d["roles"][name], bool(row)
 
 
+def hook_command(path):
+    """The registered command of a hook. A python hook runs as `python3 -I`: it runs unboxed with HOME set to the profile home,
+    which a boxed worker can write, so no user-site .pth or PYTHON* variable may reach it (RT-A-01)."""
+    return f"python3 -I {path}" if path.endswith(".py") else path
+
 def hooks_for(d, H, name, folder, role):
     """[(matcher, command, timeout, repo source or None)] the profile's role installs, filtered by its worker kind."""
     worker = (d["profiles"].get(name) or {}).get("worker")
@@ -178,7 +250,7 @@ def hooks_for(d, H, name, folder, role):
     for h in d["roles"][role].get("hooks", []):
         if "workers" in h and worker not in h["workers"]:
             continue
-        cmd = h.get("command") or f"{folder}/hooks/{os.path.basename(h['file'])}"
+        cmd = hook_command(h.get("command") or f"{folder}/hooks/{os.path.basename(h['file'])}")
         out.append((h["matcher"], cmd, int(h.get("timeout", 10)), h.get("file")))
     return out
 
@@ -191,9 +263,23 @@ def spec(d, H):
         if "background_review" in r:
             cfg["auxiliary.background_review.enabled"] = r["background_review"]
         out[n] = {"dir": folder, "role": role, "listed": listed, "platform_toolsets": r.get("platform_toolsets", {}),
-                  "hook_files": {c: s for _, c, _, s in hooks_for(d, H, n, folder, role) if s}, "config": cfg}
+                  "hook_files": {f"{folder}/hooks/{os.path.basename(s)}": s for _, _, _, s in hooks_for(d, H, n, folder, role) if s},
+                  "config": cfg}
         if "skills_disabled" in r:
             out[n]["skills_disabled"] = r["skills_disabled"]
+        sb = d.get("sandbox")
+        if sb:   # option A: the backend is per profile (a role's profiles flip one at a time), the plugin files with it
+            boxed = n in sb["boxed_profiles"]
+            cfg["terminal.backend"] = sb["backend"] if boxed else sb["unboxed_backend"]
+            if boxed:
+                src = f"{ROOT}/{sb['plugin_dir']}"
+                if not os.path.isdir(src):
+                    raise RolesError(f"sandbox plugin_dir {sb['plugin_dir']} is not a folder in the stack repo")
+                name = os.path.basename(sb["plugin_dir"].rstrip("/"))
+                cfg["plugins.isolation"] = "in_process"   # Hermes refuses a user terminal backend under `host`
+                out[n]["plugin_enable"] = name
+                out[n]["hook_files"].update({f"{folder}/plugins/{name}/{f}": f"{sb['plugin_dir']}/{f}"
+                                             for f in sorted(os.listdir(src)) if not f.startswith((".", "__pycache__"))})
     return out
 
 
@@ -233,6 +319,7 @@ def kanban(b, *args):
     # delegation pins are dropped and HERMES_HOME is the user's root home (Hermes shares the board across profiles).
     env = {k: v for k, v in os.environ.items() if not k.startswith("HERMES_KANBAN") and k != "HERMES_DELEGATED_CHILD_CONTEXT"}
     env["HERMES_HOME"] = f"{pwd.getpwuid(os.getuid()).pw_dir}/.hermes"
+    env["HOME"] = pwd.getpwuid(os.getuid()).pw_dir   # RT-RTA-01: hermes reads pip.conf, ~/.hermes and git config under HOME, which the worker writes
     r = subprocess.run(["hermes", "kanban", "--board", b, *args, "--json"], capture_output=True, text=True, timeout=25,
                        env=env)
     if r.returncode:
@@ -345,7 +432,7 @@ def log_alert(code, streak="", **kv):
         alert_catalog.log(tag, kv2)
         due, f = alert_catalog.page_due(tag, str(kv.get("card") or ""), streak)
         if due:
-            env = dict(os.environ, HERMES_HOME=f"{pwd.getpwuid(os.getuid()).pw_dir}/.hermes")
+            env = dict(os.environ, HERMES_HOME=f"{pwd.getpwuid(os.getuid()).pw_dir}/.hermes", HOME=pwd.getpwuid(os.getuid()).pw_dir)   # RT-RTA-01: as kanban()
             r = subprocess.run(["hermes", "send", "--to", os.environ.get("ALERT_TARGET") or "discord:#alerts", "--quiet", body],
                                env=env, capture_output=True, timeout=5)   # shorter than the hook's own timeout; an unsent page is retried
             if r.returncode == 0:

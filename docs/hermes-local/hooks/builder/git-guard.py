@@ -8,6 +8,9 @@ dir, the stack or a project repo) other than reading it: a merge into main is th
 OpenCode or Claude Code is not a Hermes tool call, so bin/commit-guard.sh (pre-commit) is the enforcement there.
 Exit 2 = block; any error blocks."""
 import fnmatch, json, os, re, shlex, subprocess, sys
+# RT-RTA-01: HOME is a folder the worker writes; a planted ~/.gitconfig or ~/.config/git/config (trace2 appends to any file) must not
+# reach our git. Global only: /etc/gitconfig (root) carries safe.directory for the root-owned /workspace.
+GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "LC_ALL": "C"}   # C: git's "dubious ownership" text is matched below
 
 SEP = {"&&", "||", ";", "|", "&"}
 READ = {"status", "log", "show", "diff", "rev-parse", "ls-files", "blame", "grep", "describe", "cat-file", "show-ref",
@@ -57,7 +60,7 @@ def main_checkout(path):
     """K1b: path is (inside) a repo's main checkout, not a linked worktree: its git dir is its common dir."""
     try:
         r = [subprocess.run(["git", "-C", path, "rev-parse", "--path-format=absolute", o], capture_output=True, text=True,
-                            timeout=10) for o in ("--git-dir", "--git-common-dir")]
+                            timeout=10, env=GIT_ENV) for o in ("--git-dir", "--git-common-dir")]
     except Exception:
         return True
     if any(x.returncode or not x.stdout.strip() for x in r):
@@ -90,9 +93,11 @@ def output_into_main(path):
     d = os.path.dirname(os.path.abspath(os.path.expanduser(path))) or "/"
     try:
         r = [subprocess.run(["git", "-C", d, "rev-parse", "--path-format=absolute", o], capture_output=True, text=True,
-                            timeout=10) for o in ("--git-dir", "--git-common-dir")]
+                            timeout=10, env=GIT_ENV) for o in ("--git-dir", "--git-common-dir")]
     except Exception:
         return True
+    if any("dubious ownership" in x.stderr for x in r):
+        return True   # as _is_main: the stack's safe.directory list sat in the ~/.gitconfig this call no longer reads; refuse rather than guess
     return all(x.returncode == 0 for x in r) and r[0].stdout.strip() == r[1].stdout.strip()
 
 
@@ -145,7 +150,7 @@ def check(cmd):
             for u in reversed(toks[:i]):
                 if u in SEP:
                     break
-                cfg_env = cfg_env or re.match(r"GIT_CONFIG[A-Z0-9_]*=", u) is not None
+                cfg_env = cfg_env or re.match(r"(GIT_CONFIG[A-Z0-9_]*|HOME|XDG_CONFIG_HOME)=", u) is not None   # HH-06: git reads a planted config from another HOME / XDG folder
                 m = re.fullmatch(r"(GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|GIT_INDEX_FILE)=(.*)", u)
                 if m:
                     env_targets.append(m[2] or ".")
@@ -154,7 +159,7 @@ def check(cmd):
                 if u in SEP or u.rsplit("/", 1)[-1] == "git":
                     break
                 args.append(u)
-            r = "git config through the environment (GIT_CONFIG_*)" if cfg_env else why(args, env_targets)
+            r = "git config through the environment (GIT_CONFIG_*, HOME=, XDG_CONFIG_HOME=)" if cfg_env else why(args, env_targets)
             if r:
                 return r
     return None
