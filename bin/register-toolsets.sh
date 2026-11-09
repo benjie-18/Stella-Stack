@@ -69,5 +69,12 @@ for prof in $(jq -r 'keys[]' "$T"); do
       if cp "/workspace/$src" "$dst.tmp" && chmod 755 "$dst.tmp" && mv "$dst.tmp" "$dst"; then echo "$prof: $(basename "$dst") restored from repo"
       else echo "$prof: $(basename "$dst") could not be restored from repo"; rc=1; fi; fi
   done < <(jq -r --arg p "$prof" '.[$p].hook_files // {} | to_entries[] | "\(.key)\t\(.value)"' "$T")
+  # option A: a boxed profile's terminal plugin (its files were copied just above) must be enabled to load
+  if pl=$(jq -er --arg p "$prof" '.[$p].plugin_enable // empty' "$T"); then
+    if h plugins list | grep -q "^│ $pl  *│ enabled"; then echo "$prof: plugin $pl enabled (in sync)"
+    elif [ "$mode" = --check ]; then echo "$prof: plugin $pl DRIFT (not enabled)"; rc=1
+    elif h plugins enable "$pl" >/dev/null; then echo "$prof: plugin $pl enabled"
+    else echo "$prof: plugin $pl could not be enabled"; rc=1; fi
+  fi
 done
 exit $rc
