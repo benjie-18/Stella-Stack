@@ -22,7 +22,7 @@ lits=$( {
   jq -r '.watch[]?' "$A"   # B2V-05: names no data file holds yet (other channels, Claude model names)
 } | tr -d "\"'" | sort -u | grep -v '^$')
 files=$(cd "$W" && { ls bin/*.sh bin/*.py | grep -v -e '-selftest\.sh$' -e '^bin/selftests\.sh$' -e '^bin/kanban-board\.sh$'
-  find docs/hermes-local/hooks -type f \( -name '*.py' -o -name '*.sh' \); ls docs/hermes-local/soul/*.md docs/hermes-local/board.md docs/stella-recover.ps1; } | sort)
+  find docs/hermes-local/hooks docs/hermes-local/plugins -type f \( -name '*.py' -o -name '*.sh' \); ls docs/hermes-local/soul/*.md docs/hermes-local/board.md docs/stella-recover.ps1; } | sort)
 counts=$(cd "$W" && for f in $files; do
   text=$(python3 -c 'import json, sys
 t = open(sys.argv[1]).read()
@@ -37,6 +37,7 @@ print(t)' "$f" "$A") || { echo "ERROR $f"; continue; }
 done)
 [ "${LINT_DUMP:-}" = 1 ] && { printf '%s\n' "$counts"; exit 0; }
 ok '[ -n "$lits" ] && ! grep -q ^ERROR <<<"$counts"' "the literals come from data ($(wc -l <<<"$lits") found) and every scanned file was read"
+ok 'grep -q "^docs/hermes-local/plugins/.*\.py$" <<<"$files"' "the terminal backend plugin (docs/hermes-local/plugins) is scanned too"
 ok 'jq -e "(.schema_version == 1) and all(.baseline[]?; (.phase // \"\") != \"\" and (.count | type) == \"number\") and all(.allow[]?; (.phase // \"\") != \"\")" "$A" >/dev/null' "every allow-list entry names its phase (schema_version 1)"
 over=$(while IFS=$'\t' read -r f l n; do [ -n "$f" ] || continue
   max=$(jq -r --arg f "$f" --arg l "$l" '[.baseline[]? | select(.file == $f and .literal == $l) | .count] | add // 0' "$A")

@@ -276,7 +276,7 @@ if (-not $id) {
     $cid = $c.Id
     Log "container stopped: docker start $cid"
     Invoke-Timed 120 docker @('start', $cid) | LogOutput
-    if ($LASTEXITCODE -ne 0) { Log "docker start failed rc=$LASTEXITCODE"; exit 1 }
+    if ($LASTEXITCODE -ne 0) { Log "docker start failed rc=$LASTEXITCODE; if the OS box is installed, check the seccomp file .devcontainer\seccomp-userns.json (docs/recovery.md, The OS box host file)"; exit 1 }
     $restarted += "container started"
   } else {
     if (-not (Get-Command devcontainer -ErrorAction SilentlyContinue)) {

@@ -89,5 +89,27 @@
         {"matcher": "^skill_manage$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
       ]
     }
+  },
+  "sandbox": {
+    "schema_version": 1,
+    "backend": "os_box",
+    "unboxed_backend": "local",
+    "boxed_profiles": ["builder-local", "reviewer", "builder-claude"],
+    "plugin_dir": "docs/hermes-local/plugins/os-box",
+    "tmp_dir": "{profile_dir}/box-tmp",
+    "home_ro": [".local/bin", ".local/share/uv"],
+    "home_protect": [".local/bin/", ".local/lib/", ".bash_profile", ".bash_login", ".profile", ".bashrc", ".gitconfig", ".config/git/", ".jq", ".pip/", ".config/pip/", ".hermes/"],
+    "hide": [".scratch"],
+    "sibling_dirs": [".worktrees"],
+    "canary": "boxcanary/canary.txt",
+    "profile_overrides": {
+      "builder-claude": {
+        "claude_config_dir": "{home}/.claude",
+        "ro_over": ["settings.json", "settings.local.json", "CLAUDE.md", "agents", "skills", "hooks", "commands", "plugins"]
+      }
+    },
+    "env": {
+      "LC_ALL": "C.UTF-8"
+    }
   }
 }

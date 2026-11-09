@@ -338,6 +338,27 @@ Editing the file from Windows (Explorer or an editor on the host folder) needs n
 inside the container only. `config/` at 555 also means a `git checkout` or `git pull` that changes
 `config/owner.example.env` needs `chmod u+w config` first, then `chmod 555 config` again.
 
+## The OS box host file (option A, D73)
+
+Boxed worker terminals (bubblewrap) need two lines in `runArgs` of `.devcontainer/devcontainer.json`:
+`--security-opt seccomp=${localWorkspaceFolder}/.devcontainer/seccomp-userns.json` (Docker's default profile plus one
+entry for `clone`, `unshare`, `mount`, `umount2`, `pivot_root`) and `--security-opt systempaths=unconfined`. The seccomp
+file is read by **Docker on the host** when the container starts. If the file is missing, unreadable or not valid JSON,
+`docker start` or `devcontainer up` fails and the container does not come up: `stella-recover.log` shows
+`docker start failed rc=...` (or the `devcontainer up` error) and the script now adds the hint line
+`seccomp file`. Fix, in this order:
+
+1. Restore `.devcontainer/seccomp-userns.json` from the repo (it is kept in the repo as a whole file, so a rebuild needs no network; it stays untracked until the `.devcontainer` change is committed, so commit it with that change). Then
+   `Start-ScheduledTask "Stella Startup Recovery"`.
+2. If the container must come up without the box: edit `devcontainer.json` on the host, remove the two
+   `--security-opt` lines from `runArgs`, and rebuild. Boxed terminals then **refuse to run** (fail closed, not
+   unboxed). To go back to unboxed terminals as well, in a container shell set `sandbox.boxed_profiles` to `[]` in
+   `docs/hermes-local/roles.json` and run `bin/apply-hermes-local.sh` (each profile's `terminal.backend` returns to
+   `local`). Do that first when the container is still running: reverting the host lines first leaves boxed profiles refused
+   until they are applied.
+
+The box adds no Windows-side task and changes none of the two tasks; `.devcontainer/` stays human-gated.
+
 ## Notes
 
 - **Image-baked files.** `.devcontainer/init-firewall.sh` and `.devcontainer/managed-settings.json` are copied into the
