@@ -48,19 +48,39 @@ branch=${branches[0]}
 [ "$(g rev-list --count "main..$branch")" -gt 0 ] || refuse "$branch is not ahead of main"
 wt=$(g worktree list --porcelain | awk -v b="branch refs/heads/$branch" '/^worktree / { w = substr($0, 10) } $0 == b { print w }')
 [ -n "$wt" ] || refuse "no worktree has $branch checked out"
-[ -z "$(git -C "$wt" status --porcelain)" ] || refuse "the card worktree $wt is not clean"
+# RT-A-02: a worker can rewrite $wt/.git and the commondir/gitdir files of its entry (case variants on the 9p mount), so git
+# reads the worktree through the main checkout's own entry, with the common dir fixed, and runs no fsmonitor or hook command;
+# a submodule's git dir sits in that same entry (its config is the worker's too), so status does not descend into it.
+common=$(g rev-parse --absolute-git-dir); wtg=
+for d in "$common"/worktrees/*/; do [ "$(cat "$d/gitdir" 2>/dev/null)" = "$wt/.git" ] && wtg=${d%/}; done
+[ -n "$wtg" ] || refuse "no worktree entry of $top points at $wt"
+st=$(GIT_COMMON_DIR=$common git --git-dir="$wtg" --work-tree="$wt" -c core.fsmonitor= -c core.hooksPath=/dev/null status --porcelain --ignore-submodules=dirty) \
+  || refuse "cannot read the status of the card worktree $wt"
+[ -z "$st" ] || refuse "the card worktree $wt is not clean"
+tip=$(g rev-parse --verify "refs/heads/$branch^{commit}") || refuse "cannot read the tip of $branch"   # read first: the commit checked and tested below is the commit merged
+# VH-02: a box writes the shared objects folder, so a commit can keep its id while its content changes; fsck compares every object with its id
+g fsck --no-dangling --no-progress >/dev/null 2>&1 || refuse "git fsck reports a damaged or altered object in $top; nothing was merged"
 if [ -z "$owner" ]; then
-  verdict=$(kanban show "$card" --json 2>/dev/null \
+  read -r verdict started < <(kanban show "$card" --json 2>/dev/null \
     | jq -r --argjson r "$(python3 -I "$(dirname "$(readlink -f "$0")")/roles.py" reviewers 2>/dev/null || echo '[]')" \
-      '[.runs[]? | select(.profile as $p | $r | index($p))] | last | if .outcome == "completed" then (.metadata.review // "none") else "none" end')   # K8/K12: the reviewing roles, from roles.json
-  [ "$verdict" = approved ] || refuse "no reviewer approval on $card (the reviewer's last run must complete with metadata.review \"approved\"); after your own review, rerun with --owner-approved"
+      '[.runs[]? | select(.profile as $p | $r | index($p))] | last | if .outcome == "completed" then "\(.metadata.review // "none") \(.started_at // "none")" else "none none" end')   # K8/K12: the reviewing roles, from roles.json
+  [ "${verdict:-none}" = approved ] || refuse "no reviewer approval on $card (the reviewer's last run must complete with metadata.review \"approved\"); after your own review, rerun with --owner-approved"
+  # HH-05: the approval counts for the commit that was reviewed, so the branch must not have moved since the review run
+  # started. Its reflog is written outside the box only (box.py), so a boxed builder cannot forge it.
+  [[ "${started:-none}" =~ ^[0-9]+$ ]] || refuse "the review run on $card has no start time: its approval cannot be tied to a commit"
+  moved=$(g reflog show --format=%gd --date=unix -1 "refs/heads/$branch" 2>/dev/null | sed -n 's/.*@{\([0-9]*\)}$/\1/p')
+  [ -n "$moved" ] || refuse "$branch has no reflog: cannot tell whether it moved after the review"
+  [ "$moved" -lt "$started" ] || refuse "$branch moved after the review started (branch ${moved}, review ${started}): the approval does not cover its tip; review it again"
 fi
 jq -e '.scripts.test' "$wt/package.json" >/dev/null 2>&1 || refuse "no test command in $wt/package.json (scripts.test)"
 echo "merge-card.sh: running this branch's own test command in your shell; review the diff first" >&2
 (cd "$wt" && timeout 1800 npm test) || refuse "tests failed in $wt (npm test)"
+[ "$(g rev-parse --verify "refs/heads/$branch^{commit}")" = "$tip" ] || refuse "$branch moved while its tests ran; nothing was merged"
+# N1: the tests ran for up to 30 minutes with the shared objects folder writable by a box; check the objects again before the merge
+g fsck --no-dangling --no-progress >/dev/null 2>&1 || refuse "git fsck reports a damaged or altered object in $top after the tests; nothing was merged"
 
 before=$(g rev-parse HEAD)
-if ! g merge --no-ff --no-edit -m "Merge $branch (card $card)" "$branch"; then
+if ! g merge --no-ff --no-edit -m "Merge $branch (card $card)" "$tip"; then
   g rev-parse -q --verify MERGE_HEAD >/dev/null && g merge --abort
   [ "$(g rev-parse HEAD)" = "$before" ] || echo "merge-card.sh: main moved during a failed merge: check $top by hand" >&2
   echo "merge-card.sh: merge of $branch failed (conflict or hook); aborted, main left at ${before:0:12}" >&2

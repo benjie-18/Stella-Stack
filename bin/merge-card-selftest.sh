@@ -10,14 +10,14 @@ cat > "$T/bin/hermes" <<'S'
 #!/usr/bin/env bash
 [ "$1 $2" = "kanban --board" ] && [ "$3" != ai-stack ] && { echo "board $3 not found" >&2; exit 1; }
 [ "$1 $2" = "kanban --board" ] && set -- "$1" "${@:4}"
-[ "$1 $2" = "kanban show" ] && [ -f "$FAKE_CARDS/$3.json" ] && { jq -c --arg c "$3" --arg a " ${FAKE_APPROVED:-} " '. + {runs: (.runs + (if ($a | contains(" " + $c + " ")) then [{id: 8, profile: ($ENV.FAKE_REVIEWER // "reviewer"), ended_at: 1, outcome: "completed", metadata: {review: "approved"}}] else [] end))}' "$FAKE_CARDS/$3.json"; exit 0; }
+[ "$1 $2" = "kanban show" ] && [ -f "$FAKE_CARDS/$3.json" ] && { jq -c --arg c "$3" --arg a " ${FAKE_APPROVED:-} " 'def st: if ($ENV.FAKE_REVIEW_STARTED // "") == "none" then {} else {started_at: (($ENV.FAKE_REVIEW_STARTED // "9999999999") | tonumber)} end; . + {runs: (.runs + (if ($a | contains(" " + $c + " ")) then [{id: 8, profile: ($ENV.FAKE_REVIEWER // "reviewer"), ended_at: 1, outcome: "completed", metadata: {review: "approved"}} + st] else [] end))}' "$FAKE_CARDS/$3.json"; exit 0; }
 [ "$1 $2" = "kanban list" ] && { [ -z "${FAKE_UNREADABLE:-}" ] || exit 1; cat "$FAKE_CARDS"/*.json 2>/dev/null | jq -sc '[.[] | select(.task.status == "running") | {id: .task.id}]'; exit 0; }
 # FAKE_REVIEWER: the profile of that reviewer run (default reviewer). FAKE_APPROVED: cards whose latest reviewer run is completed with metadata.review = approved; FAKE_BUILDER_APPROVED:
 # cards where only the builder's own run carries that marker.
 case "$1 $2" in
-  "kanban show") jq -nc --arg c "$3" --arg a " ${FAKE_APPROVED:-} " --arg b " ${FAKE_BUILDER_APPROVED:-} " '{task: {id: $c, status: "done"},
+  "kanban show") jq -nc --arg c "$3" --arg a " ${FAKE_APPROVED:-} " --arg b " ${FAKE_BUILDER_APPROVED:-} " 'def st: if ($ENV.FAKE_REVIEW_STARTED // "") == "none" then {} else {started_at: (($ENV.FAKE_REVIEW_STARTED // "9999999999") | tonumber)} end; {task: {id: $c, status: "done"},
                    runs: ([{profile: "builder-claude", outcome: "completed", metadata: (if ($b | contains(" " + $c + " ")) then {review: "approved"} else {} end)}]
-                          + (if ($a | contains(" " + $c + " ")) then [{profile: ($ENV.FAKE_REVIEWER // "reviewer"), outcome: "completed", metadata: {review: "approved"}}] else [] end))}';;
+                          + (if ($a | contains(" " + $c + " ")) then [{profile: ($ENV.FAKE_REVIEWER // "reviewer"), outcome: "completed", metadata: {review: "approved"}} + st] else [] end))}';;
 esac
 S
 chmod +x "$T/bin/hermes"
@@ -167,4 +167,69 @@ h23=$(head_of "$T/repo")
 ok '[ "$(cd "$T/repo" && ROLES_FILE=$T/garbage.json FAKE_REVIEWER=$RVP FAKE_APPROVED=t_00000023 "$T/lnk/mc-link" t_00000023 >"$T/out" 2>&1; echo $?)" = 3 ] && [ "$(head_of "$T/repo")" = "$h23" ]' "K8: through a symlink with an unreadable table: refused"
 ok '[ "$(FAKE_BUILDER_APPROVED=t_00000024 mc t_00000024)" = 3 ] && [ "$(FAKE_BUILDER_APPROVED=t_00000024 FAKE_REVIEWER=$BLP FAKE_APPROVED=t_00000024 mc t_00000024)" = 3 ]' "K8: a builder's own approved marker (alone, or beside a non-reviewer's) never merges"
 ok '[ "$(FAKE_BUILDER_APPROVED=t_00000025 FAKE_REVIEWER=$RVP FAKE_APPROVED=t_00000025 mc t_00000025)" = 0 ]' "K8: a builder's marker beside a reviewing profile's approval: the reviewer's last run decides, merged"
+# RT-A-02 (red-team of option A): on the case-insensitive /workspace mount a boxed worker can still rewrite the card worktree's
+# .git file and the commondir/gitdir files under .git/worktrees/<id>. A plain `git -C <worktree> status` (merge-card's clean check)
+# then runs the core.fsmonitor command of the config they point at, in the owner's shell. merge-card.sh must read the worktree
+# through the main checkout's own entry (--git-dir, GIT_COMMON_DIR) with fsmonitor and hooks forced off, and a status that
+# cannot be read must refuse (it used to read as "clean").
+card t_0000a001 g1.txt one 'exit 0'; card t_0000a002 g2.txt two 'exit 0'; card t_0000a003 g3.txt three 'exit 0'; card t_0000a004 g4.txt four 'exit 0'; card t_0000a005 g5.txt five 'exit 0'; card t_0000a006 g6.txt six 'exit 0'; card t_0000a007 g7.txt seven 'exit 0'; card t_0000a008 g8.txt eight 'exit 0'
+evil() { rm -rf "$T/evilcommon"; cp -a "$T/repo/.git" "$T/evilcommon"; git config --file "$T/evilcommon/config" core.fsmonitor "touch $T/fsm #"
+  git config --file "$T/evilcommon/config" filter.evil.clean "touch $T/fsm #"; mkdir -p "$T/evilcommon/info"; echo "* filter=evil" > "$T/evilcommon/info/attributes"; rm -f "$T/fsm"; }
+evil; printf 'gitdir: %s\n' "$T/evilcommon/worktrees/t_0000a004" > "$T/repo/.worktrees/t_0000a004/.git"
+git -C "$T/repo/.worktrees/t_0000a004" status --porcelain >/dev/null 2>&1
+ok '[ -e "$T/fsm" ]' "RT-A-02 premise: a plain git -C <worktree> status runs the fsmonitor command of a rewritten .git file"
+git -C "$T/evilcommon" worktree prune 2>/dev/null; evil
+printf 'gitdir: %s\n' "$T/evilcommon/worktrees/t_0000a001" > "$T/repo/.worktrees/t_0000a001/.git"; touch "$T/repo/.worktrees/t_0000a001/g1.txt"; h=$(head_of "$T/repo")
+ok '[ "$(FAKE_APPROVED=t_0000a001 mc t_0000a001)" = 0 ] && [ ! -e "$T/fsm" ] && [ "$(head_of "$T/repo")" != "$h" ]' "RT-A-02: a rewritten .git file: merge-card runs neither its fsmonitor nor its clean filter (the clean card still merges)"
+evil; printf '%s\n' "$T/evilcommon" > "$T/repo/.git/worktrees/t_0000a002/commondir"; touch "$T/repo/.worktrees/t_0000a002/g2.txt"; h=$(head_of "$T/repo")
+ok '[ "$(FAKE_APPROVED=t_0000a002 mc t_0000a002)" = 0 ] && [ ! -e "$T/fsm" ] && [ "$(head_of "$T/repo")" != "$h" ]' "RT-A-02: a rewritten commondir: merge-card runs neither the fsmonitor nor the clean filter of the config it points at"
+# config.worktree sits in the writable worktree entry and counts once the repo sets extensions.worktreeConfig (git sparse-checkout does)
+g config core.repositoryformatversion 1; g config extensions.worktreeConfig true; rm -f "$T/fsm"
+printf '[core]\n\tfsmonitor = touch %s #\n' "$T/fsm" > "$T/repo/.git/worktrees/t_0000a005/config.worktree"; h=$(head_of "$T/repo")
+ok '[ "$(FAKE_APPROVED=t_0000a005 mc t_0000a005)" = 0 ] && [ ! -e "$T/fsm" ] && [ "$(head_of "$T/repo")" != "$h" ]' "RT-A-02: a worktree config.worktree with core.fsmonitor: not run (-c core.fsmonitor=)"
+mkdir -p "$T/evilhooks"; printf '#!/bin/sh\ntouch %s\n' "$T/fsm" > "$T/evilhooks/post-index-change"; chmod +x "$T/evilhooks/post-index-change"
+printf '[core]\n\thooksPath = %s\n' "$T/evilhooks" > "$T/repo/.git/worktrees/t_0000a006/config.worktree"; touch "$T/repo/.worktrees/t_0000a006/g6.txt"
+git -C "$T/repo/.worktrees/t_0000a006" status --porcelain >/dev/null 2>&1; ok '[ -e "$T/fsm" ]' "RT-A-02 premise: a plain status that refreshes the index runs the post-index-change hook of a worktree config.worktree"
+rm -f "$T/fsm"; touch "$T/repo/.worktrees/t_0000a006/g6.txt"; h=$(head_of "$T/repo")
+ok '[ "$(FAKE_APPROVED=t_0000a006 mc t_0000a006)" = 0 ] && [ ! -e "$T/fsm" ] && [ "$(head_of "$T/repo")" != "$h" ]' "RT-A-02: a worktree config.worktree with core.hooksPath: its index hook is not run (-c core.hooksPath=/dev/null)"
+printf 'dirty\n' >> "$T/repo/.worktrees/t_0000a007/g7.txt"; printf 'garbage\n' > "$T/repo/.worktrees/t_0000a007/.git"; h=$(head_of "$T/repo")
+ok '[ "$(FAKE_APPROVED=t_0000a007 mc t_0000a007)" = 3 ] && grep -q "is not clean" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "RT-A-02: a dirty worktree whose .git file was overwritten is read through the main checkout's entry: refused as not clean"
+# a submodule's git dir lives inside the writable worktree entry (worktrees/<id>/modules/<name>): its config is worker-controlled too, and
+# status descends into the submodule (V-RTA-01)
+git init -q "$T/subrepo"; printf 'in\n' > "$T/subrepo/s.txt"; git -C "$T/subrepo" add s.txt; git -C "$T/subrepo" -c core.hooksPath=/dev/null commit -qm sub
+W8="$T/repo/.worktrees/t_0000a008"; git -C "$W8" -c protocol.file.allow=always submodule add -q "$T/subrepo" sub >/dev/null 2>&1; git -C "$W8" -c core.hooksPath=/dev/null commit -qm "add sub"
+SM="$T/repo/.git/worktrees/t_0000a008/modules/sub"; printf '[filter "evil"]\n\tclean = touch %s #\n[core]\n\tfsmonitor = touch %s #\n' "$T/fsm" "$T/fsm" >> "$SM/config"; mkdir -p "$SM/info"; echo "* filter=evil" > "$SM/info/attributes"
+rm -f "$T/fsm"; touch "$W8/sub/s.txt"; h=$(head_of "$T/repo")
+git -C "$W8" status --porcelain >/dev/null 2>&1; ok '[ -e "$T/fsm" ]' "RT-A-02 premise: a plain status in a worktree with a submodule runs the clean filter or fsmonitor in the submodule's worktree-entry config"
+rm -f "$T/fsm"; touch "$W8/sub/s.txt"
+ok '[ "$(FAKE_APPROVED=t_0000a008 mc t_0000a008)" = 0 ] && [ ! -e "$T/fsm" ] && [ "$(head_of "$T/repo")" != "$h" ]' "RT-A-02: a submodule config in the worktree entry: its clean filter and fsmonitor are not run (--ignore-submodules=dirty)"
+printf 'garbage' > "$T/repo/.git/worktrees/t_0000a003/index"; h=$(head_of "$T/repo")
+ok '[ "$(FAKE_APPROVED=t_0000a003 mc t_0000a003)" = 3 ] && grep -q "cannot read" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "RT-A-02: a worktree whose status cannot be read is refused, not taken as clean"
+# HH-05: the approval counts for the commit the reviewer saw: the branch must not have moved since the reviewer's run started
+# (the branch reflog is written only outside the box, so a boxed builder cannot forge it). FAKE_REVIEW_STARTED: epoch seconds
+# of that run (default: far future, so the older cases above are unchanged); "none": the run record has no start time.
+for n in 1 2 3 4; do card t_0000b00$n b$n.txt b$n 'exit 0'; done
+h=$(head_of "$T/repo")
+ok '[ "$(FAKE_REVIEW_STARTED=1 FAKE_APPROVED=t_0000b001 mc t_0000b001)" = 3 ] && grep -q "moved after the review" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "HH-05: the branch changed after the reviewer's run started: refused, main untouched"
+ok '[ "$(FAKE_REVIEW_STARTED=none FAKE_APPROVED=t_0000b002 mc t_0000b002)" = 3 ] && grep -q "no start time" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "HH-05: a reviewer run with no start time cannot be tied to a commit: refused"
+rm -f "$T/repo/.git/logs/refs/heads/stella/t_0000b003-x"
+ok '[ "$(FAKE_APPROVED=t_0000b003 mc t_0000b003)" = 3 ] && grep -q "no reflog" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "HH-05: a branch with no reflog cannot be checked: refused"
+ok '[ "$(FAKE_APPROVED=t_0000b004 mc t_0000b004)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ]' "HH-05: the branch last moved before the reviewer's run started: merged"
+h=$(head_of "$T/repo"); card t_0000b005 b5.txt b5 'exit 0'
+ok '[ "$(FAKE_REVIEW_STARTED=1 mc t_0000b005 --owner-approved)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ]' "HH-05: --owner-approved is the owner's own review of the branch as it is now: no reviewer timing applies"
+# N1: an object swapped while the card's own tests run (after the first fsck, before the merge): the second fsck refuses it.
+# Before the VH-02 row, which leaves a damaged object in this repo for every later card.
+bh=$(printf 'b7\n' | git hash-object --stdin); of7="$T/repo/.git/objects/${bh:0:2}/${bh:2}"
+body=$(cat <<B
+chmod u+w $of7; python3 -c 'import sys,zlib; open(sys.argv[1],"wb").write(zlib.compress(b"blob 5\0EVIL\n"))' $of7
+B
+)
+card t_0000b007 b7.txt b7 "$body"; h=$(head_of "$T/repo")
+ok '[ "$(FAKE_APPROVED=t_0000b007 mc t_0000b007)" = 3 ] && grep -q "fsck" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "N1: an object swapped while the card's tests ran: refused by the second fsck, main untouched"
+rm -f "$of7"; printf 'b7\n' | g hash-object -w --stdin >/dev/null   # put the blob back: VH-02 below must fail on its own damage, not on this one
+# VH-02: a box writes the shared objects folder, so the content behind an unmoved, reviewed commit can change; git fsck sees it
+card t_0000b006 b6.txt b6 'exit 0'; h=$(head_of "$T/repo")
+blob=$(g rev-parse "stella/t_0000b006-x:b6.txt"); of="$T/repo/.git/objects/${blob:0:2}/${blob:2}"
+chmod u+w "$of"; python3 -c 'import sys,zlib; open(sys.argv[1],"wb").write(zlib.compress(b"blob 5\0EVIL\n"))' "$of"
+ok '[ "$(FAKE_APPROVED=t_0000b006 mc t_0000b006)" = 3 ] && grep -q "fsck" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "VH-02: an object whose content does not match its id (written through a shared objects folder): refused, main untouched"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
