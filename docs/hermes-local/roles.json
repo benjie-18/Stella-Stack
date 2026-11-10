@@ -22,7 +22,8 @@
     "default": {"role": "dispatcher", "dir": "", "soul": "default.md", "display_name": "Stella"},
     "builder-local": {"role": "builder", "worker": "opencode", "soul": "builder-local.md", "capability_fallback": "builder-claude"},
     "builder-claude": {"role": "builder", "worker": "claude-code", "soul": "builder-claude.md"},
-    "reviewer": {"role": "reviewer", "soul": "reviewer.md"}
+    "reviewer": {"role": "reviewer", "worker": "opencode", "soul": "reviewer.md"},
+    "reviewer-claude": {"role": "reviewer", "worker": "claude-code", "soul": "reviewer-claude.md"}
   },
   "roles": {
     "dispatcher": {
@@ -67,6 +68,7 @@
       "git_identity": {"name": "WORKER_GIT_NAME", "email": "WORKER_GIT_EMAIL"},
       "assignable": true, "workspace": "read-parent-worktree", "may_complete": true, "may_unblock": true, "may_claim": true,
       "may_delegate": false, "may_create_cards": false, "may_review": true, "allowed_overrides": [],
+      "workers": ["opencode", "claude-code"],
       "complete_metadata": {"review": "approved"},
       "platform_toolsets": {
         "cli": ["clarify", "file", "session_search", "skills", "terminal", "todo"]
@@ -74,7 +76,8 @@
       "hooks": [
         {"matcher": "^kanban_complete$", "command": "/workspace/bin/complete-gate.py", "timeout": 30},
         {"matcher": "^(write_file|patch|skill_manage)$", "file": "docs/hermes-local/hooks/reviewer/deny-write.sh"},
-        {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/reviewer/test-only-terminal.sh"},
+        {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/reviewer/test-only-terminal.sh", "workers": ["opencode"]},
+        {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/reviewer/claude-review-terminal.sh", "workers": ["claude-code"]},
         {"matcher": "^(read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"}
       ]
     },
@@ -94,7 +97,7 @@
     "schema_version": 1,
     "backend": "os_box",
     "unboxed_backend": "local",
-    "boxed_profiles": ["builder-local", "reviewer", "builder-claude"],
+    "boxed_profiles": ["builder-local", "reviewer", "builder-claude", "reviewer-claude"],
     "plugin_dir": "docs/hermes-local/plugins/os-box",
     "tmp_dir": "{profile_dir}/box-tmp",
     "home_ro": [".local/bin", ".local/share/uv"],
@@ -104,6 +107,10 @@
     "canary": "boxcanary/canary.txt",
     "profile_overrides": {
       "builder-claude": {
+        "claude_config_dir": "{home}/.claude",
+        "ro_over": ["settings.json", "settings.local.json", "CLAUDE.md", "agents", "skills", "hooks", "commands", "plugins"]
+      },
+      "reviewer-claude": {
         "claude_config_dir": "{home}/.claude",
         "ro_over": ["settings.json", "settings.local.json", "CLAUDE.md", "agents", "skills", "hooks", "commands", "plugins"]
       }
