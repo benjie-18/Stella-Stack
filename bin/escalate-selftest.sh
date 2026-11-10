@@ -14,7 +14,7 @@ cat >"$T/bin/hermes" <<'S'
 #!/usr/bin/env bash
 [ "$1 $2" = "kanban --board" ] && set -- "$1" "${@:4}"   # scripts name the board (F4)
 case "$1 $2" in
-  "kanban show") { [ "$3" = t_00000000 ] || [ -n "${FAKE_SHOW_FAIL:-}" ]; } && exit 1; printf '{"task":{"body":"%s","status":"%s"}}\n' "${FAKE_BODY:-}" "${FAKE_STATUS:-running}";;
+  "kanban show") { [ "$3" = t_00000000 ] || [ -n "${FAKE_SHOW_FAIL:-}" ]; } && exit 1; [ -z "${FAKE_SHOW_RAW:-}" ] || { printf '%s\n' "$FAKE_SHOW_RAW"; exit 0; }; printf '{"task":{"body":"%s","status":"%s"}}\n' "${FAKE_BODY:-}" "${FAKE_STATUS:-running}";;
   "kanban comment") echo "$*" >>"$ESCALATE_SUP_DIR/comments";;
   send*) echo "$*" >>"$ESCALATE_SUP_DIR/sends"
     # FAKE_SEND_HOLD=<path>: a slow alert. Says it arrived (<path>.in), then waits for <path>.go, at most 30 s.
@@ -149,6 +149,7 @@ ok '[ "$rc" = 0 ] && [ "$(fbn)" = 1 ] && [ "$(jq -r .fallback <<<"$out")" = true
 ok 'grep -q -- "--role review" "$T/sup/fb_calls"' "T15: the runner is asked for the call's purpose as its role (per-role chain)"
 ok '[ "$(ev t_cccc0001)" = "START POOL_EXHAUSTED FALLBACK " ] && jq -s -e --arg m "$FIX" "any(.[]; .card == \"t_cccc0001\" and .event == \"FALLBACK\" and .fallback == true and .model_used == \$m)" "$T/sup/escalations.log" >/dev/null && [ "$(q t_cccc0001)" = "" ]' "T15: escalations.log has POOL_EXHAUSTED then FALLBACK (fallback true, serving model), and nothing is queued"
 ok 'grep -q "t_cccc0001" "$T/sup/comments" && grep -q "fallback: true" "$T/sup/comments" && grep -q "$FIX" "$T/sup/comments" && grep -q "STL-LIM-404" "$T/sup/sends"' "T15: the card comment says fallback with the serving model, and #alerts got STL-LIM-404"
+ok 'grep "t_cccc0001" "$T/sup/comments" | grep -q "Alert to .* exit 1"' "T15: the card comment records the alert's exit code (the stub's send fails with 1), so a lost alert is visible on the card"
 ok '! jq -e ".modelUsage // .total_cost_usd" <<<"$out" >/dev/null 2>&1' "T15: the rerouted result carries no Claude fields (modelUsage, cost), so it cannot pass for a Claude result"
 n=$(fbn); out=$(echo hi | FAKE_BODY='risk: high' ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_cccc0002 sonnet review highrisk-fb 2>/dev/null); rc=$?
 ok '[ "$rc" = 75 ] && [ "$(fbn)" = "$n" ] && [ "$(q t_cccc0002)" = "queued," ] && [ "$(ev t_cccc0002)" = "START POOL_EXHAUSTED QUEUED " ]' "T15: a high-risk card queues, the runner is never called (exit $rc)"
@@ -174,6 +175,26 @@ for raw in '{"model_used":["a"],"text":"t"}' '{"model_used":"m1","text":"a"}\n{"
   out=$(echo hi | FAKE_FB_RAW="$raw" ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_dddd0011 sonnet review "shape-check" 2>/dev/null); rc=$?
   ok '[ "$rc" = 75 ] && [ -z "$out" ]' "T15: runner output '${raw:0:40}' is refused, no result (exit $rc)"
 done
+export FALLBACK_CONFIG="$T/no-such-fallback-config.json"
+
+# --- follow-up fix round 1 (red-team S6D-04, S6D-05): the high-risk gate fails closed; secrets in a prompt never leave ---
+fbcfg true; i=0
+for body in 'High risk: migration' 'high-risk card' 'Risk is high' 'Risk tier: high' 'Risk (owner): high' 'risk: h\u200bigh' 'risk:             high' 'a very HIGH level of RISK'; do
+  i=$((i+1)); n=$(fbn); echo hi | FAKE_BODY="$body" ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_eeee000$i sonnet review "risk-spelling-$i" >/dev/null 2>&1; rc=$?
+  ok '[ "$rc" = 75 ] && [ "$(fbn)" = "$n" ] && [ "$(q t_eeee000$i)" = "queued," ]' "S6D-04: body '$body' counts as high risk: queued, runner never called (exit $rc)"
+done
+n=$(fbn); echo hi | FAKE_SHOW_RAW='not json at all' ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_eeee0009 sonnet review "unparsable-card" >/dev/null 2>&1; rc=$?
+ok '[ "$rc" = 75 ] && [ "$(fbn)" = "$n" ] && [ "$(q t_eeee0009)" = "queued," ]' "S6D-04: a card whose JSON cannot be read is treated as high risk (exit $rc)"
+n=$(fbn); echo hi | FAKE_BODY='This is low risk, nobody called it high.' ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_eeee0010 sonnet review "control" >/dev/null 2>&1; rc=$?
+ok '[ "$rc" = 75 ] && [ "$(fbn)" = "$n" ] && [ "$(q t_eeee0010)" = "queued," ]' "S6D-04 note: a body that denies high risk in words is queued too (the gate prefers a false alarm)"
+n=$(fbn); echo hi | FAKE_BODY='Rename a variable in the docs.' ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_eeee0011 sonnet review "plain-low" >/dev/null 2>&1; rc=$?
+ok '[ "$rc" = 0 ] && [ "$(fbn)" = $((n + 1)) ]' "S6D-04 control: a body with no risk wording is still rerouted (exit $rc)"
+jq '.prompt_block_patterns = ["fixture-secret-[a-z]{6}", "BEGIN FIXTURE KEY"]' "$T/fbcfg.json" >"$T/fbcfg2.json" && export FALLBACK_CONFIG="$T/fbcfg2.json"
+n=$(fbn); out=$(echo "please use fixture-secret-abcdef to log in" | ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_eeee0012 sonnet review "prompt-with-secret" 2>/dev/null); rc=$?
+ok '[ "$rc" = 75 ] && [ -z "$out" ] && [ "$(fbn)" = "$n" ] && [ "$(q t_eeee0012)" = "queued," ] && jq -s -e "any(.[]; .card == \"t_eeee0012\" and .event == \"FALLBACK_SKIPPED\")" "$T/sup/escalations.log" >/dev/null' "S6D-05: a prompt matching a blocked pattern is queued, the runner is never called, FALLBACK_SKIPPED is logged (exit $rc)"
+ok '! grep -q "fixture-secret-abcdef" "$T/sup/escalations.log" "$T/sup/comments" "$T/sup/sends"' "S6D-05: the matched text is in neither the log, the card comment nor the alert"
+n=$(fbn); echo "an ordinary prompt" | ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_eeee0013 sonnet review "clean-prompt" >/dev/null 2>&1; rc=$?
+ok '[ "$rc" = 0 ] && [ "$(fbn)" = $((n + 1)) ]' "S6D-05 control: a prompt that matches nothing is rerouted (exit $rc)"
 export FALLBACK_CONFIG="$T/no-such-fallback-config.json"
 
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

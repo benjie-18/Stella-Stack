@@ -129,8 +129,10 @@ for p in "${POOL_PATTERNS[@]}"; do
   [[ "$out$err" == *"$p"* ]] || continue
   alert_rc=none
   log POOL_EXHAUSTED "$rc" none true null "matched '$p'"
-  # any spelling of "risk ... high" counts (tab, NBSP, CR, markdown, "level", "="): an unrecognised spelling would send a high-risk prompt to a free model
-  jq -e '(.task.body // "") | gsub("[\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\u00ad\u200b-\u200f\u2060-\u2064\ufeff]"; " ") | test("(?i)risk[^a-z0-9]{0,8}(level[^a-z0-9]{0,8})?high")' <<<"$card_json" >/dev/null && high=1 || high=""
+  # High risk fails closed: the word "high" within 40 characters of "risk", in either order and any spelling, counts (zero-width
+  # characters removed, other unicode spaces made spaces), and so does a card whose JSON cannot be read. A false alarm only queues.
+  jq -e '(.task.body // "") | gsub("[\u00ad\u180e\u200b-\u200f\u2060-\u2064\ufeff]"; "") | gsub("[\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]"; " ") | test("risk.{0,40}high|high.{0,40}risk"; "is")' <<<"$card_json" >/dev/null 2>&1; jrc=$?
+  case $jrc in 1) high="" ;; *) high=1 ;; esac   # 0 match = high, 1 no match = low, anything else (unreadable card) = high
   # T15: a low-risk call is served by the fallback runner (bin/omniroute-run.sh via the OmniRoute gateway) when the fallback config
   # (docs/hermes-local/fallback-routing.json) is enabled; the runner gets the call's purpose as its role. High-risk calls queue, never reroute; a replay stays a queued Claude call. The result is labelled
   # fallback with the model that served it and carries none of Claude's fields; a runner that names Claude or the
@@ -139,14 +141,19 @@ for p in "${POOL_PATTERNS[@]}"; do
   if [ -z "$high" ] && [ -z "${ESCALATE_REPLAY:-}" ] && jq -e '.enabled == true' "$FALLBACK_CONFIG" >/dev/null 2>&1; then
     FALLBACK_RUNNER=$(jq -r '.runner // empty' "$FALLBACK_CONFIG"); [[ "$FALLBACK_RUNNER" == /* ]] || FALLBACK_RUNNER=/workspace/$FALLBACK_RUNNER
   fi
+  skip_reason=""   # S6D-05: a prompt that looks like it holds a secret never leaves the machine (patterns are config data; the match is never logged)
+  if [ -x "$FALLBACK_RUNNER" ]; then
+    pi=0; while IFS= read -r pat; do pi=$((pi+1)); grep -Eq -- "$pat" "$prompt" 2>/dev/null && { skip_reason="the prompt matches blocked pattern #$pi (prompt_block_patterns)"; break; }; done < <(jq -r '.prompt_block_patterns[]? | strings' "$FALLBACK_CONFIG")
+    [ -z "$skip_reason" ] || { log FALLBACK_SKIPPED null none true null "$skip_reason; queued instead"; FALLBACK_RUNNER=""; }
+  fi
   if [ -x "$FALLBACK_RUNNER" ]; then
     fb=$(timeout "$CALL_TIMEOUT" "$FALLBACK_RUNNER" --role "$purpose" <"$prompt" 2>/dev/null); frc=$?
     served=""; jq -s -e 'length == 1 and (.[0] | type == "object" and (.model_used | type == "string") and (.text | type == "string"))' <<<"$fb" >/dev/null 2>&1 \
       && served=$(jq -r '.model_used' <<<"$fb"); sl=${served,,}
     if [ "$frc" = 0 ] && [[ "$served" =~ ^[A-Za-z0-9._:/+@-]{1,128}$ ]] && [[ "$sl" != *claude* && "$sl" != *"$model"* ]]; then
       log FALLBACK 0 "$served" true null "rerouted after POOL_EXHAUSTED (matched '$p')"
-      hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-LIM-404 card="$card" model="${model^}" served="$served" since="$(date -u +%FT%TZ)")" >/dev/null 2>&1
-      note "escalate.sh FALLBACK: $model ($purpose) for '$reason' was answered by a fallback model, not Claude. model_used: $served, fallback: true. Alert to $ALERT_TARGET."
+      hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-LIM-404 card="$card" model="${model^}" served="$served" since="$(date -u +%FT%TZ)")" >/dev/null 2>&1; alert_rc=$?
+      note "escalate.sh FALLBACK: $model ($purpose) for '$reason' was answered by a fallback model, not Claude. model_used: $served, fallback: true. Alert to $ALERT_TARGET exit $alert_rc."
       rm -f "$prompt"
       jq -c --arg m "$served" '{type: "result", is_error: false, fallback: true, model_used: $m, text: (.text // "")}' <<<"$fb"
       exit 0

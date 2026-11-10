@@ -1,7 +1,8 @@
-const assert = require('assert'); const { execFileSync } = require('child_process');
+const { strictEqual, deepStrictEqual } = require('assert');   // taken before any worker code loads (a worker module could replace assert.*)
+ const { execFileSync } = require('child_process');
 const { slugify, version } = require('./index');
-assert.strictEqual(version(), '1.0.0');
-assert.strictEqual(slugify('Hello, World!'), 'hello-world');
-assert.strictEqual(slugify('  a  b--c '), 'a-b-c');
-assert.strictEqual(execFileSync('node', ['cli.js', 'Foo Bar']).toString().trim(), 'foo-bar');
-console.log('ok');
+strictEqual(version(), '1.0.0');
+strictEqual(slugify('Hello, World!'), 'hello-world');
+strictEqual(slugify('  a  b--c '), 'a-b-c');
+strictEqual(execFileSync('node', ['cli.js', 'Foo Bar']).toString().trim(), 'foo-bar');
+console.log(process.env.BENCH_NONCE || 'ok');

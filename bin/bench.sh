@@ -3,7 +3,7 @@
 # overlay). Commands:
 #   bench.sh list [--subset]            task ids
 #   bench.sh check                      every task is red at its start and green with its solution (hermetic)
-#   bench.sh reset <id> <repo> | verify <repo> <branch> <id>   the two steps of `run`, on their own (hermetic tests)
+#   bench.sh reset <id> <repo> | verify <repo> <branch> <id> | settle <pid> <s> | pid <card>   the two steps of `run`, on their own (hermetic tests)
 #   bench.sh metrics <card>             JSON {card,status,wall_s,retries,escalations,cost_usd} from the board + escalations log
 #   bench.sh run <id|--subset> --worker <profile> --project <slug> [--timeout <s>]
 #                                       reset the project's repo to the task start, create the card, wait, then check the
@@ -20,6 +20,30 @@ OUT=${BENCH_OUT:-$W/.scratch/bench}
 die() { echo "bench: $*" >&2; exit 1; }
 tasks() { for f in "$D"/tasks/*/task.json; do [ -f "$f" ] && echo "$f"; done; }
 
+nonce() { head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+# passes <dir> <check> <nonce> [boxed]: the check exits 0 AND its last output line is the nonce. The protected test prints the nonce
+# (from $BENCH_NONCE) as its last act, so a branch that exits 0 before the test finishes passes nothing (S6C-06). Shortcut: code that
+# reads $BENCH_NONCE and prints it on purpose still forges it; closing that needs the test to run outside the worker's process.
+passes() {
+  local dir=$1 chk=$2 n=$3 box=${4:-} out last
+  out=$(mktemp) || return 1
+  if [ -n "$box" ]; then
+    bwrap --ro-bind / / --tmpfs /home --tmpfs /workspace --tmpfs /tmp --bind "$dir" "$dir" --dev /dev --proc /proc \
+      --unshare-net --unshare-pid --unshare-ipc --unshare-uts --die-with-parent --chdir "$dir" --setenv BENCH_NONCE "$n" \
+      timeout -k 3 "${BENCH_TIMEOUT:-60}" bash -c "ulimit -f 65536; $chk" >"$out" 2>/dev/null || { rm -f "$out"; return 1; }
+  else
+    (cd "$dir" && BENCH_NONCE=$n timeout -k 3 "${BENCH_TIMEOUT:-60}" bash -c "ulimit -f 65536; $chk") >"$out" 2>/dev/null || { rm -f "$out"; return 1; }
+  fi
+  last=$(grep -v '^[[:space:]]*$' "$out" | tail -n 1); rm -f "$out"; [ "$last" = "$n" ]
+}
+alive() { [ -r "/proc/$1/stat" ] && [ "$(awk '{print $3}' "/proc/$1/stat" 2>/dev/null)" != Z ]; }
+settle() {  # settle <pid> <max s>: wait until the worker process has exited (a worker can keep committing after it blocked its card)
+  local pid=${1:-} max=${2:-300} i=0
+  [ -n "$pid" ] || return 0
+  while alive "$pid"; do [ "$i" -lt "$max" ] || return 1; sleep 1; i=$((i+1)); done
+  return 0
+}
+
 check() {
   local n=0 s=0 f id t rc bad=0
   [ "$(jq -r '.missing|type' "$D/suite.json" 2>/dev/null)" = array ] || die "suite.json: missing must be a list"
@@ -31,9 +55,9 @@ check() {
     [ "$(jq -r .subset "$f")" = true ] && s=$((s+1))
     t=$(mktemp -d); cp -a "$(dirname "$f")/repo/." "$t/"
     chk=$(jq -r .check "$f")
-    (cd "$t" && timeout 60 bash -c "$chk" >/dev/null 2>&1) && { echo "FAIL $id: the check already passes before any work"; bad=1; }
+    passes "$t" "$chk" chk-nonce-1 && { echo "FAIL $id: the check already passes before any work"; bad=1; }
     cp -a "$(dirname "$f")/solution/." "$t/"
-    (cd "$t" && timeout 60 bash -c "$chk" >/dev/null 2>&1) || { echo "FAIL $id: the reference solution does not pass the check"; bad=1; }
+    passes "$t" "$chk" chk-nonce-2 || { echo "FAIL $id: the reference solution does not pass the check (exit 0 and the nonce as its last line)"; bad=1; }
     rm -rf "$t"
   done
   [ "$n" -gt 0 ] || die "no tasks in $D/tasks"
@@ -64,18 +88,26 @@ reset_repo() {  # reset_repo <id> <repo>: main = the task's start commit. Card w
 }
 
 verify_branch() {  # verify_branch <repo> <branch> <id>: exit 0 if the branch passes the task's check. The worker's code runs boxed:
-  # read-only system, no home, no /workspace, no network, writes only in its own temp folder (shortcut: plain bwrap, not box.py;
-  # upgrade if the check ever needs the network or a tool outside /usr). A symlink anywhere in the branch is refused: a copy of a
-  # protected test file would write through it.
+  # read-only system, no home, no /workspace, no network, writes only in its own temp folder, killed after BENCH_TIMEOUT s (TERM,
+  # then KILL), file size capped (shortcut: plain bwrap, not box.py; upgrade if the check ever needs the network or a tool outside
+  # /usr). A symlink anywhere in the branch is refused (a copy of a protected test file would write through it), and so is a
+  # protected path that is not a plain file in the branch (a folder of that name would run the worker's code in the test's place).
   local repo=$1 br=$2 id=$3 f="$D/tasks/$3/task.json" tmp x rc=1 chk
   chk=$(jq -r .check "$f"); tmp=$(mktemp -d) || return 1
+  trap 'rm -rf "$tmp"' EXIT TERM INT
   if git -C "$repo" archive "$br" 2>/dev/null | tar -x --no-same-owner -C "$tmp" && ! find "$tmp" -type l | grep -q .; then
-    for x in $(jq -r '.protected[]' "$f"); do rm -f "$tmp/$x"; mkdir -p "$(dirname "$tmp/$x")"; cp "$D/tasks/$id/repo/$x" "$tmp/$x"; done
-    bwrap --ro-bind / / --tmpfs /home --tmpfs /workspace --tmpfs /tmp --bind "$tmp" "$tmp" --dev /dev --proc /proc \
-      --unshare-net --unshare-pid --unshare-ipc --unshare-uts --die-with-parent --chdir "$tmp" \
-      timeout 60 bash -c "$chk" >/dev/null 2>&1 && rc=0
+    rc=0
+    for x in $(jq -r '.protected[]' "$f"); do
+      if [ -e "$tmp/$x" ] && [ ! -f "$tmp/$x" ]; then echo "bench: protected path $x is not a plain file in the branch: refused" >&2; rc=1; break; fi
+      { rm -f "$tmp/$x" && mkdir -p "$(dirname "$tmp/$x")" && cp "$D/tasks/$id/repo/$x" "$tmp/$x"; } || { rc=1; break; }
+    done
+    if [ "$rc" = 0 ]; then rc=1; passes "$tmp" "$chk" "$(nonce)" boxed && rc=0; fi
   else echo "bench: the branch cannot be unpacked, or holds a symlink: refused" >&2; fi
-  rm -rf "$tmp"; return $rc
+  rm -rf "$tmp"; trap - EXIT TERM INT; return $rc
+}
+
+worker_pid() {  # worker_pid <card>: the newest worker_bound event's pid (Hermes does not fill runs[].worker_pid); empty if none
+  kanban show "$1" --json 2>/dev/null | jq -r '[.events[]? | select(.kind == "worker_bound") | .payload.pid | select(. != null)] | last // empty'
 }
 
 run_one() {  # run_one <id> <worker> <project> <timeout>
@@ -93,6 +125,8 @@ run_one() {  # run_one <id> <worker> <project> <timeout>
     [ $(( $(date +%s) - t0 )) -lt "$to" ] || { st=timeout; break; }
     sleep 15
   done
+  settle "$(worker_pid "$card")" 300 || echo "bench: the worker of $card was still running after 300 s; measured anyway" >&2   # before anything is read
+  st=$(kanban show "$card" --json | jq -r .task.status)
   m=$(metrics "$card") || m="{\"card\":\"$card\"}"
   br=$(kanban show "$card" --json | jq -r '.task.branch_name // empty')
   [ -z "$br" ] || { verify_branch "$repo" "$br" "$id" && ok=true; }   # the task's own test files go over the tip
@@ -104,6 +138,8 @@ case ${1:-} in
   list) for f in $(tasks); do [ "${2:-}" != --subset ] || [ "$(jq -r .subset "$f")" = true ] && basename "$(dirname "$f")"; done;;
   check) check;;
   reset) reset_repo "${2:-}" "${3:-}";;
+  pid) worker_pid "${2:-}";;
+  settle) settle "${2:-}" "${3:-300}";;
   verify) verify_branch "${2:-}" "${3:-}" "${4:-}";;
   metrics) metrics "${2:-}";;
   run) shift; sel=${1:-}; shift || true; w= p= to=1800
