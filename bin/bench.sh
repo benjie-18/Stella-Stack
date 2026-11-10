@@ -25,16 +25,36 @@ nonce() { head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 # (from $BENCH_NONCE) as its last act, so a branch that exits 0 before the test finishes passes nothing (S6C-06). Shortcut: code that
 # reads $BENCH_NONCE and prints it on purpose still forges it; closing that needs the test to run outside the worker's process.
 passes() {
-  local dir=$1 chk=$2 n=$3 box=${4:-} out last
+  # passes <dir> <check> <nonce> [boxed] [min]: without <min> the check must exit 0 and print the nonce last (bash tasks). With <min> (a
+  # node task's `guard` count) it runs under bench/guard.js and must also report, signed with the nonce, `min` or more passed assertions,
+  # none failed and exit code 0 (S6C-06 general fix: neutering assert, exiting early, swallowing the error or faking a report all fail).
+  local dir=$1 chk=$2 n=$3 box=${4:-} min=${5:-} prot=${6:-} out last opts=() nonce_env=() uenv=()
   out=$(mktemp) || return 1
+  if [ -n "$min" ]; then
+    rm -f "$dir/.bench-guard.js" && cp "$D/guard.js" "$dir/.bench-guard.js" || { rm -f "$out"; return 1; }
+    opts=(--setenv NODE_OPTIONS "--require $dir/.bench-guard.js"); uenv=("NODE_OPTIONS=--require $dir/.bench-guard.js")
+  else
+    nonce_env=(--setenv BENCH_NONCE "$n"); uenv=("BENCH_NONCE=$n")   # bash tasks print it; a node task gets it on stdin only (S6E-08)
+  fi
   if [ -n "$box" ]; then
-    bwrap --ro-bind / / --tmpfs /home --tmpfs /workspace --tmpfs /tmp --bind "$dir" "$dir" --dev /dev --proc /proc \
-      --unshare-net --unshare-pid --unshare-ipc --unshare-uts --die-with-parent --chdir "$dir" --setenv BENCH_NONCE "$n" \
+    printf '%s\n%s\n' "$n" "$prot" | bwrap --ro-bind / / --tmpfs /home --tmpfs /workspace --tmpfs /tmp --bind "$dir" "$dir" --dev /dev --proc /proc \
+      --unshare-net --unshare-pid --unshare-ipc --unshare-uts --die-with-parent --chdir "$dir" "${nonce_env[@]}" "${opts[@]}" \
       timeout -k 3 "${BENCH_TIMEOUT:-60}" bash -c "ulimit -f 65536; $chk" >"$out" 2>/dev/null || { rm -f "$out"; return 1; }
   else
-    (cd "$dir" && BENCH_NONCE=$n timeout -k 3 "${BENCH_TIMEOUT:-60}" bash -c "ulimit -f 65536; $chk") >"$out" 2>/dev/null || { rm -f "$out"; return 1; }
+    (cd "$dir" && printf '%s\n%s\n' "$n" "$prot" | env "${uenv[@]}" timeout -k 3 "${BENCH_TIMEOUT:-60}" bash -c "ulimit -f 65536; $chk") >"$out" 2>/dev/null || { rm -f "$out"; return 1; }
   fi
+  if [ -n "$min" ]; then guard_ok "$out" "$n" "$min"; rc=$?; rm -f "$out"; return $rc; fi
   last=$(grep -v '^[[:space:]]*$' "$out" | tail -n 1); rm -f "$out"; [ "$last" = "$n" ]
+}
+guard_ok() {  # guard_ok <output file> <nonce> <min>: a signed report line with 0 failed, exit code 0 and at least <min> passed
+  local line p f c m want
+  while IFS= read -r line; do
+    [[ $line =~ ^@@BENCH-REPORT\ passed=([0-9]+)\ failed=([0-9]+)\ code=([0-9]+)\ mac=([0-9a-f]{64})$ ]] || continue
+    p=${BASH_REMATCH[1]} f=${BASH_REMATCH[2]} c=${BASH_REMATCH[3]} m=${BASH_REMATCH[4]}
+    want=$(printf '%s' "$2:$p:$f:$c" | sha256sum | cut -d' ' -f1)
+    [ "$m" = "$want" ] && [ "$f" = 0 ] && [ "$c" = 0 ] && [ "$p" -ge "$3" ] && return 0
+  done <"$1"
+  return 1
 }
 alive() { [ -r "/proc/$1/stat" ] && [ "$(awk '{print $3}' "/proc/$1/stat" 2>/dev/null)" != Z ]; }
 settle() {  # settle <pid> <max s>: wait until the worker process has exited (a worker can keep committing after it blocked its card)
@@ -45,7 +65,7 @@ settle() {  # settle <pid> <max s>: wait until the worker process has exited (a 
 }
 
 check() {
-  local n=0 s=0 f id t rc bad=0
+  local n=0 s=0 f id t rc bad=0 gmin
   [ "$(jq -r '.missing|type' "$D/suite.json" 2>/dev/null)" = array ] || die "suite.json: missing must be a list"
   for f in $(tasks); do
     id=$(basename "$(dirname "$f")"); n=$((n+1))
@@ -55,9 +75,10 @@ check() {
     [ "$(jq -r .subset "$f")" = true ] && s=$((s+1))
     t=$(mktemp -d); cp -a "$(dirname "$f")/repo/." "$t/"
     chk=$(jq -r .check "$f")
-    passes "$t" "$chk" chk-nonce-1 && { echo "FAIL $id: the check already passes before any work"; bad=1; }
+    gmin=$(jq -r '.guard // empty' "$f")
+    passes "$t" "$chk" chk-nonce-1 "" "$gmin" "$(jq -r '.protected[]' "$f")" && { echo "FAIL $id: the check already passes before any work"; bad=1; }
     cp -a "$(dirname "$f")/solution/." "$t/"
-    passes "$t" "$chk" chk-nonce-2 || { echo "FAIL $id: the reference solution does not pass the check (exit 0 and the nonce as its last line)"; bad=1; }
+    passes "$t" "$chk" chk-nonce-2 "" "$gmin" "$(jq -r '.protected[]' "$f")" || { echo "FAIL $id: the reference solution does not pass the check (exit 0 and the nonce as its last line)"; bad=1; }
     rm -rf "$t"
   done
   [ "$n" -gt 0 ] || die "no tasks in $D/tasks"
@@ -101,7 +122,7 @@ verify_branch() {  # verify_branch <repo> <branch> <id>: exit 0 if the branch pa
       if [ -e "$tmp/$x" ] && [ ! -f "$tmp/$x" ]; then echo "bench: protected path $x is not a plain file in the branch: refused" >&2; rc=1; break; fi
       { rm -f "$tmp/$x" && mkdir -p "$(dirname "$tmp/$x")" && cp "$D/tasks/$id/repo/$x" "$tmp/$x"; } || { rc=1; break; }
     done
-    if [ "$rc" = 0 ]; then rc=1; passes "$tmp" "$chk" "$(nonce)" boxed && rc=0; fi
+    if [ "$rc" = 0 ]; then rc=1; passes "$tmp" "$chk" "$(nonce)" boxed "$(jq -r '.guard // empty' "$f")" "$(jq -r '.protected[]' "$f")" && rc=0; fi
   else echo "bench: the branch cannot be unpacked, or holds a symlink: refused" >&2; fi
   rm -rf "$tmp"; trap - EXIT TERM INT; return $rc
 }

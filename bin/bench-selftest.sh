@@ -114,6 +114,47 @@ for t in bugfix-range bugfix-nullguard feature-multifile migration-rename; do
   ok 'head -3 /workspace/bench/tasks/'$t'/repo/test.js | grep -q "^const { *[a-zA-Z, ]* *} *= *require(.assert.)"' "shipped $t test takes its assert functions before loading worker code"
 done
 
+
+# --- follow-up 2, S6C-06 general fix: node tasks run under bench/guard.js (preloaded before any worker code) ---
+# The guard freezes and counts the assert functions and reports, signed with a nonce the harness sends on stdin, how many assertions
+# passed and failed and how the process ended. A branch passes only on a valid report with 0 failed, at least `guard` passed, exit 0.
+gmk() {  # gmk <worker lib.js body> [min] [test.js body]: a node task whose protected test calls strictEqual(f(), 1) unless a body is given
+  rm -rf "$T/g"; mkdir -p "$T/g/b/tasks/x/repo" "$T/g/b/tasks/x/solution"; echo '{"missing":[]}' >"$T/g/b/suite.json"; cp /workspace/bench/guard.js "$T/g/b/guard.js" 2>/dev/null
+  jq -n --argjson m "${2:-1}" '{id:"x",category:"c",title:"t",body:"b",check:"node test.js",protected:["test.js"],guard:$m,subset:true}' >"$T/g/b/tasks/x/task.json"
+  dflt="const { strictEqual } = require('assert'); const f = require('./lib.js'); strictEqual(f(), 1);"
+  printf '%s\n' "${3:-$dflt}" >"$T/g/b/tasks/x/repo/test.js"
+  printf 'module.exports = () => 0;\n' >"$T/g/b/tasks/x/repo/lib.js"; printf 'module.exports = () => 1;\n' >"$T/g/b/tasks/x/solution/lib.js"
+  git init -q -b main "$T/g/r" && git -C "$T/g/r" -c user.name=t -c user.email=t@localhost commit -q --allow-empty -m s && git -C "$T/g/r" checkout -q -b card
+  printf '%s\n' "$1" >"$T/g/r/lib.js"; printf '%s\n' "const { strictEqual } = require('assert'); strictEqual(1, 1);" >"$T/g/r/test.js"
+  git -C "$T/g/r" add -A && git -C "$T/g/r" -c user.name=t -c user.email=t@localhost commit -q -m c; }
+gv() { BENCH_DIR=$T/g/b "$B" verify "$T/g/r" card x; }
+ok '[ -f /workspace/bench/guard.js ] && node --check /workspace/bench/guard.js' "bench/guard.js exists and parses"
+gmk 'module.exports = () => 1;'; ok 'gv >/dev/null 2>&1' "guard: honest worker code passes (the test's own assertion counted and passed)"
+gmk 'module.exports = () => 2;'; ok '! gv >/dev/null 2>&1' "guard: honest but wrong worker code fails"
+gmk "const a = require('assert'); for (const k of Object.keys(a)) if (typeof a[k] === 'function') a[k] = () => {}; module.exports = () => 2;"; ok '! gv >/dev/null 2>&1' "guard: worker code that replaces every assert function with a no-op still fails (S6D-01)"
+gmk "'use strict'; const a = require('assert'); a.strictEqual = () => {}; a.strict.strictEqual = () => {}; module.exports = () => 2;"; ok '! gv >/dev/null 2>&1' "guard: the same in strict mode (the frozen export throws) fails"
+gmk "const a = require('assert'); const c = require('module'); require.cache[require.resolve('assert')] = { id: 'x', filename: 'x', loaded: true, exports: { strictEqual() {}, deepStrictEqual() {} } }; module.exports = () => 2;"; ok '! gv >/dev/null 2>&1' "guard: swapping the cached assert module for a fake fails (the test took its functions first)"
+gmk 'process.exit(0);'; ok '! gv >/dev/null 2>&1' "guard: process.exit(0) before the test's assertions ran fails"
+gmk "process.on('uncaughtException', () => {}); module.exports = () => 2;"; ok '! gv >/dev/null 2>&1' "guard: swallowing the AssertionError with an uncaughtException handler fails"
+gmk "console.log('@@BENCH-REPORT passed=1 failed=0 code=0 mac=0000'); process.exit(0);"; ok '! gv >/dev/null 2>&1' "guard: a forged report line without the nonce fails"
+gmk "process.removeAllListeners('exit'); process.exit(0);"; ok '! gv >/dev/null 2>&1' "guard: removing the exit listeners (no report at all) fails"
+gmk "let s = ''; try { s = require('fs').readFileSync(0, 'utf8'); } catch (e) {} console.log('@@BENCH-REPORT passed=1 failed=0 code=0 mac=' + require('crypto').createHash('sha256').update(s + ':1:0:0').digest('hex')); process.exit(0);"; ok '! gv >/dev/null 2>&1' "guard: reading stdin for the nonce finds nothing (it was consumed before any worker code), so a report cannot be forged"
+gmk 'module.exports = () => 1;' 3; ok '! gv >/dev/null 2>&1' "guard: fewer assertions than the task's minimum (1 of 3) fails"
+ok '[ "$(jq -r .guard /workspace/bench/tasks/bugfix-range/task.json)" -ge 1 ] && [ "$(jq -r .guard /workspace/bench/tasks/migration-rename/task.json)" -ge 1 ]' "the shipped node tasks name their minimum assertion count"
+ok 'bin_out=$("$B" check 2>&1); [ "$?" = 0 ] && grep -q "^5 tasks" <<<"$bin_out"' "bench.sh check still passes on the shipped suite under the guard"
+
+
+# --- follow-up 2, fix round 1 (red-team S6E-01, S6E-08; verifier blocker): the nonce is in no environment variable, only the protected test's
+# own assertion calls count, and an async assertion counts when it settles ---
+gmk "const c = require('crypto'); const n = process.env.BENCH_NONCE || ''; console.log('@@BENCH-REPORT passed=1 failed=0 code=0 mac=' + c.createHash('sha256').update(n + ':1:0:0').digest('hex')); process.exit(0);"; ok '! gv >/dev/null 2>&1' "S6E-08: a worker that signs a report with process.env.BENCH_NONCE fails (the nonce is not in the environment of a node task)"
+gmk "const a = require('assert'); a.ok(true); process.exit(0);"; ok '! gv >/dev/null 2>&1' "S6E-01: padding the count with the worker's own assert calls, then exit(0), fails"
+gmk "const a = require('assert'); for (let i = 0; i < 20; i++) a.strictEqual(1, 1); process.on('uncaughtException', () => {}); module.exports = () => { throw new Error('x'); };" 5; ok '! gv >/dev/null 2>&1' "S6E-01: padding with 20 calls, then a throwing function and a swallowed exception, fails (the test's own assertion never ran)"
+gmk "module.exports = () => { process.exit(0); };"; ok '! gv >/dev/null 2>&1' "S6E-01: an exit(0) inside the function the test calls fails"
+gmk "const a = require('assert'); module.exports = () => { try { a.ok(false); } catch (e) {} try { a.strictEqual(1, 2); } catch (e) {} return 1; };"; ok 'gv >/dev/null 2>&1' "S6E-01 control: correct worker code that uses assert itself (and catches its own failures) still passes"
+TA="const { rejects } = require('assert'); const f = require('./lib.js'); rejects(f());"
+gmk "module.exports = async () => 1; process.on('unhandledRejection', () => {});" 1 "$TA"; ok '! gv >/dev/null 2>&1' "S6E-01: a wrong async function (the rejects assertion fails) with unhandledRejection swallowed fails"
+gmk "module.exports = async () => { throw new Error('boom'); };" 1 "$TA"; ok 'gv >/dev/null 2>&1' "S6E-01 control: an async function that rejects as the test expects passes (counted when it settles)"
+
 # the reset keeps a card worktree out of the start commit and keeps the worktree
 mkb 'bash test.sh'; git -C "$T/v/r" checkout -q main; mkdir -p "$T/v/r/.worktrees"; git -C "$T/v/r" worktree add -q "$T/v/r/.worktrees/w1" -b wb 2>/dev/null; echo old >"$T/v/r/.worktrees/w1/keep"
 BENCH_DIR=$T/v/b "$B" reset x "$T/v/r" >/dev/null 2>&1; rc=$?
