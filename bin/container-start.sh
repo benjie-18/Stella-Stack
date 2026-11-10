@@ -32,4 +32,11 @@ skill=~/.hermes/skills/writing/anti-ai-slop-writing
     "container-start: apply-hermes-local.sh failed (exit $rc) at container start: guards may not be registered (escalation hooks, guard hooks, toolsets) while the gateway runs. Run bin/apply-hermes-local.sh in the container and read its output." \
     >/dev/null 2>&1 || echo "container-start: #alerts send skipped (sent within the hour) or failed" >&2
 }
+# The fallback gateway (OmniRoute, T14/T15, D93) starts when the fallback is enabled in its config, so a restart does not leave every
+# rerouted call queued until someone starts it by hand. Best effort and in the background (its start waits for a health answer):
+# a failure is in the log below, never a failed step. It is loopback-only and needs its API key (bin/omniroute-ctl.sh status).
+if jq -e '.enabled == true' /workspace/docs/hermes-local/fallback-routing.json >/dev/null 2>&1; then
+  mkdir -p "$ws/.scratch" 2>/dev/null
+  ( setsid nohup /workspace/bin/omniroute-ctl.sh start >>"$ws/.scratch/omniroute-start.log" 2>&1 & )
+fi
 [ -z "$failed" ] || { echo "container-start: failed steps:$failed" >&2; exit 1; }
