@@ -10,3 +10,4 @@
 config/owner.env
 .hermes/
 __pycache__/
+.supervisor/omniroute-calls.jsonl

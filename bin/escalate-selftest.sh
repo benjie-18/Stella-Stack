@@ -23,7 +23,7 @@ case "$1 $2" in
 esac
 S
 chmod +x "$T/bin/"*
-export PATH="$T/bin:$PATH" ESCALATE_SUP_DIR="$T/sup"
+export PATH="$T/bin:$PATH" ESCALATE_SUP_DIR="$T/sup" FALLBACK_CONFIG="$T/no-such-fallback-config.json"   # no reroute unless a test writes one
 E=${ESCALATE:-/workspace/bin/escalate.sh} fails=0   # ESCALATE=<copy>: a staged copy while it is being replaced
 check() { local want=$1 desc=$2; shift 2; "$@" >/dev/null 2>"$T/err"; local rc=$?
   if [ "$rc" = "$want" ]; then echo "ok   $desc (exit $rc)"; else echo "FAIL $desc: want $want got $rc: $(cat "$T/err")"; fails=$((fails+1)); fi; }
@@ -127,4 +127,53 @@ timeout 10 sh -c "echo hi | $E t_bbbb0002 haiku judge second" >/dev/null 2>&1; r
 ok '[ "$rc" = 3 ]' "a second over-limit Haiku call is refused at once, not held behind the slow alert (exit $rc)"
 touch "$H.go"; wait "$a"; rc=$?
 ok '[ "$rc" = 3 ]' "control: the slow call still ends refused once its alert returns (exit $rc)"
+# T15 reroute (OmniRoute): with the fallback config enabled (docs/hermes-local/fallback-routing.json format, FALLBACK_CONFIG) a
+# low-risk pool-exhausted call is served by the config's runner and labelled as a fallback; a high-risk one still queues; a
+# runner that fails, or reports a Claude or same-family model, changes nothing. The model name is a fixture the stub invents.
+FIX=fixture-free-model
+cat >"$T/bin/fbrun" <<'S'
+#!/usr/bin/env bash
+cat >/dev/null; echo "$*" >>"$ESCALATE_SUP_DIR/fb_calls"
+[ -z "${FAKE_FB_RAW:-}" ] || { printf '%b\n' "$FAKE_FB_RAW"; exit 0; }
+printf '{"model_used":"%s","text":"fallback answer"}\n' "${FAKE_FB_MODEL:-fixture-free-model}"; exit "${FAKE_FB_RC:-0}"
+S
+chmod +x "$T/bin/fbrun"
+fbcfg() { jq -n --argjson en "$1" --arg r "$T/bin/fbrun" '{schema_version: 1, enabled: $en, runner: $r}' >"$T/fbcfg.json"; export FALLBACK_CONFIG="$T/fbcfg.json"; }
+fbn() { cat "$T/sup/fb_calls" 2>/dev/null | wc -l; }
+ev() { jq -r --arg c "$1" 'select(.card == $c) | .event' "$T/sup/escalations.log" | tr '\n' ' '; }
+fbcfg false; n=$(fbn); echo hi | ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_cccc0000 sonnet review disabled >/dev/null 2>&1; rc=$?
+ok '[ "$rc" = 75 ] && [ "$(fbn)" = "$n" ] && ev t_cccc0000 | grep -q NO_REROUTE' "T15: enabled false in the config: the runner is never called, NO_REROUTE and queued (exit $rc)"
+fbcfg true
+out=$(echo hi | ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_cccc0001 sonnet review lowrisk-fb 2>/dev/null); rc=$?
+ok '[ "$rc" = 0 ] && [ "$(fbn)" = 1 ] && [ "$(jq -r .fallback <<<"$out")" = true ] && [ "$(jq -r .model_used <<<"$out")" = "$FIX" ] && [ "$(jq -r .text <<<"$out")" = "fallback answer" ]' "T15: low-risk pool-exhausted call is rerouted: result labelled fallback with the serving model (exit $rc)"
+ok 'grep -q -- "--role review" "$T/sup/fb_calls"' "T15: the runner is asked for the call's purpose as its role (per-role chain)"
+ok '[ "$(ev t_cccc0001)" = "START POOL_EXHAUSTED FALLBACK " ] && jq -s -e --arg m "$FIX" "any(.[]; .card == \"t_cccc0001\" and .event == \"FALLBACK\" and .fallback == true and .model_used == \$m)" "$T/sup/escalations.log" >/dev/null && [ "$(q t_cccc0001)" = "" ]' "T15: escalations.log has POOL_EXHAUSTED then FALLBACK (fallback true, serving model), and nothing is queued"
+ok 'grep -q "t_cccc0001" "$T/sup/comments" && grep -q "fallback: true" "$T/sup/comments" && grep -q "$FIX" "$T/sup/comments" && grep -q "STL-LIM-404" "$T/sup/sends"' "T15: the card comment says fallback with the serving model, and #alerts got STL-LIM-404"
+ok '! jq -e ".modelUsage // .total_cost_usd" <<<"$out" >/dev/null 2>&1' "T15: the rerouted result carries no Claude fields (modelUsage, cost), so it cannot pass for a Claude result"
+n=$(fbn); out=$(echo hi | FAKE_BODY='risk: high' ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_cccc0002 sonnet review highrisk-fb 2>/dev/null); rc=$?
+ok '[ "$rc" = 75 ] && [ "$(fbn)" = "$n" ] && [ "$(q t_cccc0002)" = "queued," ] && [ "$(ev t_cccc0002)" = "START POOL_EXHAUSTED QUEUED " ]' "T15: a high-risk card queues, the runner is never called (exit $rc)"
+n=$(fbn); out=$(echo hi | FAKE_FB_RC=1 ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_cccc0003 sonnet review runner-fails 2>/dev/null); rc=$?
+ok '[ "$rc" = 75 ] && [ "$(fbn)" = $((n + 1)) ] && [ "$(q t_cccc0003)" = "queued," ] && ev t_cccc0003 | grep -q NO_REROUTE' "T15: a failing runner leaves the old behaviour: NO_REROUTE and queued (exit $rc)"
+for bad in claude-fixture fixture-sonnet-x; do
+  n=$(fbn); out=$(echo hi | FAKE_FB_MODEL=$bad ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_cccc0004 sonnet review masquerade 2>/dev/null); rc=$?
+  ok '[ "$rc" = 75 ] && ! ev t_cccc0004 | grep -qw FALLBACK && [ -z "$out" ]' "T15: a runner reporting '$bad' (Claude or the requested family) is refused, no result printed (exit $rc)"
+done
+n=$(fbn); echo hi | ESCALATE_REPLAY=q_x ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_cccc0005 sonnet review replay >/dev/null 2>&1
+ok '[ "$(fbn)" = "$n" ]' "T15: a drain replay never reroutes (it stays a queued Claude call)"
+# fix round 1 (red-team S6C-03, S6C-05): a risk line in any common spelling is high risk; the runner's output must be one object
+# with a plain model name
+i=0; for body in 'risk:\thigh' ' risk: high' '- risk: high' '**risk:** high' 'Risk level: high' 'risk = high' 'risk:\u00a0high' 'x\rrisk: high'; do
+  i=$((i+1)); n=$(fbn); echo hi | FAKE_BODY="$body" ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_dddd000$i sonnet review "risk-variant-$i" >/dev/null 2>&1; rc=$?
+  ok '[ "$rc" = 75 ] && [ "$(fbn)" = "$n" ] && [ "$(q t_dddd000$i)" = "queued," ]' "T15: risk spelling '$body' is treated as high risk: queued, runner never called (exit $rc)"
+done
+for bad in 'x <@123456789012345678> @everyone' 'Org/ClAuDe-x' 'a b'; do
+  out=$(echo hi | FAKE_FB_MODEL="$bad" ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_dddd0010 sonnet review "name-check" 2>/dev/null); rc=$?
+  ok '[ "$rc" = 75 ] && [ -z "$out" ]' "T15: served model name '$bad' is refused, no result (exit $rc)"
+done
+for raw in '{"model_used":["a"],"text":"t"}' '{"model_used":"m1","text":"a"}\n{"model_used":"m2","text":"b"}' '{"model_used":"m1","text":{"x":1}}' 'not json'; do
+  out=$(echo hi | FAKE_FB_RAW="$raw" ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_dddd0011 sonnet review "shape-check" 2>/dev/null); rc=$?
+  ok '[ "$rc" = 75 ] && [ -z "$out" ]' "T15: runner output '${raw:0:40}' is refused, no result (exit $rc)"
+done
+export FALLBACK_CONFIG="$T/no-such-fallback-config.json"
+
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

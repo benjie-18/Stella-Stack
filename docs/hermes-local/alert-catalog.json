@@ -275,6 +275,18 @@
       "resolvable": false
     },
     {
+      "code": "STL-LIM-404",
+      "area": "LIM",
+      "severity": "info",
+      "title": "a Claude request was answered by a fallback model",
+      "message": "Claude has no usage left right now, so a {model} request for card {card} was answered by a different, free model ({served}) through the OmniRoute gateway. The answer is labelled as a fallback; it is not a Claude answer.",
+      "action": "nothing, unless the card is important: check the fallback answer before relying on it, and send the request to Claude later if it matters (see STL-LIM-404 in docs/alert-codes.md).",
+      "cause": "The Claude subscription's limit was reached (STL-LIM-402) on a low-risk card and the fallback is switched on (`enabled: true` in docs/hermes-local/fallback-routing.json). High-risk cards are never rerouted.",
+      "check": ".supervisor/escalations.log (POOL_EXHAUSTED then FALLBACK, with the serving model); the card's comments; the OmniRoute gateway on loopback.",
+      "related": "D77; bin/escalate.sh (T15); bin/omniroute-run.sh",
+      "resolvable": false
+    },
+    {
       "code": "STL-LIM-403",
       "area": "LIM",
       "severity": "warning",
