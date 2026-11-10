@@ -24,14 +24,14 @@
     "builder-claude": {"role": "builder", "worker": "claude-code", "soul": "builder-claude.md"},
     "reviewer": {"role": "reviewer", "worker": "opencode", "soul": "reviewer.md"},
     "reviewer-claude": {"role": "reviewer", "worker": "claude-code", "soul": "reviewer-claude.md", "review_callers": ["dispatcher", "card"],
-      "approval_evidence": {"tool": "terminal", "command": "^claude -p ", "output": "^[\\s*_#>]*APPROVE\\b", "exit_code": 0,
-        "hint": "Make your one Claude call now, as a terminal command with the workdir set to your workspace_path: claude -p '<plain words: the criteria, the files to read, and ask for APPROVE or CHANGES with the evidence>' --model sonnet --restricted --strict-mcp-config --tools Read,Grep,Glob --allowedTools Read,Grep,Glob (change only the words in the quotes). Approve only if its answer starts with APPROVE. If Claude answered CHANGES, call kanban_request_changes; if the call failed or was refused, block with kind capability."}}
+      "approval_evidence": {"tool": "terminal", "command": "^bash /workspace/bin/claude-review\\.sh$", "output": "^[\\s*_#>]*APPROVE\\b", "exit_code": 0,
+        "hint": "Run your one Claude call now: the terminal command bash /workspace/bin/claude-review.sh with the workdir set to your workspace_path and nothing before or after it. The stack builds the question from the card and sends it. Approve only if the answer starts with APPROVE. If Claude answered CHANGES, call kanban_request_changes; if the call failed or was refused, block with kind capability."}}
   },
   "roles": {
     "dispatcher": {
       "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": true, "may_review": false, "allowed_overrides": [], "background_review": false,
-      "config": {"kanban.auto_subscribe_on_create": false, "gateway.strict": true, "gateway.trust_recent_files": false},
+      "config": {"kanban.auto_subscribe_on_create": false, "kanban.auto_decompose": false, "gateway.strict": true, "gateway.trust_recent_files": false},
       "platform_toolsets": {
         "cli": ["clarify", "cronjob", "delegation", "file", "memory", "session_search", "skills", "terminal", "todo", "vision"],
         "discord": ["clarify", "cronjob", "delegation", "discord", "file", "kanban", "memory", "session_search", "skills", "terminal", "todo", "vision"]
@@ -51,6 +51,7 @@
       "assignable": true, "workspace": "git-worktree", "may_complete": true, "may_unblock": true, "may_claim": true,
       "may_delegate": true, "may_create_cards": false, "may_review": false, "allowed_overrides": [],
       "complete_needs_review": true,
+      "config": {"kanban.auto_decompose": false},
       "workers": ["opencode", "claude-code"],
       "platform_toolsets": {
         "cli": ["clarify", "delegation", "file", "memory", "session_search", "skills", "terminal", "todo", "vision"]
@@ -72,6 +73,7 @@
       "may_delegate": false, "may_create_cards": false, "may_review": true, "allowed_overrides": [],
       "workers": ["opencode", "claude-code"],
       "complete_metadata": {"review": "approved"},
+      "config": {"kanban.auto_decompose": false},
       "platform_toolsets": {
         "cli": ["clarify", "file", "session_search", "skills", "terminal", "todo"]
       },
@@ -86,6 +88,7 @@
     "unlisted": {
       "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
+      "config": {"kanban.auto_decompose": false},
       "hooks": [
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/git-guard.py"},
         {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20},
@@ -105,6 +108,7 @@
     "home_ro": [".local/bin", ".local/share/uv"],
     "home_protect": [".local/bin/", ".local/lib/", ".bash_profile", ".bash_login", ".profile", ".bashrc", ".gitconfig", ".config/git/", ".jq", ".pip/", ".config/pip/", ".hermes/"],
     "hide": [".scratch"],
+    "env_unset": ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"],
     "sibling_dirs": [".worktrees"],
     "canary": "boxcanary/canary.txt",
     "profile_overrides": {
@@ -115,7 +119,13 @@
       "reviewer-claude": {
         "claude_config_dir": "{home}/.claude",
         "ro_over": ["settings.json", "settings.local.json", "CLAUDE.md", "agents", "skills", "hooks", "commands", "plugins"],
-        "rw_files": [".credentials.json"]
+        "hide_files": [".credentials.json"],
+        "broker_env": {"CLAUDE_CODE_OAUTH_TOKEN": "claude-reviewer"},
+        "broker_when": "bash /workspace/bin/claude-review\\.sh",
+        "review_prompt": "docs/hermes-local/review-prompt.txt",
+        "review_model": "sonnet",
+        "review_max_files": 50000,
+        "review_max_mb": 100
       }
     },
     "env": {

@@ -23,11 +23,12 @@ NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 KEY = re.compile(r"[A-Z][A-Z0-9_]*")   # an owner config key (config/owner.env)
 BACKEND = re.compile(r"[a-z0-9_]+")   # a Hermes terminal.backend name
 SANDBOX_KEYS = {"schema_version", "backend", "unboxed_backend", "boxed_profiles", "plugin_dir", "tmp_dir", "home_ro", "hide",
-                "sibling_dirs", "canary", "env", "home_protect", "profile_overrides"}
+                "sibling_dirs", "canary", "env", "env_unset", "home_protect", "profile_overrides"}
 BOX_OWNED_ENV = {"HOME", "TMPDIR", "TMP", "TEMP", "CLAUDE_CONFIG_DIR", "HERMES_KANBAN_WORKSPACE", "HERMES_KANBAN_BRANCH",
                  "PATH", "BASH_ENV", "ENV", "IFS", "SHELL"}   # set by the box itself, or able to run code before the command
+BOX_SHELL_ENV = {"BASH_ENV", "ENV", "PATH", "IFS", "SHELLOPTS", "BASHOPTS", "PROMPT_COMMAND", "GIT_DIR", "GIT_WORK_TREE", "REVIEW_PROMPT_FILE", "REVIEW_MODEL", "REVIEW_EXPORT_DIR", "REVIEW_SENT_FILE"}   # a broker secret is a token, never one of these
 BOX_DENY_ENV_PREFIX = ("LD_", "PYTHON")   # dynamic loader and interpreter start-up variables
-OVERRIDE_KEYS = {"claude_config_dir", "ro_over", "rw_files"}
+OVERRIDE_KEYS = {"claude_config_dir", "ro_over", "hide_files", "broker_env", "broker_when", "review_prompt", "review_model", "review_max_files", "review_max_mb"}
 ROOT_PROFILE = "default"   # Hermes's own name for the profile that lives in the root of ~/.hermes
 
 
@@ -164,6 +165,9 @@ def validate_sandbox(d):
     for k in ("home_ro", "hide"):
         if not (isinstance(sb.get(k), list) and all(_rel(x) for x in sb[k])):
             errs.append(f"sandbox: {k} must be a list of relative paths without ..")
+    eu = sb.get("env_unset", [])
+    if not (isinstance(eu, list) and all(isinstance(x, str) and re.fullmatch(r"[A-Z][A-Z0-9_]*", x) for x in eu)):
+        errs.append("sandbox: env_unset must be a list of upper-case variable names the box removes from the parent environment")
     sd = sb.get("sibling_dirs")
     if not (isinstance(sd, list) and all(_rel(x) and "/" not in x for x in sd)):
         errs.append("sandbox: sibling_dirs must be a list of folder names")
@@ -185,9 +189,29 @@ def validate_sandbox(d):
         ro = o.get("ro_over", [])
         if not (isinstance(ro, list) and all(_rel(x) and "/" not in x for x in ro)):
             errs.append(f"sandbox: profile_overrides.{p}.ro_over must be a list of names inside the folder")
-        rw = o.get("rw_files", [])
-        if not (isinstance(rw, list) and all(_rel(x) and "/" not in x for x in rw)):
-            errs.append(f"sandbox: profile_overrides.{p}.rw_files must be a list of file names inside the folder")
+        hf = o.get("hide_files", [])
+        if not (isinstance(hf, list) and all(isinstance(x, str) and _rel(x) and "/" not in x for x in hf)):
+            errs.append(f"sandbox: profile_overrides.{p}.hide_files must be a list of file names inside the folder")
+        for k in ("review_max_files", "review_max_mb"):
+            v = o.get(k)
+            if v is not None and not (isinstance(v, int) and not isinstance(v, bool) and 0 < v <= 1_000_000):
+                errs.append(f"sandbox: profile_overrides.{p}.{k} must be a positive integer")
+        rm = o.get("review_model")
+        if rm is not None and not (isinstance(rm, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}", rm)):
+            errs.append(f"sandbox: profile_overrides.{p}.review_model must be a model name (letters, digits, . _ : -)")
+        rp = o.get("review_prompt")
+        if rp is not None and not (isinstance(rp, str) and _rel(rp)):
+            errs.append(f"sandbox: profile_overrides.{p}.review_prompt must be a path inside the stack folder, with no ..")
+        bw = o.get("broker_when")
+        if bw is not None:
+            try:
+                re.compile(bw)
+            except (re.error, TypeError):
+                errs.append(f"sandbox: profile_overrides.{p}.broker_when must be a regular expression for the one command that gets the broker's variables")
+        be = o.get("broker_env", {})
+        if not (isinstance(be, dict) and all(re.fullmatch(r"[A-Z][A-Z0-9_]*", k) and k not in BOX_OWNED_ENV and not k.startswith(BOX_DENY_ENV_PREFIX + ("GIT_",)) and k not in BOX_SHELL_ENV and isinstance(v, str) and re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,63}", v) and ".." not in v
+                                             for k, v in be.items())):
+            errs.append(f"sandbox: profile_overrides.{p}.broker_env must map variable names (A-Z0-9_) to broker secret names (a-z0-9_.-)")
     return errs
 
 

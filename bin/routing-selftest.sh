@@ -51,4 +51,8 @@ ok '[ "$(wg write_file "$(jq -nc --arg p "$RJ" "{path:\$p, content:\"{}\"}")")" 
 ok '[ "$(wg patch "$(jq -nc --arg p "$RJ" "{mode:\"replace\", path:\$p, old_string:\"a\", new_string:\"b\"}")")" = 2 ]' "a builder's patch on roles.json is refused"
 ok '[ "$(wg terminal "$(jq -nc --arg c "sed -i s/dispatcher/builder/ $RJ" "{command:\$c}")")" = 2 ]' "a builder's sed -i on roles.json is refused"
 ok '[ "$(wg terminal "$(jq -nc --arg c "echo x >> $RJ" "{command:\$c}")")" = 2 ]' "a builder's shell append to roles.json is refused"
+# follow-up 4, item 1 (D105 open): Hermes's auto-decomposer creates child cards and assigns them to any profile without the role guard; the stack
+# refuses that path: the dispatcher role (the profile whose process runs the decomposer) turns kanban.auto_decompose off, from the role table
+ok 'jq -e "[.roles[] | select(.may_create_cards == true and .assignable == false)] | length > 0 and all(.config[\"kanban.auto_decompose\"] == false)" "$RJ" >/dev/null' "the role that runs the dispatcher turns the auto-decomposer off (kanban.auto_decompose false)"
+ok 'jq -e "[.roles[]] | all(.config[\"kanban.auto_decompose\"] == false)" "$RJ" >/dev/null' "verifier LOW-1: every role, the fallback role included, turns the auto-decomposer off (a new or unlisted profile gets Hermes's default of true otherwise)"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

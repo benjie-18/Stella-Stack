@@ -50,25 +50,47 @@ def approval_evidence(profile, session_id, ev):
     db = os.path.join(roles.pdir(root, profile, row), "state.db")
     try:
         c = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
-        calls = {}
-        for (tc,) in c.execute("select tool_calls from messages where session_id = ? and role = 'assistant' and tool_calls is not null", (session_id,)):
-            for call in json.loads(tc):
-                f = call.get("function") or {}
-                if f.get("name") != ev["tool"]:
-                    continue
-                cmd = json.loads(f.get("arguments") or "{}").get("command")
-                if isinstance(cmd, str) and re.search(ev["command"], cmd):
-                    calls[call.get("call_id") or call.get("id")] = cmd
-        for cid, content in c.execute("select tool_call_id, content from messages where session_id = ? and role = 'tool'", (session_id,)):
-            if cid not in calls:
-                continue
-            try:
-                r = json.loads(content)
-            except ValueError:
-                continue
-            if isinstance(r, dict) and r.get("exit_code") == ev.get("exit_code", 0) and not r.get("error") \
-                    and isinstance(r.get("output"), str) and re.search(ev["output"], r["output"]):
-                return None
+        # A context compression mid-run can give the run a new session id whose parent_session_id is the old one (Hermes marks that parent's
+        # end_reason "compression"; on this stack compression.in_place is true, so it usually does not). The run is the chain, child to parents
+        # (never parent to children), bounded and cycle-safe, any other kind of parent link is not followed.
+        chain = [session_id]
+        while len(chain) < 50:
+            r = c.execute("select s.parent_session_id from sessions s join sessions p on p.id = s.parent_session_id "
+                          "where s.id = ? and p.end_reason = 'compression'", (chain[-1],)).fetchone()
+            if not r or not r[0] or r[0] in chain:
+                break
+            chain.append(r[0])
+        verdict, refused = None, False   # an answered non-APPROVE is final for the run (S6L-RT-08: asking again is a re-roll); a call and its result must sit in the same session, the result after the call
+        for sid in reversed(chain):
+            calls = {}
+            for role, content, tc, tcid in c.execute("select role, content, tool_calls, tool_call_id from messages where session_id = ? order by id", (sid,)):
+                if role == "assistant" and tc:
+                    calls.clear()   # a call is answered before the model's next turn: an unanswered one never pairs with a later result (S6M-RA-04)
+                    for call in json.loads(tc):
+                        f = call.get("function") or {}
+                        if f.get("name") != ev["tool"]:
+                            continue
+                        try:
+                            args = json.loads(f.get("arguments") or "{}")
+                        except ValueError:
+                            continue   # a malformed call never ran: it is not evidence and not an error (S6M-RA-03)
+                        cmd = args.get("command") if isinstance(args, dict) else None
+                        if isinstance(cmd, str) and re.search(ev["command"], cmd):
+                            calls[call.get("call_id") or call.get("id")] = cmd
+                elif role == "tool" and tcid in calls:
+                    del calls[tcid]
+                    try:
+                        r = json.JSONDecoder().raw_decode(content)[0]   # Hermes may append hints after the stored JSON (S6M-RA-02)
+                    except ValueError:
+                        verdict = False
+                        continue
+                    if isinstance(r, dict) and r.get("session_id"):
+                        continue   # a background-start result is not the call's answer (S6M-RA-01)
+                    answered = bool(isinstance(r, dict) and r.get("exit_code") == ev.get("exit_code", 0) and not r.get("error") and isinstance(r.get("output"), str))
+                    verdict = answered and bool(re.search(ev["output"], r["output"]))
+                    refused = refused or (answered and not verdict)
+        if verdict and not refused:
+            return None
     except Exception as e:
         return f"{need}. The session store could not be read ({type(e).__name__})"
     return need + ". None was found in this session"

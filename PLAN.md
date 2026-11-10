@@ -504,3 +504,36 @@ Verifier (readiness-verifier): **FAIL before the fix round**, claims 1, 2, 4, 6 
 2. Live gateway autostart across a real container restart (`docker restart tender_austin` or Rebuild Container), then `curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $(cat /home/node/.hermes/omniroute/endpoint-key)" http://localhost:20128/v1/models` should print 200.
 3. Optional: run `! bash .scratch/stage6g/symlink-probe.sh` and send me the output (item 4); a review run more than a token lifetime after a login (item 3, live refresh).
 4. Optional: archive or delete the Discord threads the probes left (T16c, T16d, T16e, S6, T16b).
+
+## Stage 6 follow-up 4 (2026-11-10; D107-D120; same branch)
+
+Owner decisions (2026-11-10): token via the broker; the auto-decomposer bypass is fixed; the symlink case is fixed. Testing approach: no full-suite gate and no run cap; targeted selftests after every change, the whole suite at the end until everything passes. Verifier and red-team pairs ran in parallel on frozen snapshots (`.scratch/snap/`). Evidence is in `.scratch/stage6j/`. Pre-check: exec bits on `bin/*.sh` checked before runs and restored after commits.
+
+| Item | Result | Evidence |
+| ---- | ------ | -------- |
+| 1 Auto-decomposer | **PASS (disabled by configuration, D107)**: `kanban.auto_decompose: false` on every role; live: off = a triage probe untouched for 14 minutes, on = assigned and started within a minute with no role guard on the path | `evidence-e1.txt` |
+| 2 Token via the broker | **wiring PASS, real token MISSING (D109)**: broker folder, per-command injection, snapshot exclusion, hidden login, `bin/broker-put.sh`; live: a canary token made the review command fail `401 Invalid bearer token` (so the broker token is what it uses) and left no file; **a real long-lived token (`claude setup-token` + `bin/broker-put.sh claude-reviewer`) is an owner step; a live review with it is not done; the OAuth refresh stays unproven** | `evidence-e2b.txt` |
+| 3 Symlink to the login | **PASS as defence in depth (D110)**; the real-login probe was refused by the permission layer again (not worked around); live with a canary: a committed symlink out of the card made the reviewing box refuse to start (STL-GRD-603) | `evidence-e3.txt`, box-selftest 3.60-3.62, 3.78 |
+| 4 Session id / compression | **PASS in selftest, not live (D108)**: this stack compacts in place (no new session id), so the premise did not occur; lineage through compression parents, same-session pairing, sticky CHANGES | `bin/approval-evidence-selftest.sh` |
+| 5 Prompt content | **PASS (D111)**: one allowed command, owner template, stack-built evidence, export of the committed tree; live: sent copy identical to the rendered file with the template verbatim | `t16g-prompt-sent.txt` |
+| 6 T16 with the commit rule | **PASS (D112)**: T16g, builder blocked, owner replied in Discord, builder committed only `docs/colour.txt`, Claude verified the commit and approved, exactly one COMPLETED, no CLI completion; and Claude answered CHANGES when a probe file was not committed (E7b, run 2) | `evidence-t16g.txt` |
+| 7 Planted repo live | **PASS (D113)**, with caveats: the trap was planted from the host by `.scratch/stage6j/plant.sh` (the builder agent could not build it itself) and no control run was done by me (the permission layer refused); trap intact afterwards, the reviewer's `git -C notes log` showed the card's own history, marker never written | `evidence-e7c.txt` |
+| 8 QA | verifier + red-team pairs per element (three rounds, D114/D115) and a final whole-tree pass (D116): verifier PASS WITH NOTES; red-team found a host code-execution path in Hermes's own card-completion cleanup (S6N-01, pre-existing): mitigated stack-side after every builder call (restore git files, quarantine nested repos behind gitlinks), **not closed**: the full fix is in Hermes (owner decision) | decisions D114-D116 |
+| Live runs vs final code | E1, E2b, E3, T16g and E7c ran on earlier code; the smoke card t_8c76ab9f ran on the code before the last fixes; later fixes are selftest-proven only (D116) | `.scratch/stage6j/` |
+
+### Suite and freeze (follow-up 4; no run cap, no gate: iterate until every test passes)
+| Step | Result | Evidence |
+| ---- | ------ | -------- |
+| Full suite, runs 1-5 | run 1 34 ok + 1 FAIL (`complete-gate-selftest`, a word in a comment); runs 2-4 40 ok; run 5 39 ok + 1 FAIL (`owner-leak-selftest`: owner-added untracked spec files with the owner's name in `docs/spec/`, left untouched, excluded locally via `.git/info/exclude`) | `.scratch/stage6j/suite-*.log`, D120 |
+| Full suite, run 6 | **40 ok, 0 FAIL, `selftests PASS`, exit 0** on the final tree | `.scratch/stage6j/suite-6.log` |
+| Freeze | `sha256sum -c .supervisor/state/stage5-freeze.sha256`, regenerated once, last, over the same 114 paths (old manifest kept as `stage5-freeze-114-f4.sha256`) | see the closeout report |
+
+### Human steps outstanding after follow-up 4
+1. Open the PR (body `.scratch/stage6/pr-body.md`; the attempt and its result are in the closeout below) and merge after review.
+2. **Needed now: the Claude reviewer's login has expired (D119), so no live Claude review runs until this is done.** Give the Claude reviewer its long-lived token: in your own terminal run `claude setup-token`, copy the token, then run `bin/broker-put.sh claude-reviewer` and paste it (nothing is echoed). Then I (or you) run one real review to see it succeed; the first review after the token's life would show a refresh problem (none is expected for a long-lived token).
+3. Optional: run the symlink probe against the real login yourself (`! bash .scratch/stage6g/symlink-probe.sh`).
+4. Live gateway autostart across a real container restart (see follow-up 3, human step 2).
+5. Optional: archive or delete the Discord threads the probes left (T16c to T16g).
+6. Decide whether a card that Hermes sends to triage after a block loop should page you (open, D107).
+7. **Decide how to close S6N-01 for good (D116)**: Hermes runs `git status` / `git log` in a builder's worktree on the host at card completion; patch those two calls so they do not trust `<worktree>/.git` or a nested repo (`--git-dir=<common>` with the card's index, `--ignore-submodules`, a hardened environment) locally or upstream. The stack now restores the git files, quarantines nested repos and fails closed (moves the card's index aside) after every builder call, with a detached helper for a killed launcher (D116, D117, D118); it remains a mitigation.
+8. Check the gateway's environment names for the three Claude credential variables (command in D116); the box now removes them anyway.

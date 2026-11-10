@@ -18,13 +18,47 @@ ok '[ -n "$(block $R)" ] && [ "$(block $R)" = "$(block $S)" ]' "the secret-path 
 cp_hook() { sed "s#/workspace/bin#$STACK/bin#g" "$1" >"$T/$(basename "$1")"; chmod +x "$T/$(basename "$1")"; }
 cp_hook "$R"; cp_hook "$S"; R=$T/$(basename "$R"); S=$T/$(basename "$S")
 # The Part A bypasses (register F11), the approved list, and each way of writing a path. Both hooks refuse them all.
+# verifier M1: ordinary commands that mention /dev/std*, stdin or a project path with proc in it stay allowed (the /proc rule is about other processes' files)
+# final red-team S6N-02: the dispatcher's git must not run inside a card worktree (the sibling folders of the sandbox table) or inside a .git folder: a builder's repo config could run code there
+for c in 'git -C /workspace/.scratch/s6-scratch/.worktrees/t_1 status' 'cd /workspace/.scratch/s6-scratch/.worktrees/t_1 && git status' 'git -C /workspace/.scratch/s6-scratch/.WORKTREES/t_1/sub diff' \
+         'git -C /workspace/.scratch/s6-scratch/.worktrees/t_1/.GIT log' 'cd /workspace/.scratch/s6-scratch/.worktrees && cd t_1 && git log --oneline' 'git -C /workspace/.git/worktrees/t_1 log'; do
+  ok '[ "$(term $R "$c")" = 2 ]' "Stella refused: $c"
+done
+for c in 'git -C /workspace -C .scratch/s6-scratch/.worktrees/t_1 status' 'cd -- /workspace/.scratch/s6-scratch/.worktrees/t_1 && git status' 'cd -P /workspace/.scratch/s6-scratch/.worktrees/t_1 && git status' \
+         'git -C /workspace/.scratch/s6-scratch/.worktree?/t_1 status' 'git -C /workspace/.scratch/s6-scratch/.worktree[s]/t_1 status' 'git -C /workspace/.scratch/s6-scratch/.w*/t_1 status' \
+         'cd /workspace/.scratch/s6-scratch/.{worktrees,x}/t_1 && git status'; do   # delta red-team S6O-05
+  ok '[ "$(term $R "$c")" = 2 ]' "Stella refused: $c"
+done
+# delta verifier F5: a card worktree is recognised by the file system (its .git is a FILE), not only by the spelling of its path; cd - and variables are refused
+mkdir -p "$T/lw/sub" && echo "gitdir: /nonexistent" >"$T/lw/.git"
+for c in "git -C $T/lw status" "git -C $T/lw/sub status" "cd $T/lw && git status" "cd /workspace && cd - && git status" 'cd $OLDPWD && git status' "git -C / -C $T/lw status"; do
+  ok '[ "$(term $R "$c")" = 2 ]' "Stella refused: ${c//$T/T}"
+done
+# delta-2 S6P-02: tilde forms and variables as folders, and any cd into a card worktree (the session keeps the cd for the next call)
+for c in "cd $T/lw" 'cd /workspace && cd / && git -C ~- status' 'git -C $OLDPWD status' 'cd ~- && git status' 'git -C "$OLDPWD" status' 'cd ~root && git status'; do
+  ok '[ "$(term $R "$c")" = 2 ]' "Stella refused: ${c//$T/T}"
+done
+for c in 'git -C /workspace log --oneline -5' 'cd /workspace && git status --short' 'git -C /workspace/bin log --oneline -2'; do
+  ok '[ "$(term $R "$c")" = 0 ]' "Stella allowed: $c"
+done
+# delta red-team S6O-07: only the standard streams as written are exempt, not a link that resolves to one
+ln -sf /proc/self/fd/0 "$T/plink"
+ok '[ "$(term $R "cat $T/plink")" = 2 ] && [ "$(term $S "cat $T/plink")" = 2 ]' "a planted symlink to a process fd is refused (only /dev/stdin, /dev/stdout, /dev/stderr, /dev/fd/0-2 as written are exempt)"
+for c in 'cat /dev/stdin' 'cat src/proc/self_test.js' 'ls data/proc/2024' 'ls /proc' 'cat /proc/cpuinfo'; do
+  ok '[ "$(term $R "$c")" = 0 ]' "Stella allowed: $c"
+  ok '[ "$(term $S "$c")" = 0 ]' "builder allowed: $c"
+done
+for c in 'echo hi > /dev/stderr' 'node app.js 2>/dev/stderr' 'npm test 2>&1 | tee /dev/stderr'; do   # the dispatcher's terminal is read-only (no redirects); builders may write to the standard streams
+  ok '[ "$(term $S "$c")" = 0 ]' "builder allowed: $c"
+done
 for c in 'cat ~/.hermes/.env' 'cat ~/.hermes/.en?' 'cat /home/node/.hermes/.e*' 'grep -r BOT_TOKEN /home/node/.hermes --include=.e*' \
          'grep -rh TOKEN /home/node/.hermes/profiles' 'cat /home/node/.claude/.credentials.json' 'jq . ~/.local/share/opencode/auth.json' \
          'cat $HOME/.hermes/.env' 'cd ~/.hermes && cat auth.json' 'cd /home/node/.hermes && cat .e*' 'cat ~/.hermes/auth.json' \
          'grep -r x . --include=.env*' 'cat /workspace/.env' 'head .env.local' 'cat x.pem' 'tail ~/certs/server.key' \
          'ls ~/.ssh' 'cat ~/.aws/credentials' 'cat ~/.config/gh/hosts.yml' 'git diff --no-index ~/.hermes/.env /dev/null' \
          'grep -r token ~' 'cat "$HOME"/.hermes/.e"nv"' 'cat ~/.hermes/.{env,x}' 'grep -r TOKEN ~/.{hermes,claude}' \
-         'cat ~/.hermes/.{e,f}nv' "cat ~/.hermes/\$'\\x2e\\x65\\x6e\\x76'" "cat \$'/home/node/.hermes/auth\\x2ejson'"; do
+         'cat ~/.hermes/.{e,f}nv' "cat ~/.hermes/\$'\\x2e\\x65\\x6e\\x76'" "cat \$'/home/node/.hermes/auth\\x2ejson'" \
+         'cat ~/.hermes/broker/claude-reviewer' 'ls /home/node/.hermes/broker' 'cd ~/.hermes/broker && cat *' 'cat $HOME/.hermes/broker/x' 'cat /proc/4321/environ' 'cat /proc/self/environ' 'tr "\\0" "\\n" < /proc/1234/environ' 'cat /proc/4321/task/4321/environ' 'cat /proc/4321/./environ' 'cd /proc/4321 && cat environ' 'cat /proc/*/environ' 'cat /proc/[0-9]*/environ' 'cat /proc/$$/environ' 'grep -f/proc/1234/environ -o -e . /dev/null' 'tar -C/proc/1234 -cf - environ' 'cat --file=/proc/1234/environ' 'cat /proc/thread-self/environ' 'cat /proc//1234/environ' 'cat /proc/./self/environ' 'cd /proc/; cat self/environ' 'cat "/proc/"self/environ' "cat /proc/'1234'/environ" 'cat /proc/{self,x}/environ' 'cat /pro?/self/environ' 'cat /proc/\self/environ' 'grep -ra --include=environ CLAUDE /proc' 'grep -a CLAUDE_CODE_OAUTH /proc//*/environ' 'cat /dev/fd/../../1234/environ'; do
   ok '[ "$(term $R "$c")" = 2 ] && grep -q "secret" "$T/out"' "Stella refused: $c"
   ok '[ "$(term $S "$c")" = 2 ] && grep -q "secret" "$T/out"' "builder refused: $c"
 done
