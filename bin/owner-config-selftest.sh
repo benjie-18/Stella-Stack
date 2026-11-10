@@ -152,6 +152,8 @@ ok '! OWNER_CONFIG=/workspace/config/owner.example.env render_soul $SOULS/defaul
 RL=$(ROLES_FILE=$RF python3 -I -c 'import sys, json; sys.path.insert(0, sys.argv[1]); import roles; print(", ".join("`" + p + "`" for p in roles.reviewers(roles.load())))' "$S" 2>&1)
 ok '[ -n "$RL" ] && [ "${RL#*Error}" = "$RL" ]' "K8: the table lists a reviewing profile for the SOUL ($RL)"
 for f in $(grep -l "{{REVIEWERS}}" $SOULS/*.md); do
+  # D101/D105: the reviewers a SOUL names are the ones its profile's role may name (review_callers), so the expectation is per SOUL
+  RL=$(ROLES_FILE=$RF python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import roles; d = roles.load(); p = next(n for n, r in d["profiles"].items() if r.get("soul") == sys.argv[2]); print(", ".join("`" + x + "`" for x in roles.reviewers(d, roles.role_of(d, p)[0])))' "$S" "${f##*/}" 2>&1)
   ok 'out=$(OWNER_CONFIG=/workspace/config/owner.example.env render_soul "$f"); grep -qF "reviewer\` set to one of $RL:" <<<"$out" && ! grep -q "{{" <<<"$out"' "K8: ${f##*/} renders {{REVIEWERS}} as the table's reviewers, no placeholder left"
 done
 ok '[ "$(grep -l "{{REVIEWERS}}" $SOULS/*.md | wc -l)" = 2 ] && grep -q "{{REVIEWERS}}" $SOULS/builder-local.md $SOULS/builder-claude.md' "K8: exactly the two builder SOULs carry {{REVIEWERS}}"

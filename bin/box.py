@@ -118,6 +118,7 @@ def plan(d, profile, proof, *, hermes_root, home, roots, stack_root=None, spec=N
             env["GIT_CONFIG_GLOBAL"] = pdir + "/home/.gitconfig"   # HH-06: HOME=<dir> / XDG_CONFIG_HOME=<dir> cannot make git read a planted config (the commit hook stays on); the file is read-only (home_protect)
         else:
             must[wt], must[common] = [("ro", wt, wt)], [("ro", common, common)]
+            env["GIT_DIR"], env["GIT_WORK_TREE"] = gd, wt   # S6I-01: git here never discovers a repo the builder planted in a subfolder (its config can name programs git runs)
         env["HERMES_KANBAN_WORKSPACE"] = wt   # the commit guard's marker: the proof cannot run inside the box (design 4.4)
     inside = lambda p, m: p == m or p.startswith(m + "/")
     out, done = [("tmpfs", "/tmp")] + ([("tmpfs", "/commandhistory")] if os.path.isdir("/commandhistory") else []), set()
@@ -195,6 +196,11 @@ def plan(d, profile, proof, *, hermes_root, home, roots, stack_root=None, spec=N
             if not os.path.exists(x):   # shortcut: a dotted name is a file, else a folder; put a type in the data if an entry breaks that
                 (open(x, "a").close() if "." in name else os.makedirs(x))
             out.append(("ro", x, x))
+        for name in ov.get("rw_files", []):   # D102: one writable file in a read-only folder (the login's token refresh); a file bind, so it cannot be renamed, removed or swapped for a link
+            x = f"{cdir}/{name}"
+            if os.path.islink(x) or not os.path.isfile(x):   # shortcut: the file must already exist (the owner's login made it); nothing creates it here
+                continue
+            out.append(("rw", x, x))
     verify(out, hidecf, protcf, list(must))
     return out, env
 

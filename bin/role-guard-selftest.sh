@@ -218,15 +218,20 @@ ok '[ "$(tree "$KP" "{\"task_id\":\"t_0000c0de\"}" closed)" = 2 ] && grep -qF "t
 REVS=$(for q in $PROFILES; do [ "$(perm "$q" may_review)" = true ] && echo "$q"; done)
 ok '[ -n "$REVS" ]' "K8: the role table has a reviewing profile (may_review true on a role)"
 rr() { jq -nc --arg r "$1" '{task_id: "t_0000c001", summary: "done, tests pass", reviewer: $r, metadata: {commit: "abc1234"}}'; }
+# D101: a profile's review_callers (absent = anyone) limits which roles may name it; REVS_FOR p = the reviewers p's role may name
+callers_ok() { jq -e --arg q "$2" --arg r "$(role "$1")" '(.profiles[$q].review_callers // null) as $c | ($c == null) or ($c | index($r) != null)' "$RF" >/dev/null; }
+REVS_FOR() { for q in $REVS; do [ "$q" != "$1" ] && callers_ok "$1" "$q" && echo "$q"; done; }
 for p in $PROFILES; do
   for q in $PROFILES; do
-    if [ "$(perm "$q" may_review)" = true ] && [ "$q" != "$p" ]; then
+    if [ "$(perm "$q" may_review)" = true ] && [ "$q" != "$p" ] && callers_ok "$p" "$q"; then
       ok '[ "$(run "$p" kanban_request_review "$(rr "$q")")" = 0 ]' "K8: $p ($(role "$p")) asks $q ($(role "$q")) to review: allowed"
+    elif [ "$(perm "$q" may_review)" = true ] && [ "$q" != "$p" ]; then
+      ok '[ "$(run "$p" kanban_request_review "$(rr "$q")")" = 2 ] && grep -q "review_callers" "$T/out"' "K8: $p ($(role "$p")) asks $q ($(role "$q")) to review: refused by the owner's review_callers setting (D101)"
     else
-      ok '[ "$(run "$p" kanban_request_review "$(rr "$q")")" = 2 ] && grep -q "its own builder" "$T/out" && for r in $REVS; do [ "$r" = "$p" ] || grep -qF "$r" "$T/out" || exit 1; done' "K8: $p ($(role "$p")) asks $q ($(role "$q")) to review: refused, valid reviewers named"
+      ok '[ "$(run "$p" kanban_request_review "$(rr "$q")")" = 2 ] && grep -q "its own builder" "$T/out" && for r in $(REVS_FOR "$p"); do grep -qF "$r" "$T/out" || exit 1; done' "K8: $p ($(role "$p")) asks $q ($(role "$q")) to review: refused, valid reviewers named"
     fi
   done
-  ok '[ "$(run "$p" kanban_request_review "{\"task_id\":\"t_0000c001\",\"summary\":\"x\"}")" = 2 ] && grep -q "names the profile that reviews the card" "$T/out" && for r in $REVS; do [ "$r" = "$p" ] || grep -qF "$r" "$T/out" || exit 1; done' "K8: $p: no reviewer: refused, valid reviewers named"
+  ok '[ "$(run "$p" kanban_request_review "{\"task_id\":\"t_0000c001\",\"summary\":\"x\"}")" = 2 ] && grep -q "names the profile that reviews the card" "$T/out" && for r in $(REVS_FOR "$p"); do grep -qF "$r" "$T/out" || exit 1; done' "K8: $p: no reviewer: refused, valid reviewers named"
   for bad in '""' 'null' '123' '["'"$(echo $REVS | cut -d" " -f1)"'"]' '"nobody-x"' '"REVIEWER"' '" reviewer"'; do
     ok '[ "$(run "$p" kanban_request_review "{\"task_id\":\"t_0000c001\",\"reviewer\":$bad}")" = 2 ]' "K8: $p: reviewer=$bad: refused"
   done
@@ -257,6 +262,27 @@ KB=$(for q in $PROFILES; do [ "$(perm "$q" may_review)" != true ] && [ "$(perm "
 KB=${KB:-$WT}
 ok '[ "$(TREE_TOOL=kanban_request_review tree "$KB" "$(rr "$RV1")" ok)" = 0 ]' "K8: from a fake worker's process tree: $KB naming $RV1: allowed"
 ok '[ "$(TREE_TOOL=kanban_request_review tree "$KB" "$(rr "$KB")" ok)" = 2 ] && grep -qF "$RV1" "$T/out" && [ "$(TREE_TOOL=kanban_request_review tree "$KB" "{\"task_id\":\"t_0000c001\"}" ok)" = 2 ]' "K8: from a fake worker's process tree: its own profile, or no reviewer: refused"
+# D101, the "card" setting: a role that is not listed in a reviewer's review_callers may still name it when the card's own body (written by
+# whoever created the card, never by a worker) says `Review-by: <that profile>` and review_callers contains "card".
+RCP=$(jq -r '[.profiles | to_entries[] | select(.value.review_callers != null) | .key][0] // empty' "$RF")
+if [ -n "$RCP" ]; then
+  CB=$(role "$KB")
+  fx_reviewby() { fx_ok "$@"; jq -c --arg b "$(printf 'Do the task.\n  Review-by:  %s \nCheck: none: x' "$RCP")" '.task.body = $b' "$T/cards/t_0000c0de.json" >"$T/c.tmp" && mv "$T/c.tmp" "$T/cards/t_0000c0de.json"; }
+  fx_reviewby_other() { fx_ok "$@"; jq -c --arg b "Review-by: $RV1" '.task.body = $b' "$T/cards/t_0000c0de.json" >"$T/c.tmp" && mv "$T/c.tmp" "$T/cards/t_0000c0de.json"; }
+  rbc() { jq -nc --arg r "$RCP" '{task_id: "t_0000c0de", reviewer: $r}'; }
+  jq --arg q "$RCP" '.profiles[$q].review_callers |= map(select(. != "card"))' "$RF" >"$T/nocard.json"
+  jq -e --arg q "$RCP" '.profiles[$q].review_callers | index("card") != null' "$RF" >/dev/null && HAVE_CARD=1 || HAVE_CARD=
+  if [ -n "$HAVE_CARD" ] && [ "$(jq -r --arg q "$RCP" --arg r "$CB" '.profiles[$q].review_callers | index($r) == null' "$RF")" = true ]; then
+    ok '[ "$(TREE_TOOL=kanban_request_review tree "$KB" "$(rbc)" ok)" = 2 ] && grep -q "review_callers" "$T/out"' "D101: $KB naming $RCP when the card says nothing about it: refused"
+    ok '[ "$(TREE_TOOL=kanban_request_review tree "$KB" "$(rbc)" reviewby)" = 0 ]' "D101: $KB naming $RCP when the card's body says Review-by: $RCP (any spacing): allowed"
+    ok '[ "$(TREE_TOOL=kanban_request_review tree "$KB" "$(rbc)" reviewby_other)" = 2 ]' "D101: the card names another reviewer: naming $RCP is still refused"
+    ok '[ "$(ROLES_FILE=$T/nocard.json TREE_TOOL=kanban_request_review tree "$KB" "$(rbc)" reviewby)" = 2 ]' "D101: the owner removes \"card\" from the setting: the same request is refused (the setting takes effect)"
+    ok '[ "$(TREE_TOOL=kanban_request_review tree "$KB" "$(rbc)" stranger)" = 2 ]' "D101: a request for a card that is not the caller's own running card (no proof) is refused"
+    rb1() { jq -nc --arg r "$RV1" '{task_id: "t_0000c0de", reviewer: $r}'; }
+    ok '[ "$(TREE_TOOL=kanban_request_review tree "$KB" "$(rb1)" reviewby)" = 2 ] && grep -q "Review-by" "$T/out"' "S6I-04: the card says Review-by: $RCP, so naming another reviewer ($RV1) is refused (the line binds the caller)"
+    ok '[ "$(TREE_TOOL=kanban_request_review tree "$KB" "$(rb1)" reviewby_other)" = 0 ]' "S6I-04 control: the card says Review-by: $RV1 and the caller names $RV1: allowed"
+  fi
+fi
 # A1-01: a role that takes cards, or a profile with no row, comments on its own proven running card only. Fake worker's
 # process tree again (D48); the coordinator (a listed role that takes no cards) comments anywhere.
 DISP=$(for q in $PROFILES; do [ "$(jq -r --arg p "$q" '.roles[.profiles[$p].role].assignable' "$RF")" = false ] && echo "$q" && break; done)

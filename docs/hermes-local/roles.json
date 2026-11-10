@@ -23,7 +23,9 @@
     "builder-local": {"role": "builder", "worker": "opencode", "soul": "builder-local.md", "capability_fallback": "builder-claude"},
     "builder-claude": {"role": "builder", "worker": "claude-code", "soul": "builder-claude.md"},
     "reviewer": {"role": "reviewer", "worker": "opencode", "soul": "reviewer.md"},
-    "reviewer-claude": {"role": "reviewer", "worker": "claude-code", "soul": "reviewer-claude.md"}
+    "reviewer-claude": {"role": "reviewer", "worker": "claude-code", "soul": "reviewer-claude.md", "review_callers": ["dispatcher", "card"],
+      "approval_evidence": {"tool": "terminal", "command": "^claude -p ", "output": "^[\\s*_#>]*APPROVE\\b", "exit_code": 0,
+        "hint": "Make your one Claude call now, as a terminal command with the workdir set to your workspace_path: claude -p '<plain words: the criteria, the files to read, and ask for APPROVE or CHANGES with the evidence>' --model sonnet --restricted --strict-mcp-config --tools Read,Grep,Glob --allowedTools Read,Grep,Glob (change only the words in the quotes). Approve only if its answer starts with APPROVE. If Claude answered CHANGES, call kanban_request_changes; if the call failed or was refused, block with kind capability."}}
   },
   "roles": {
     "dispatcher": {
@@ -112,7 +114,8 @@
       },
       "reviewer-claude": {
         "claude_config_dir": "{home}/.claude",
-        "ro_over": ["settings.json", "settings.local.json", "CLAUDE.md", "agents", "skills", "hooks", "commands", "plugins"]
+        "ro_over": ["settings.json", "settings.local.json", "CLAUDE.md", "agents", "skills", "hooks", "commands", "plugins"],
+        "rw_files": [".credentials.json"]
       }
     },
     "env": {

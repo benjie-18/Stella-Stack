@@ -17,6 +17,8 @@ re2="^claude -p \"[^\"\$\`\\\\!${nl}[:space:]-][^\"\$\`\\\\!${nl}]{0,3999}\"${ta
 [[ -n $cmd && ( $cmd =~ $re1 || $cmd =~ $re2 ) ]] && exit 0
 # builder code never runs next to the Claude login: the 9B reviewer's npm test / lint / node --test are not offered here
 case "$cmd" in "npm test"|"npm run test"|"npm run lint"|"node --test") printf '%s\n' '{"action": "block", "message": "the Claude reviewer reads the work with its one Claude call and read-only git; it never runs the builder code"}'; exit 2;; esac
+# any other claude call: say what the one allowed call ends with (live T7d: the model changed --tools and, told only about npm test, gave up)
+case "$cmd" in *"claude -p"*) printf '%s\n' '{"action": "block", "message": "this profile may run its one Claude call exactly as claude -p '"'"'<plain words>'"'"''"$tail"' with nothing before or after it (no cd, no redirect, no pipe: set the terminal workdir to your workspace_path instead); change only the words inside the quotes and keep every flag as written"}'; exit 2;; esac
 partner=/workspace/docs/hermes-local/hooks/reviewer/test-only-terminal.sh
 [ -f "$partner" ] || { printf '%s\n' '{"action": "block", "message": "the Claude reviewer terminal hook cannot find its partner hook"}'; exit 2; }
 printf '%s' "$payload" | bash "$partner"

@@ -472,3 +472,35 @@ Pinned-call check, live once (`.scratch/stage6f/pinned-call-live.txt`, 05:49Z): 
 3. Optional live checks left open: a full T16 with the pinned Claude call; whether `--restricted` stops Claude reading the login file through a symlink in the worktree (a credential probe the permission layer refused me to run); a real container restart with the gateway autostart.
 4. Optional: archive or delete the Discord threads the probes left (T16c, T16d and its decomposed child's thread, S6, T16b); the board has leftover done and archived probe cards.
 
+
+## Stage 6 follow-up 3 (2026-11-10; D100-D104; same branch)
+
+Pre-check: exec bits on `bin/*.sh` checked before every run and restored after every commit (the mount strips them); `bin/roles.py`, `bin/box.py` stay 644 as in git. Evidence files are in `.scratch/stage6g/`.
+
+| Item | Result | Evidence |
+| ---- | ------ | -------- |
+| 1 Approval guard | **PASS** (D100): a reviewer-claude approval is refused unless this run's session holds the pinned `claude -p` call, exit 0, answer starting APPROVE; test first (red), live: 8 approvals without a call refused on T7d; the first output rule also refused real `**APPROVE**` answers (T7e, T7f), fixed in round 1 | `ae-red.log`, `bin/approval-evidence-selftest.sh`, `t7f-evidence.txt`, `evidence-t16e.txt` |
+| 2a T7 test fix, Claude approval on the true basis | **PASS**: card t_e2dd3ebe (T7f): Claude read `test.js` and `app.js` and answered APPROVE twice (loads app.js in a vm with a fake DOM, asserts the click listener, fires it twice); card completed with `{"review": "approved"}` | `t7f-evidence.txt` |
+| 2b Full T16 re-proof with the pinned call | **mechanics PASS, worker deviation**: card t_1e3b2924 (T16e): thread opened (1569719773619822642), link posted in #supervisor, owner reply "blue" unblocked it, builder-claude wrote `docs/colour.txt`, Claude (pinned call, after one refusal of a `cd ... &&` wrapper) answered APPROVE, reviewer-claude completed it, **one** COMPLETED, thread reaction and archive/delete prompt posted; not completed from the CLI. Deviation: the builder left `docs/colour.txt` uncommitted (no `git commit` call) and the reviewer's Claude call read the file only, so the commit rule in the card was not checked by anyone | `evidence-t16e.txt` |
+| 3 Token refresh | **narrow fix built and proven in the box; live refresh not observed** (D102): the first run a day after the login failed with 401 (read-only config folder); `rw_files` makes only `.credentials.json` writable (file bind), all else read-only; after the owner's re-login every live Claude call worked, the token never expired inside a run | `box-selftest.sh` 3.51-3.54, `apply-d102.out` |
+| 4 Symlink to the login file | **still open** (D104): the permission layer refused the live canary probe (it needs the reviewer-claude login); script for the owner: `.scratch/stage6g/symlink-probe.sh` | `symlink-probe.sh` |
+| 5 Routing | **PASS** (D101): `review_callers` owner setting (default dispatcher + `Review-by` card line), guard enforced, tests first, live: a card with the line was reviewed through reviewer-claude | `routing-red.log`, `bin/routing-selftest.sh` |
+| 6 Verifier blocker recovery, S6C-06 | the follow-up-2 verifier's first-pass text was not saved as a file; its blocker is in follow-up 2's "Verifier and red-team" and D97 and is covered by `bench-selftest.sh`; S6C-06 now also for the bash task (deploy-recovery: protected test requires a plain `NAME=value` config) (D103) | `bin/bench-selftest.sh` |
+| Live runs also taught (D103) | the refusal message of the Claude hook now shows the exact call, the `approval_evidence.hint` spells the call out | `reviewer-claude-selftest.sh` |
+
+### Verifier and red-team on follow-up 3 (one pass each; at most one fix round)
+Verifier (readiness-verifier): **FAIL before the fix round**, claims 1, 2, 4, 6 held. Red-team (readiness-security-auditor): 1 blocker, 2 high, 2 medium, 2 low. Round 1 fixed with tests first: B1 (NUL byte hid code from the bash task's config check), H1 (the approval rule refused `**APPROVE**`, which cost a second Claude call on T7f and blocked T7e), S6I-01 (a repo planted in a worktree subfolder ran builder code in the reviewer's box through git; `GIT_DIR`/`GIT_WORK_TREE` pinned in `box.py`), S6I-04 (`Review-by` binds any caller). Recorded as open, not fixed: the rename-style token save (S6I-02/H2, row 3.55 documents it), the symlink to the login (S6I-05, owner probe), the auto-decomposer (M1/S6I-06), free-text prompt (S6I-03), session id change on compression (S6I-07). D105. Targeted selftests after the round: box (3.56, 3.57 and the rest), bench, approval-evidence, routing, role-guard, roles, reviewer-claude: all PASS.
+
+### Suite and freeze (follow-up 3; budget: one run, one more only if it fails)
+| Step | Command | Exit | Result |
+| ---- | ------- | ---- | ------ |
+| Full suite, run 1 | `flock test.lock flock watchdog.lock env -i HOME=$HOME PATH=$PATH npm test` 14:54:47Z | 1 | **34 ok, 3 FAIL**: `owner-config-selftest` (K8 expectation per SOUL), `owner-leak-selftest` (the repository URL in PLAN.md), `hardcode-lint-selftest` (hook wording); log `.scratch/stage6g/suite-f3.log`; D105 |
+| Fix, targeted only | the three selftests above, run alone | 0 | all PASS |
+| Full suite, run 2 | same command, 15:12:42Z-15:28:41Z | 0 | **39 ok, 0 FAIL, `selftests PASS`** (`.scratch/stage6g/suite-f3b.log`); two runs, the maximum; D106 |
+| Freeze | `sha256sum -c .supervisor/state/stage5-freeze.sha256`, regenerated once, last, over the same 114 paths (old manifest kept as `stage5-freeze-114-f3.sha256`) | 0 | **114 OK, 0 FAILED** (`.scratch/stage6g/freeze-check.out`) |
+
+### Human steps outstanding after follow-up 3
+1. Open the PR from the GitHub compare link for main...readiness/stage6-closeout (or via Spark with body `.scratch/stage6/pr-body.md`; `gh` is not logged in here); merge after review.
+2. Live gateway autostart across a real container restart (`docker restart tender_austin` or Rebuild Container), then `curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $(cat /home/node/.hermes/omniroute/endpoint-key)" http://localhost:20128/v1/models` should print 200.
+3. Optional: run `! bash .scratch/stage6g/symlink-probe.sh` and send me the output (item 4); a review run more than a token lifetime after a login (item 3, live refresh).
+4. Optional: archive or delete the Discord threads the probes left (T16c, T16d, T16e, S6, T16b).

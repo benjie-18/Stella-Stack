@@ -160,4 +160,21 @@ mkb 'bash test.sh'; git -C "$T/v/r" checkout -q main; mkdir -p "$T/v/r/.worktree
 BENCH_DIR=$T/v/b "$B" reset x "$T/v/r" >/dev/null 2>&1; rc=$?
 ok '[ "$rc" = 0 ] && [ "$(git -C "$T/v/r" ls-tree -r HEAD | grep -c "^160000")" = 0 ] && [ -f "$T/v/r/.worktrees/w1/keep" ] && [ -f "$T/v/r/test.sh" ]' "reset: the start commit has the task files, no worktree gitlink, and the old worktree survives (rc $rc)"
 
+# S6C-06 for the bash task (D103): deploy-recovery's protected test.sh accepts only a config of plain NAME=value lines, so a config that prints
+# the expected line and exits (or that prints anything, or runs code) cannot pass; only the real fix does
+DR=/workspace/bench/tasks/deploy-recovery
+dr() { rm -rf "$T/dr"; cp -r "$DR/repo" "$T/dr"; printf '%s\n' "$1" >"$T/dr/deploy.conf"; ( cd "$T/dr" && BENCH_NONCE=n123 bash test.sh 2>/dev/null | tail -n1 ); }
+ok '[ "$(dr "TARGET_DIR=./out")" = n123 ]' "S6C-06 bash: the honest fix (TARGET_DIR=./out) prints the nonce"
+ok '[ "$(dr "echo would deploy to ./out; exit 0")" != n123 ]' "S6C-06 bash: a config that prints the expected line and exits 0 does not pass"
+ok '[ "$(dr "TARGET_DIR=./out
+echo would deploy to ./out
+exit 0")" != n123 ]' "S6C-06 bash: a valid assignment followed by code in the config does not pass"
+ok '[ "$(dr "")" != n123 ]' "S6C-06 bash: an empty config does not pass"
+ok '[ "$(dr "TARGET_DIR=\$(echo ./out)")" != n123 ]' "S6C-06 bash: a command substitution in the config does not pass"
+ok '[ "$(dr "TARGET=./out")" != n123 ]' "S6C-06 bash: the original fault (wrong variable name) still fails"
+
+# fix round 1 (verifier B1): a NUL byte makes grep treat the config as binary and split the line, and bash drops the NUL when it sources the file
+rm -rf "$T/dr"; cp -r "$DR/repo" "$T/dr"; printf 'TARGET=./out\nA=b\0# echo would deploy to ./out; exit 0\n' >"$T/dr/deploy.conf"
+ok '[ "$(cd "$T/dr" && BENCH_NONCE=n123 bash test.sh 2>/dev/null | tail -n1)" != n123 ]' "S6C-06 bash: a NUL byte hiding code from the plain-assignment check does not pass"
+
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

@@ -40,6 +40,9 @@ ok 'bad ".sandbox.canary = \"\"" canary' "1.13 empty canary"
 ok 'bad ".sandbox.profile_overrides = {\"nope\":{}}" profile_overrides' "1.14 override for a profile not in the table"
 ok 'bad ".sandbox.profile_overrides[\$p].ro_over = [\"a/b\"]" ro_over' "1.15 ro_over entry with a slash"
 ok 'bad ".sandbox.profile_overrides[\$p].claude_config_dir = \"/x\"" claude_config_dir' "1.16 claude_config_dir without {home}"
+ok 'bad ".sandbox.profile_overrides[\$p].rw_files = [\"a/b\"]" rw_files' "1.15b D102: rw_files entry with a slash"
+ok 'bad ".sandbox.profile_overrides[\$p].rw_files = \".credentials.json\"" rw_files' "1.15c D102: rw_files that is not a list"
+ok 'bad ".sandbox.profile_overrides[\$p].rw_files = [\"..\"]" rw_files' "1.15d D102: rw_files entry .."
 ok 'bad ".sandbox.backend = \"Bad-Name\"" backend' "1.17 backend not [a-z0-9_]+"
 ok 'bad ".sandbox.backend = \"local\"" backend' "1.18 backend equal to the unboxed backend"
 ok 'bad ".sandbox.sibling_dirs = [\"a/b\"]" sibling_dirs' "1.19 sibling_dirs entry with a slash"
@@ -238,6 +241,29 @@ S0=$(sha256sum "$PHH/.claude/settings.json" | cut -c1-16)
 ok '! inb "mv \$HOME/.claude \$HOME/.claude.o" && ! inb "mkdir \$HOME/evil && echo {} > \$HOME/evil/settings.json && mv \$HOME/.claude \$HOME/c.o && mv \$HOME/evil \$HOME/.claude" && ! inb "rm -rf \$HOME/.claude" && [ -d "$PHH/.claude/hooks" ] && [ ! -e "$PHH/.claude.o" ] && [ ! -e "$PHH/c.o" ] && [ "$(sha256sum "$PHH/.claude/settings.json" | cut -c1-16)" = "$S0" ]' "3.49 mv, replace or rm of the Claude config folder fails in the box and the ro_over entries stay (RT-A-04)"
 ok 'inb "mkdir \$HOME/.claude/projects && echo n > \$HOME/.claude/notes" && [ -d "$PHH/.claude/projects" ] && [ -f "$PHH/.claude/notes" ] && ! inb "echo x > \$HOME/.claude/settings.json"' "3.50 negative control: new files in the Claude config folder are still writable, ro_over entries are not"
 cp "$T/roles.base.json" "$T/roles.json"
+# D102: the Claude reviewer's config folder stays read-only (its home is read-only) except the credentials file, a file-level bind like RT-A-04:
+# a token refresh can be saved, nothing else in the folder can be written, and the file cannot be renamed, removed or swapped for a link
+PHR=$H2/profiles/$R/home; mkdir -p "$PHR/.claude"; printf '{"canary":"cred0"}\n' >"$PHR/.claude/.credentials.json"; printf '{}\n' >"$PHR/.claude/other.json"
+RWJ='.sandbox.profile_overrides[$r] = {claude_config_dir: "{home}/.claude", ro_over: ["settings.json"], rw_files: [".credentials.json"]}'
+jq --arg r "$R" "$RWJ" "$T/roles.base.json" >"$T/roles.json"
+inr() { boxrun "$R" "$WT" card/x "$1" >"$T/out" 2>&1; }
+inr "true"
+ok 'inr "echo cred1 > \$CLAUDE_CONFIG_DIR/.credentials.json" && grep -q cred1 "$PHR/.claude/.credentials.json"' "3.51 D102: the credentials file is writable in the reviewing profile's box and the write reaches the host file"
+ok 'inr "true" && ! inr "echo x > \$CLAUDE_CONFIG_DIR/settings.json" && ! inr "echo x > \$CLAUDE_CONFIG_DIR/other.json" && ! inr "echo x > \$CLAUDE_CONFIG_DIR/new.json" && ! inr "mkdir \$CLAUDE_CONFIG_DIR/d" && [ "$(cat "$PHR/.claude/other.json")" = "{}" ] && [ ! -e "$PHR/.claude/new.json" ]' "3.52 D102: every other file in that folder, and new files, stay read-only"
+ok '! inr "mv \$CLAUDE_CONFIG_DIR/.credentials.json \$CLAUDE_CONFIG_DIR/.credentials.json.o" && ! inr "rm \$CLAUDE_CONFIG_DIR/.credentials.json" && ! inr "ln -sf /etc/hostname \$CLAUDE_CONFIG_DIR/.credentials.json" && grep -q cred1 "$PHR/.claude/.credentials.json" && [ ! -e "$PHR/.claude/.credentials.json.o" ]' "3.53 D102: the credentials file cannot be renamed, removed or replaced by a link (it is a mount point)"
+jq --arg r "$R" "$RWJ | del(.sandbox.profile_overrides[\$r].rw_files)" "$T/roles.base.json" >"$T/roles.json"
+ok '! inr "echo x > \$CLAUDE_CONFIG_DIR/.credentials.json" && grep -q cred1 "$PHR/.claude/.credentials.json"' "3.54 D102 control: without rw_files the same file is read-only in that box"
+# known limit (verifier H2, D102): the file bind only allows writes IN PLACE; a writer that makes a temp file in the folder and renames it over the
+# credentials file (what Claude's save may do, read from its minified code, not seen live) is refused, so a refresh may still not be saved
+jq --arg r "$R" "$RWJ" "$T/roles.base.json" >"$T/roles.json"
+ok '! inr "echo n > \$CLAUDE_CONFIG_DIR/.credentials.json.tmp.x && mv \$CLAUDE_CONFIG_DIR/.credentials.json.tmp.x \$CLAUDE_CONFIG_DIR/.credentials.json" && grep -q cred1 "$PHR/.claude/.credentials.json"' "3.55 D102 known limit: temp-file-then-rename over the credentials file is refused (only in-place writes work)"
+cp "$T/roles.base.json" "$T/roles.json"
+# fix round 1 (red-team S6I-01): a repo planted in a subfolder of the worktree must not be read by git inside the reviewing profile's box (its local
+# config can name programs that git runs, e.g. gpg.program with log.showSignature): the box pins GIT_DIR/GIT_WORK_TREE to the card's own worktree
+mkdir -p "$WT/planted" && git -C "$WT/planted" init -q && git -C "$WT/planted" config canary.key planted-value
+ok '! inr "git -C \$HERMES_KANBAN_WORKSPACE/planted config --get canary.key" && ! grep -q planted-value "$T/out" && inr "git -C \$HERMES_KANBAN_WORKSPACE/planted rev-parse --show-toplevel" && grep -q "^$WT\$" "$T/out"' "3.56 S6I-01: git in the reviewing profile's box ignores a repo planted in a worktree subfolder (it reads the card's own repo)"
+ok 'inr "git log --oneline -1" && [ -s "$T/out" ]' "3.57 S6I-01 control: the reviewing profile's git still reads the card's history"
+rm -rf "$WT/planted"
 ok '! inb "unshare -Ur true" && ( unshare -Ur true )' "3.14 unshare works outside, fails inside (--disable-userns)"
 ok 'inb "ls /proc | grep -c \"^[0-9]\"" && [ "$(head -1 "$T/out")" -lt 10 ]' "3.15 the box sees only its own processes"
 ( sleep 1; touch "$T/survived-out" ) >/dev/null 2>&1 &

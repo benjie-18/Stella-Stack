@@ -9,7 +9,7 @@
      `Check: none: <reason>` (a decision card) still completes. A missing or doubled Check line is check-guard's refusal, not this one.
 Neither rule widens anything: this hook only adds refusals, the other guards on the tool still run.
 Payload on stdin: {tool_name, tool_input: {task_id, metadata, ...}, session_id, cwd, profile}. Any error refuses."""
-import json, os, re, sys
+import json, os, re, sqlite3, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import roles
 
@@ -38,6 +38,42 @@ def check_line(body):
     return ("none", n[1].strip()) if n else ("cmd", v) if v else None
 
 
+def approval_evidence(profile, session_id, ev):
+    """None when the profile's own session (read-only from its state.db) holds a call of ev["tool"] whose command matches ev["command"]
+    and whose result exited ev.get("exit_code", 0) with output matching ev["output"]; else the refusal text. Any error refuses."""
+    need = (f"approving needs this run's own evidence: a {ev['tool']} call matching /{ev['command']}/ whose answer matches /{ev['output']}/. "
+            + str(ev.get("hint") or ""))
+    if not isinstance(session_id, str) or not session_id:
+        return f"{need}. No session id came with this call"
+    row = (roles.load()["profiles"].get(profile) or {})
+    root = os.environ.get("HERMES_ROOT") or os.path.join(roles.homes()[0], ".hermes")
+    db = os.path.join(roles.pdir(root, profile, row), "state.db")
+    try:
+        c = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+        calls = {}
+        for (tc,) in c.execute("select tool_calls from messages where session_id = ? and role = 'assistant' and tool_calls is not null", (session_id,)):
+            for call in json.loads(tc):
+                f = call.get("function") or {}
+                if f.get("name") != ev["tool"]:
+                    continue
+                cmd = json.loads(f.get("arguments") or "{}").get("command")
+                if isinstance(cmd, str) and re.search(ev["command"], cmd):
+                    calls[call.get("call_id") or call.get("id")] = cmd
+        for cid, content in c.execute("select tool_call_id, content from messages where session_id = ? and role = 'tool'", (session_id,)):
+            if cid not in calls:
+                continue
+            try:
+                r = json.loads(content)
+            except ValueError:
+                continue
+            if isinstance(r, dict) and r.get("exit_code") == ev.get("exit_code", 0) and not r.get("error") \
+                    and isinstance(r.get("output"), str) and re.search(ev["output"], r["output"]):
+                return None
+    except Exception as e:
+        return f"{need}. The session store could not be read ({type(e).__name__})"
+    return need + ". None was found in this session"
+
+
 def main():
     p = json.load(sys.stdin)
     if p.get("tool_name") != "kanban_complete":
@@ -59,6 +95,11 @@ def main():
             refuse("completing a card is your verdict that the work is accepted, and the stack reads that verdict from the metadata. "
                    f"Call kanban_complete again with metadata exactly {json.dumps(need)} (your findings go in the summary). If the work "
                    "is not good enough, do not complete it: call kanban_request_changes with what must change")
+    ev = ((d["profiles"].get(profile) if isinstance(profile, str) else None) or {}).get("approval_evidence")
+    if ev:   # D100: this profile approves only on evidence in its own session (the profile row says which call and which answer)
+        why = approval_evidence(profile, p.get("session_id"), ev)
+        if why:
+            refuse(why)
     if role.get("complete_needs_review"):
         j, why = roles.prove_card(profile, str(a.get("task_id") or ""), roles.board())
         if why:

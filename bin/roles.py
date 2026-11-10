@@ -27,7 +27,7 @@ SANDBOX_KEYS = {"schema_version", "backend", "unboxed_backend", "boxed_profiles"
 BOX_OWNED_ENV = {"HOME", "TMPDIR", "TMP", "TEMP", "CLAUDE_CONFIG_DIR", "HERMES_KANBAN_WORKSPACE", "HERMES_KANBAN_BRANCH",
                  "PATH", "BASH_ENV", "ENV", "IFS", "SHELL"}   # set by the box itself, or able to run code before the command
 BOX_DENY_ENV_PREFIX = ("LD_", "PYTHON")   # dynamic loader and interpreter start-up variables
-OVERRIDE_KEYS = {"claude_config_dir", "ro_over"}
+OVERRIDE_KEYS = {"claude_config_dir", "ro_over", "rw_files"}
 ROOT_PROFILE = "default"   # Hermes's own name for the profile that lives in the root of ~/.hermes
 
 
@@ -108,6 +108,19 @@ def validate(d):
             errs.append(f"profile {p}: worker {row['worker']!r} is not one of its role's workers")
         if ".." in str(row.get("dir", "")).split("/") or str(row.get("dir", "")).startswith("/"):
             errs.append(f"profile {p}: dir must be relative to ~/.hermes")
+        ae = row.get("approval_evidence")   # D100: complete-gate refuses this profile's completion without this evidence in its session
+        if ae is not None:
+            ok_ae = isinstance(ae, dict) and set(ae) <= {"tool", "command", "output", "exit_code", "hint"} \
+                and all(isinstance(ae.get(k), str) and ae[k] for k in ("tool", "command", "output")) \
+                and isinstance(ae.get("exit_code", 0), int) and isinstance(ae.get("hint", ""), str)
+            if ok_ae:
+                try: re.compile(ae["command"]); re.compile(ae["output"])
+                except re.error: ok_ae = False
+            if not ok_ae:
+                errs.append(f"profile {p}: approval_evidence must be {{tool, command, output[, exit_code, hint]}} with regexes that compile (hint is optional text)")
+        rc = row.get("review_callers")   # D101: the roles that may name this profile for a card review or assign a card to it
+        if rc is not None and not (isinstance(rc, list) and rc and all(isinstance(x, str) and (x in roles or x == "card") for x in rc)):
+            errs.append(f"profile {p}: review_callers must be a non-empty list of role names (and \"card\": the card's own Review-by line)")
         fbp = row.get("capability_fallback")   # B2V-08: the escalation thread suggests it; it must be a real peer
         if fbp is not None and (not isinstance(fbp, str) or fbp == p or not isinstance(profs.get(fbp), dict)
                                 or profs[fbp].get("role") != row["role"]):   # RT10-01: a list or object is named, not a crash
@@ -172,6 +185,9 @@ def validate_sandbox(d):
         ro = o.get("ro_over", [])
         if not (isinstance(ro, list) and all(_rel(x) and "/" not in x for x in ro)):
             errs.append(f"sandbox: profile_overrides.{p}.ro_over must be a list of names inside the folder")
+        rw = o.get("rw_files", [])
+        if not (isinstance(rw, list) and all(_rel(x) and "/" not in x for x in rw)):
+            errs.append(f"sandbox: profile_overrides.{p}.rw_files must be a list of file names inside the folder")
     return errs
 
 
@@ -394,9 +410,11 @@ def board_projects(b):
     return [{"id": i, "slug": s, "repo": (p or "").rstrip("/")} for i, s, p in rows]
 
 
-def reviewers(d):
-    """K8: the profiles whose role may review a card (may_review); a builder's review request names one of them."""
-    return sorted(p for p, row in d["profiles"].items() if d["roles"][row["role"]].get("may_review"))
+def reviewers(d, caller_role=None):
+    """K8: the profiles whose role may review a card (may_review); a builder's review request names one of them. With caller_role,
+    only those the caller's role may name (a profile's review_callers, D101; absent = anyone)."""
+    return sorted(p for p, row in d["profiles"].items() if d["roles"][row["role"]].get("may_review")
+                  and (caller_role is None or row.get("review_callers") is None or caller_role in row["review_callers"]))
 
 
 def soul_values(d, profile):
@@ -407,7 +425,7 @@ def soul_values(d, profile):
                              ("may_unblock", "unblock a card"), ("may_delegate", "delegate to a subagent")) if not r[k]]
     projects = board_projects(board())
     return {"BOARD": board(),   # K12: the board name in a SOUL comes from bin/kanban-board.sh
-            "REVIEWERS":", ".join(f"`{p}`" for p in reviewers(d)) or "(no reviewing profile listed)",
+            "REVIEWERS":", ".join(f"`{p}`" for p in reviewers(d, role_of(d, profile)[0])) or "(no reviewing profile listed)",
             "CARD_ASSIGNEES": ", ".join(f"`{p}`" for p, row in sorted(d["profiles"].items())
                                         if d["roles"][row["role"]]["assignable"]),
             "CARD_PROJECTS": ", ".join(f"`{p['slug']}`" for p in projects) or "(none bound to the board)",
