@@ -529,7 +529,7 @@ Owner decisions (2026-11-10): token via the broker; the auto-decomposer bypass i
 | Freeze | `sha256sum -c .supervisor/state/stage5-freeze.sha256`, regenerated once, last, over the same 114 paths (old manifest kept as `stage5-freeze-114-f4.sha256`) | see the closeout report |
 
 ### Human steps outstanding after follow-up 4
-1. Open the PR (body `.scratch/stage6/pr-body.md`; the attempt and its result are in the closeout below) and merge after review.
+1. Open the PR (body `.scratch/stage6/pr-body.md`; attempted with `gh pr create` after the last push: `You are not logged into any GitHub hosts`, no GitHub connector is available here, so it is left for you) and merge after review.
 2. **Needed now: the Claude reviewer's login has expired (D119), so no live Claude review runs until this is done.** Give the Claude reviewer its long-lived token: in your own terminal run `claude setup-token`, copy the token, then run `bin/broker-put.sh claude-reviewer` and paste it (nothing is echoed). Then I (or you) run one real review to see it succeed; the first review after the token's life would show a refresh problem (none is expected for a long-lived token).
 3. Optional: run the symlink probe against the real login yourself (`! bash .scratch/stage6g/symlink-probe.sh`).
 4. Live gateway autostart across a real container restart (see follow-up 3, human step 2).
