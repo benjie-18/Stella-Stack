@@ -11,3 +11,6 @@ config/owner.env
 .hermes/
 __pycache__/
 .supervisor/omniroute-calls.jsonl
+
+# the owner's plan documents live here; they name the owner and stay out of the repo (follow-up 5)
+docs/spec/
