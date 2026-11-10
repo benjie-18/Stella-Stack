@@ -359,6 +359,10 @@ file is read by **Docker on the host** when the container starts. If the file is
 
 The box adds no Windows-side task and changes none of the two tasks; `.devcontainer/` stays human-gated.
 
+## If Discord is down: what answers an approval (T12, D79)
+
+Nothing in a terminal answers a tool approval. Checked on this stack (Stage 6 closeout, with `hermes pause` on and a DM from a second account): `hermes pairing list/approve` only handles access codes for people, never a command approval; the gateway's control socket has no verb that answers an approval; and with an allow-list set the Discord bot drops a stranger's DM before it offers a code, so a new account cannot even get one. A command approval that is already waiting in the gateway is answered by the Discord button or `/approve`, and `hermes pause` does not stop that answer (it holds new turns). If Discord or the gateway is down, a waiting approval stays unanswered and the worker waits or times out: use `hermes resume`, fix the gateway (the sections above), and ask again. The Stella app's inbox is the planned second path and is not built.
+
 ## Notes
 
 - **Image-baked files.** `.devcontainer/init-firewall.sh` and `.devcontainer/managed-settings.json` are copied into the
