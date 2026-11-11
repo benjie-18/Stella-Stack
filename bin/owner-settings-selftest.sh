@@ -434,6 +434,7 @@ for m in main thread; do
   say "$([ "$(gc $m ok-$m.txt)" = 0 ] && [ "$(git -C "$WA" rev-list --count HEAD)" = $((N0+1)) ]; echo $?)" "6 $m: the bound worker's ordinary commit in its card worktree is allowed (control: the proof works)"
   N0=$(git -C "$WA" rev-list --count HEAD)
   say "$([ "$(gc $m $PROBE)" != 0 ] && grep -qi "owner settings" "$T/bout" && [ "$(git -C "$WA" rev-list --count HEAD)" = "$N0" ]; echo $?)" "6 $m: the bound worker's commit staging the owner path: refused by the owner list, no commit made"
+  git -C "$WA" reset -q --hard; git -C "$WA" clean -qfd   # the refused commit above left its file staged
   N0=$(git -C "$WA" rev-list --count HEAD)
   say "$([ "$(gc $m "$OD/zz-w4-$m.json")" != 0 ] && grep -qi "owner data" "$T/bout" && [ "$(git -C "$WA" rev-list --count HEAD)" = "$N0" ]; echo $?)" "6 $m: the bound worker's commit staging owner data ($OD): refused as owner data, no commit made"
   git -C "$WA" reset -q --hard; git -C "$WA" clean -qfd

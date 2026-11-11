@@ -25,7 +25,7 @@ marks=$(jq -r '.worker_markers[]?' "$tbl" 2>/dev/null); odata=$(jq -r '.owner_da
 [ -n "$marks" ] && [ -n "$odata" ] || refuse "the worker marker or owner data list in roles.json cannot be read"
 marked=
 while IFS= read -r m; do
-  [[ $m =~ ^[A-Z][A-Z0-9_]*$ ]] || refuse "a worker marker name in roles.json is not a variable name"   # ${!m} below must never see anything else
+  [[ $m =~ ^[A-Z][A-Z0-9_]*$ ]] || refuse "the worker marker list in roles.json cannot be read: a name in it is not a variable name"   # ${!m} below must never see anything else
   [ -z "${!m:-}" ] || marked=1
 done <<<"$marks"
 # shortcut: this hook runs in the committing process's own environment, so it stops mistakes, not a determined worker
