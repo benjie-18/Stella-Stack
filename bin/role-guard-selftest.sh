@@ -285,7 +285,7 @@ if [ -n "$RCP" ]; then
 fi
 # A1-01: a role that takes cards, or a profile with no row, comments on its own proven running card only. Fake worker's
 # process tree again (D48); the coordinator (a listed role that takes no cards) comments anywhere.
-DISP=$(for q in $PROFILES; do [ "$(jq -r --arg p "$q" '.roles[.profiles[$p].role].assignable' "$RF")" = false ] && echo "$q" && break; done)
+DISP=$(for q in $PROFILES; do [ "$(jq -r --arg p "$q" '.roles[.profiles[$p].role].may_answer_for_owner' "$RF")" = true ] && echo "$q" && break; done)   # W2-RT-01: the field, never `assignable`
 cm() { printf '{"task_id":"%s","comment":"UNBLOCK: escalation reply\\nGo on."}' "$1"; }
 export TREE_TOOL=kanban_comment
 ok '[ "$(tree "$WT" "$(cm t_0000c0de)" ok)" = 0 ]' "A1-01: $WT comments on its own proven card: allowed"
@@ -297,6 +297,12 @@ ok '[ "$(tree "$WT" "{\"task_id\":[\"t_0000c0de\"],\"comment\":\"x\"}" ok)" = 2 
 ok '[ "$(run no-such-profile kanban_comment "$(cm t_0000c001)")" = 2 ] && [ "$(run no-such-profile kanban_comment "{\"comment\":\"x\"}")" = 0 ]' "A1-01: a profile with no row: cross-card refused; no task_id left to Hermes: allowed"
 [ -n "$DISP" ] && ok '[ "$(run "$DISP" kanban_comment "$(cm t_0000c001)")" = 0 ]' "A1-01: $DISP ($(role "$DISP"), takes no cards) comments on any card: allowed"
 [ -n "$RV1" ] && ok '[ "$(tree "$RV1" "$(cm t_0000beef)" wrongcard)" = 2 ]' "A1-01: the reviewing role is a worker too: other card refused"
+ok '[ -n "$DISP" ] && [ "$(jq "[.roles[] | select(.may_answer_for_owner == true)] | length" "$RF")" = 1 ]' "W2-RT-01: exactly one role has may_answer_for_owner, and a profile has it ($DISP)"
+# W2-RT-01: a role without the field is a worker for this rule, listed or not, whatever its `assignable`: foreign comment refused
+for r in $(jq -r '.roles | to_entries[] | select(.value.may_answer_for_owner != true) | .key' "$RF"); do
+  jq --arg r "$r" '.profiles["qa-p"] = {"role": $r}' "$RF" >"$T/qa-t.json"
+  ok '[ "$(ROLES_FILE=$T/qa-t.json run qa-p kanban_comment "$(cm t_0000c001)")" = 2 ] && grep -qF "not your own running card" "$T/out"' "W2-RT-01: a profile with role $r (no may_answer_for_owner) is refused a foreign comment by the own-card proof"
+done
 unset TREE_TOOL
 GM=$(sed -n 's/^GUARDS = \[("pre_tool_call", "\(.*\)",$/\1/p' /workspace/bin/register-escalation-hook.sh)
 ok '[ -n "$GM" ] && [[ kanban_comment =~ $GM ]] && [[ kanban_complete =~ $GM ]] && ! [[ kanban_show =~ $GM ]]' "A1-01: the registered role-guard matcher covers kanban_comment (and still not kanban_show)"

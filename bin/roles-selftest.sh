@@ -166,4 +166,48 @@ bad '.roles.builder.requirements.allowed_data_classes = ["public","public"]' 'al
 bad 'del(.roles.builder.requirements.vision)' 'vision' "a requirements key missing"
 bad '.schema_version = 2' 'schema_version' "wrong schema_version"
 bad 'del(.schema_version)' 'schema_version' "missing schema_version"
+# F1 W2 round 2 (QA r1): the coordinator is its own field, strict values, the fallback opens nothing in every field, the read command's failures.
+FB=$(jq -r .fallback_role "$RF"); R1=$(jq -r --arg fb "$FB" '[.roles | keys[] | select(. != $fb)][0]' "$RF")
+ok '[ "$(jq "[.roles[] | select(.may_answer_for_owner == true)] | length" "$RF")" = 1 ] && [ "$(jq ".roles[\"$FB\"].may_answer_for_owner" "$RF")" = false ]' "W2-RT-01: exactly one role may answer for the owner, the fallback does not"
+for r in $(jq -r '.roles | keys[]' "$RF"); do
+  jq --arg r "$r" 'del(.roles[$r].may_answer_for_owner)' "$RF" >"$T/b.json"
+  ok '[ "$(chk)" = 1 ] && grep -q "role $r: may_answer_for_owner" "$T/out"' "W2-RT-01: role $r without may_answer_for_owner: check fails"
+done
+bad ".roles[\"$FB\"].may_answer_for_owner = true" 'fallback_role must open nothing' "the fallback may answer for the owner"
+bad ".roles[\"$R1\"].may_answer_for_owner = \"yes\"" 'may_answer_for_owner' "may_answer_for_owner not a boolean"
+# W2-RT-02: a repeated key at any depth
+rep() { python3 -I -c 'import sys; t = open(sys.argv[1]).read(); a, b = sys.argv[2], sys.argv[3]; i = t.index(a); print(t[:i] + b + t[i:], end="")' "$RF" "$1" "$2" >"$T/b.json"; }
+rep '"schema_version": 1,' '"schema_version": 1,
+  '; ok '[ "$(chk)" = 1 ] && grep -q "repeated" "$T/out" && grep -q "schema_version" "$T/out"' "W2-RT-02: a repeated top-level key: check fails, naming it"
+rep '"vision":' '"vision": true, '; ok '[ "$(chk)" = 1 ] && grep -q "repeated" "$T/out" && grep -q "vision" "$T/out"' "W2-RT-02: a repeated key inside requirements: check fails, naming it"
+ok '[ "$(ROLES_FILE=$T/b.json python3 $S/roles.py reviewers >"$T/out" 2>&1; echo $?)" = 1 ]' "W2-RT-02: load refuses it too"
+# W2-RT-07 / W2-VAL-02 / W2-VAL-03 / W2-VAL-05: exact types
+tv() { python3 -I -c 'import sys; t = open(sys.argv[1]).read(); i = t.index(sys.argv[2]); print(t[:i] + t[i:].replace(sys.argv[3], sys.argv[4], 1), end="")' "$RF" "$1" "$2" "$3" >"$T/b.json"; }
+for v in 1.0 true '"1"' 1e0; do
+  tv '"schema_version"' '"schema_version": 1' "\"schema_version\": $v"; ok '[ "$(chk)" = 1 ] && grep -q "schema_version" "$T/out"' "W2-VAL-03: schema_version $v: check fails"
+  tv '"sandbox"' '"schema_version": 1' "\"schema_version\": $v"; ok '[ "$(chk)" = 1 ] && grep -q "sandbox: schema_version" "$T/out"' "W2-VAL-05: sandbox schema_version $v: check fails"
+done
+big() { jq --argjson v "$1" ".roles[\"$R1\"].requirements.min_context_tokens = \$v" "$RF" >"$T/b.json"; }
+big 9007199254740991; ok '[ "$(chk)" = 0 ]' "W2-RT-07: min_context_tokens 2^53-1 passes"
+big 9007199254740992; ok '[ "$(chk)" = 1 ] && grep -q min_context_tokens "$T/out"' "W2-RT-07: min_context_tokens 2^53 fails"
+python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1])); d["roles"][sys.argv[2]]["requirements"]["min_context_tokens"] = 10**39; json.dump(d, open(sys.argv[3], "w"))' "$RF" "$R1" "$T/b.json"
+ok '[ "$(chk)" = 1 ] && grep -q min_context_tokens "$T/out"' "W2-RT-07: min_context_tokens 10^39 fails"
+# W2-RT-04 / W2-RT-08: the fallback opens nothing in every field
+bad ".roles[\"$FB\"].requirements.allowed_data_classes += [\"zz-extra\"]" 'allowed_data_classes' "the fallback allows a data class another role lacks"
+bad ".roles[\"$FB\"].hooks = []" 'hook' "the fallback with no hooks"
+bad ".roles[\"qa-new\"] = (.roles[\"$FB\"] | .hooks = [])" 'qa-new' "a role no profile names, with fewer hooks than the fallback"
+bad ".roles[\"qa-new\"] = (.roles[\"$FB\"] | .hooks = [.hooks[0] | .matcher = \"x\"])" 'qa-new' "a role no profile names, without the fallback's hooks (other matcher)"
+# W2-RT-03: lists the code treats as sets
+bad ".roles[\"$R1\"].allowed_overrides = [\"model\", \"model\"]" 'allowed_overrides' "allowed_overrides with a repeated entry"
+bad '.protected.repo += [.protected.repo[0]]' 'protected' "protected.repo with a repeated entry"
+bad '.protected.home += [.protected.home[0]]' 'protected' "protected.home with a repeated entry"
+bad '.owner_settings += [.owner_settings[0]]' 'owner_settings' "owner_settings with a repeated entry"
+bad ".roles[\"$R1\"].workers = [\"a\", \"a\"]" 'workers' "workers with a repeated entry"
+# W2-RT-05 / W2-RT-06: failures of the read command carry a code, a plain message and one alert line
+mkdir -p "$T/fl" "$T/rs/logs"; printf '#!/usr/bin/env bash\nexit 1\n' >"$T/fl/hermes"; chmod +x "$T/fl/hermes"
+rq() { ESCALATE_SUP_DIR="$T/rs" PATH="$T/fl:$PATH" python3 $S/roles.py requirements "$@" >"$T/ro" 2>"$T/re"; echo $?; }
+: >"$T/rs/logs/alerts.log"
+ok '[ "$(ROLES_FILE=$RF rq no-such-role)" = 1 ] && [ ! -s "$T/ro" ] && grep -q "no-such-role" "$T/re" && grep -q "not in Stella" "$T/re" && [ "$(grep -c "^STL-CFG-311 " "$T/rs/logs/alerts.log")" = 1 ] && grep -q " problem=.*no-such-role" "$T/rs/logs/alerts.log"' "W2-RT-05: unknown role: exit 1, plain catalog message with the name on stderr, exactly one alert line with problem="
+jq 'del(.schema_version)' "$RF" >"$T/b.json"; : >"$T/rs/logs/alerts.log"
+ok '[ "$(ROLES_FILE=$T/b.json rq "$R1")" = 1 ] && [ ! -s "$T/ro" ] && grep -q "role table" "$T/re" && [ "$(grep -c "^STL-CFG-303 " "$T/rs/logs/alerts.log")" = 1 ]' "W2-RT-06: requirements on an invalid table: nothing on stdout, STL-CFG-303 message on stderr, exit 1, one alert line"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
