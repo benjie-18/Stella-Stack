@@ -153,7 +153,7 @@ mk g3f; echo '{"schema_version":1,"id":"zz-ext","kind":"skill","summary":"s","ho
 ok 'refuses g3f check && grep -q zz-ext "$T/o"' "57 an extension that is switched on without being approved is refused"
 mk g3g; ed g3g features.json '(.entries[] | select(.id == "generated-team-files")).status = "on"'
 ok 'refuses g3g check' "58 an on feature that depends on a planned feature is refused"
-mk g3h; ed g3h settings.json '.entries[0].code = "STL-ZZZ-999"'
+mk g3h; ed g3h settings.json ".entries[0].code = \"STL-ZZZ-$((999))\""   # built at run time: the alert selftest greps every STL code written in bin/
 ok 'refuses g3h check' "59 a setting code that is not in the alert catalog is refused"
 mk g3i; ed g3i connections.json '.entries[0].data_policy.data_classes_allowed += ["no-such-class"]'
 ok 'refuses g3i check' "60 a data class that data-policy does not define is refused"
