@@ -2,7 +2,7 @@
 """Write guard (D40, D46): pre_tool_call on write_file, patch, terminal and process_manage for every profile whose role
 installs it (docs/hermes-local/roles.json: the roles whose hook entry says writes: judged). It stops mistaken writes to the main
 checkout; it is not a security boundary, and since F1 W4 round 2 nothing claims it is. A text guard cannot decide what a shell will do,
-so the owner-only write path is three layers, each holding on its own for the roles it covers (docs/contract/README.md, decisions.md):
+so the owner-only write path is three layers, each holding on its own for the roles it covers (the contract's owner-only write path section says it):
  1. a role that runs in the OS box (sandbox.boxed_profiles) has the box as its boundary: the main checkout is read-only there, and the
     owner settings and every owner state path are not mounted;
  2. a role that does not (runs_unboxed: the coordinator, the fallback role) has hooks that refuse every write, not this guard (the table

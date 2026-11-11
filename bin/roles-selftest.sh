@@ -56,12 +56,13 @@ ok '[ "$(g planner-x delegate_task "{}")" = 0 ] && [ "$(g planner-x kanban_unblo
 ok '[ "$(g planner-x kanban_create "{\"title\":\"x\",\"assignee\":\"planner-x\",\"project\":\"proj-a\",\"workspace_kind\":\"worktree\",\"body\":\"x\"}")" = 0 ]' "new role: creates a valid card and is itself an assignable worker"
 ok '[ "$(g planner-x kanban_complete "{\"task_id\":\"t_0000c001\"}")" = 2 ] && grep -q STL-GRD-601 "$T/out"' "new role: completion still needs the card's own run"
 
+ROTF=$(jq -r '[.roles[].hooks[]? | select(.writes == "refused") | .file | select(test("terminal"))][0] | split("/")[-1]' "$RF")   # the refusing terminal hook of the roles outside the box, from the table
 # 3. A profile with no row: the fallback role, nothing opens, one STL-CFG-303 line.
 mk "$H/profiles/x-new"; : >"$SUP/logs/alerts.log"
 rc=$(ap)
 X="$H/profiles/x-new"
 ok '[ "$rc" = 1 ] && grep -q "x-new: no row in roles.json, registering role unlisted" "$T/out" && [ "$(grep -c "^STL-CFG-303" "$SUP/logs/alerts.log")" = 1 ]' "unlisted profile: apply exits 1, says so, one STL-CFG-303 alerts.log line"
-ok 'grep -qF "/workspace/bin/role-guard.py" "$X/config.yaml" && grep -qF "$X/hooks/read-only-terminal.py" "$X/config.yaml" && grep -qF "$X/hooks/deny-write.sh" "$X/config.yaml" && grep -qF "$X/hooks/secret-guard.py" "$X/config.yaml" && [ -s "$X/hooks/read-only-terminal.py" ] && ! grep -qF "write-guard.py" "$X/config.yaml"' "F1 W4 B2 (replaces: write and secret guards): unlisted profile: role guard, the read-only terminal, deny-write and secret guard registered, no write guard (a role outside the box refuses every write; never left unguarded)"
+ok 'grep -qF "/workspace/bin/role-guard.py" "$X/config.yaml" && grep -qF "$X/hooks/$ROTF" "$X/config.yaml" && grep -qF "$X/hooks/deny-write.sh" "$X/config.yaml" && grep -qF "$X/hooks/secret-guard.py" "$X/config.yaml" && [ -s "$X/hooks/$ROTF" ] && ! grep -qF "write-guard.py" "$X/config.yaml"' "F1 W4 B2 (replaces: write and secret guards): unlisted profile: role guard, the read-only terminal, deny-write and secret guard registered, no write guard (a role outside the box refuses every write; never left unguarded)"
 ok '[ "$(g x-new kanban_create "{}")" = 2 ] && [ "$(g x-new delegate_task "{}")" = 2 ] && [ "$(g x-new kanban_complete "{}")" = 2 ]' "unlisted profile: create, delegate and complete refused"
 rm -rf "$X"
 
@@ -276,7 +277,7 @@ jq '(.files[] | select(.id == "capabilities") | .owner_only) = true | (.files[] 
 ok 'od | jq -e "index(\".stella/capabilities.json\") and (index(\".stella/settings.json\") | not)" >/dev/null' "W4 G1: flip a row's owner_only flag in a scratch index and the same file moves in or out of the set, with no other edit"
 printf '{"x": 1}' >"$T/g1/.stella/data-files.json"
 ok '[ "$(od 2>&1 | grep -c RolesError)" -ge 1 ]' "W4 G1: an index that cannot be read raises (every caller refuses)"
-ok '[ "$(python3 -I $S/roles.py owner-data | jq -r "map(select(. == \".stella/schemas\")) | length")" = 1 ] && [ "$(python3 -I $S/roles.py boundary | jq -r "map(select(. == \"docs/hermes-local/roles.json\" or . == \"bin/box.py\" or . == \"$WGF\" or . == \"bin/false-close-guard.py\")) | length")" = 4 ]' "W4 G1/B3: roles.py owner-data and boundary print the sets (the boundary holds the table, the box, the hook files and the commands the table names)"
+ok '[ "$(python3 -I $S/roles.py owner-data | jq -r "map(select(. == \".stella/schemas\")) | length")" = 1 ] && [ "$(python3 -I $S/roles.py boundary | jq -c --argjson want "$(jq -c "[.boundary_paths[]] + [\"$WGF\"] + [([.roles[].hooks[]? | .command // empty][0] | ltrimstr(\"/workspace/\"))]" "$RF")" ". as \$b | \$want | all(. as \$w | \$b | index(\$w) != null)")" = true ]' "W4 G1/B3: roles.py owner-data and boundary print the sets (the boundary holds the table's boundary_paths, the write guard's file and a command the table names)"
 # B1: the apply tool's state paths come from the index
 ok '[ "$(python3 -I -c "import os, sys; sys.path.insert(0, sys.argv[1]); os.environ[\"ROLES_FILE\"] = sys.argv[2]; import roles; print(\" \".join(roles.state_paths(roles.load())))" "$S" "$RF")" = "$(jq -r "[.backup_dir, .applied_state, .event_log] | join(\" \")" /workspace/.stella/data-files.json)" ]' "W4 B1: state_paths = the backup folder, the applied state and the event log, from the index"
 # worker_pins (the commit guard's workspace and branch variables come from the table, not from its code)

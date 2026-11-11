@@ -286,9 +286,10 @@ matrix2() {   # matrix2 <tag> <owner data list> <owner commands list> [light dat
 IDX=$STACK/$(jq -r .data_index "$SRC"); BK=/workspace/$(jq -r .backup_dir "$IDX"); APS=/workspace/$(jq -r .applied_state "$IDX"); EVL=/workspace/$(jq -r .event_log "$IDX")
 MT=$SRC; export ROLES_FILE=$SRC
 say "$(jq -e '(.owner_data | length > 0) and (.owner_commands | length > 0) and (.worker_markers | length > 0)' "$SRC" >/dev/null; echo $?)" "3b the real table has owner_data, owner_commands and worker_markers"
+SETP=$(jq -r '.files[] | select(.id == "settings") | .path' "$IDX")   # an owner_only index row, found by its id
 OWNP=$(ROLES_FILE=$SRC python3 -I "$STACK/bin/roles.py" owner-data | jq -r '.[]')   # G1: the one function (index + owner_only rows + the table's list)
-say "$([ "$(wc -l <<<"$OWNP")" -gt 5 ] && grep -qx '.stella/settings.json' <<<"$OWNP" && grep -qx '.supervisor/limits.env' <<<"$OWNP" && ! grep -qx '.stella/capabilities.json' <<<"$OWNP"; echo $?)" "3b G1: the owner data set holds the index rows with owner_only (settings, limits) and not the capability registry"
-matrix2 "3b real table" "$(jq -r '.owner_data[]' "$SRC"; grep -x '.stella/settings.json' <<<"$OWNP")" "$(jq -r '.owner_commands[]' "$SRC")" "$(grep -vx -e '.stella/settings.json' -e "$(jq -r '.owner_data[0]' "$SRC")" <<<"$OWNP" | grep -v '^config/')"
+say "$([ "$(wc -l <<<"$OWNP")" -gt 5 ] && grep -qx "$SETP" <<<"$OWNP" && grep -qx '.supervisor/limits.env' <<<"$OWNP" && ! grep -qx '.stella/capabilities.json' <<<"$OWNP"; echo $?)" "3b G1: the owner data set holds the index rows with owner_only (settings, limits) and not the capability registry"
+matrix2 "3b real table" "$(jq -r '.owner_data[]' "$SRC"; grep -x "$SETP" <<<"$OWNP")" "$(jq -r '.owner_commands[]' "$SRC")" "$(grep -vx -e "$SETP" -e "$(jq -r '.owner_data[0]' "$SRC")" <<<"$OWNP" | grep -v '^config/')"
 jq '.owner_data += ["zz-odata/sub"] | .owner_commands += ["tools/zz-owner-cmd.sh"]' "$SRC" >"$T/extra.json"; MT=$T/extra.json; export ROLES_FILE=$MT
 matrix2 "3b extra entries" "zz-odata/sub" "tools/zz-owner-cmd.sh"
 MT=$SRC; export ROLES_FILE=$SRC

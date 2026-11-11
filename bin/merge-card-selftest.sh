@@ -143,6 +143,7 @@ ok '[ "$(cd "$T/repo" && FAKE_UNREADABLE=1 FAKE_APPROVED=t_00000014 "$M" t_00000
 # F1 W4 round 2 (B3): the merge is the single place every card change passes. Owner data is refused however the commit was made, the boundary
 # itself needs the owner's explicit flag, and an ordinary branch (the cases above) merges as before.
 export ESCALATE_SUP_DIR=$T/sup; mkdir -p "$T/sup/logs"; : >"$T/sup/logs/alerts.log"
+SETP=$(jq -r '.files[] | select(.id == "settings") | .path' "/workspace/$(jq -r .data_index /workspace/docs/hermes-local/roles.json)")   # an owner_only index row, found by its id
 mkdir -p "$T/repo/.stella/extensions" "$T/repo/.stella/schemas"; printf '{}\n' >"$T/repo/.stella/extensions/zz-own.json"; printf '{}\n' >"$T/repo/.stella/schemas/zz.schema.json"
 g add -f .stella; g -c core.hooksPath=/dev/null commit -qm "owner data, as the owner committed it"
 wcard() {  # wcard <id>: a worktree on a new branch off main; the commands that change it follow
@@ -152,10 +153,10 @@ wcommit() {  # wcommit <id>: commit everything staged in the worktree, no hook
 wcard t_0000c001   # plumbing only: hash-object, update-index --cacheinfo, write-tree, commit-tree, update-ref (no commit hook ever runs)
 W1=$T/repo/.worktrees/t_0000c001
 sha=$(printf '{"x": 1}\n' | git -C "$W1" hash-object -w --stdin)
-git -C "$W1" update-index --add --cacheinfo 100644,$sha,.stella/settings.json
+git -C "$W1" update-index --add --cacheinfo 100644,$sha,$SETP
 tr1=$(git -C "$W1" write-tree); c1=$(git -C "$W1" commit-tree "$tr1" -p HEAD -m plumbing); git -C "$W1" update-ref refs/heads/stella/t_0000c001-x "$c1"; git -C "$W1" reset -q --hard
 h=$(head_of "$T/repo")
-ok '[ "$(FAKE_APPROVED=t_0000c001 mc t_0000c001)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -q ".stella/settings.json" "$T/out" && grep -q "nothing was merged" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ] && [ "$(grep -c "^STL-CFG-312 " "$T/sup/logs/alerts.log")" = 1 ]' "B3: an owner-data file added by plumbing (hash-object, update-index, commit-tree, update-ref): refused with the code, one alert line, main untouched"
+ok '[ "$(FAKE_APPROVED=t_0000c001 mc t_0000c001)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -qF "$SETP" "$T/out" && grep -q "nothing was merged" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ] && [ "$(grep -c "^STL-CFG-312 " "$T/sup/logs/alerts.log")" = 1 ]' "B3: an owner-data file added by plumbing (hash-object, update-index, commit-tree, update-ref): refused with the code, one alert line, main untouched"
 ok '[ "$(mc t_0000c001 --owner-approved)" = 3 ] && grep -q "owner data" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "B3: --owner-approved does not lift it (owner data changes only through the apply tool)"
 wcard t_0000c002; git -C "$T/repo/.worktrees/t_0000c002" mv .stella/extensions/zz-own.json moved-out.json; wcommit t_0000c002
 ok '[ "$(FAKE_APPROVED=t_0000c002 mc t_0000c002)" = 3 ] && grep -q ".stella/extensions/zz-own.json" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "B3: a rename out of an owner folder is refused (both sides of a rename count)"

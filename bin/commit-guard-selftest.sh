@@ -90,6 +90,7 @@ ok '[ "$(guard "$R" GIT_AUTHOR_EMAIL=test@test.com)" = 1 ] && grep -q "test@test
 ok '[ "$(guard "$R" GIT_AUTHOR_EMAIL=)" = 1 ] && grep -q "empty" "$T/err"' "empty author email refused"
 # F1 W4 round 2 (G3, G1): the staged names are read whole (-z, no rename detection); owner data is the one definition in bin/roles.py.
 WK=(HERMES_KANBAN_WORKSPACE="$W" HERMES_KANBAN_BRANCH="$BR")
+SETP=$(jq -r '.files[] | select(.id == "settings") | .path' "/workspace/$(jq -r .data_index /workspace/docs/hermes-local/roles.json)")   # an owner_only index row, found by its id
 mkdir -p "$W/.stella/extensions" "$W/.stella/schemas"; echo x >"$W/.stella/schemas/zz-w4.json"
 git -C "$W" add -f .stella/schemas/zz-w4.json && git -C "$W" -c core.hooksPath=/dev/null commit -q -m "owner data, as the owner committed it"
 echo x >"$W/.stella/extensions/é.json"; git -C "$W" add -f ".stella/extensions/é.json"
@@ -103,9 +104,9 @@ git -C "$W" rm -q .stella/schemas/zz-w4.json
 ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "G3: a deletion of owner data: refused for a worker"
 ok '[ "$(guard "$W")" = 0 ]' "G3: the same deletion by the owner: allowed"
 git -C "$W" reset -q --hard
-mkdir -p "$W/.stella"; echo x >"$W/.stella/settings.json"; echo x >"$W/.stella/capabilities.json"; echo x >"$W/.stella/test-map.json"
-git -C "$W" add -f .stella/settings.json
-ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "G1: a worker staging an owner_only index row (settings.json): refused"
+mkdir -p "$W/.stella"; echo x >"$W/$SETP"; echo x >"$W/.stella/capabilities.json"; echo x >"$W/.stella/test-map.json"
+git -C "$W" add -f "$SETP"
+ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "G1: a worker staging an owner_only index row (the settings row): refused"
 git -C "$W" reset -q; git -C "$W" add -f .stella/capabilities.json .stella/test-map.json
 ok '[ "$(guard "$W" "${WK[@]}")" = 0 ]' "G1: a worker staging the capability registry and the test map (rows that are not owner-only; product rules 4 and 8): allowed"
 git -C "$W" reset -q
@@ -114,8 +115,8 @@ GT=$T/gt; mkdir -p "$GT/bin" "$GT/docs/hermes-local" "$GT/.stella"; cp "$CG" /wo
 jq '(.files[] | select(.id == "capabilities") | .owner_only) = true | (.files[] | select(.id == "settings") | .owner_only) = false' /workspace/.stella/data-files.json >"$GT/.stella/data-files.json"
 git -C "$W" add -f .stella/capabilities.json
 ok '[ "$(CG=$GT/bin/commit-guard.sh guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "G1: capabilities.json made owner_only in a scratch index: now refused for a worker"
-git -C "$W" reset -q; git -C "$W" add -f .stella/settings.json
-ok '[ "$(CG=$GT/bin/commit-guard.sh guard "$W" "${WK[@]}")" = 0 ]' "G1: settings.json made not owner_only in the scratch index: now allowed (no other edit)"
+git -C "$W" reset -q; git -C "$W" add -f "$SETP"
+ok '[ "$(CG=$GT/bin/commit-guard.sh guard "$W" "${WK[@]}")" = 0 ]' "G1: the settings row made not owner_only in the scratch index: now allowed (no other edit)"
 git -C "$W" reset -q
 printf '{}' >"$GT/.stella/data-files.json"; git -C "$W" add -f .stella/capabilities.json
 ok '[ "$(CG=$GT/bin/commit-guard.sh guard "$W")" = 1 ] && grep -qi "cannot be read" "$T/err"' "G1: an index the guard cannot read: every commit is refused, the owner's too (fail closed)"
