@@ -43,22 +43,31 @@ and `get`, `list` and `search` never read it. The index row of the index is `own
 Schemas use a small JSON Schema subset (the list is in the docstring of `bin/stella_data.py`). A schema that uses any
 other keyword is an error, never ignored; so is a keyword with a wrong value (`required` as a string, an external `$ref`).
 `const` and `enum` compare by JSON type (`true` is not 1); `pattern` is read as ECMA-262 does, so `$` is the very end of the
-value. Data files are strict JSON: a repeated key, NaN and Infinity are errors. A problem message never prints the rejected
-value, only its JSON type and, for a string, its length. Every data file needs `schema_version`. `check` also runs the
+value. Data files are strict JSON: a repeated key, NaN and Infinity are errors. A problem line (schema or cross-file) never
+prints a value taken from the file under check unless that value is an id that exists in the data (an entry id, a role, a
+provider); otherwise it names the field and gives the JSON type and, for a string, its length. File paths from the index are
+printed: they locate the file. Numbers must fit a float, strings must be valid Unicode text, and nesting is limited to 64 levels
+(one limit for `check` and the read commands). Every data file needs `schema_version`. `check` also runs the
 cross-file rules: role assignments against the connections catalog, the effort modes and the data policy (a project scope
 needs `project`, a card scope needs `project` and `card`, a global scope has neither; project ids are lower case; one
-assignment per scope, role and effort mode; no chain entry names a provider that is switched off; the role table's
+assignment per scope, role and effort mode; no chain entry names a provider that is switched off, and its provider allows every data class of the role (`requirements.allowed_data_classes`; an empty `data_classes_allowed` allows none); one card id belongs to one project; the role table's
 `fallback_role` is not a role to assign or allow); `depends_on` in features (no missing target, no cycle, an `on` feature
 depends only on `on` features); `allowed_roles` against the role table; a setting's store, default and `code` (it must
 exist in the alert catalog) against the index and the registry itself; an extension is `enabled` only when `approved`; data
-class names against data-policy `data_classes`. The role table (the index's `role_table`, `.stella/schemas/roles.schema.json`) is valid only when both its schema and the validation in `bin/roles.py` pass (the rules the schema subset cannot say live there); `check` and `validate roles <file>` run both, and `validate roles` also applies the data-class rule to a candidate file. `check <id>` prints that file's problems plus every cross-file problem and
+class names against data-policy `data_classes`; a provider with locality `local` lists at least one host and only hosts in data-policy `local_hosts`;
+a provider or channel states `allowed_roles` and `risk_class`; approved hosts have real dates and expire after approval; a setting
+that is not `secret` is not stored under a key its store row redacts. The rules find a file by the row's `schema`, so a renamed row
+switches none off; when a file a rule needs has no JSON row, `check` says the rule could not run and exits 1. The index row that
+describes the index must be `owner_only`, and `check data-files` reports everything a full `check` reports. The role table (the index's `role_table`, `.stella/schemas/roles.schema.json`) is valid only when both its schema and the validation in `bin/roles.py` pass (the rules the schema subset cannot say live there); `check` and `validate roles <file>` run both, and `validate roles` also applies the data-class rule to a candidate file. `check <id>` prints that file's problems plus every cross-file problem and
 every "could not run" problem, so a candidate file can be judged on its own; it exits 1 when any exists. `check` also says
 which env-format rows it did not open (their keys are read by the apply tool, never here).
 
 Read commands fail closed: a file that is malformed, nested too deeply, not an object or fails its schema gives exit 1 and one
 `STL-CFG-310` line naming it, never a traceback and never an empty result. `get` on an env-format row says the id is known and
-not readable through this tool (no alert line). `get` and `search` mask the value of any key matching the row's `redact_keys`
-and the default of a `secret` setting. `search` matches values, not key names, ignoring case (also non-ASCII text).
+not readable through this tool (no alert line). `get`, `list` and `search` mask the value of any key matching the row's `redact_keys` (at any depth, so a key pasted into
+a free-form object such as `parameters`, `cost` or `limits` is masked) and the default of a `secret` setting; `check` refuses a
+`redact_keys` pattern that is not a regular expression. A command that fails in a way not listed here ends in exit 1 and one
+`STL-CFG-310` line naming only the exception type. `search` matches values, not key names, ignoring case (also non-ASCII text).
 
 **Secrets are names only.** A `secrets` field holds variable names such as `SOME_API_KEY`, never a value. The schema enforces
 a shape: upper case letters, digits and underscores, starting with a letter, with at least one underscore, at most 64
@@ -77,27 +86,27 @@ purpose), `auth_types[]`, `secrets[]` (names), `actions[]` (id and approval clas
 pay, delete need approval first; sign_in is an escalation), `models[]` (id, probed `capabilities`: `tool_calling`,
 `json_mode`, `context_tokens`, `vision`, `streaming`, each a value or null for not probed; `probed_at`, `probe_source`),
 `data_policy` (retention, training use, region, zero retention, `data_classes_allowed`; an empty list allows no class)
-`tos` (`status`, `unverified` is a legal value; `subscription_login_by_agent` is the declared automated-agent terms flag:
-`unverified`, `allowed`, `forbidden` or `not_applicable`), `scopes[]` (the access scopes it asks for), `redaction_patterns[]`
-(regular expressions masked in its logs) and, optionally, `allowed_roles[]` and `risk_class`. *To add one:* append an entry; an aggregator proxy is a provider with
+`tos` (`status`, `unverified` is a legal value; `subscription_login_by_agent` is required and is the declared automated-agent terms flag:
+`unverified`, `allowed`, `forbidden` or `not_applicable`; no other key), `scopes[]` (the access scopes it asks for), `redaction_patterns[]`
+(Python regular expressions masked in its logs) and `allowed_roles[]` and `risk_class` (required on a provider and a channel; `[]` allows no role). *To add one:* append an entry; an aggregator proxy is a provider with
 `subkind: openai-compatible-aggregator`, disabled until the owner turns it on, with its own outbound hosts in `hosts`.
 
 ### `.stella/data-policy.json`
-`data_classes[]`, a `default` and `projects{}`; each has `mode` (`open`, `local_only`, `allowed_providers`) and
+`data_classes[]`, `local_hosts[]` (the host names that count as local; a provider declared local may list only these), a `default` and `projects{}`; each has `mode` (`open`, `local_only`, `allowed_providers`) and
 `allowed_providers[]`. *To add a project rule:* add a key under `projects`.
 
 ### `.stella/role-assignments.json`
 `effort_modes{}` (allowed localities and `no_silent_fallback` for standard, eco, max, local_only) and `assignments[]`:
 `scope` (`level` global, project or card, with `project` or `card`), `role`, `effort_mode`, and an ordered `chain[]` of
-`{provider, model, parameters}`. **Precedence:** the data policy first, then the card, then the project, then the global
+`{provider, model, parameters}`; effort-mode ids are lower case ASCII like other ids. **Precedence:** the data policy first, then the card, then the project, then the global
 assignment. An override never widens the data policy: `check` refuses a chain entry the policy forbids for its project.
 It also refuses an unknown provider, model, role or mode, an empty chain, and a provider whose locality the mode forbids.
 The resolver that applies the precedence is built in a later phase; this file is the data and the validator.
 *To add one:* append an assignment with a new `id`.
 
 ### `.stella/approved-hosts.json`
-`hosts[]`: host (a host name; `*` alone is refused), port, scope and approved_by (not empty), approved_at and expires_at
-(`YYYY-MM-DDTHH:MM:SSZ`, UTC; expires_at may be null). One entry per host and port. Ships empty. The live firewall does not read it yet.
+`hosts[]`: host (a host name; a wildcard `*.` needs at least two labels after it, so `*.com` is refused), port, scope and approved_by (not empty), approved_at and expires_at
+(`YYYY-MM-DDTHH:MM:SSZ`, UTC, real dates; expires_at may be null and is after approved_at). One entry per host and port. Ships empty. The live firewall does not read it yet.
 
 ### `.stella/capabilities.json` (capability registry)
 One schema for tools, skills, MCP servers, commands and extensions: `id`, `kind`, `summary`, `keywords`, `inputs`,

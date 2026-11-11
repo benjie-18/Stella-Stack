@@ -21,7 +21,9 @@
       "schema": "connections",
       "format": "json",
       "owner_only": false,
-      "redact_keys": [],
+      "redact_keys": [
+        "(?i)(key|token|secret|password|passwd|credential|authorization)$"
+      ],
       "list_key": "entries",
       "id_field": "id"
     },
@@ -41,7 +43,9 @@
       "schema": "role-assignments",
       "format": "json",
       "owner_only": true,
-      "redact_keys": [],
+      "redact_keys": [
+        "(?i)(key|token|secret|password|passwd|credential|authorization)$"
+      ],
       "list_key": "assignments",
       "id_field": "id"
     },

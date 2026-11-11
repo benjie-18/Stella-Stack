@@ -490,6 +490,18 @@
       "resolvable": false
     },
     {
+      "code": "STL-CFG-319",
+      "area": "CFG",
+      "severity": "warning",
+      "title": "a data file is known but not readable through this tool",
+      "message": "A request named a data file that Stella knows but is not readable through this tool: {problem}. It was refused and nothing was changed.",
+      "action": "the file's keys are read by the apply tool; use that tool, or name a JSON data file. See STL-CFG-319 in docs/alert-codes.md.",
+      "cause": "The data file is in env format; the owner's file is never opened by this tool.",
+      "check": "`python3 bin/stella_data.py list` shows the data files and their formats.",
+      "related": "F1 contract data; bin/stella_data.py",
+      "resolvable": false
+    },
+    {
       "code": "STL-GRD-601",
       "area": "GRD",
       "severity": "warning",

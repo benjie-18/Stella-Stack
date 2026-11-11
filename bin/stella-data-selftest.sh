@@ -14,7 +14,7 @@ mk() {  # <name>: a scratch root with a copy of the data and the role table
 ed() { local f="$T/$1/.stella/$2"; jq "$3" "$f" >"$f.n" && mv "$f.n" "$f"; }   # <root name> <file> <jq filter>
 sd() { STELLA_ROOT=$T/$1 python3 -I "$SD" "${@:2}"; }                          # <root name> <args...>
 conn() {  # <id> <kind> <subkind> <locality>: a complete connections entry as jq text
-  echo "{id:\"$1\",kind:\"$2\",subkind:\"$3\",label:\"Fake $1\",enabled:true,locality:\"$4\",hosts:[{host:\"$1.example.invalid\",port:443,purpose:\"api\"}],auth_types:[\"api_key\"],secrets:[\"FAKE_KEY\"],actions:[{id:\"go\",approval_class:\"write\"}],models:[{id:\"$1-model\",capabilities:{tool_calling:null,json_mode:null,context_tokens:null,vision:null,streaming:null},probed_at:null,probe_source:null}],data_policy:{retention:null,training_use:null,region:null,zero_retention_available:null,data_classes_allowed:[]},tos:{status:\"unverified\"}}"
+  echo "{id:\"$1\",kind:\"$2\",subkind:\"$3\",label:\"Fake $1\",enabled:true,locality:\"$4\",hosts:[{host:\"$1.example.invalid\",port:443,purpose:\"api\"}],auth_types:[\"api_key\"],secrets:[\"FAKE_KEY\"],actions:[{id:\"go\",approval_class:\"write\"}],models:[{id:\"$1-model\",capabilities:{tool_calling:null,json_mode:null,context_tokens:null,vision:null,streaming:null},probed_at:null,probe_source:null}],data_policy:{retention:null,training_use:null,region:null,zero_retention_available:null,data_classes_allowed:[\"public\",\"internal\",\"client\"]},tos:{status:\"unverified\",subscription_login_by_agent:\"unverified\"},allowed_roles:[],risk_class:\"read\"}"
 }
 refuses() { local r=$1; shift; ! sd "$r" "$@" >"$T/o" 2>&1; }                 # <root name> <args...>: exits non-zero, output in $T/o
 alerts() { cat "$T/sup/logs/alerts.log" 2>/dev/null | wc -l; }
@@ -66,7 +66,7 @@ ok 'refuses bad2 check && grep -q "schema_version" "$T/o"' "20 a data file witho
 mk bad3; jq '.properties.entries.contains = {}' "$T/bad3/.stella/schemas/connections.schema.json" >"$T/bad3/s" && mv "$T/bad3/s" "$T/bad3/.stella/schemas/connections.schema.json"
 ok 'refuses bad3 check && grep -q "contains" "$T/o"' "21 a schema keyword the validator does not know is an error, never ignored"
 mk bad4; ed bad4 role-assignments.json '.assignments[0].chain[0].provider = "no-such-provider"'
-ok 'refuses bad4 check && grep -q "no-such-provider" "$T/o"' "22 a dangling provider reference in a role assignment is refused"
+ok 'refuses bad4 check && grep -q "chain\[0\].provider" "$T/o" && ! grep -q "no-such-provider" "$T/o"' "22 a dangling provider reference in a role assignment is refused, and the line names the field, not the value"
 mk bad5; ed bad5 role-assignments.json '.assignments[0].chain[0].model = "no-such-model"'
 ok '! sd bad5 check >/dev/null 2>&1' "23 an unknown model in a chain is refused"
 mk bad6; ed bad6 role-assignments.json '.assignments[0].role = "no-such-role"'
@@ -136,7 +136,7 @@ ok 'refuses g2c check && refuses g2c list extensions && ! sd g2c get extensions 
 ok '[ "$(jq -r ".files[] | select(.id == \"data-files\") | .owner_only" "$ROOT/.stella/data-files.json")" = true ]' "50 the index row of the index is owner-only"
 # G3 cross-file rules
 mk g3a; ed g3a role-assignments.json '.assignments[0].role = "ghost"'
-ok 'refuses g3a check connections && grep -q ghost "$T/o"' "51 check <id> also prints the cross-file problems"
+ok 'refuses g3a check connections && grep -q "role-assignments" "$T/o" && grep -q "assignable role" "$T/o" && ! grep -q ghost "$T/o"' "51 check <id> also prints the cross-file problems"
 mk g3b; ed g3b data-policy.json '.projects["cx"] = {mode:"local_only",allowed_providers:[]}'
 ed g3b role-assignments.json '.assignments += [{id:"zz",scope:{level:"card",card:"c1"},role:"builder",effort_mode:"standard",chain:[{provider:"claude-subscription",model:"haiku",parameters:{}}]}]'
 ok 'refuses g3b check' "52 a card assignment with no project is refused, not judged by the open default"
@@ -214,7 +214,7 @@ for f in '.profiles["qa-p"] = {"role": "qa-no-such-role"}' '.fallback_role = "qa
   ok 'refuses rt'$n' check && grep -q "^STL-CFG-310 " "$T/o"' "81.$n check refuses the same table in the index's role_table, as STL-CFG-310 lines"
 done
 mk rtd; jq '.roles["qa-x"] = .roles.'"$FB"' | .roles["qa-x"].requirements.allowed_data_classes = ["public","bogus"]' "$RT" >"$T/rtd.json"
-ok 'refuses rtd validate roles "$T/rtd.json" && [ "$(grep -c "^STL-CFG-310 " "$T/o")" = 1 ] && grep -q bogus "$T/o"' "82 a data class the data policy does not define: validate roles refuses it, one STL-CFG-310 line naming it"
+ok 'refuses rtd validate roles "$T/rtd.json" && [ "$(grep -c "^STL-CFG-310 " "$T/o")" = 1 ] && grep -q "qa-x" "$T/o" && grep -q "allowed_data_classes\[1\]" "$T/o" && ! grep -q bogus "$T/o"' "82 a data class the data policy does not define: validate roles refuses it, one STL-CFG-310 line naming it"
 ok '! grep -q "stella_data" "$BIN/roles.py"' "83 bin/roles.py does not import stella_data (it runs inside guards)"
 # ---- F1 W1 fix round 2 (QA round 2): P policy, M no leaks, L loader, I index, S schemas ----
 V=sk-ant-api03-qafake0123456789abcdef   # lower case on purpose: it fits the id pattern

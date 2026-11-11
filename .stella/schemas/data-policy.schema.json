@@ -66,13 +66,24 @@
       "propertyNames": {
         "pattern": "^[a-z0-9][a-z0-9._:-]*$"
       }
+    },
+    "local_hosts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$",
+        "maxLength": 253
+      },
+      "uniqueItems": true,
+      "description": "Host names that count as local: a provider with locality local may list only these."
     }
   },
   "required": [
     "schema_version",
     "data_classes",
     "default",
-    "projects"
+    "projects",
+    "local_hosts"
   ],
   "additionalProperties": false
 }
