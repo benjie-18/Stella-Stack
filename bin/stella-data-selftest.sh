@@ -161,7 +161,7 @@ ok 'refuses g3h check' "59 a setting code that is not in the alert catalog is re
 mk g3i; ed g3i connections.json '.entries[0].data_policy.data_classes_allowed += ["no-such-class"]'
 ok 'refuses g3i check' "60 a data class that data-policy does not define is refused"
 # G4 schemas and entries
-mk g4a; ed g4a connections.json '.entries[0] += {scopes:["read"],redaction_patterns:["sk-[A-Za-z0-9]+"],allowed_roles:["builder"],risk_class:"read"} | .entries[1].tos.subscription_login_by_agent = "allowed"'
+mk g4a; ed g4a connections.json '.entries[0] += {scopes:["read"],redaction_patterns:["sk-[A-Za-z0-9]+"],allowed_roles:'"$AR"',risk_class:"read"} | .entries[1].tos.subscription_login_by_agent = "allowed"'
 ok 'sd g4a check' "61 connections accept scopes, redaction_patterns, allowed_roles, risk_class and the declared agent ToS flag"
 ed g4a connections.json '.entries[1].tos.subscription_login_by_agent = "maybe"'
 ok 'refuses g4a check' "62 the agent ToS flag takes only its declared values"
