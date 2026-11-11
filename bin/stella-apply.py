@@ -159,7 +159,7 @@ def alias_problem(idx, rows):
         + [(f"the file of {r['id']}", r["path"]) for r in rows]
     seen, found = {}, []
     for what, rel in named:
-        p = sd.safe(rel)
+        p = os.path.realpath(os.path.join(el.ROOT, rel))   # confinement and links are refused where a path is used (el.path)
         try:
             st = os.stat(p)
         except OSError:
@@ -167,7 +167,7 @@ def alias_problem(idx, rows):
         keys = [("name", p.casefold())] + ([("file", st.st_dev, st.st_ino)] if st else [])
         for k in keys:
             if k in seen:
-                return f"{what} and {seen[k]} are the same file; the index must name each file once"
+                return f"{what} and {seen[k]} are the same file (one name for it, or a hard link or a link); the index must name each file once"
         seen.update(dict.fromkeys(keys, what))
         found.append((what, p, st))
     for what, p, st in found:
