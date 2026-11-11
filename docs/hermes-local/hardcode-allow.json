@@ -1,13 +1,32 @@
 {
   "schema_version": 1,
   "about": "Literals that look like a profile, model, provider, board, host or channel name but are not stack data, read by the name checks in the selftests (D47, K12: bin/hardcode-lint-selftest.sh). own_names: the stack's own names (data folder, tool and marker names), removed in every file before counting. allow: exact text removed before counting in one file (where the word comes from, and the phase that may remove it). baseline: at most `count` whole-word uses of `literal` in `file`, each with the phase that removes it; one more use, or a new literal, fails the suite. watch: literals no data file holds yet (other channels, Claude model names), counted like the data literals (B2V-05).",
+  "scan": [
+    "bin/**/*", "scripts/**/*", ".claude/hooks/*", ".devcontainer/init-firewall.sh", "docs/hermes-local/hooks/**/*",
+    "docs/hermes-local/plugins/**/*", "docs/hermes-local/soul/*.md", "docs/hermes-local/board.md", "docs/hermes-local/review-prompt.txt",
+    "docs/stella-recover.ps1", "opencode.json"
+  ],
+  "skip": [
+    {"file": "bin/*-selftest.sh", "why": "a selftest plants names to prove the lint and the guards; its own fake names are not stack code"},
+    {"file": "*/__pycache__/*", "why": "compiled caches, not source and not tracked"}
+  ],
+  "plain_words": [
+    {"word": "default", "why": "the root profile's name, which the agent runtime owns (Hermes's own word), and a common word"},
+    {"word": "builder", "why": "a common word of the language (the worker that builds); the role table names it, the profiles are builder-claude and builder-local, which are counted"},
+    {"word": "dispatcher", "why": "a common word of the language (the one that sends work on)"},
+    {"word": "look", "why": "a common word of the language (the verb)"},
+    {"word": "validator", "why": "a common word of the language (one who checks)"},
+    {"word": "unlisted", "why": "a common word of the language (not on a list)"}
+  ],
   "own_names": [
     {"text": ".stella", "why": "the stack's data folder, where the contract data lives; not the project slug of the same name", "phase": "permanent (folder name)"},
     {"text": "stella-rules", "why": "the SOUL region marker, the stack's name, not the project slug", "phase": "permanent (marker in live SOULs)"},
     {"text": "stella-apply", "why": "the apply tool's own file name (bin/stella-apply.py), not the project slug", "phase": "permanent (file name)"},
+    {"text": "stella-data", "why": "the data tool's selftest name in bin/selftests.sh (bin/stella-data-selftest.sh), not the project slug", "phase": "permanent (file name)"},
     {"text": "stella-recover.ps1", "why": "the recovery script's file name in docs/", "phase": "permanent (file name)"}
   ],
   "allow": [
+    {"file": "bin/kanban-board.sh", "text": "KANBAN_BOARD=ai-stack", "why": "the one place that names the board: the data line the lint reads the board from (L3)", "phase": "permanent (the board value; the lint reads it here)"},
     {"file": "bin/role-guard.py", "text": "a.get(\"reviewer\")", "why": "the argument name of Hermes's kanban_request_review tool (tools/kanban_tools.py), not a profile name", "phase": "permanent (Hermes API)"}
   ],
   "baseline": [
@@ -99,7 +118,28 @@
     {"file": "docs/hermes-local/soul/builder-local.md", "literal": "discord", "count": 1, "phase": "to place (F1 W5: the channel entry id of the connections catalog, also an English word in prose and in the discord: delivery prefix; goes with the #alerts delivery defaults, session 2, A7)"},
     {"file": "docs/hermes-local/soul/default.md", "literal": "discord", "count": 2, "phase": "to place (F1 W5: the channel entry id of the connections catalog, also an English word in prose and in the discord: delivery prefix; goes with the #alerts delivery defaults, session 2, A7)"},
     {"file": "docs/hermes-local/soul/reviewer-claude.md", "literal": "discord", "count": 1, "phase": "to place (F1 W5: the channel entry id of the connections catalog, also an English word in prose and in the discord: delivery prefix; goes with the #alerts delivery defaults, session 2, A7)"},
-    {"file": "docs/hermes-local/soul/reviewer.md", "literal": "discord", "count": 1, "phase": "to place (F1 W5: the channel entry id of the connections catalog, also an English word in prose and in the discord: delivery prefix; goes with the #alerts delivery defaults, session 2, A7)"}
+    {"file": "docs/hermes-local/soul/reviewer.md", "literal": "discord", "count": 1, "phase": "to place (F1 W5: the channel entry id of the connections catalog, also an English word in prose and in the discord: delivery prefix; goes with the #alerts delivery defaults, session 2, A7)"},
+    {"file": ".devcontainer/init-firewall.sh", "literal": "api.anthropic.com", "count": 1, "phase": "to place (F1 W5 r2: the firewall host list is human-gated (Plan 12.1); the host belongs in the connections catalog or the approved hosts, the script reads it)"},
+    {"file": ".devcontainer/init-firewall.sh", "literal": "discord", "count": 9, "phase": "to place (F1 W5 r2: the firewall host list is human-gated (Plan 12.1); the host belongs in the connections catalog or the approved hosts, the script reads it)"},
+    {"file": ".devcontainer/init-firewall.sh", "literal": "discord.com", "count": 4, "phase": "to place (F1 W5 r2: the firewall host list is human-gated (Plan 12.1); the host belongs in the connections catalog or the approved hosts, the script reads it)"},
+    {"file": ".devcontainer/init-firewall.sh", "literal": "gateway.discord.gg", "count": 3, "phase": "to place (F1 W5 r2: the firewall host list is human-gated (Plan 12.1); the host belongs in the connections catalog or the approved hosts, the script reads it)"},
+    {"file": ".devcontainer/init-firewall.sh", "literal": "host.docker.internal", "count": 4, "phase": "to place (F1 W5 r2: the firewall host list is human-gated (Plan 12.1); the host belongs in the connections catalog or the approved hosts, the script reads it)"},
+    {"file": ".devcontainer/init-firewall.sh", "literal": "openrouter.ai", "count": 3, "phase": "to place (F1 W5 r2: the firewall host list is human-gated (Plan 12.1); the host belongs in the connections catalog or the approved hosts, the script reads it)"},
+    {"file": "bin/box.py", "literal": "red-team", "count": 3, "phase": "to place (F1 W5 r2: the role name red-team belongs to the role table; the hook or sandbox code reads it from roles.json)"},
+    {"file": "bin/crontab.txt", "literal": "#alerts", "count": 1, "phase": "to place (F1 W5 r2: the cron delivery target (the #alerts and #escalations channels and the discord: prefix) goes with the #alerts delivery defaults, session 2, A7)"},
+    {"file": "bin/crontab.txt", "literal": "#escalations", "count": 1, "phase": "to place (F1 W5 r2: the cron delivery target (the #alerts and #escalations channels and the discord: prefix) goes with the #alerts delivery defaults, session 2, A7)"},
+    {"file": "bin/crontab.txt", "literal": "discord", "count": 1, "phase": "to place (F1 W5 r2: the cron delivery target (the #alerts and #escalations channels and the discord: prefix) goes with the #alerts delivery defaults, session 2, A7)"},
+    {"file": "bin/selftests.sh", "literal": "#alerts", "count": 1, "phase": "to place (F1 W5 r2: the suite lists selftests by name, and the names contain reviewer-claude; the list belongs in the test map, and the #alerts word is a comment)"},
+    {"file": "bin/selftests.sh", "literal": "reviewer", "count": 1, "phase": "to place (F1 W5 r2: the suite lists selftests by name, and the names contain reviewer-claude; the list belongs in the test map, and the #alerts word is a comment)"},
+    {"file": "bin/selftests.sh", "literal": "reviewer-claude", "count": 1, "phase": "to place (F1 W5 r2: the suite lists selftests by name, and the names contain reviewer-claude; the list belongs in the test map, and the #alerts word is a comment)"},
+    {"file": "docs/hermes-local/hooks/default/read-only-terminal.py", "literal": "red-team", "count": 2, "phase": "to place (F1 W5 r2: the role name red-team belongs to the role table; the hook or sandbox code reads it from roles.json)"},
+    {"file": "docs/hermes-local/plugins/os-box/__init__.py", "literal": "red-team", "count": 1, "phase": "to place (F1 W5 r2: the role name red-team belongs to the role table; the hook or sandbox code reads it from roles.json)"},
+    {"file": "docs/hermes-local/review-prompt.txt", "literal": "reviewer", "count": 1, "phase": "to place (F1 W5 r2: English role noun in the prompt text (the reviewer role); the prompt is not data the lint can fill)"},
+    {"file": "opencode.json", "literal": "haiku", "count": 2, "phase": "to place (F1 W5 r2: the coding tool's model map names Claude models, the local model and its host; they belong in the connections catalog and the model policy (session 2, A7))"},
+    {"file": "opencode.json", "literal": "host.docker.internal", "count": 1, "phase": "to place (F1 W5 r2: the coding tool's model map names Claude models, the local model and its host; they belong in the connections catalog and the model policy (session 2, A7))"},
+    {"file": "opencode.json", "literal": "opus", "count": 2, "phase": "to place (F1 W5 r2: the coding tool's model map names Claude models, the local model and its host; they belong in the connections catalog and the model policy (session 2, A7))"},
+    {"file": "opencode.json", "literal": "qwen3.5:9b-64k", "count": 2, "phase": "to place (F1 W5 r2: the coding tool's model map names Claude models, the local model and its host; they belong in the connections catalog and the model policy (session 2, A7))"},
+    {"file": "opencode.json", "literal": "sonnet", "count": 2, "phase": "to place (F1 W5 r2: the coding tool's model map names Claude models, the local model and its host; they belong in the connections catalog and the model policy (session 2, A7))"}
   ],
   "watch": ["#escalations", "#supervisor", "opus", "sonnet", "haiku"]
 }

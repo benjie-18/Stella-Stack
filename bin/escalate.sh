@@ -2,7 +2,7 @@
 # The only sanctioned way to run Claude Opus, Haiku or Sonnet: card-scoped, logged, rate-limited.
 # usage: escalate.sh <card-id> <haiku|sonnet|opus> <purpose> <reason...> [-- <extra claude args>]
 #   prompt on stdin; opus purpose must be in OPUS_PURPOSES (plan runs --model opusplan).
-# Exit: 0 ok, 2 usage, 3 over a limit (never retried), 75 pool exhausted, else claude's exit code.
+# Exit: 0 ok, 2 usage or a refusal (a setting's registry default unreadable: STL-CFG-310, nothing run), 3 over a limit (never retried), 75 pool exhausted, else claude's exit code.
 # Queue (F15, F28, F29): a call refused by a zeroed or exceeded limit (Opus slots, Haiku per day) and every pool-exhausted
 # call is recorded in state/queue.jsonl with its prompt file, and raises one #alerts line; the caller still gets 3 or 75.
 # Nothing retries it: bin/escalate-drain.sh (manual) replays it. Beyond QUEUE_MAX queued entries the call is refused
@@ -24,9 +24,6 @@ mkdir -p "$STATE"
 # shellcheck source=/dev/null
 . "$SUP/limits.env" || { echo "escalate.sh: cannot read $SUP/limits.env" >&2; exit 2; }
 . /workspace/bin/kanban-board.sh   # kanban(): every kanban call names its board (F4)
-# `timeout 0` means no timeout, so 0, empty or non-numeric CALL_TIMEOUT falls back to the default (warned below, D42).
-# The fallback is the settings registry default (resolved after refuse() exists; unreadable = refuse, never no timeout).
-[[ "${CALL_TIMEOUT:-}" =~ ^[1-9][0-9]*[smhd]?$ ]] || { bad_timeout="${CALL_TIMEOUT:-}"; CALL_TIMEOUT=; }
 
 # Rate-limit / pool-exhausted output, verified in claude 2.1.310 (bin/claude.exe strings).
 POOL_PATTERNS=("You've hit your" "You've reached your" "You're out of usage credits" "You're out of extra usage"
@@ -46,15 +43,28 @@ log() {  # log <event> <exit_code|null> [model_used] [fallback] [cost] [detail]
       exit_code: $exit_code, model_used: $model_used, fallback: $fallback, cost_usd: $cost_usd, detail: $detail}' >>"$LOG"
 }
 refuse() { log "$1" "$2" "" false null "$3"; echo "escalate.sh: $1: $3" >&2; exit "$2"; }
-stack_default() {  # stack_default <KEY> <min>: the integer default of a setting in the registry; refuses (exit 2, STL-CFG-310) if unreadable
-  local v; v=$(python3 -I /workspace/bin/stella_data.py get --json settings "$1" 2>/dev/null | jq -er --argjson m "$2" '.default | select(type == "number" and . == floor and . >= $m)') && [ -n "$v" ] && { echo "$v"; return; }
-  python3 -I /workspace/bin/alert_catalog.py preview STL-CFG-310 problem="the default of setting $1 cannot be read" >&2 2>/dev/null
-  refuse SETTING_UNREADABLE 2 "the default of setting $1 cannot be read; no call without a timeout, no unbounded queue"
+registry() {  # registry <KEY>: sets reg_def reg_min reg_max from the settings registry; unreadable = refuse (exit 2, STL-CFG-310)
+  local v p="the default and range of setting $1 cannot be read"
+  v=$(python3 -I /workspace/bin/stella_data.py get --json settings "$1" 2>/dev/null | jq -er '[.default, .validation.minimum, .validation.maximum]
+    | select(all(type == "number" and . == floor) and .[1] <= .[0] and .[0] <= .[2]) | @tsv') && read -r reg_def reg_min reg_max <<<"$v" && [ -n "$reg_max" ] && return
+  python3 -I /workspace/bin/alert_catalog.py preview STL-CFG-310 problem="$p" >&2 2>/dev/null || echo "STL-CFG-310 $p" >&2   # fallback: no catalog, still a code
+  refuse SETTING_UNREADABLE 2 "$p; no call without a timeout, no unbounded queue"
 }
-[ -n "${CALL_TIMEOUT:-}" ] || CALL_TIMEOUT=$(stack_default CALL_TIMEOUT 1) || exit 2   # exit in the substitution's shell: refuse already logged it
-[ -n "${QUEUE_MAX:-}" ] || QUEUE_MAX=$(stack_default QUEUE_MAX 0) || exit 2
-[ -z "${bad_timeout+x}" ] || { log WARN null "" false null "CALL_TIMEOUT='$bad_timeout' is not a positive duration (0 would disable the timeout); using $CALL_TIMEOUT"
-  echo "escalate.sh: warning: CALL_TIMEOUT='$bad_timeout' is not a positive duration; using $CALL_TIMEOUT" >&2; }
+# A limit that is set but outside the registry's type and range is treated like a bad timeout: one warning, then the registry
+# default (`timeout 0` means no timeout; a non-number makes `[ -ge ]` fail, which would queue without bound).
+registry CALL_TIMEOUT; ct_def=$reg_def ct_min=$reg_min ct_max=$reg_max
+registry QUEUE_MAX; qm_def=$reg_def qm_min=$reg_min qm_max=$reg_max
+# shortcut: nine digits at most (a number of days still fits in 64 bits); longer is out of range anyway
+secs=; if [[ "${CALL_TIMEOUT:-}" =~ ^([1-9][0-9]{0,8})([smhd]?)$ ]]; then
+  case "${BASH_REMATCH[2]}" in m) mul=60;; h) mul=3600;; d) mul=86400;; *) mul=1;; esac; secs=$(( ${BASH_REMATCH[1]} * mul )); fi
+if [ -z "$secs" ] || [ "$secs" -lt "$ct_min" ] || [ "$secs" -gt "$ct_max" ]; then bad_timeout="${CALL_TIMEOUT:-}"; CALL_TIMEOUT=$ct_def
+  log WARN null "" false null "CALL_TIMEOUT='$bad_timeout' is not a positive duration of $ct_min to $ct_max seconds (0 would disable the timeout); using $CALL_TIMEOUT"
+  echo "escalate.sh: warning: CALL_TIMEOUT='$bad_timeout' is not a positive duration of $ct_min to $ct_max seconds; using $CALL_TIMEOUT" >&2; fi
+if [ -z "${QUEUE_MAX:-}" ]; then QUEUE_MAX=$qm_def   # unset or empty: the default, silently
+elif ! [[ "$QUEUE_MAX" =~ ^[0-9]{1,9}$ ]] || [ "$((10#$QUEUE_MAX))" -lt "$qm_min" ] || [ "$((10#$QUEUE_MAX))" -gt "$qm_max" ]; then
+  log WARN null "" false null "QUEUE_MAX='$QUEUE_MAX' is not a whole number from $qm_min to $qm_max; using $qm_def"
+  echo "escalate.sh: warning: QUEUE_MAX='$QUEUE_MAX' is not a whole number from $qm_min to $qm_max; using $qm_def" >&2; QUEUE_MAX=$qm_def
+else QUEUE_MAX=$((10#$QUEUE_MAX)); fi
 note() { kanban comment --author escalate.sh "$card" "$1" >/dev/null 2>&1; }
 . /workspace/bin/owner-config.sh   # once_per_hour, and alert_text (D44) through it
 QUEUE="$STATE/queue.jsonl"
@@ -62,7 +72,9 @@ queue() {  # queue <LIMIT|POOL_EXHAUSTED> <what happened>: one entry and one #al
   qid="" qnote="not queued"
   [ -z "${ESCALATE_REPLAY:-}" ] || { qnote="left in the queue as $ESCALATE_REPLAY"; rm -f "$prompt"; return 0; }
   exec 6>"$STATE/queue.lock"; flock 6
-  if [ "$(jq -s '[.[] | select(.state == "queued")] | length' "$QUEUE" 2>/dev/null || echo 0)" -ge "$QUEUE_MAX" ]; then
+  : >>"$QUEUE"   # the file exists from the first call on: jq -s on a missing file prints 0 and fails, which made the count two numbers
+  nq=$(jq -s '[.[] | select(.state == "queued")] | length' "$QUEUE" 2>/dev/null) || nq=0
+  if [ "$nq" -ge "$QUEUE_MAX" ]; then
     flock -u 6; rm -f "$prompt"
     qnote="not queued: the queue is full (QUEUE_MAX=$QUEUE_MAX)"
     once_per_hour queue-full && hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-LIM-403 max="$QUEUE_MAX" why="$1" card="$card" since="$(date -u +%FT%TZ)")" >/dev/null 2>&1

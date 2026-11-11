@@ -44,7 +44,7 @@ replay() {
   flock 6
   case "$rc" in
     0)    setstate "$id" replayed; rm -f "$pf"; echo "$id: replayed" ;;
-    2|3|75) setstate "$id" queued; echo "$id: still blocked or not runnable now (exit $rc), left in the queue" ;;   # 2: e.g. kanban show failed (review M2)
+    2|3|75) setstate "$id" queued; echo "$id: still blocked or not runnable now (exit $rc), left in the queue" ;;   # 2: kanban show failed (review M2), or escalate.sh refused because a setting's registry default is unreadable (STL-CFG-310)
     *)    setstate "$id" failed; rm -f "$pf"; echo "$id: failed (exit $rc)" ;;
   esac
   flock -u 6
