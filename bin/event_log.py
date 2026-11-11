@@ -14,8 +14,12 @@ CLI: event_log.py append --type T --what W [--old JSON] [--new JSON] [--code C] 
                                              event objects are counted and reported on stderr (one STL-CFG-318 line)
 Exit: 0 ok; 1 refused (STL-CFG-313 invalid line, STL-CFG-318 log not writable; the catalog's plain message on stderr); 2 usage.
 The stack root is the parent of this file's folder, or STELLA_ROOT (a scratch root in tests). Importers use build, append,
-preflight, mask, redactor, scrub, SECRETS, read_log, path, locked, say and fail."""
-import argparse, contextlib, fcntl, json, os, re, sys, time
+preflight, mask, redactor, scrub, SECRETS, note_secrets, depth, read_log, path, locked, open_file, open_dir, say and fail.
+Limits of a line (one rule for the writer and the reader, the reader's with a margin): the writer refuses nesting beyond
+WRITE_DEPTH or a line beyond WRITE_MAX bytes (313); the reader counts a line beyond READ_DEPTH / READ_MAX, or one it cannot
+parse, mask or print for any reason, as unreadable (reported, 318) and goes on. Every file opened (log, lock) must be a regular
+file, opened without blocking, through a folder checked at the moment of the open: a FIFO is refused (318), never waited for."""
+import argparse, contextlib, fcntl, json, os, re, stat, sys, time
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -25,6 +29,9 @@ import stella_data as sd
 OWN = os.path.realpath(os.path.dirname(BIN))
 ROOT = os.path.realpath(sd.ROOT)
 MASK = "***"
+MAX_FILE = 8 << 20   # shortcut: a data, state or backup file larger than this is refused, not read; the limit is in code, upgrade when the index carries one
+WRITE_DEPTH, READ_DEPTH = 16, 64   # nesting of a line: the writer's limit is far below the reader's, so a written line always reads back
+WRITE_MAX, READ_MAX = 1 << 20, 4 << 20   # bytes of a line, same idea
 
 class EventError(Exception):
     def __init__(self, code, problem):
@@ -48,12 +55,49 @@ def path(rel):
         raise ValueError(f"{rel} is, or passes through, a symbolic link")
     return p
 
+def open_dir(d):
+    """An open folder that is d itself: no link on its last part, and the path the kernel gives the descriptor is d (a parent
+    swapped for a link after the path was checked is refused here; later steps work relative to this descriptor)."""
+    fd = os.open(d, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        if os.readlink(f"/proc/self/fd/{fd}").casefold() != d.casefold():
+            raise ValueError("a folder on the way is not where the index puts it")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+def open_file(p, flags, mode=0o600):
+    """An open regular file, never through a link and never blocking (a FIFO or device is refused, not waited for)."""
+    d, name = os.path.split(p)
+    dfd = open_dir(d)
+    try:
+        fd = os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, mode, dir_fd=dfd)
+    finally:
+        os.close(dfd)
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise ValueError("is not a regular file")
+    return fd
+
 @contextlib.contextmanager
 def locked(p):
+    """flock on p. After the lock is taken the file at the path must still be the file that was locked (it can be replaced while
+    a run waits): else the run locks again, a few times, then refuses."""
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    fd = os.open(p, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-    try:
+    for _ in range(5):
+        fd = open_file(p, os.O_RDWR | os.O_CREAT)
         fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            same = os.path.samestat(os.fstat(fd), os.lstat(p))
+        except FileNotFoundError:
+            same = False
+        if same:
+            break
+        os.close(fd)
+    else:
+        raise OSError("the lock file keeps being replaced")
+    try:
         yield
     finally:
         os.close(fd)
@@ -65,6 +109,18 @@ def scrub(text):
         if x:   # an empty value would match between every two characters
             text = text.replace(x, MASK)
     return text
+
+def depth(v):
+    """The nesting of a value, counted without recursion (the input's depth must not decide the stack)."""
+    todo, d = [(v, 1)], 0
+    while todo:
+        x, n = todo.pop()
+        d = max(d, n)
+        if isinstance(x, dict):
+            todo += [(y, n + 1) for y in x.values()]
+        elif isinstance(x, list):
+            todo += [(y, n + 1) for y in x]
+    return d
 
 def say(code, problem, alert=False):
     """The catalog code and its plain message on stderr (the problem text scrubbed); with alert=True one alert line too."""
@@ -96,6 +152,31 @@ def redactor(row_id=None):
         return any(s in secret or any(p.search(s) for p in pats) for s in segs)
     return red
 
+def leaves(v):
+    todo = [v]
+    while todo:
+        x = todo.pop()
+        if isinstance(x, dict):
+            todo += list(x.values())
+        elif isinstance(x, list):
+            todo += x
+        elif x is not None:
+            yield x
+
+def note_secrets(doc, red):
+    """Remember the values found under masked keys, so scrub() removes them from any text of the same call."""
+    todo = [doc]
+    while todo:
+        x = todo.pop()
+        if isinstance(x, dict):
+            for k, v in x.items():
+                if red(str(k)):
+                    SECRETS.update(str(y) for y in leaves(v))
+                else:
+                    todo.append(v)
+        elif isinstance(x, list):
+            todo += x
+
 def mask(v, red):
     if isinstance(v, dict):
         return {k: MASK if red(str(k)) else mask(x, red) for k, x in v.items()}
@@ -126,7 +207,7 @@ def preflight():
     try:
         p = log_path()
         os.makedirs(os.path.dirname(p), mode=0o700, exist_ok=True)
-        os.close(os.open(p, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600))
+        os.close(open_file(p, os.O_WRONLY | os.O_APPEND | os.O_CREAT))
     except (OSError, ValueError) as e:
         raise EventError("STL-CFG-318", why(e))
 
@@ -137,30 +218,39 @@ def sensitive_row(line, row_id):
     secret_rows = {e["store"]["data"] for e in registry()["entries"] if e["sensitivity"] == "secret"}
     return next((r for r in sd.rows() if r["id"] == rid and (r["redact_keys"] or rid in secret_rows)), None)
 
-def append(line, row_id=None):
+def append(line, row_id=None, scrub_detail=True):
     """Mask, validate, append one line under the lock; returns the line written. EventError 313 (invalid, nothing
-    written) or 318 (not written). The line goes out in one write; if that fails or is short, the file is cut back."""
+    written) or 318 (not written). The line goes out in one write; if that fails or is short, the file is cut back.
+    scrub_detail=False: the caller's detail is the tool's own text (no outside value in it), which a scrub by substring could garble."""
     try:
-        sens = sensitive_row(line, row_id)
-        line = mask(line, redactor(row_id))
+        if depth(line) > WRITE_DEPTH:
+            raise ValueError("nested too deeply")
+        sens, red = sensitive_row(line, row_id), redactor(row_id)
+        for k in ("old", "new"):
+            note_secrets(line.get(k), red)   # the values masked in this line are scrubbed from its detail too
+            if sens and line.get(k) is not None and not isinstance(line[k], (dict, list)):
+                SECRETS.add(str(line[k]))
+        line = mask(line, red)
         for k in ("old", "new"):
             if sens and k in line and line[k] is not None and not isinstance(line[k], (dict, list)):
                 line[k] = MASK   # a scalar has no key to match: for such a row it is masked whole
-        if isinstance(line.get("detail"), str):
+        if scrub_detail and isinstance(line.get("detail"), str):
             line["detail"] = scrub(line["detail"])
         errs = sd.validate_doc(line, sd.load(f"{sd.SCHEMAS}/event.schema.json"))
         if "code" in line and line["code"] not in alert_catalog.catalog():
             errs.append(f"code {line['code']} is not in the alert catalog")
     except Exception as e:
-        raise EventError("STL-CFG-313", f"event line: {type(e).__name__}")
+        raise EventError("STL-CFG-313", f"event line: {type(e).__name__}" + (" (nested too deeply)" if depth(line) > WRITE_DEPTH else ""))
     errs += [f"{k} must not be empty" for k in ("type", "what") if line.get(k) == ""]   # the schema subset has no minLength here
     if errs:
         raise EventError("STL-CFG-313", "event line: " + "; ".join(errs)[:300])
     data = (json.dumps(line, ensure_ascii=True, separators=(",", ":")) + "\n").encode()
+    if len(data) > WRITE_MAX:
+        raise EventError("STL-CFG-313", f"event line: larger than {WRITE_MAX} bytes")
     try:
         p = log_path()
         with locked(p + ".lock"):
-            fd = os.open(p, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            fd = open_file(p, os.O_RDWR | os.O_APPEND | os.O_CREAT)
             try:
                 size = os.fstat(fd).st_size
                 if size and os.pread(fd, 1, size - 1) != b"\n":
@@ -181,10 +271,11 @@ def append(line, row_id=None):
     return line
 
 def read_log(n=None):
-    """([events], bad): the last n lines (all when None), split on \\n only, masked again; bad = lines that are not a JSON object."""
+    """([events], bad): the last n lines (all when None), split on \\n only, masked again; bad = lines that are not a JSON object,
+    are larger or nested deeper than the writer's limits allow for, or cannot be masked (any exception): one unreadable line
+    never stops a reader."""
     try:
-        fd = os.open(log_path(), os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(fd, "rb") as f:
+        with os.fdopen(open_file(log_path(), os.O_RDONLY), "rb") as f:
             lines = f.read().split(b"\n")
     except FileNotFoundError:
         return [], 0
@@ -197,13 +288,13 @@ def read_log(n=None):
     red, out, bad = redactor(), [], 0
     for s in lines:
         try:
-            d = json.loads(s.decode("utf-8", "replace"))
-        except (ValueError, RecursionError):
-            d = None
-        if isinstance(d, dict):
-            out.append(mask(d, red))
-        else:
-            bad += 1
+            d = json.loads(s.decode("utf-8", "replace")) if len(s) <= READ_MAX else None
+            if isinstance(d, dict) and depth(d) <= READ_DEPTH:
+                out.append(mask(d, red))
+                continue
+        except Exception:   # RecursionError, MemoryError, a pattern error: this line only
+            pass
+        bad += 1
     return out, bad
 
 def tail(n=20):
@@ -238,8 +329,9 @@ def main(argv):
             print(json.dumps(append(build(o.type, o.what, o.old, o.new, o.code, o.detail, who)), ensure_ascii=False))
         else:
             ls, bad = read_log(o.n)
+            esc = lambda x: json.dumps(str(x))[1:-1]   # a field cannot start a line of its own
             print(json.dumps(ls, indent=2, ensure_ascii=False) if o.json else "\n".join(
-                f"{l.get('time')} {l.get('type')} {json.dumps(str(l.get('what')))[1:-1]}" for l in ls))
+                f"{esc(l.get('time'))} {esc(l.get('type'))} {esc(l.get('what'))}" for l in ls))
             if bad:
                 say("STL-CFG-318", f"{bad} line(s) of the event log are not event lines")
     except EventError as e:
