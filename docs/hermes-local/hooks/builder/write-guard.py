@@ -483,26 +483,29 @@ def owner_hit_word(a, d, names):
 
 
 def owner_cmd_why(words, cwd, names):
-    """The refusal when this simple command runs an owner command: the command word, or any argument of an interpreter, resolves (braces,
-    globs, ~, known variables, PATH, case) to the file of one. A word of the command (or the script an interpreter is given) that holds an
-    expansion only the shell can compute is refused too: the hook cannot tell what runs."""
-    cmdw = strip_prefixes(words)[0]
-    if not cmdw:
+    """The refusal when this simple command runs an owner command: the command word resolves (braces, globs, ~, known variables, PATH, case)
+    to the file of one; and when the command word is a wrapper (env, timeout, sudo, xargs ...) or an interpreter, so does any other word of the
+    command, because a wrapper's option values (env -u NAME, timeout -s KILL 5) cannot be told from the program it runs. A word of the command
+    (or the script an interpreter is given) that holds an expansion only the shell can compute is refused too: the hook cannot tell what runs."""
+    k = 0
+    while k < len(words) and ASSIGN.fullmatch(words[k]):
+        k += 1
+    rest = words[k:]
+    if not rest:
         return None
-    name = re.sub(r"[0-9.]+$", "", cmdw[0].rsplit("/", 1)[-1])
-    judged, scripted = cmdw[:1], False
-    if name in INTERPRETERS:
-        judged = cmdw
-    for k, wd in enumerate(judged):
-        paths, unres = words_of(wd, cwd, names)
-        if k == 0 and "/" not in wd and (found := shutil.which(wd)):
+    norm = lambda w: re.sub(r"(?<=[A-Za-z])[0-9.]+$", "", w.rsplit("/", 1)[-1])
+    judged = rest if norm(rest[0]) in INTERPRETERS | PREFIXES else rest[:1]
+    cmdw = strip_prefixes(words)[0]   # the program the wrappers run, as far as their options can be told apart
+    for wd in judged:
+        paths = words_of(wd, cwd, names)[0]
+        if wd == rest[0] and "/" not in wd and (found := shutil.which(wd)):
             paths.append(os.path.realpath(found))
         for p in paths:
             if p.casefold() in CMDS:
                 return ob(CMDS[p.casefold()])
-        first = k == 0 or (not scripted and not wd.startswith("-") and judged[k - 1] != "-c")
-        scripted = scripted or (k > 0 and not wd.startswith("-"))
-        if unres and first:
+    script = next((w for w in cmdw[1:] if not w.startswith("-")), None) if cmdw and norm(cmdw[0]) in INTERPRETERS else None
+    for wd in cmdw[:1] + ([script] if script else []):
+        if words_of(wd, cwd, names)[1]:
             return ob(f"`{' '.join(words)[:120]}` runs a command or script built at run time, which this guard cannot check; owner commands are never run by a role")
     return None
 
@@ -586,12 +589,12 @@ def command_reason(cmd, base):
             if src:
                 return f"`{' '.join(words)[:120]}` hard-links {src}, a file outside your worktree"
             cmdw, xargs = strip_prefixes(words)
-            cname = re.sub(r"[0-9.]+$", "", cmdw[0].rsplit("/", 1)[-1]) if cmdw else ""
+            cname = re.sub(r"(?<=[A-Za-z])[0-9.]+$", "", cmdw[0].rsplit("/", 1)[-1]) if cmdw else ""
             if xargs and cname in WRITE_VERBS | INTERPRETERS:
                 return f"`{' '.join(words)[:120]}` feeds paths this guard cannot see to a write command or an interpreter"
             if cname == "find":   # find -exec <interpreter>: the command it runs is built from files found at run time
                 ex = [cmdw[k + 1] for k, x in enumerate(cmdw[:-1]) if x in ("-exec", "-execdir", "-ok", "-okdir")]
-                if any(re.sub(r"[0-9.]+$", "", x.rsplit("/", 1)[-1]) in INTERPRETERS for x in ex):
+                if any(re.sub(r"(?<=[A-Za-z])[0-9.]+$", "", x.rsplit("/", 1)[-1]) in INTERPRETERS for x in ex):
                     return f"`{' '.join(words)[:120]}` runs an interpreter on files found at run time, which this guard cannot check"
             if cmdw[:1] in (["cd"], ["pushd"]):
                 target = next((w for w in cmdw[1:] if not w.startswith("-")), "~")   # K1c: cd -P / -L / -- target
