@@ -8,17 +8,23 @@ CLI: test-map.py check                           lint: exit 1 and one STL-CFG-31
 The stack root is the parent of this file's folder, or STELLA_ROOT (a scratch root in tests). Under STELLA_ROOT every
 `check` line ends with the root (a root too long for that is named once, first), a narrow `select` names it on stderr,
 and `select --json` has a `root` key. A problem longer than the catalog keeps is split into numbered parts, and a long
-list of selftests into whole lines: nothing is cut. git runs with no global, system or XDG config and no personal
-ignore list (only the caller's safe.directory is kept).
+list of selftests into whole lines: nothing is cut. git runs with no global, system or XDG config, no ignore list but
+the tree's .gitignore files, the work tree given and no fsmonitor program (only the caller's safe.directory is kept).
 check fails when: the map is unreadable, repeats a key or breaks its schema; a selftest is not a target of any row; a
 target or an always gate has no selftest file; a selftest is missing from the suite list of the runner (or the list
 cannot be read); a suite selftest is not executable, on disk or in the mode git records; a file that looks like a test
 (test_like) is neither a suite selftest nor listed in not_tests; a selftest can reach a file (see reach) whose
-selection leaves that selftest out; or a row with no targets matches more than prose (see prose).
+selection leaves that selftest out; a row that is not a scan row has a glob that matches every path; or a row that adds
+no target beyond the always gates matches more than prose (see prose).
 select: a file on the full list (matched without regard to case), or matched by no row, selects the full suite; so does
 no file name at all. `scan` rows add targets (a selftest that reads a whole folder) but do not count as a match. Pass
 both sides of a rename (`git diff --name-only --no-renames`): the new path alone can narrow the selection. A name with
-white space (at either end too, on stdin as well), a control character or a leading dash selects the full suite."""
+white space (at either end too, on stdin as well), a control character, a leading dash or bytes that are not UTF-8
+selects the full suite. select also answers full when a changed file is the map, its schema or this tool, when the map
+breaks a rule that needs no file list (the schema, a glob over every path; the reason goes to stderr), and when the
+selection would be empty. shortcut: the rules that need the file list (prose, reach, selftests, suite list, modes) are
+left to `check` (about 1.7 s on the stack tree against 0.05 s for a select), which every selection runs through the
+always gate test-map; upgrade if a map may drop that gate."""
 import fnmatch, json, os, re, subprocess, sys, textwrap
 
 BIN = os.path.dirname(os.path.abspath(__file__))
@@ -92,10 +98,13 @@ def tree():
     trust = [f"safe.directory={d}" for scope in ("--system", "--global") for d in subprocess.run(
         ["git", "config", scope, "--get-all", "safe.directory"], capture_output=True, text=True, env=env).stdout.splitlines()]
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, HOME=os.devnull, XDG_CONFIG_HOME=os.devnull)
+    # the tree's own untracked settings neither hide a file (info/exclude, core.excludesFile, core.worktree) nor run a
+    # program (core.fsmonitor, switched off as bin/box.py does)
     def git(*args):
-        return subprocess.run(["git", *[x for t in trust for x in ("-c", t)], "-C", ROOT, "ls-files", "-z", *args],
+        return subprocess.run(["git", *[x for t in trust for x in ("-c", t)], "-c", "core.fsmonitor=false", "-C", ROOT,
+                               f"--work-tree={ROOT}", "ls-files", "-z", *args],
                               capture_output=True, text=True, check=True, env=env).stdout.split("\0")
-    files = dict.fromkeys(filter(None, git("-co", "--exclude-standard")))
+    files = dict.fromkeys(filter(None, git("-co", "--exclude-per-directory=.gitignore")))
     for line in filter(None, git("-s")):
         files[line.split("\t", 1)[1]] = line.split()[0]
     return {f: mode for f, mode in files.items() if os.path.isfile(os.path.join(ROOT, f))}
@@ -121,11 +130,23 @@ def uncommented(text):
 PROBES = ("zq9", ".zq9", "zq9/.zq9/zq9.zq9")
 
 
+def every(globs):
+    return next((g for g in globs if all(fnmatch.fnmatchcase(p, g) for p in PROBES)), None)
+
+
+def wide(m):
+    """The rule that needs no file list: a row that is not a scan row may have no glob that matches every path."""
+    return [f"map row {i} ({', '.join(r['globs'])}) {'is not a scan row,' if r['targets'] else 'has no targets'} and its "
+            f"glob {every(r['globs'])} matches every path" for i, r in enumerate(m["map"], 1) if not r.get("scan") and every(r["globs"])]
+
+
 def prose(m, files):
-    """A row with no targets may match only prose, since a change to its files runs no selftest: refuse a row whose glob
-    matches every path, or that matches code (follow, #!), an executable, a test-like file, or a file that a code or data
-    file (the `data` globs; every file when the map has none) names, by the name search reach uses. One problem per row."""
-    rows = [(i, r["globs"]) for i, r in enumerate(m["map"], 1) if not r["targets"] and not r.get("scan")]
+    """A row that adds no target beyond the always gates selects what a row with no targets selects, so it may match only
+    prose: refuse a row that matches code (follow, #!), an executable, a test-like file, or a file that a code or data
+    file (the `data` globs; every file when the list is empty or missing) names, by the name search reach uses. The
+    selftest file of a gate the row names is the exception. One problem per row; a glob over every path is wide()'s."""
+    rows = [(i, r) for i, r in enumerate(m["map"], 1)
+            if not set(r["targets"]) - set(m["always"]) and not r.get("scan") and not every(r["globs"])]
     if not rows:
         return []
     by_base, named = {}, {}
@@ -133,7 +154,7 @@ def prose(m, files):
         by_base.setdefault(os.path.basename(f), set()).add(f)
     for g in sorted(files):
         text = content(g)
-        if g != MAP and (text.startswith("#!") or matches(g, m["follow"]) or matches(g, m.get("data", ["*"]))):
+        if g != MAP and (text.startswith("#!") or matches(g, m["follow"]) or matches(g, m.get("data") or ["*"])):
             for w in words(uncommented(text)) & by_base.keys():
                 for f in by_base[w] - {g}:
                     named.setdefault(f, g)
@@ -150,13 +171,11 @@ def prose(m, files):
         return f in named and f"named by {named[f]}"
 
     probs = []
-    for i, globs in rows:
-        row = f"map row {i} ({', '.join(globs)}) has no targets"
-        wide = [g for g in globs if all(fnmatch.fnmatchcase(p, g) for p in PROBES)]
-        if wide:
-            probs.append(f"{row} and its glob {wide[0]} matches every path")
-            continue
-        bad = next(((f, w) for f in sorted(files) if matches(f, globs) for w in [why(f)] if w), None)
+    for i, r in rows:
+        row = f"map row {i} ({', '.join(r['globs'])}) " + (
+            f"adds no target beyond the always gates ({', '.join(r['targets'])})" if r["targets"] else "has no targets")
+        own = {m["test_file"].replace("{name}", t) for t in r["targets"]}
+        bad = next(((f, w) for f in sorted(files) if matches(f, r["globs"]) and f not in own for w in [why(f)] if w), None)
         if bad:
             probs.append(f"{row}, so it may match only prose, but it matches {bad[0]}: {bad[1]}")
     return probs
@@ -195,14 +214,20 @@ def reach(m, files, tests):
     return out
 
 
+OWN = {p.lower() for p in (MAP, *(os.path.relpath(f, os.path.dirname(BIN)) for f in (SCHEMA, os.path.abspath(__file__))))}
+
+
 def select(files, m=None):
     m = m or load()
     targets, reason = set(m["always"]), []
     for f in files:
-        if re.search(r"[\s\x00-\x1f\x7f]", f) or f.startswith("-"):   # several names joined into one (a quoted $(git diff), -z output) would match one narrow row
-            reason.append(f"{f!r}: not one plain file name (white space, a control character or a leading dash)")
+        if re.search(r"[\s\x00-\x1f\x7f\ud800-\udfff]", f) or f.startswith("-"):   # several names joined into one (a quoted $(git diff), -z output) would match one narrow row; a surrogate is a byte that is not UTF-8
+            reason.append(f"{f!r}: not one plain file name (white space, a control character, a leading dash or not UTF-8)")
             continue
         f = os.path.normpath(f)
+        if f.lower() in OWN:   # a map edit could name its own narrow answer
+            reason.append(f"{f}: the test map, its schema or the tool that reads them")
+            continue
         if matches(f.lower(), [g.lower() for g in m["full"]]):   # a guard is a guard in any case (Guard.js)
             reason.append(f"{f}: a shared contract (full list)")
             continue
@@ -211,6 +236,8 @@ def select(files, m=None):
         for row in m["map"]:
             if matches(f, row["globs"]):
                 targets.update(row["targets"])
+    if not targets:
+        reason.append("the selection is empty (no always gate, no target), and an empty run proves nothing")
     return {"full": bool(reason), "reason": reason, "targets": sorted(targets)}
 
 
@@ -221,18 +248,19 @@ def check():
         return [f"{MAP}: {type(e).__name__}: {e}"]
     if errs:
         return [f"{MAP}: ValueError: {e}" for e in errs]   # one line per problem
+    probs = wide(m)
     try:
         files = tree()
     except Exception as e:
-        return [f"the files of {ROOT} cannot be listed with git: {type(e).__name__}"]
+        return probs + [f"the files of {ROOT} cannot be listed with git: {type(e).__name__}"]
     head, tail = m["test_file"].split("{name}")
     path = lambda t: head + t + tail
     tests = {f[len(head):len(f) - len(tail)]: f for f in files
              if f.startswith(head) and f.endswith(tail) and "/" not in f[len(head):len(f) - len(tail)]}
     if not tests:
-        return [f"no selftest ({path('<name>')}) found under {ROOT}"]
+        return probs + [f"no selftest ({path('<name>')}) found under {ROOT}"]
     targets = {t for row in m["map"] for t in row["targets"]}
-    probs = [f"{tests[t]} is not a target of any map row" for t in sorted(tests.keys() - targets)]
+    probs += [f"{tests[t]} is not a target of any map row" for t in sorted(tests.keys() - targets)]
     probs += [f"target {t}: {path(t)} does not exist" for t in sorted((targets | set(m["always"])) - tests.keys())]
     # shortcut: a test is known by its name only (test_like globs), a test named otherwise is not seen; upgrade when a second test runner arrives
     probs += [f"{f} looks like a test but is neither a suite selftest nor listed in not_tests" for f in sorted(files)
@@ -260,9 +288,12 @@ def check():
 
 def fail(problem, out=sys.stdout, where=""):
     """One catalog line per piece: a problem longer than the catalog keeps is split, `where` ends every piece."""
-    text = esc(problem)
-    parts = [text] if len(text) + len(where) <= LIMIT else textwrap.wrap(
-        text, LIMIT - len(where) - len("(part 99 of 99) "), break_on_hyphens=False, drop_whitespace=False)
+    text, parts, n = esc(problem), [esc(problem)], 9
+    while len(text) + len(where) > LIMIT:   # leave room for the widest prefix "(part n of n) " the real count needs
+        parts = textwrap.wrap(text, LIMIT - len(where) - len(f"(part {n} of {n}) "), break_on_hyphens=False, drop_whitespace=False)
+        if len(parts) <= n:
+            break
+        n = n * 10 + 9
     for i, part in enumerate(parts, 1):
         part = part if len(parts) == 1 else f"(part {i} of {len(parts)}) {part}"
         print("STL-CFG-310 " + alert_catalog.render("STL-CFG-310", {"problem": part + where})[0].split("\n")[1], file=out)   # the plain message line
@@ -287,16 +318,25 @@ def main(argv):
     if argv[:1] == ["select"]:
         files, as_json = argv[1:], argv[1:2] == ["--json"]   # only the first argument may be an option
         files = files[as_json:]
-        files = files[files[:1] == ["--"]:]   # "--" ends the options; every later argument is a name
+        ended = files[:1] == ["--"]
+        files = files[ended:]   # "--" ends the options; every later argument is a name, "-" too
+        if files == ["-"] and not ended:
+            try:   # bytes: no CR translation, no strip (white space at either end selects full); a non-UTF-8 byte stays visible
+                files = [f for f in sys.stdin.buffer.read().decode("utf-8", "surrogateescape").split("\n") if f]
+            except Exception as e:
+                complain([f"the file names on stdin cannot be read: {type(e).__name__}: {e}"], sys.stderr)
+                return 1
         try:
-            if files == ["-"]:
-                sys.stdin.reconfigure(newline="")   # no CR translation, no strip: white space at either end selects full
-                files = [f for f in sys.stdin.read().split("\n") if f]
-            # no file name at all (an empty stdin, no argument) is a failed diff, not "nothing changed": the full suite
-            sel = select(files) if files else {"full": True, "reason": ["no file name given"], "targets": sorted(load()["always"])}
+            m = load()
         except Exception as e:
             complain([f"{MAP}: {type(e).__name__}: {e}"], sys.stderr)
             return 1
+        # no file name at all (an empty stdin, no argument) is a failed diff, not "nothing changed": the full suite
+        sel = select(files, m) if files else {"full": True, "reason": ["no file name given"], "targets": sorted(m["always"])}
+        broken = wide(m)
+        if broken:   # a map that fails check cannot narrow anything
+            complain(broken, sys.stderr)
+            sel["full"], sel["reason"] = True, sel["reason"] + [f"the map fails check: {p}" for p in broken]
         if os.environ.get("STELLA_ROOT"):
             sel["root"] = ROOT
             if not sel["full"]:   # a narrow answer from another tree must say so; "full" runs everything whatever the tree

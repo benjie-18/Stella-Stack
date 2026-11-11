@@ -33,7 +33,7 @@
       "$ref": "#/$defs/globs"
     },
     "data": {
-      "description": "Globs of files read as data (JSON, YAML, text lists). A file that a code or data file names may not sit in a row with no targets. Without this list every file counts.",
+      "description": "Globs of files read as data (JSON, YAML, text lists). A file that a code or data file names may not sit in a row that adds no target beyond the always gates. An empty or missing list means every file counts.",
       "$ref": "#/$defs/globs"
     },
     "always": {
