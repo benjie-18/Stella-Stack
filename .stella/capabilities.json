@@ -81,6 +81,35 @@
       "triage": {
         "result": "shipped"
       }
+    },
+    {
+      "id": "role-requirements",
+      "kind": "command",
+      "summary": "What a role needs from any model that serves it: tool calling, context size, vision and the data classes it may see",
+      "keywords": [
+        "role",
+        "requirements",
+        "model",
+        "context",
+        "vision",
+        "tool calling",
+        "data class"
+      ],
+      "inputs": "a role name",
+      "outputs": "JSON; exit 1 with STL-CFG-311 when the role is unknown",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/roles.py",
+      "triage": {
+        "result": "shipped"
+      }
     }
   ]
 }
