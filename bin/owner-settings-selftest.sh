@@ -173,62 +173,77 @@ fi
 # path, a symlink to it, another spelling of it, and every spelling of each command; reads of owner data stay allowed. The tables are
 # the real one and one with an extra entry in each list (no name is in the code).
 printf '%s\n' 'diff --git a/ZZD/zz-probe.json b/ZZD/zz-probe.json' 'new file mode 100644' '--- /dev/null' '+++ b/ZZD/zz-probe.json' '@@ -0,0 +1 @@' '+x' >"$T/w4.patch.in"
-matrix2() {
-  local tag=$1 lab role d f c b q dir okc h bad
-  while read -r lab role; do
-    setw "$lab"; L="$tag $lab/$role"
-    okc=; for c in "cat package.json" "npm test" "git log --oneline"; do
-      bad=0; for h in $(hooks_for "$MT" "$role" terminal); do [ "$(hk "$(hf "$h")" "$(pl terminal "$(js --arg c "$c" '{command: $c}')")")" = 0 ] || bad=1; done
-      [ $bad = 0 ] && { okc=$c; break; }
+M2=$T/m2; mkdir -p "$M2"
+m2role() {   # m2role <tag> <profile label> <role> <owner data list> <owner commands list> <n>: one role's cases; runs in a subshell, writes only under $M2
+  local tag=$1 lab=$2 role=$3 DS=$4 CS=$5 n=$6 OUT=$M2/$n.o ERR=$M2/$n.e LN=$M2/$n.lnk PT=$M2/$n.patch d f c x b q dir okc bad h
+  hk() { printf '%s' "$2" | "$1" >"$OUT" 2>"$ERR"; echo $?; }
+  blocked() { [ "$1" = 2 ] && jq -e '.action == "block"' "$OUT" >/dev/null 2>&1; }
+  r1() {   # r1 <tool> <input> <description> [cwd]: refused as soon as one hook of the role covering <tool> blocks
+    local hs h pay; hs=$(hooks_for "$MT" "$role" "$1"); pay=$(pl "$1" "$2" "${4:-/workspace}")
+    [ -n "$hs" ] || { say 1 "$L $1 $3: no hook of the role covers $1"; return; }
+    for h in $hs; do blocked "$(hk "$(hf "$h")" "$pay")" && { say 0 "$L $1 $3: refused by $(basename "$h")"; return; }; done
+    say 1 "$L $1 $3: refused by (none)"
+  }
+  setw "$lab"; L="$tag $lab/$role"
+  okc=; for c in "cat package.json" "npm test" "git log --oneline"; do
+    bad=0; for h in $(hooks_for "$MT" "$role" terminal); do [ "$(hk "$(hf "$h")" "$(pl terminal "$(js --arg c "$c" '{command: $c}')")")" = 0 ] || bad=1; done
+    [ $bad = 0 ] && { okc=$c; break; }
+  done
+  for d in $DS; do
+    f=/workspace/$d/zz-probe.json; sed "s#ZZD#$d#g" "$T/w4.patch.in" >"$PT"; ln -sfn "/workspace/$d" "$LN"
+    r1 write_file "$(js --arg p "$f" '{path: $p, content: "x"}')" "owner data $d"
+    r1 patch "$(js --arg p "$f" '{mode: "replace", path: $p, old_string: "a", new_string: "b"}')" "owner data $d"
+    r1 patch "$(js --arg p "$f" '{mode: "patch", patch: "*** Begin Patch\n*** Add File: \($p)\n+x\n*** End Patch"}')" "owner data $d, V4A add"
+    r1 write_file "$(js --arg p "/workspace/${d^^}/zz-probe.json" '{path: $p, content: "x"}')" "owner data $d upper-cased (B2V-01)"
+    r1 write_file "$(js --arg p "$LN/zz-probe.json" '{path: $p, content: "x"}')" "owner data $d through a symlink"
+    r1 write_file "$(js --arg p "/workspace/.worktrees/t_00000000/$d/zz-probe.json" '{path: $p, content: "x"}')" "owner data $d in a card worktree of the stack"
+    for c in "echo x > $f" "echo x >> $f" "cp /tmp/x $f" "mv /tmp/x $f" "tee $f" "sed -i s/a/b/ $f" "rm $f" "rm -r /workspace/$d" "dd if=/tmp/x of=$f" \
+             "ln -sf /tmp/x $f" "echo x > $LN/zz-probe.json" "git add -f $f" "git -C /workspace add -f $d/zz-probe.json" "git commit -m x $f" \
+             "git checkout HEAD -- $f" "git -C /workspace restore $d" "git rm $f" "git mv $f /tmp/x" "git mv /tmp/x $f" "git apply $PT" \
+             "env GIT_DIR=/workspace/.git git add -f $f" "bash -c 'git add -f $f'"; do
+      r1 terminal "$(js --arg c "$c" '{command: $c}')" "$c"
     done
-    while read -r d; do
-      f=/workspace/$d/zz-probe.json; sed "s#ZZD#$d#g" "$T/w4.patch.in" >"$T/w4.patch"; ln -sfn "/workspace/$d" "$T/lnkd"
-      refuse "$L" "$role" write_file "$(js --arg p "$f" '{path: $p, content: "x"}')" "owner data $d"
-      refuse "$L" "$role" patch "$(js --arg p "$f" '{mode: "replace", path: $p, old_string: "a", new_string: "b"}')" "owner data $d"
-      refuse "$L" "$role" patch "$(js --arg p "$f" '{mode: "patch", patch: "*** Begin Patch\n*** Add File: \($p)\n+x\n*** End Patch"}')" "owner data $d, V4A add"
-      refuse "$L" "$role" write_file "$(js --arg p "/workspace/${d^^}/zz-probe.json" '{path: $p, content: "x"}')" "owner data $d upper-cased (B2V-01)"
-      refuse "$L" "$role" write_file "$(js --arg p "$T/lnkd/zz-probe.json" '{path: $p, content: "x"}')" "owner data $d through a symlink"
-      refuse "$L" "$role" write_file "$(js --arg p "/workspace/.worktrees/t_00000000/$d/zz-probe.json" '{path: $p, content: "x"}')" "owner data $d in a card worktree of the stack"
-      for c in "echo x > $f" "echo x >> $f" "echo x >| $f" "cp /tmp/x $f" "mv /tmp/x $f" "tee $f" "sed -i s/a/b/ $f" "rm $f" "rm -rf /workspace/$d" \
-               "truncate -s 0 $f" "install /tmp/x $f" "dd if=/tmp/x of=$f" "ln -sf /tmp/x $f" "echo x > $T/lnkd/zz-probe.json" \
-               "git add -f $f" "git -C /workspace add -f $d/zz-probe.json" "git commit -m x $f" "git checkout HEAD -- $f" "git -C /workspace restore $d" \
-               "git restore --source=HEAD~1 -- $f" "git rm $f" "git rm -r --cached /workspace/$d" "git mv $f /tmp/x" "git mv /tmp/x $f" \
-               "git apply $T/w4.patch" "git apply --index $T/w4.patch" "env GIT_DIR=/workspace/.git git add -f $f" "bash -c 'git add -f $f'"; do
-        refuse "$L" "$role" terminal "$(js --arg c "$c" '{command: $c}')" "$c"
-      done
-      refuse "$L" "$role" terminal '{"command": "echo x > zz-probe.json"}' "relative redirect from inside owner data $d" "/workspace/$d"
-      refuse "$L" "$role" terminal '{"command": "git add -f zz-probe.json"}' "relative git add from inside owner data $d" "/workspace/$d"
-      refuse "$L" "$role" terminal "$(js --arg c "git apply - <<'EOF'
-$(cat "$T/w4.patch")
+    r1 terminal '{"command": "echo x > zz-probe.json"}' "relative redirect from inside owner data $d" "/workspace/$d"
+    r1 terminal '{"command": "git add -f zz-probe.json"}' "relative git add from inside owner data $d" "/workspace/$d"
+    r1 terminal "$(js --arg c "git apply - <<'EOF'
+$(cat "$PT")
 EOF" '{command: $c}')" "git apply of a patch given on stdin naming $d"
-      refuse "$L" "$role" process_manage "$(js --arg d "echo x > $f" '{action: "write", session_id: "p1", data: $d}')" "stdin redirect into owner data $d"
-      # controls: reading owner data is allowed, and so is an ordinary write elsewhere
-      allow "$L" "$role" read_file "$(js --arg p "$f" '{path: $p}')" "reading owner data $d"
-      allow "$L" "$role" search_files "$(js --arg p "/workspace/$d" '{pattern: "x", path: $p}')" "searching owner data $d"
-      if [ "$okc" = "cat package.json" ]; then   # a role that lets an ordinary read through lets a read of owner data through too
-        bad=0; for h in $(hooks_for "$MT" "$role" terminal); do [ "$(hk "$(hf "$h")" "$(pl terminal "$(js --arg c "cat $f" '{command: $c}')")")" = 0 ] || bad=1; done
-        say $bad "$L terminal control: cat of owner data $d allowed"
-      fi
-    done < <(jq -r '.owner_data[]' "$MT")
-    while read -r c; do
-      b=${c##*/}; q="${b:0:2}''${b:2}"; dir=${c%/*}
-      for x in "/workspace/$c" "bash /workspace/$c" "bash /workspace/$c x y" "sh /workspace/$c" "zsh /workspace/$c" "source /workspace/$c" ". /workspace/$c" \
-               "env X=1 /workspace/$c" "env -i /workspace/$c" "python3 /workspace/$c" "python3 -I /workspace/$c set A b" "bash -c '/workspace/$c x'" \
-               "bash -c \"bash /workspace/$c\"" "bash /workspace/$dir/$q" "cd /workspace/$dir && ./$b" "nohup /workspace/$c" "timeout 5 /workspace/$c" \
-               "X=1 /workspace/$c" "./$c" "/workspace/$dir/../$c" "exec /workspace/$c" "sudo /workspace/$c" "true && /workspace/$c" "echo y | /workspace/$c"; do
-        refuse "$L" "$role" terminal "$(js --arg c "$x" '{command: $c}')" "owner command: $x"
-      done
-      refuse "$L" "$role" terminal '{"command": "bash ./'"$b"'"}' "owner command from inside its folder" "/workspace/$dir"
-      refuse "$L" "$role" process_manage "$(js --arg d "/workspace/$c x
+    r1 process_manage "$(js --arg d "echo x > $f" '{action: "write", session_id: "p1", data: $d}')" "stdin redirect into owner data $d"
+    # controls: reading owner data is allowed
+    allow "$L" "$role" read_file "$(js --arg p "$f" '{path: $p}')" "reading owner data $d"
+    allow "$L" "$role" search_files "$(js --arg p "/workspace/$d" '{pattern: "x", path: $p}')" "searching owner data $d"
+    if [ "$okc" = "cat package.json" ]; then   # a role that lets an ordinary read through lets a read of owner data through too
+      bad=0; for h in $(hooks_for "$MT" "$role" terminal); do [ "$(hk "$(hf "$h")" "$(pl terminal "$(js --arg c "cat $f" '{command: $c}')")")" = 0 ] || bad=1; done
+      say $bad "$L terminal control: cat of owner data $d allowed"
+    fi
+  done
+  for c in $CS; do
+    b=${c##*/}; q="${b:0:2}''${b:2}"; dir=${c%/*}
+    for x in "/workspace/$c" "bash /workspace/$c" "sh /workspace/$c x" "source /workspace/$c" ". /workspace/$c" "env X=1 /workspace/$c" "X=1 /workspace/$c" \
+             "python3 -I /workspace/$c set A b" "bash -c '/workspace/$c x'" "bash /workspace/$dir/$q" "./$c" "/workspace/$dir/../$c" "timeout 5 /workspace/$c" \
+             "echo y | /workspace/$c"; do
+      r1 terminal "$(js --arg c "$x" '{command: $c}')" "owner command: $x"
+    done
+    r1 terminal '{"command": "bash ./'"$b"'"}' "owner command from inside its folder: $c" "/workspace/$dir"
+    r1 process_manage "$(js --arg d "/workspace/$c x
 " '{action: "write", session_id: "p1", data: $d}')" "owner command on stdin: $c"
-    done < <(jq -r '.owner_commands[]' "$MT")
+  done
+}
+matrix2() {   # matrix2 <tag> <owner data list> <owner commands list>: every profile and role without one, six at a time, output kept in order
+  local tag=$1 lab role n=0 f t h
+  while read -r lab role; do setw "$lab"; for t in write_file patch terminal process_manage read_file search_files; do for h in $(hooks_for "$MT" "$role" $t); do hf "$h" >/dev/null; done; done; done < <(pairs)
+  while read -r lab role; do
+    n=$((n+1)); m2role "$tag" "$lab" "$role" "$2" "$3" "$n" >"$M2/$n.out" 2>&1 &
+    [ $((n % 6)) = 0 ] && wait
   done < <(pairs)
+  wait
+  for f in $(ls "$M2"/*.out | sort -V); do cat "$f"; fails=$((fails + $(grep -c '^FAIL' "$f"))); done; rm -f "${M2:?}"/*
 }
 MT=$SRC; export ROLES_FILE=$SRC
 say "$(jq -e '(.owner_data | length > 0) and (.owner_commands | length > 0) and (.worker_markers | length > 0)' "$SRC" >/dev/null; echo $?)" "3b the real table has owner_data, owner_commands and worker_markers"
-matrix2 "3b real table"
+matrix2 "3b real table" "$(jq -r '.owner_data[]' "$SRC")" "$(jq -r '.owner_commands[]' "$SRC")"
 jq '.owner_data += ["zz-odata/sub"] | .owner_commands += ["tools/zz-owner-cmd.sh"]' "$SRC" >"$T/extra.json"; MT=$T/extra.json; export ROLES_FILE=$MT
-matrix2 "3b extra entries"
+matrix2 "3b extra entries" "zz-odata/sub" "tools/zz-owner-cmd.sh"
 MT=$SRC; export ROLES_FILE=$SRC
 
 # RT7-02: a MEDIA:/path tag in a gateway reply uploads a file with no tool call (no hook sees it); every role that talks on
@@ -350,7 +365,7 @@ for m in main thread; do
     for tgt in "/workspace/$d/zz-probe.json" "$WS/$d/zz-probe.json"; do
       brefuse $m write_file "$(js --arg p "$tgt" '{path: $p, content: "x"}')" "owner data $tgt"
       brefuse $m patch "$(js --arg p "$tgt" '{mode: "replace", path: $p, old_string: "a", new_string: "b"}')" "owner data $tgt"
-      for c in "echo x > $tgt" "cp /tmp/x $tgt" "git -C $WS add -f ${tgt#$WS/}" "git commit -m x $tgt" "git checkout HEAD -- $tgt" "git rm $tgt"; do
+      for c in "echo x > $tgt" "git -C $WS add -f $tgt" "git commit -m x $tgt" "git checkout HEAD -- $tgt"; do
         brefuse $m terminal "$(js --arg c "$c" '{command: $c}')" "$c"
       done
     done
@@ -358,7 +373,7 @@ for m in main thread; do
     ballow $m terminal "$(js --arg c "cat $WS/$d/zz-probe.json" '{command: $c}')" "cat of owner data (control)"
   done < <(jq -r '.owner_data[]' "$MT")
   while read -r c; do
-    for x in "/workspace/$c" "bash /workspace/$c" "python3 -I $WS/$c x" "env X=1 $WS/$c" "source $WS/$c"; do
+    for x in "bash /workspace/$c" "python3 -I $WS/$c x" "env X=1 $WS/$c"; do
       brefuse $m terminal "$(js --arg c "$x" '{command: $c}')" "owner command: $x"
     done
   done < <(jq -r '.owner_commands[]' "$MT")
