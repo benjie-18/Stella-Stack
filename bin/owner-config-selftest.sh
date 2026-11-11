@@ -178,4 +178,34 @@ ok '[ -z "$miss" ]' "every consumer self-test sets OWNER_CONFIG to a scratch fil
 # A6-01: seven selftests build their scratch owner config as `cat config/owner.example.env` plus appended lines; a missing
 # final newline fuses the first appended key into the last line and 5 of them fail with no hint why (15 red hours, 2026-11-05).
 ok '[ "$(tail -c1 /workspace/config/owner.example.env | od -An -c | tr -d " ")" = "\\n" ]' "config/owner.example.env ends with a newline (the consumer selftests append lines to a copy of it)"
+# F1 W4 (E7): the canonical writer. What it writes, the strict parser (and bash) read back as the same value; what the grammar
+# cannot hold (a single quote together with $, backtick, backslash or ", a line break) is refused, never written in a form that reads back differently.
+cat >"$T/rt.py" <<'PY'
+import os, subprocess, sys
+sys.path.insert(0, sys.argv[1]); import owner_config as o
+good = ["plain", "with space", "it's", "q\"uote", "back\\slash", "dollar $HOME", "hash # not a comment", "a=b=c", "Zoë 日本語 ñ", "", "  lead and trail  ",
+        "semi;colon & amp | pipe", "glob * ? [x] ~ {a,b}", "tab\there", "'", "\"", "a'b#c=d e", "$", "back`tick`"]
+for v in good:
+    try:
+        line = o.line("SOME_KEY", v)
+    except o.OwnerConfigError:
+        assert "'" in v and any(c in v for c in "$`\\\""), f"refused a value the grammar can hold: {v!r}"
+        continue
+    assert o.parse_env(line + "\n", "t")["SOME_KEY"] == v, f"round trip failed for {v!r}"
+    got = subprocess.run(["bash", "-c", 'eval "$1"; printf %s "$SOME_KEY"', "b", line], capture_output=True, text=True).stdout
+    assert got == v, f"bash reads {got!r} for {v!r}"
+for v in ["a'b$c", "a'b`c", "a'b\\c", "a'b\"c", "line\nbreak", "cr\rhere", "nul\0x"]:
+    try:
+        o.line("SOME_KEY", v)
+    except o.OwnerConfigError:
+        continue
+    raise AssertionError(f"wrote a value the strict parser cannot hold: {v!r}")
+for k in ["lower", "1BAD", "BAD KEY", "", "A=B"]:
+    try:
+        o.line(k, "v")
+    except o.OwnerConfigError:
+        continue
+    raise AssertionError(f"wrote a bad key: {k!r}")
+PY
+ok 'python3 -I "$T/rt.py" /workspace/bin >"$T/rt.out" 2>&1' "F1 W4: the canonical writer round-trips quotes, backslashes, spaces, \$, #, = and non-ASCII text through the strict parser and bash, and refuses what the grammar cannot hold"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

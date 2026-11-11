@@ -168,6 +168,69 @@ if [ -n "$REAL" ]; then
   done < <(pairs)
 fi
 
+# 3b F1 W4 (E7): the owner-only write path. For every role and every entry of owner_data (paths no role writes, but all may read) and of
+# owner_commands (commands no role runs), from the table: the write tools, a redirect, copy/move/delete, git commands that write the
+# path, a symlink to it, another spelling of it, and every spelling of each command; reads of owner data stay allowed. The tables are
+# the real one and one with an extra entry in each list (no name is in the code).
+printf '%s\n' 'diff --git a/ZZD/zz-probe.json b/ZZD/zz-probe.json' 'new file mode 100644' '--- /dev/null' '+++ b/ZZD/zz-probe.json' '@@ -0,0 +1 @@' '+x' >"$T/w4.patch.in"
+matrix2() {
+  local tag=$1 lab role d f c b q dir okc h bad
+  while read -r lab role; do
+    setw "$lab"; L="$tag $lab/$role"
+    okc=; for c in "cat package.json" "npm test" "git log --oneline"; do
+      bad=0; for h in $(hooks_for "$MT" "$role" terminal); do [ "$(hk "$(hf "$h")" "$(pl terminal "$(js --arg c "$c" '{command: $c}')")")" = 0 ] || bad=1; done
+      [ $bad = 0 ] && { okc=$c; break; }
+    done
+    while read -r d; do
+      f=/workspace/$d/zz-probe.json; sed "s#ZZD#$d#g" "$T/w4.patch.in" >"$T/w4.patch"; ln -sfn "/workspace/$d" "$T/lnkd"
+      refuse "$L" "$role" write_file "$(js --arg p "$f" '{path: $p, content: "x"}')" "owner data $d"
+      refuse "$L" "$role" patch "$(js --arg p "$f" '{mode: "replace", path: $p, old_string: "a", new_string: "b"}')" "owner data $d"
+      refuse "$L" "$role" patch "$(js --arg p "$f" '{mode: "patch", patch: "*** Begin Patch\n*** Add File: \($p)\n+x\n*** End Patch"}')" "owner data $d, V4A add"
+      refuse "$L" "$role" write_file "$(js --arg p "/workspace/${d^^}/zz-probe.json" '{path: $p, content: "x"}')" "owner data $d upper-cased (B2V-01)"
+      refuse "$L" "$role" write_file "$(js --arg p "$T/lnkd/zz-probe.json" '{path: $p, content: "x"}')" "owner data $d through a symlink"
+      refuse "$L" "$role" write_file "$(js --arg p "/workspace/.worktrees/t_00000000/$d/zz-probe.json" '{path: $p, content: "x"}')" "owner data $d in a card worktree of the stack"
+      for c in "echo x > $f" "echo x >> $f" "echo x >| $f" "cp /tmp/x $f" "mv /tmp/x $f" "tee $f" "sed -i s/a/b/ $f" "rm $f" "rm -rf /workspace/$d" \
+               "truncate -s 0 $f" "install /tmp/x $f" "dd if=/tmp/x of=$f" "ln -sf /tmp/x $f" "echo x > $T/lnkd/zz-probe.json" \
+               "git add -f $f" "git -C /workspace add -f $d/zz-probe.json" "git commit -m x $f" "git checkout HEAD -- $f" "git -C /workspace restore $d" \
+               "git restore --source=HEAD~1 -- $f" "git rm $f" "git rm -r --cached /workspace/$d" "git mv $f /tmp/x" "git mv /tmp/x $f" \
+               "git apply $T/w4.patch" "git apply --index $T/w4.patch" "env GIT_DIR=/workspace/.git git add -f $f" "bash -c 'git add -f $f'"; do
+        refuse "$L" "$role" terminal "$(js --arg c "$c" '{command: $c}')" "$c"
+      done
+      refuse "$L" "$role" terminal '{"command": "echo x > zz-probe.json"}' "relative redirect from inside owner data $d" "/workspace/$d"
+      refuse "$L" "$role" terminal '{"command": "git add -f zz-probe.json"}' "relative git add from inside owner data $d" "/workspace/$d"
+      refuse "$L" "$role" terminal "$(js --arg c "git apply - <<'EOF'
+$(cat "$T/w4.patch")
+EOF" '{command: $c}')" "git apply of a patch given on stdin naming $d"
+      refuse "$L" "$role" process_manage "$(js --arg d "echo x > $f" '{action: "write", session_id: "p1", data: $d}')" "stdin redirect into owner data $d"
+      # controls: reading owner data is allowed, and so is an ordinary write elsewhere
+      allow "$L" "$role" read_file "$(js --arg p "$f" '{path: $p}')" "reading owner data $d"
+      allow "$L" "$role" search_files "$(js --arg p "/workspace/$d" '{pattern: "x", path: $p}')" "searching owner data $d"
+      if [ "$okc" = "cat package.json" ]; then   # a role that lets an ordinary read through lets a read of owner data through too
+        bad=0; for h in $(hooks_for "$MT" "$role" terminal); do [ "$(hk "$(hf "$h")" "$(pl terminal "$(js --arg c "cat $f" '{command: $c}')")")" = 0 ] || bad=1; done
+        say $bad "$L terminal control: cat of owner data $d allowed"
+      fi
+    done < <(jq -r '.owner_data[]' "$MT")
+    while read -r c; do
+      b=${c##*/}; q="${b:0:2}''${b:2}"; dir=${c%/*}
+      for x in "/workspace/$c" "bash /workspace/$c" "bash /workspace/$c x y" "sh /workspace/$c" "zsh /workspace/$c" "source /workspace/$c" ". /workspace/$c" \
+               "env X=1 /workspace/$c" "env -i /workspace/$c" "python3 /workspace/$c" "python3 -I /workspace/$c set A b" "bash -c '/workspace/$c x'" \
+               "bash -c \"bash /workspace/$c\"" "bash /workspace/$dir/$q" "cd /workspace/$dir && ./$b" "nohup /workspace/$c" "timeout 5 /workspace/$c" \
+               "X=1 /workspace/$c" "./$c" "/workspace/$dir/../$c" "exec /workspace/$c" "sudo /workspace/$c" "true && /workspace/$c" "echo y | /workspace/$c"; do
+        refuse "$L" "$role" terminal "$(js --arg c "$x" '{command: $c}')" "owner command: $x"
+      done
+      refuse "$L" "$role" terminal '{"command": "bash ./'"$b"'"}' "owner command from inside its folder" "/workspace/$dir"
+      refuse "$L" "$role" process_manage "$(js --arg d "/workspace/$c x
+" '{action: "write", session_id: "p1", data: $d}')" "owner command on stdin: $c"
+    done < <(jq -r '.owner_commands[]' "$MT")
+  done < <(pairs)
+}
+MT=$SRC; export ROLES_FILE=$SRC
+say "$(jq -e '(.owner_data | length > 0) and (.owner_commands | length > 0) and (.worker_markers | length > 0)' "$SRC" >/dev/null; echo $?)" "3b the real table has owner_data, owner_commands and worker_markers"
+matrix2 "3b real table"
+jq '.owner_data += ["zz-odata/sub"] | .owner_commands += ["tools/zz-owner-cmd.sh"]' "$SRC" >"$T/extra.json"; MT=$T/extra.json; export ROLES_FILE=$MT
+matrix2 "3b extra entries"
+MT=$SRC; export ROLES_FILE=$SRC
+
 # RT7-02: a MEDIA:/path tag in a gateway reply uploads a file with no tool call (no hook sees it); every role that talks on
 # Discord gets strict delivery (Hermes caches, allow-listed dirs only; no recent-file trust), set by apply from this table
 say "$(jq -e '[.roles[] | select(.platform_toolsets.discord) | .config["gateway.strict"] == true and .config["gateway.trust_recent_files"] == false] | length > 0 and all' "$SRC" >/dev/null; echo $?)" "3 every role with a Discord toolset has gateway.strict true and gateway.trust_recent_files false (RT7-02)"
@@ -177,7 +240,11 @@ MT=$T/probe.json
 printf 'not json' >"$T/garbage.json"
 jq 'del(.owner_settings)' "$SRC" >"$T/none.json"
 tbl "$T/empty.json" '[]'; tbl "$T/dotdot.json" '["../etc/zz"]'; tbl "$T/abs.json" '["/etc/zz"]'; tbl "$T/str.json" '"config/zz"'; tbl "$T/mixed.json" '["config/ok", 7]'
-for bad in "$T/missing.json" "$T/garbage.json" "$T/none.json" "$T/empty.json" "$T/dotdot.json" "$T/abs.json" "$T/str.json" "$T/mixed.json"; do
+# F1 W4: the three owner-write lists are part of the table: without one, with it empty, or with a bad entry, every role refuses everything
+jq 'del(.owner_data)' "$SRC" >"$T/nod.json"; jq 'del(.owner_commands)' "$SRC" >"$T/noc.json"; jq 'del(.worker_markers)' "$SRC" >"$T/nom.json"
+jq '.owner_data = []' "$SRC" >"$T/emd.json"; jq '.owner_commands = [""]' "$SRC" >"$T/emc.json"; jq '.worker_markers = ["a b"]' "$SRC" >"$T/bmk.json"
+for bad in "$T/missing.json" "$T/garbage.json" "$T/none.json" "$T/empty.json" "$T/dotdot.json" "$T/abs.json" "$T/str.json" "$T/mixed.json" \
+           "$T/nod.json" "$T/noc.json" "$T/nom.json" "$T/emd.json" "$T/emc.json" "$T/bmk.json"; do
   export ROLES_FILE=$bad
   while read -r lab role; do
     setw "$lab"
@@ -278,6 +345,25 @@ for m in main thread; do
   brefuse $m skill_view "$(js --arg p "$POWN" '{name: "x", file_path: $p}')" "owner file"
   ballow $m read_file '{"path": "/workspace/SUPERVISOR.md"}' "ordinary file (control)"
   ballow $m terminal '{"command": "cat package.json"}' "ordinary command (control)"
+  # F1 W4: owner data and owner commands, from the bound worker's main thread and from a delegated child (a second thread)
+  while read -r d; do
+    for tgt in "/workspace/$d/zz-probe.json" "$WS/$d/zz-probe.json"; do
+      brefuse $m write_file "$(js --arg p "$tgt" '{path: $p, content: "x"}')" "owner data $tgt"
+      brefuse $m patch "$(js --arg p "$tgt" '{mode: "replace", path: $p, old_string: "a", new_string: "b"}')" "owner data $tgt"
+      for c in "echo x > $tgt" "cp /tmp/x $tgt" "git -C $WS add -f ${tgt#$WS/}" "git commit -m x $tgt" "git checkout HEAD -- $tgt" "git rm $tgt"; do
+        brefuse $m terminal "$(js --arg c "$c" '{command: $c}')" "$c"
+      done
+    done
+    ballow $m read_file "$(js --arg p "$WS/$d/zz-probe.json" '{path: $p}')" "reading owner data (control)"
+    ballow $m terminal "$(js --arg c "cat $WS/$d/zz-probe.json" '{command: $c}')" "cat of owner data (control)"
+  done < <(jq -r '.owner_data[]' "$MT")
+  while read -r c; do
+    for x in "/workspace/$c" "bash /workspace/$c" "python3 -I $WS/$c x" "env X=1 $WS/$c" "source $WS/$c"; do
+      brefuse $m terminal "$(js --arg c "$x" '{command: $c}')" "owner command: $x"
+    done
+  done < <(jq -r '.owner_commands[]' "$MT")
+  ballow $m terminal "$(js --arg c "echo x > $WS/zz-ok.txt" '{command: $c}')" "an ordinary write in its own worktree (control)"
+  ballow $m write_file "$(js --arg p "$WS/docs-ok.md" '{path: $p, content: "x"}')" "an ordinary file in its own worktree (control)"
 done
 
 # 6 the pre-commit guard, in scratch repos; its list is read from the docs/hermes-local/roles.json beside its own bin/
@@ -302,7 +388,11 @@ say "$([ "$(cg tree)" = 1 ] && grep -qi "owner settings" "$T/out"; echo $?)" "6 
 git -C "$T/repo" rm -rq --cached zzzz; git -C "$T/repo" reset -q config/zz-owner-probe.env
 mkdir -p "$T/repo/CONFIG"; echo x >"$T/repo/CONFIG/zz-owner-probe.env"; git -C "$T/repo" add CONFIG/zz-owner-probe.env
 say "$([ "$(cg tree)" = 1 ] && grep -qi "owner settings" "$T/out"; echo $?)" "6 the owner path staged upper-cased (the same file on the case-insensitive /workspace): refused (B2V-01)"
-git -C "$T/repo" reset -q CONFIG/zz-owner-probe.env; git -C "$T/repo" rm -q --cached -f b
+git -C "$T/repo" reset -q CONFIG/zz-owner-probe.env
+# F1 W4: owner_data is committed by the owner and refused only for a worker (below): with no worker proof the guard lets it through
+OD=$(jq -r '.owner_data[0]' "$T/probe.json"); mkdir -p "$T/repo/$OD"; echo x >"$T/repo/$OD/zz-w4.json"; git -C "$T/repo" add -f "$OD/zz-w4.json"
+say "$([ "$(cg tree)" = 0 ]; echo $?)" "6 owner data staged by the owner (no worker proof, no marker): allowed (the owner and the build commit it)"
+git -C "$T/repo" reset -q "$OD/zz-w4.json"; git -C "$T/repo" rm -q --cached -f b
 git -C "$T/repo" add sub/config/zz-owner-probe.env config/zz-owner-probe.example.env
 say "$([ "$(cg tree)" = 0 ]; echo $?)" "6 same file name in another folder, and the owner example file: allowed (the exact path decides)"
 # a real commit by the bound worker, in its card worktree on its card branch, the hook installed as the repo's pre-commit
@@ -319,8 +409,56 @@ for m in main thread; do
   say "$([ "$(gc $m ok-$m.txt)" = 0 ] && [ "$(git -C "$WA" rev-list --count HEAD)" = $((N0+1)) ]; echo $?)" "6 $m: the bound worker's ordinary commit in its card worktree is allowed (control: the proof works)"
   N0=$(git -C "$WA" rev-list --count HEAD)
   say "$([ "$(gc $m $PROBE)" != 0 ] && grep -qi "owner settings" "$T/bout" && [ "$(git -C "$WA" rev-list --count HEAD)" = "$N0" ]; echo $?)" "6 $m: the bound worker's commit staging the owner path: refused by the owner list, no commit made"
+  N0=$(git -C "$WA" rev-list --count HEAD)
+  say "$([ "$(gc $m "$OD/zz-w4-$m.json")" != 0 ] && grep -qi "owner data" "$T/bout" && [ "$(git -C "$WA" rev-list --count HEAD)" = "$N0" ]; echo $?)" "6 $m: the bound worker's commit staging owner data ($OD): refused as owner data, no commit made"
   git -C "$WA" reset -q --hard; git -C "$WA" clean -qf
 done
+# F1 W4: the worker markers come from the table: a marked commit nothing proves is refused, whatever the marker's name
+jq '.worker_markers += ["ZZ_W4_MARK"]' "$T/probe.json" >"$T/marks.json"; mktree treemark "$T/marks.json"
+echo y >"$T/repo/c"; git -C "$T/repo" add c
+say "$([ "$(cd "$T/repo" && ZZ_W4_MARK=1 "$T/treemark/bin/commit-guard.sh" >"$T/out" 2>&1; echo $?)" = 1 ] && grep -qi "cannot be proven" "$T/out"; echo $?)" "6 a marker variable that only the table names (ZZ_W4_MARK) marks a worker: the unproven commit is refused"
+say "$([ "$(cd "$T/repo" && ZZ_W4_MARK=1 "$T/tree/bin/commit-guard.sh" >"$T/out" 2>&1; echo $?)" = 0 ]; echo $?)" "6 the same variable is no marker in a table that does not list it (control)"
+mktree treenom "$T/nom.json"; mktree treeemd "$T/emd.json"; mktree treebmk "$T/bmk.json"
+for t in treenom treeemd treebmk; do
+  say "$([ "$(cg $t)" = 1 ] && grep -qi "cannot be read" "$T/out"; echo $?)" "6 the worker marker or owner data list unreadable ($t): refused (fail closed)"
+done
+git -C "$T/repo" reset -q config/zz-owner-probe.env
+mkdir -p "$T/repo/CONFIG"; echo x >"$T/repo/CONFIG/zz-owner-probe.env"; git -C "$T/repo" add CONFIG/zz-owner-probe.env
+say "$([ "$(cg tree)" = 1 ] && grep -qi "owner settings" "$T/out"; echo $?)" "6 the owner path staged upper-cased (the same file on the case-insensitive /workspace): refused (B2V-01)"
+git -C "$T/repo" reset -q CONFIG/zz-owner-probe.env
+# F1 W4: owner_data is committed by the owner and refused only for a worker (below): with no worker proof the guard lets it through
+OD=$(jq -r '.owner_data[0]' "$T/probe.json"); mkdir -p "$T/repo/$OD"; echo x >"$T/repo/$OD/zz-w4.json"; git -C "$T/repo" add -f "$OD/zz-w4.json"
+say "$([ "$(cg tree)" = 0 ]; echo $?)" "6 owner data staged by the owner (no worker proof, no marker): allowed (the owner and the build commit it)"
+git -C "$T/repo" reset -q "$OD/zz-w4.json"; git -C "$T/repo" rm -q --cached -f b
+git -C "$T/repo" add sub/config/zz-owner-probe.env config/zz-owner-probe.example.env
+say "$([ "$(cg tree)" = 0 ]; echo $?)" "6 same file name in another folder, and the owner example file: allowed (the exact path decides)"
+# a real commit by the bound worker, in its card worktree on its card branch, the hook installed as the repo's pre-commit
+K=$T/k6; WA=$K/wa
+git init -q -b main "$K/main" && (cd "$K/main" && echo a >a && git add a && git commit -q -m init) \
+  && git -C "$K/main" worktree add -q -b "$BRA" "$WA" && ln -s "$T/tree/bin/commit-guard.sh" "$K/main/.git/hooks/pre-commit"
+mkdir -p "$WA/config"; WS=$WA
+gc() {  # gc <mode> <file>: add and commit <file> in the card worktree as the worker's tool call
+  bound "$1" '{}' env "HERMES_KANBAN_WORKSPACE=$WA" "HERMES_DELEGATED_CHILD_CONTEXT=$FENCE" \
+    sh -c 'cd "$1" && mkdir -p "$(dirname "$2")" && echo x >"$2" && git add -f -- "$2" && git commit -q -m "$2"' sh "$WA" "$2"
+}
+for m in main thread; do
+  N0=$(git -C "$WA" rev-list --count HEAD)
+  say "$([ "$(gc $m ok-$m.txt)" = 0 ] && [ "$(git -C "$WA" rev-list --count HEAD)" = $((N0+1)) ]; echo $?)" "6 $m: the bound worker's ordinary commit in its card worktree is allowed (control: the proof works)"
+  N0=$(git -C "$WA" rev-list --count HEAD)
+  say "$([ "$(gc $m $PROBE)" != 0 ] && grep -qi "owner settings" "$T/bout" && [ "$(git -C "$WA" rev-list --count HEAD)" = "$N0" ]; echo $?)" "6 $m: the bound worker's commit staging the owner path: refused by the owner list, no commit made"
+  N0=$(git -C "$WA" rev-list --count HEAD)
+  say "$([ "$(gc $m "$OD/zz-w4-$m.json")" != 0 ] && grep -qi "owner data" "$T/bout" && [ "$(git -C "$WA" rev-list --count HEAD)" = "$N0" ]; echo $?)" "6 $m: the bound worker's commit staging owner data ($OD): refused as owner data, no commit made"
+  git -C "$WA" reset -q --hard; git -C "$WA" clean -qf
+done
+# F1 W4: the worker markers come from the table: a marked commit nothing proves is refused, whatever the marker's name
+jq '.worker_markers += ["ZZ_W4_MARK"]' "$T/probe.json" >"$T/marks.json"; mktree treemark "$T/marks.json"
+echo y >"$T/repo/c"; git -C "$T/repo" add c
+say "$([ "$(cd "$T/repo" && ZZ_W4_MARK=1 "$T/treemark/bin/commit-guard.sh" >"$T/out" 2>&1; echo $?)" = 1 ] && grep -qi "cannot be proven" "$T/out"; echo $?)" "6 a marker variable that only the table names (ZZ_W4_MARK) marks a worker: the unproven commit is refused"
+say "$([ "$(cd "$T/repo" && ZZ_W4_MARK=1 "$T/tree/bin/commit-guard.sh" >"$T/out" 2>&1; echo $?)" = 0 ]; echo $?)" "6 the same variable is no marker in a table that does not list it (control)"
+for t in nom emd bmk; do mktree tree$t "$T/$([ $t = nom ] && echo nom || ([ $t = emd ] && echo emd || echo bmk)).json"
+  say "$([ "$(cg tree$t)" = 1 ] && grep -qi "cannot be read" "$T/out"; echo $?)" "6 the worker marker or owner data list unreadable ($t): refused (fail closed)"
+done
+git -C "$T/repo" reset -q c
 rm -f "$K/main/.git/hooks/pre-commit"
 
 # 7 RT6-01: the write guard in a project repo bound to the board, outside /workspace
