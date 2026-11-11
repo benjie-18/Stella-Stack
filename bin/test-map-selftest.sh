@@ -195,7 +195,7 @@ m, files = tm.load(), tm.tree()
 sel = {f: tm.select([f], m) for f, mode in files.items() if mode}   # tracked files only
 full = sorted(f for f, s in sel.items() if s["full"])
 wide = max(sel, key=lambda f: (len(sel[f]["targets"]), f))
-print(len(sel), len(full), " ".join(full[:5]), len(sel[wide]["targets"]), wide, sep="\t")
+print(len(sel), len(full), " ".join(full[:5]) or "-", len(sel[wide]["targets"]), wide, sep="\t")   # no empty field: read joins tabs
 EOF
 }
 IFS=$'\t' read -r n_all n_full first_full n_wide f_wide < <(sweep)
