@@ -35,15 +35,35 @@ problem). Read with `list`, `get <id> [<entry>]` and `search <words>`; every rea
 `.stella/data-files.json` lists every data file: `id`, `path` (a file, or a folder of `*.json`), `schema`
 (`.stella/schemas/<schema>.schema.json`, or null for an env file), `format` (`json` or `env`), `owner_only` (only the
 owner's path writes it), `redact_keys` (key names whose values are masked in logs), `list_key` (the array or map that
-holds the entries) and `id_field`. It also names the event log, the backup folder, the applied-state file and the role table.
+holds the entries) and `id_field` (several fields, comma separated, make an id joined with `:`; approved hosts use `host,port`).
+It also names the event log, the backup folder, the applied-state file and the role table. Every path in the index is
+relative, has no `..` part and must resolve (symlinks followed) inside the stack root; `check` refuses one that does not,
+and `get`, `list` and `search` never read it. The index row of the index is `owner_only`: it decides which files are.
 
 Schemas use a small JSON Schema subset (the list is in the docstring of `bin/stella_data.py`). A schema that uses any
-other keyword is an error, never ignored. Every data file needs `schema_version`. `check` also runs the cross-file rules:
-role assignments against the connections catalog, the effort modes and the data policy; `depends_on` in features
-(no missing target, no cycle); `allowed_roles` against the role table; a setting's store against the index.
+other keyword is an error, never ignored; so is a keyword with a wrong value (`required` as a string, an external `$ref`).
+`const` and `enum` compare by JSON type (`true` is not 1); `pattern` is read as ECMA-262 does, so `$` is the very end of the
+value. Data files are strict JSON: a repeated key, NaN and Infinity are errors. A problem message never prints the rejected
+value, only its JSON type and, for a string, its length. Every data file needs `schema_version`. `check` also runs the
+cross-file rules: role assignments against the connections catalog, the effort modes and the data policy (a project scope
+needs `project`, a card scope needs `project` and `card`, a global scope has neither; project ids are lower case; one
+assignment per scope, role and effort mode; no chain entry names a provider that is switched off; the role table's
+`fallback_role` is not a role to assign or allow); `depends_on` in features (no missing target, no cycle, an `on` feature
+depends only on `on` features); `allowed_roles` against the role table; a setting's store, default and `code` (it must
+exist in the alert catalog) against the index and the registry itself; an extension is `enabled` only when `approved`; data
+class names against data-policy `data_classes`. `check <id>` prints that file's problems plus every cross-file problem and
+every "could not run" problem, so a candidate file can be judged on its own; it exits 1 when any exists. `check` also says
+which env-format rows it did not open (their keys are read by the apply tool, never here).
 
-**Secrets are names only.** A `secrets` field holds variable names such as `SOME_API_KEY`, never a value; the schema
-refuses anything that is not a variable name.
+Read commands fail closed: a file that is malformed, nested too deeply, not an object or fails its schema gives exit 1 and one
+`STL-CFG-310` line naming it, never a traceback and never an empty result. `get` on an env-format row says the id is known and
+not readable through this tool (no alert line). `get` and `search` mask the value of any key matching the row's `redact_keys`
+and the default of a `secret` setting. `search` matches values, not key names, ignoring case (also non-ASCII text).
+
+**Secrets are names only.** A `secrets` field holds variable names such as `SOME_API_KEY`, never a value. The schema enforces
+a shape: upper case letters, digits and underscores, starting with a letter, with at least one underscore, at most 64
+characters. That stops text that does not look like a name and most pasted keys (they rarely contain an underscore); it is
+not a guarantee that a value cannot be written in that shape, so never put a credential there.
 
 **How to add any entry:** edit the file, run `python3 bin/stella_data.py check`, then `get <id> <entry id>`. No code changes.
 Unknown means `null` or `"unverified"`: never write a capability, cost or term you have not checked.
@@ -57,7 +77,9 @@ purpose), `auth_types[]`, `secrets[]` (names), `actions[]` (id and approval clas
 pay, delete need approval first; sign_in is an escalation), `models[]` (id, probed `capabilities`: `tool_calling`,
 `json_mode`, `context_tokens`, `vision`, `streaming`, each a value or null for not probed; `probed_at`, `probe_source`),
 `data_policy` (retention, training use, region, zero retention, `data_classes_allowed`; an empty list allows no class)
-and `tos` (`status`, `unverified` is a legal value). *To add one:* append an entry; an aggregator proxy is a provider with
+`tos` (`status`, `unverified` is a legal value; `subscription_login_by_agent` is the declared automated-agent terms flag:
+`unverified`, `allowed`, `forbidden` or `not_applicable`), `scopes[]` (the access scopes it asks for), `redaction_patterns[]`
+(regular expressions masked in its logs) and, optionally, `allowed_roles[]` and `risk_class`. *To add one:* append an entry; an aggregator proxy is a provider with
 `subkind: openai-compatible-aggregator`, disabled until the owner turns it on, with its own outbound hosts in `hosts`.
 
 ### `.stella/data-policy.json`
@@ -74,7 +96,8 @@ The resolver that applies the precedence is built in a later phase; this file is
 *To add one:* append an assignment with a new `id`.
 
 ### `.stella/approved-hosts.json`
-`hosts[]`: host, port, scope, approved_by, approved_at, expires_at. Ships empty. The live firewall does not read it yet.
+`hosts[]`: host (a host name; `*` alone is refused), port, scope and approved_by (not empty), approved_at and expires_at
+(`YYYY-MM-DDTHH:MM:SSZ`, UTC; expires_at may be null). One entry per host and port. Ships empty. The live firewall does not read it yet.
 
 ### `.stella/capabilities.json` (capability registry)
 One schema for tools, skills, MCP servers, commands and extensions: `id`, `kind`, `summary`, `keywords`, `inputs`,
@@ -95,7 +118,9 @@ One manifest per file (see its README); `enabled` is the disable switch; install
 ### `.stella/settings.json` (settings registry)
 Every owner-editable setting: `key`, `label`, `type`, `validation`, `scope`, `sensitivity` (plain, identity_critical,
 secret), `default`, `store` (`data`: an index id, `key`), `apply` (script, needs_restart) and the catalog `code` shown on
-failure. Secrets are never stored or shown here.
+failure. Secrets are never stored or shown here: a `secret` setting has no default, and `get` and `search` mask it. A default
+must satisfy the setting's own `type` and `validation`; `validation` must be coherent (minimum not above maximum, a pattern
+that compiles, an enum with values). Patterns are read with `$` as the very end of the value.
 
 ### Event and approval schemas
 `.stella/schemas/event.schema.json`, `approval-request.schema.json` and `approval-decision.schema.json` are schemas for

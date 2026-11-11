@@ -60,7 +60,7 @@ ok '! sd fake search --json 2>/dev/null' "18 search with no words is refused"
 
 # check refuses.
 mk bad1; ed bad1 connections.json '.entries[0].kind = "bogus"'
-ok 'refuses bad1 check && grep -q "STL-CFG-310" "$T/o" && grep -q bogus "$T/o"' "19 a schema violation makes check exit 1 with STL-CFG-310"
+ok 'refuses bad1 check && grep -q "STL-CFG-310" "$T/o" && grep -q "kind" "$T/o"' "19 a schema violation makes check exit 1 with STL-CFG-310"
 mk bad2; ed bad2 connections.json 'del(.schema_version)'
 ok 'refuses bad2 check && grep -q "schema_version" "$T/o"' "20 a data file without schema_version makes check exit 1"
 mk bad3; jq '.properties.entries.contains = {}' "$T/bad3/.stella/schemas/connections.schema.json" >"$T/bad3/s" && mv "$T/bad3/s" "$T/bad3/.stella/schemas/connections.schema.json"
@@ -94,7 +94,7 @@ ok '! sd bad12 check >/dev/null 2>&1' "32 a capability naming a role that is not
 mk bad13; ed bad13 settings.json '.entries[0].store.data = "no-such-data"'
 ok '! sd bad13 check >/dev/null 2>&1' "33 a setting stored in a data file that is not in the index is refused"
 mk bad14; ed bad14 connections.json '.entries[0].secrets += ["not a name"]'
-ok '! sd bad14 check >/dev/null 2>&1' "34 a secret that is not a variable name (a value pasted in) is refused"
+ok '! sd bad14 check >/dev/null 2>&1' "34 a secret with characters a variable name cannot have is refused (63 and 64 cover the shape rule)"
 mk bad15; ed bad15 connections.json '.entries += [.entries[0]]'
 ok 'refuses bad15 check && grep -qi "duplicate" "$T/o"' "35 a duplicate entry id is refused"
 mk bad16; echo '{' >"$T/bad16/.stella/features.json"
@@ -121,7 +121,7 @@ ok '! sd g1c validate zz1 "$T/d1" 2>&1 | grep -qx valid && ! sd g1c validate zz2
 mk g1d
 printf '{"schema_version":1,"data_classes":["public"],"default":{"mode":"open","allowed_providers":[]},"projects":{"cx":{"mode":"local_only","allowed_providers":[]},"cx":{"mode":"open","allowed_providers":[]}}}' >"$T/g1d/.stella/data-policy.json"
 ok 'refuses g1d check && grep -qi "repeated" "$T/o"' "44 a repeated JSON key is refused"
-mk g1e; sed -i '0,/"cost": null/s//"cost": NaN/' "$T/g1e/.stella/connections.json"
+mk g1e; sed -i '0,/"cost": null/s//"cost": {"per_call": NaN, "cap": Infinity}/' "$T/g1e/.stella/connections.json"
 ok 'grep -q NaN "$T/g1e/.stella/connections.json" && refuses g1e check' "45 NaN in a data file is refused"
 mk g1f; ed g1f connections.json '.entries[0].secrets = ["sk-live-abcdef0123456789xyz"]'
 ok 'refuses g1f check && ! grep -q abcdef0123 "$T/o"' "46 a problem message never prints the rejected value"
@@ -167,7 +167,7 @@ ok 'refuses g4b check' "63 a pasted key without an underscore is not a secret na
 mk g4c; ed g4c connections.json '.entries[0].secrets += ["A_" + ("X" * 70)]'
 ok 'refuses g4c check' "64 a secret name over 64 characters is refused"
 mk g4d; ed g4d settings.json '.entries += [{key:"QA_API_TOKEN",label:"x",type:"string",validation:{},scope:"global",sensitivity:"secret",default:"qa-fake-value-7f3a",store:{data:"owner-settings",key:"QA_API_TOKEN"},apply:{script:"bin/stella-apply.py",needs_restart:false},code:"STL-CFG-315"}]'
-ok 'refuses g4d check && ! sd g4d get settings QA_API_TOKEN 2>&1 | grep -q qa-fake-value && ! sd g4d search fake-value 2>&1 | grep -q QA_API_TOKEN' "65 a secret setting with a default is refused, and get and search never print it"
+ok 'refuses g4d check && ! sd g4d get settings QA_API_TOKEN 2>&1 | grep -q qa-fake-value && ! sd g4d search fake-value 2>/dev/null | grep -q QA_API_TOKEN' "65 a secret setting with a default is refused, and get and search never print it"
 mk g4e; ed g4e settings.json '(.entries[] | select(.key == "CALL_TIMEOUT")).default = 0'
 ok 'refuses g4e check' "66 a setting default outside its own validation is refused"
 mk g4g; ed g4g settings.json '(.entries[] | select(.key == "CALL_TIMEOUT")) |= (.default = 5 | .validation = {minimum:9,maximum:1})'

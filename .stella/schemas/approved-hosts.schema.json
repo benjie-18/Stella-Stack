@@ -12,7 +12,9 @@
         "type": "object",
         "properties": {
           "host": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^(\\*\\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$",
+            "maxLength": 253
           },
           "port": {
             "type": "integer",
@@ -20,19 +22,23 @@
             "maximum": 65535
           },
           "scope": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "approved_by": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "approved_at": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
           },
           "expires_at": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
           }
         },
         "required": [
