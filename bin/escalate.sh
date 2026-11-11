@@ -55,10 +55,11 @@ registry() {  # registry <KEY>: sets reg_def reg_min reg_max from the settings r
 registry CALL_TIMEOUT; ct_def=$reg_def ct_min=$reg_min ct_max=$reg_max
 registry QUEUE_MAX; qm_def=$reg_def qm_min=$reg_min qm_max=$reg_max
 # shortcut: nine digits at most (a number of days still fits in 64 bits); longer is out of range anyway
-secs=; [[ "${CALL_TIMEOUT:-}" =~ ^([1-9][0-9]{0,8})([smhd]?)$ ]] && secs=$(( ${BASH_REMATCH[1]} * $(case "${BASH_REMATCH[2]}" in m) echo 60;; h) echo 3600;; d) echo 86400;; *) echo 1;; esac) ))
+secs=; if [[ "${CALL_TIMEOUT:-}" =~ ^([1-9][0-9]{0,8})([smhd]?)$ ]]; then
+  case "${BASH_REMATCH[2]}" in m) mul=60;; h) mul=3600;; d) mul=86400;; *) mul=1;; esac; secs=$(( ${BASH_REMATCH[1]} * mul )); fi
 if [ -z "$secs" ] || [ "$secs" -lt "$ct_min" ] || [ "$secs" -gt "$ct_max" ]; then bad_timeout="${CALL_TIMEOUT:-}"; CALL_TIMEOUT=$ct_def
-  log WARN null "" false null "CALL_TIMEOUT='$bad_timeout' is not a duration of $ct_min to $ct_max seconds (0 would disable the timeout); using $CALL_TIMEOUT"
-  echo "escalate.sh: warning: CALL_TIMEOUT='$bad_timeout' is not a duration of $ct_min to $ct_max seconds; using $CALL_TIMEOUT" >&2; fi
+  log WARN null "" false null "CALL_TIMEOUT='$bad_timeout' is not a positive duration of $ct_min to $ct_max seconds (0 would disable the timeout); using $CALL_TIMEOUT"
+  echo "escalate.sh: warning: CALL_TIMEOUT='$bad_timeout' is not a positive duration of $ct_min to $ct_max seconds; using $CALL_TIMEOUT" >&2; fi
 if [ -z "${QUEUE_MAX:-}" ]; then QUEUE_MAX=$qm_def   # unset or empty: the default, silently
 elif ! [[ "$QUEUE_MAX" =~ ^[0-9]{1,9}$ ]] || [ "$((10#$QUEUE_MAX))" -lt "$qm_min" ] || [ "$((10#$QUEUE_MAX))" -gt "$qm_max" ]; then
   log WARN null "" false null "QUEUE_MAX='$QUEUE_MAX' is not a whole number from $qm_min to $qm_max; using $qm_def"
