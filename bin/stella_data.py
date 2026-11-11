@@ -133,7 +133,7 @@ def owner_files(table):
 def layout(rs, owner):
     """Where every row's files are, and which rows may be opened: ([(row id, problem)], [(row, files)] of the JSON rows that
     may be opened). A file named by two rows is opened by neither; a row on an owner setting must be an env row and owner_only,
-    and is never opened; with owner None no JSON row is opened."""
+    and is never opened."""
     probs, named, by_file = [], [], {}
     for r in rs:
         try:
@@ -144,6 +144,9 @@ def layout(rs, owner):
         named.append((r, fs))
         for _, a in fs:
             by_file.setdefault(a, []).append(r)
+    if owner is None:   # shortcut: with no readable role table only the env rows' files are kept closed; check reports the table
+        probs.append(("role-table", "the role table's owner_settings cannot be read, so only the files of env rows are kept closed"))
+        owner = {a for r, fs in named if r["format"] == "env" for _, a in fs}
     shut = set()
     for a, rr in by_file.items():
         rel = os.path.relpath(a, ROOT)
@@ -154,9 +157,7 @@ def layout(rs, owner):
             shut.add(id(r))
             if r["format"] != "env" or not r["owner_only"]:
                 probs.append((r["id"], f"{rel} is an owner setting of the role table: its row must be format env and owner_only, and it is never opened here"))
-    if owner is None:
-        probs.append(("data-files", "the role table's owner_settings cannot be read, so no JSON data file is opened"))
-    return probs, [(r, fs) for r, fs in named if r["format"] == "json" and owner is not None and id(r) not in shut]
+    return probs, [(r, fs) for r, fs in named if r["format"] == "json" and id(r) not in shut]
 
 
 _pats = "unread"
@@ -174,7 +175,11 @@ def value_pats():
                 with open(safe(rel), encoding="utf-8") as f:
                     return json.load(f)
             idx = lax(INDEX)
-            for r, fs in layout(idx["files"], owner_files(lax(idx["role_table"])))[1]:
+            try:
+                table = lax(idx["role_table"])
+            except Exception:
+                table = None
+            for r, fs in layout(idx["files"], owner_files(table))[1]:
                 for rel, _ in fs if r["schema"] == "connections" else []:
                     d = lax(rel)
                     for e in d.get(r["list_key"]) or [] if isinstance(d, dict) else []:
@@ -447,9 +452,15 @@ def cross_rules(by, whole, P, rs):
     src = by["_src"]
     D = lambda sch, k=None: src.get(sch, {}).get(k) or next((rid for rid, _ in whole.get(sch, [])), sch)
     conn, feats, sets = by.get("connections", {}), by.get("features", {}), by.get("settings", {})
-    table = load(load(INDEX)["role_table"])
-    allroles = table["roles"]
-    roles = set(allroles) - {table["fallback_role"]}   # the fail-closed row is no role to assign or allow
+    try:
+        table = load(load(INDEX)["role_table"])
+    except DataError:   # the rules that read it cannot run: the rows they judge are refused, the others still judged
+        table = None
+        for sch in ("role-assignments", "capabilities", "extension", "connections"):
+            for rid in dict(whole.get(sch, [])):
+                P(rid, "the rules that read the role table could not run: it cannot be read")
+    allroles = table["roles"] if table else {}
+    roles = set(allroles) - {table["fallback_role"]} if table else set()   # the fail-closed row is no role to assign or allow
     pols, ras = whole.get("data-policy", []), whole.get("role-assignments", [])
     if pols:   # several policy files (a schema not marked one document): a value must pass every one of them
         classes = set.intersection(*(set(d["data_classes"]) for _, d in pols))
@@ -467,10 +478,10 @@ def cross_rules(by, whole, P, rs):
             hosts = [h["host"] for h in c["hosts"]]
             if c["kind"] == "provider" and c["locality"] == "local" and (not hosts or not set(hosts) <= local):
                 P(D("connections", c["id"]), f"{c['id']}: locality is local, but it lists no host or a host outside the data policy local_hosts")
-        for m in class_problems(table, classes):
+        for m in class_problems(table, classes) if table else []:
             P("role-table", m)
     seen, cards = {}, {}
-    for rid, ra in ras:
+    for rid, ra in ras if table else []:
         for a in ra["assignments"]:
             sc, lvl = a["scope"], a["scope"]["level"]
             want = {"global": (), "project": ("project",), "card": ("project", "card")}[lvl]
@@ -527,7 +538,7 @@ def cross_rules(by, whole, P, rs):
             if n not in seen:
                 seen.add(n)
                 todo += [d for d in feats[n]["depends_on"] if d in feats]
-    for sch in ("capabilities", "extension", "connections"):
+    for sch in ("capabilities", "extension", "connections") if table else ():
         for k, e in by.get(sch, {}).items():
             for i, r in enumerate(e.get("allowed_roles", [])):
                 if r not in roles:
