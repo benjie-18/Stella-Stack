@@ -72,7 +72,8 @@ queue() {  # queue <LIMIT|POOL_EXHAUSTED> <what happened>: one entry and one #al
   qid="" qnote="not queued"
   [ -z "${ESCALATE_REPLAY:-}" ] || { qnote="left in the queue as $ESCALATE_REPLAY"; rm -f "$prompt"; return 0; }
   exec 6>"$STATE/queue.lock"; flock 6
-  nq=$(jq -s '[.[] | select(.state == "queued")] | length' "$QUEUE" 2>/dev/null) || nq=0   # no queue file yet: jq prints 0 and fails; one number either way
+  : >>"$QUEUE"   # the file exists from the first call on: jq -s on a missing file prints 0 and fails, which made the count two numbers
+  nq=$(jq -s '[.[] | select(.state == "queued")] | length' "$QUEUE" 2>/dev/null) || nq=0
   if [ "$nq" -ge "$QUEUE_MAX" ]; then
     flock -u 6; rm -f "$prompt"
     qnote="not queued: the queue is full (QUEUE_MAX=$QUEUE_MAX)"
