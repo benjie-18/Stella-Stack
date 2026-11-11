@@ -32,25 +32,38 @@ problem). Read with `list`, `get <id> [<entry>]` and `search <words>`; every rea
 
 ## The index and the schemas
 
-`.stella/data-files.json` lists every data file: `id`, `path` (a file, or a folder of `*.json`), `schema`
-(`.stella/schemas/<schema>.schema.json`, or null for an env file), `format` (`json` or `env`), `owner_only` (only the
+`.stella/data-files.json` lists every data file: `id`, `path` (a file, or a folder of `*.json`), `schema` (a plain name
+such as `settings`, lower case letters, digits and `-`, read as `.stella/schemas/<schema>.schema.json`; null for an env file), `format` (`json` or `env`), `owner_only` (only the
 owner's path writes it), `redact_keys` (key names whose values are masked in logs), `list_key` (the array or map that
 holds the entries) and `id_field` (several fields, comma separated, make an id joined with `:`; approved hosts use `host,port`).
 It also names the event log, the backup folder, the applied-state file and the role table. Every path in the index is
 relative, has no `..` part and must resolve (symlinks followed) inside the stack root; `check` refuses one that does not,
 and `get`, `list` and `search` never read it. The index row of the index is `owner_only`: it decides which files are.
+Two rows that resolve to one file (`./x` and `x`, a folder row and a row on one of its files) are refused, and neither is
+opened. A row whose file is one of the role table's `owner_settings` must be format `env` and `owner_only`; `check` and the
+read commands never open that file, whatever the row says (when the role table cannot say which files those are, no JSON
+data file is opened).
+
+**Every file a row names is judged by every rule of its schema.** All the files of all the rows of one schema form one merged
+view: the cross-file rules read every entry of it, and one entry id in two files (or twice in one) is refused. A schema that
+is one document by nature says so with `"x-one-document": true` (the index, the data policy, the role assignments); a second
+file of such a schema, in another row or in the same folder, is refused. That merged view is what `check` judges and what the
+read commands serve.
 
 Schemas use a small JSON Schema subset (the list is in the docstring of `bin/stella_data.py`). A schema that uses any
 other keyword is an error, never ignored; so is a keyword with a wrong value (`required` as a string, an external `$ref`).
 `const` and `enum` compare by JSON type (`true` is not 1); `pattern` is read as ECMA-262 does, so `$` is the very end of the
-value. Data files are strict JSON: a repeated key, NaN and Infinity are errors. A problem line (schema or cross-file) never
-prints a value taken from the file under check unless that value is an id that exists in the data (an entry id, a role, a
-provider); otherwise it names the field and gives the JSON type and, for a string, its length. File paths from the index are
-printed: they locate the file. Numbers must fit a float, strings must be valid Unicode text, and nesting is limited to 64 levels
+value. Data files are strict JSON: a repeated key, NaN and Infinity are errors. **What a problem line may print** (schema or
+cross-file, in `check`, `validate` and every read command): a value taken from the file under check only when it is an id that
+exists in the data (an entry id, a role, a provider); any other value is named by its field, its JSON type and, for a string, its
+length. A key name taken from the file (an unknown key, a repeated key, a key of a free-form map in a path) is printed only when
+no value pattern of the connections catalog (`redaction_patterns`) matches it; else it is "a masked key" at its path. File paths
+from the index are printed: they locate the file. Lines that bin/roles.py writes about the role table are passed through as it
+writes them (item W2). Numbers must fit a float (a number too large, or a non-zero number so small it would read as 0, is refused), strings must be valid Unicode text, and nesting is limited to 64 levels
 (one limit for `check` and the read commands). Every data file needs `schema_version`. `check` also runs the
 cross-file rules: role assignments against the connections catalog, the effort modes and the data policy (a project scope
 needs `project`, a card scope needs `project` and `card`, a global scope has neither; project ids are lower case; one
-assignment per scope, role and effort mode; no chain entry names a provider that is switched off, and its provider allows every data class of the role (`requirements.allowed_data_classes`; an empty `data_classes_allowed` allows none); one card id belongs to one project; the role table's
+assignment per scope, role and effort mode; no chain entry names a provider that is switched off, and its provider allows every data class of the role (`requirements.allowed_data_classes`; an empty `data_classes_allowed` allows none) and lists the assignment's role in its `allowed_roles` (`[]` allows no role); one card id belongs to one project; the role table's
 `fallback_role` is not a role to assign or allow); `depends_on` in features (no missing target, no cycle, an `on` feature
 depends only on `on` features); `allowed_roles` against the role table; a setting's store, default and `code` (it must
 exist in the alert catalog) against the index and the registry itself; an extension is `enabled` only when `approved`; data
@@ -62,11 +75,30 @@ describes the index must be `owner_only`, and `check data-files` reports everyth
 every "could not run" problem, so a candidate file can be judged on its own; it exits 1 when any exists. `check` also says
 which env-format rows it did not open (their keys are read by the apply tool, never here).
 
-Read commands fail closed: a file that is malformed, nested too deeply, not an object or fails its schema gives exit 1 and one
-`STL-CFG-310` line naming it, never a traceback and never an empty result. `get` on an env-format row says the id is known and
-not readable through this tool (no alert line). `get`, `list` and `search` mask the value of any key matching the row's `redact_keys` (at any depth, so a key pasted into
-a free-form object such as `parameters`, `cost` or `limits` is masked) and the default of a `secret` setting; `check` refuses a
-`redact_keys` pattern that is not a regular expression. A command that fails in a way not listed here ends in exit 1 and one
+**Fields no rule reads (descriptive only).** Every other required field is checked for its shape by its schema and compared
+with nothing else by this tool; a later phase (the resolver, the approval service, the firewall) or another tool reads it:
+connections `subkind`, `label`, `auth_types`, `secrets` (names), `actions[]` and their `approval_class`, `models[].capabilities`,
+`probed_at`, `probe_source`, `hosts[].port` and `purpose`, `data_policy` `retention`, `training_use`, `region` and
+`zero_retention_available`, `tos`, and the value of `risk_class`; capabilities `kind`, `inputs`, `outputs`, `risk_class`,
+`hosts`, `secrets`, `source`, `triage` (`summary`, `keywords` and `status` are what `search` reads and sorts by); extensions
+`kind`, `hosts`, `secrets`, `tools`, `risk_class`, `source`; features `owner_phase`, `flag`; role assignments
+`no_silent_fallback` and `chain[].parameters`; settings `label`, `scope` and `apply` (`settings get` shows them); every field
+of a versions pin; approved hosts `scope` and `approved_by`; the index's `event_log`, `backup_dir` and `applied_state` (only
+their paths are checked here; the apply and event-log tools use them).
+
+Read commands fail closed and never serve what `check` refuses: `get`, `list` and `search` run the same rules as `check` (the
+schema and the cross-file rules) on the files they serve, and a problem of one of those files, or of the index, gives exit 1
+and one `STL-CFG-310` line naming it (the first problem, and how many more), never a traceback, never an empty result and no
+data. A file with no problem of its own is still served while another file has one. A read leaves out what it does not need:
+it does not validate the role table itself, and it opens only the rows whose schema the cross-file rules read or the served
+rows' schema. `list` with no id and `search` serve every row, so a problem anywhere refuses them. `get` on an env-format row
+says the id is known and not readable through this tool (`STL-CFG-319`, no alert line). `get`, `list` and `search` mask the value of any key matching the row's `redact_keys` (at any depth, so a key pasted into
+a free-form object such as `parameters`, `cost` or `limits` is masked), the default of a `secret` setting, and every string a
+value pattern of the connections catalog (`redaction_patterns`, from every entry) matches, inside lists too; `search` matches
+the masked text, so it never answers for a masked value. `check` refuses a `redact_keys` pattern that is not a regular
+expression. The patterns are the owner's picks: a name pattern also hides a non-secret field whose name it matches (the
+shipped one ends in `token`, so `usd_per_input_token` would be shown as `***`), and a value no pattern matches is shown;
+change the pattern, not the code. `validate <schema> <file>` prints each problem as a `STL-CFG-310` line, for every schema. A command that fails in a way not listed here ends in exit 1 and one
 `STL-CFG-310` line naming only the exception type. `search` matches values, not key names, ignoring case (also non-ASCII text).
 
 **Secrets are names only.** A `secrets` field holds variable names such as `SOME_API_KEY`, never a value. The schema enforces
@@ -193,5 +225,6 @@ An unexpected exception is exit 1 and one coded line (the exception type, never 
   also for owner-only rows. A restore that deletes a file the apply created is not checked against the whole set.
 
 ## Alert codes
-`STL-CFG-310` (a data file is invalid) and `STL-CFG-311` (a name is not in the data) are used by `stella_data.py`.
+`STL-CFG-310` (a data file is invalid), `STL-CFG-311` (a name is not in the data) and `STL-CFG-319` (an env-format row is
+not readable through this tool) are used by `stella_data.py`.
 `STL-CFG-312` to `318` are used by the apply and event-log tools (see above).

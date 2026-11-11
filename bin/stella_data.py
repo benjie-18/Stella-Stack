@@ -13,8 +13,11 @@ The stack root is the parent of this file's folder, or STELLA_ROOT (a scratch ro
 Data files must be strict JSON: a repeated key, NaN and Infinity are errors. A problem message never prints the rejected value.
 Schema subset: type, enum, const, properties, propertyNames, required, additionalProperties, items, minItems, maxItems,
 uniqueItems, minLength, maxLength, pattern ($ matches only at the very end), minimum, maximum, $ref (#/$defs/x; sibling
-keywords still apply), $defs, $schema, $id, title, description. Any other keyword, or a wrong keyword value, is an error,
-never ignored."""
+keywords still apply), $defs, $schema, $id, title, description, and x-one-document (true: the schema is one document by
+nature, so a second file of it is refused). Any other keyword, or a wrong keyword value, is an error, never ignored.
+Two rules hold the rest: every file an index row names is judged by every rule of its schema (all rows of a schema form one
+merged view, which is what check judges and what the read commands serve); and a read command runs the same rules on the
+files it serves and refuses, with the same STL-CFG-310 line, whatever check refuses."""
 import datetime, functools, glob, json, os, re, sys
 
 BIN = os.path.dirname(os.path.abspath(__file__))
@@ -28,7 +31,7 @@ INDEX = ".stella/data-files.json"
 SCHEMAS = ".stella/schemas"
 KEYWORDS = {"$schema", "$id", "$ref", "$defs", "title", "description", "type", "enum", "const", "properties", "propertyNames",
             "required", "additionalProperties", "items", "minItems", "maxItems", "uniqueItems", "minLength", "maxLength",
-            "pattern", "minimum", "maximum"}
+            "pattern", "minimum", "maximum", "x-one-document"}
 MAX_DEPTH = 64   # a data file nests far less; one limit makes `check` and the read commands agree on a deep object
 TYPES = {"object": dict, "array": list, "string": str, "integer": int, "number": (int, float), "boolean": bool, "null": type(None)}
 
@@ -42,7 +45,7 @@ def _pairs(pairs):
     d = {}
     for k, v in pairs:
         if k in d:
-            raise ValueError(f"repeated key {k!r}")
+            raise ValueError(f"repeated key {kname(k)}")
         d[k] = v
     return d
 
@@ -53,7 +56,7 @@ def _bad_const(c):
 
 def _float(s):
     v = float(s)
-    if v in (float("inf"), float("-inf")):
+    if v in (float("inf"), float("-inf")) or (v == 0 and re.search(r"[1-9]", s.lower().split("e")[0])):   # overflow, underflow
         raise ValueError("a number does not fit a float")
     return v
 
@@ -111,6 +114,92 @@ def load(rel):
     return jload(safe(rel), rel)
 
 
+def files_of(row):
+    """[(relative path, absolute path)]: the file a row names, or every *.json of a JSON row's folder; each inside the root."""
+    p = safe(row["path"])
+    if row["format"] == "json" and os.path.isdir(p):
+        return [(rel, safe(rel)) for rel in (os.path.relpath(f, ROOT) for f in sorted(glob.glob(os.path.join(p, "*.json"))))]
+    return [(row["path"], p)]
+
+
+def owner_files(table):
+    """The resolved paths of the role table's owner settings, or None when the table does not say (then no JSON row is opened)."""
+    try:
+        return {safe(f) for f in table["owner_settings"]}
+    except Exception:
+        return None
+
+
+def layout(rs, owner):
+    """Where every row's files are, and which rows may be opened: ([(row id, problem)], [(row, files)] of the JSON rows that
+    may be opened). A file named by two rows is opened by neither; a row on an owner setting must be an env row and owner_only,
+    and is never opened; with owner None no JSON row is opened."""
+    probs, named, by_file = [], [], {}
+    for r in rs:
+        try:
+            fs = files_of(r)
+        except DataError as e:
+            probs.append((r["id"], str(e)))
+            continue
+        named.append((r, fs))
+        for _, a in fs:
+            by_file.setdefault(a, []).append(r)
+    shut = set()
+    for a, rr in by_file.items():
+        rel = os.path.relpath(a, ROOT)
+        if len(rr) > 1:
+            shut |= {id(r) for r in rr}
+            probs.append((rr[-1]["id"], f"{rel} is named by more than one index row ({', '.join(r['id'] for r in rr)}), so none of them is opened"))
+        for r in rr if owner and a in owner else []:
+            shut.add(id(r))
+            if r["format"] != "env" or not r["owner_only"]:
+                probs.append((r["id"], f"{rel} is an owner setting of the role table: its row must be format env and owner_only, and it is never opened here"))
+    if owner is None:
+        probs.append(("data-files", "the role table's owner_settings cannot be read, so no JSON data file is opened"))
+    return probs, [(r, fs) for r, fs in named if r["format"] == "json" and owner is not None and id(r) not in shut]
+
+
+_pats = "unread"
+
+
+def value_pats():
+    """The value patterns the connections catalog carries (redaction_patterns of every entry of every connections file),
+    compiled; None when they cannot be read. Read leniently (a repeated key, NaN), so a broken file still masks: check says
+    what is wrong with it. While they are being read the answer is None (fail closed: every key name is masked)."""
+    global _pats
+    if _pats == "unread":
+        _pats, out = None, []
+        try:
+            def lax(rel):
+                with open(safe(rel), encoding="utf-8") as f:
+                    return json.load(f)
+            idx = lax(INDEX)
+            for r, fs in layout(idx["files"], owner_files(lax(idx["role_table"])))[1]:
+                for rel, _ in fs if r["schema"] == "connections" else []:
+                    d = lax(rel)
+                    for e in d.get(r["list_key"]) or [] if isinstance(d, dict) else []:
+                        for p in e.get("redaction_patterns") or [] if isinstance(e, dict) else []:
+                            try:
+                                out.append(re.compile(p))
+                            except (re.error, TypeError):
+                                pass   # check reports a pattern that does not compile
+            _pats = out
+        except Exception:
+            pass
+    return _pats
+
+
+def hidden(text):
+    """True when a value pattern matches the text, or the patterns cannot be read."""
+    v = value_pats()
+    return v is None or any(p.search(text) for p in v)
+
+
+def kname(k):
+    """A key name taken from a file, as a problem line shows it: quoted, unless a value pattern matches it."""
+    return "a masked key" if hidden(k) else repr(k)
+
+
 # ---- the JSON Schema subset validator ----
 @functools.lru_cache(maxsize=None)
 def rx(p):
@@ -160,8 +249,9 @@ def lint_schema(s, path="$", root=None):
     for k in ("minimum", "maximum"):
         if k in s and not (isinstance(s[k], (int, float)) and not isinstance(s[k], bool)):
             bad(k, "must be a number")
-    if "uniqueItems" in s and not isinstance(s["uniqueItems"], bool):
-        bad("uniqueItems", "must be true or false")
+    for k in ("uniqueItems", "x-one-document"):
+        if k in s and not isinstance(s[k], bool):
+            bad(k, "must be true or false")
     for k in ("title", "description", "$schema", "$id"):
         if k in s and not isinstance(s[k], str):
             bad(k, "must be a string")
@@ -246,9 +336,9 @@ def check_value(v, s, defs, p, errs):
             if k in props:
                 check_value(x, props[k], defs, f"{p}.{k}", errs)
             elif extra is False:
-                errs.append(f"{p}: {k!r} is not allowed")
+                errs.append(f"{p}: {kname(k)} is not allowed")
             elif isinstance(extra, dict):
-                check_value(x, extra, defs, f"{p}.{k}", errs)
+                check_value(x, extra, defs, f"{p}.{'<a masked key>' if hidden(k) else k}", errs)
 
 
 def validate_doc(doc, schema):
@@ -260,7 +350,8 @@ def validate_doc(doc, schema):
 
 # ---- the index and the entries ----
 def checked(doc, rel, schema):
-    """doc if it passes its schema, else a DataError naming the file: read commands never serve data `check` refuses."""
+    """doc if it passes its schema, else a DataError naming the file. The read commands of this tool also run the cross-file
+    rules on what they serve (served()), so they never serve data `check` refuses."""
     errs = validate_doc(doc, load(f"{SCHEMAS}/{schema}.schema.json"))
     if errs:
         raise DataError(f"{rel}: {errs[0]}" + (f" (and {len(errs) - 1} more)" if len(errs) > 1 else ""))
@@ -275,37 +366,23 @@ def is_folder(row):
     return os.path.isdir(safe(row["path"]))
 
 
-def docs_of(row, strict=True):
-    """[(relative path, parsed doc)] for a JSON data file, or for every *.json of a folder. strict: each must pass its schema."""
-    rels = [os.path.relpath(f, os.path.realpath(ROOT)) for f in sorted(glob.glob(os.path.join(safe(row["path"]), "*.json")))] if is_folder(row) else [row["path"]]
-    if strict and not row["schema"]:
-        raise DataError(f"{row['id']}: no schema named, so its data is not served")
-    return [(rel, checked(load(rel), rel, row["schema"]) if strict else load(rel)) for rel in rels]
-
-
-def entries(row, strict=True):
-    """{entry id: entry} for one data file. id_field may list fields (a,b): the id is their values joined with ':'.
-    Raises DataError on a repeated id, a file that is not an object, or an entry that is not an object with its id."""
-    out, idf, lk = {}, row["id_field"].split(","), row["list_key"]
-    for rel, d in docs_of(row, strict):
-        items = [d] if lk is None and isinstance(d, dict) else d.get(lk) if isinstance(d, dict) else None
-        if isinstance(items, dict):
-            pairs = list(items.items())
-        elif isinstance(items, list):
-            if not all(isinstance(x, dict) and all(f in x for f in idf) for x in items):
-                raise DataError(f"{rel}: an entry is not an object with {row['id_field']}")
-            pairs = [(":".join(str(x[f]) for f in idf), x) for x in items]
-        else:
-            raise DataError(f"{rel}: not a JSON object holding the entries")
-        for k, e in pairs:
-            if not isinstance(e, dict):
-                raise DataError(f"{rel}: entry {k} is not an object")
-            if k in out:
-                raise DataError(f"{rel}: duplicate entry id {k!r}")
-            if strict and row["schema"] == "settings" and (setting_problems(e) or store_problems(e, rows())):
-                raise DataError(f"{rel}: setting {k}: {(setting_problems(e) or store_problems(e, rows()))[0]}")
-            out[k] = e
-    return out
+def file_entries(row, rel, d):
+    """[(entry id, entry)] of one parsed file. id_field may list fields (a,b): the id is their values joined with ':'.
+    Raises DataError on a file that is not an object holding the entries, or an entry that is not an object with its id."""
+    idf, lk = row["id_field"].split(","), row["list_key"]
+    items = [d] if lk is None and isinstance(d, dict) else d.get(lk) if isinstance(d, dict) else None
+    if isinstance(items, dict):
+        pairs = list(items.items())
+    elif isinstance(items, list):
+        if not all(isinstance(x, dict) and all(f in x for f in idf) for x in items):
+            raise DataError(f"{rel}: an entry is not an object with {row['id_field']}")
+        pairs = [(":".join(str(x[f]) for f in idf), x) for x in items]
+    else:
+        raise DataError(f"{rel}: not a JSON object holding the entries")
+    for k, e in pairs:
+        if not isinstance(e, dict):
+            raise DataError(f"{rel}: entry {k} is not an object")
+    return pairs
 
 
 # ---- check ----
@@ -364,118 +441,123 @@ def store_problems(s, rs):
 
 
 def cross_rules(by, whole, P, rs):
-    """Cross-file rules. by: schema name -> {entry id: entry}; whole: schema name -> the parsed file; P(data id, problem) records
-    one; rs: the index rows. Files are found by the row's schema, so a renamed row switches no rule off."""
-    dids = {r["schema"]: r["id"] for r in rs if r["format"] == "json"}
-    D = lambda sch: dids.get(sch, sch)
+    """Cross-file rules over the merged view. by: schema name -> {entry id: entry} (every file of every row of the schema);
+    whole: schema name -> [(row id, parsed file)] (every file); by["_src"]: schema -> {entry id: row id}; P(data id, problem)
+    records one against the row that holds it. Files are found by the row's schema, so a renamed row switches no rule off."""
+    src = by["_src"]
+    D = lambda sch, k=None: src.get(sch, {}).get(k) or next((rid for rid, _ in whole.get(sch, [])), sch)
     conn, feats, sets = by.get("connections", {}), by.get("features", {}), by.get("settings", {})
     table = load(load(INDEX)["role_table"])
     allroles = table["roles"]
     roles = set(allroles) - {table["fallback_role"]}   # the fail-closed row is no role to assign or allow
-    pol, ra = whole.get("data-policy"), whole.get("role-assignments")
-    if pol:
-        classes = set(pol["data_classes"])
-        for proj, p in [("default", pol["default"])] + list(pol["projects"].items()):
-            for i, prov in enumerate(p["allowed_providers"]):
-                if prov not in conn:
-                    P(D("data-policy"), f"{proj}: allowed_providers[{i}] ({desc(prov)}) is not in the connections catalog")
+    pols, ras = whole.get("data-policy", []), whole.get("role-assignments", [])
+    if pols:   # several policy files (a schema not marked one document): a value must pass every one of them
+        classes = set.intersection(*(set(d["data_classes"]) for _, d in pols))
+        local = set.intersection(*(set(d["local_hosts"]) for _, d in pols))
+        projects = {k: v for _, d in pols for k, v in d["projects"].items()}
+        for rid, pol in pols:
+            for proj, p in [("default", pol["default"])] + list(pol["projects"].items()):
+                for i, prov in enumerate(p["allowed_providers"]):
+                    if prov not in conn:
+                        P(rid, f"{'default' if proj == 'default' else kname(proj)}: allowed_providers[{i}] ({desc(prov)}) is not in the connections catalog")
         for c in conn.values():
             for i, k in enumerate(c["data_policy"]["data_classes_allowed"]):
                 if k not in classes:
-                    P(D("connections"), f"{c['id']}: data_classes_allowed[{i}] ({desc(k)}) is not in data-policy data_classes")
+                    P(D("connections", c["id"]), f"{c['id']}: data_classes_allowed[{i}] ({desc(k)}) is not in data-policy data_classes")
             hosts = [h["host"] for h in c["hosts"]]
-            if c["kind"] == "provider" and c["locality"] == "local" and (not hosts or not set(hosts) <= set(pol["local_hosts"])):
-                P(D("connections"), f"{c['id']}: locality is local, but it lists no host or a host outside the data policy local_hosts")
+            if c["kind"] == "provider" and c["locality"] == "local" and (not hosts or not set(hosts) <= local):
+                P(D("connections", c["id"]), f"{c['id']}: locality is local, but it lists no host or a host outside the data policy local_hosts")
         for m in class_problems(table, classes):
             P("role-table", m)
-    if ra:
-        seen, cards = {}, {}
+    seen, cards = {}, {}
+    for rid, ra in ras:
         for a in ra["assignments"]:
             sc, lvl = a["scope"], a["scope"]["level"]
             want = {"global": (), "project": ("project",), "card": ("project", "card")}[lvl]
             for k in ("project", "card"):
                 if (k in want) != (k in sc):
-                    P(D("role-assignments"), f"{a['id']}: scope.level {lvl} {'needs' if k in want else 'has no'} {k}")
+                    P(rid, f"{a['id']}: scope.level {lvl} {'needs' if k in want else 'has no'} {k}")
             key = (lvl, sc.get("project"), sc.get("card"), a["role"], a["effort_mode"])
             if key in seen:
-                P(D("role-assignments"), f"{a['id']}: same scope, role and effort mode as {seen[key]}")
+                P(rid, f"{a['id']}: same scope, role and effort mode as {seen[key]}")
             seen[key] = a["id"]
             if "card" in sc:
                 if cards.setdefault(sc["card"], (sc.get("project"), a["id"]))[0] != sc.get("project"):
-                    P(D("role-assignments"), f"{a['id']}: its card is also filed under another project, in {cards[sc['card']][1]}")
+                    P(rid, f"{a['id']}: its card is also filed under another project, in {cards[sc['card']][1]}")
             if a["role"] not in roles:
-                P(D("role-assignments"), f"{a['id']}: {nm(a['role'], allroles, 'role')} is not an assignable role in the role table")
+                P(rid, f"{a['id']}: {nm(a['role'], allroles, 'role')} is not an assignable role in the role table")
             mode = ra["effort_modes"].get(a["effort_mode"])
             if mode is None:
-                P(D("role-assignments"), f"{a['id']}: effort_mode ({desc(a['effort_mode'])}) is not defined")
-            if pol is None:
-                P(D("role-assignments"), f"{a['id']}: cannot be judged, the data policy is not readable")
-            proj = sc.get("project") if pol and sc.get("project") in pol["projects"] else None
-            policy = (pol["projects"][proj] if proj else pol["default"]) if pol else None
+                P(rid, f"{a['id']}: effort_mode ({desc(a['effort_mode'])}) is not defined")
+            if not pols:
+                P(rid, f"{a['id']}: cannot be judged, the data policy is not readable")
+            proj = sc.get("project") if sc.get("project") in (projects if pols else {}) else None
+            policies = ([projects[proj]] if proj else [d["default"] for _, d in pols]) if pols else []
             need = allroles.get(a["role"], {}).get("requirements", {}).get("allowed_data_classes", [])
             for i, c in enumerate(a["chain"]):
                 prov, w = conn.get(c["provider"]), f"{a['id']}: chain[{i}]"
                 if prov is None or prov["kind"] != "provider":
-                    P(D("role-assignments"), f"{w}.provider ({desc(c['provider'])}) is not a provider in the connections catalog")
+                    P(rid, f"{w}.provider ({desc(c['provider'])}) is not a provider in the connections catalog")
                     continue
                 if not prov["enabled"]:
-                    P(D("role-assignments"), f"{w}: {c['provider']} is switched off")
+                    P(rid, f"{w}: {c['provider']} is switched off")
                 if c["model"] not in [m["id"] for m in prov["models"]]:
-                    P(D("role-assignments"), f"{w}.model ({desc(c['model'])}) is not listed for {c['provider']}")
+                    P(rid, f"{w}.model ({desc(c['model'])}) is not listed for {c['provider']}")
                 if mode and prov["locality"] not in mode["allowed_localities"]:
-                    P(D("role-assignments"), f"{w}: {c['provider']} is {prov['locality']}, which effort mode {a['effort_mode']} forbids")
-                if policy and not policy_allows(policy, prov):
-                    P(D("role-assignments"), f"{w}: {c['provider']} is not allowed by the data policy for {proj or 'the default'} (an override never widens the policy)")
+                    P(rid, f"{w}: {c['provider']} is {prov['locality']}, which effort mode {a['effort_mode']} forbids")
+                if not all(policy_allows(p, prov) for p in policies):
+                    P(rid, f"{w}: {c['provider']} is not allowed by the data policy for {proj or 'the default'} (an override never widens the policy)")
                 if any(k not in prov["data_policy"]["data_classes_allowed"] for k in need):   # an empty list allows no class
-                    P(D("role-assignments"), f"{w}: {c['provider']} does not allow every data class that role {a['role']} handles")
+                    P(rid, f"{w}: {c['provider']} does not allow every data class that role {a['role']} handles")
+                if a["role"] not in prov.get("allowed_roles", []):   # an empty list allows no role
+                    P(rid, f"{w}: {c['provider']} does not list role {nm(a['role'], allroles, 'role')} in its allowed_roles")
     for f in feats.values():
         for i, d in enumerate(f["depends_on"]):
             if d not in feats:
-                P(D("features"), f"{f['id']}: depends_on[{i}] ({desc(d)}) is not a feature")
+                P(D("features", f["id"]), f"{f['id']}: depends_on[{i}] ({desc(d)}) is not a feature")
             elif f["status"] == "on" and feats[d]["status"] != "on":
-                P(D("features"), f"{f['id']} is on but depends on {d}, which is {feats[d]['status']}")
+                P(D("features", f["id"]), f"{f['id']} is on but depends on {d}, which is {feats[d]['status']}")
     for start in feats:   # a cycle: walking depends_on from a feature gets back to it
         seen, todo = set(), [d for d in feats[start]["depends_on"] if d in feats]
         while todo:
             n = todo.pop()
             if n == start:
-                P(D("features"), f"{start} depends on itself through a cycle")
+                P(D("features", start), f"{start} depends on itself through a cycle")
                 break
             if n not in seen:
                 seen.add(n)
                 todo += [d for d in feats[n]["depends_on"] if d in feats]
     for sch in ("capabilities", "extension", "connections"):
-        for e in by.get(sch, {}).values():
+        for k, e in by.get(sch, {}).items():
             for i, r in enumerate(e.get("allowed_roles", [])):
                 if r not in roles:
-                    P(D(sch), f"{e['id']}: {nm(r, allroles, f'allowed_roles[{i}]')} is not an assignable role in the role table")
-    for e in by.get("extension", {}).values():
+                    P(D(sch, k), f"{e['id']}: {nm(r, allroles, f'allowed_roles[{i}]')} is not an assignable role in the role table")
+    for k, e in by.get("extension", {}).items():
         if e["enabled"] and e["status"] != "approved":
-            P(D("extension"), f"{e['id']}: switched on while its status is {e['status']}; only an approved extension may be on")
-    for e in conn.values():
+            P(D("extension", k), f"{e['id']}: switched on while its status is {e['status']}; only an approved extension may be on")
+    for k, e in conn.items():
         if e["kind"] != "app" and not {"allowed_roles", "risk_class"} <= set(e):
-            P(D("connections"), f"{e['id']}: a provider or channel states its allowed_roles and risk_class")
+            P(D("connections", k), f"{e['id']}: a provider or channel states its allowed_roles and risk_class")
         for p in e.get("redaction_patterns", []):
             try:
                 re.compile(p)
             except re.error:
-                P(D("connections"), f"{e['id']}: a redaction pattern is not a regular expression")
+                P(D("connections", k), f"{e['id']}: a redaction pattern is not a regular expression")
     for k, h in by.get("approved-hosts", {}).items():
         a, x = when(h, "approved_at"), when(h, "expires_at")
         for f, v in (("approved_at", a), ("expires_at", x)):
             if v is False:
-                P(D("approved-hosts"), f"{k}: {f} is not a real date")
+                P(D("approved-hosts", k), f"{k}: {f} is not a real date")
         if a and x and x <= a:
-            P(D("approved-hosts"), f"{k}: expires_at is not after approved_at")
+            P(D("approved-hosts", k), f"{k}: expires_at is not after approved_at")
     codes = alert_catalog.catalog() if sets else {}
-    for s in sets.values():
-        k = s["key"]
+    for k, s in sets.items():
         if s["store"]["data"] not in by["_ids"]:
-            P(D("settings"), f"{k}: store.data ({desc(s['store']['data'])}) is not a data file in the index")
+            P(D("settings", k), f"{s['key']}: store.data ({desc(s['store']['data'])}) is not a data file in the index")
         if s["code"] not in codes:
-            P(D("settings"), f"{k}: code ({desc(s['code'])}) is not in the alert catalog")
+            P(D("settings", k), f"{s['key']}: code ({desc(s['code'])}) is not in the alert catalog")
         for m in setting_problems(s) + store_problems(s, rs):
-            P(D("settings"), f"{k}: {m}")
+            P(D("settings", k), f"{s['key']}: {m}")
 
 
 def setting_problems(s):
@@ -507,20 +589,23 @@ def same_path(a, b):
         return False
 
 
-def check(only=None):
-    """[(data id, problem)] over every data file in the index. With `only`: that file's problems, the index's own, and
-    every cross-file problem (a candidate file is judged against the rest of the data)."""
+def judge(reads=None):
+    """(problems, view). problems: [(data id, problem)] over every data file in the index; view: by schema name the merged
+    {entry id: entry} of every file of every row of that schema, plus "_rows": {row id: ([(rel, doc)], {entry id: entry})},
+    "_src", "_ids". reads: the row ids a read command serves: then the role table itself is not validated (it is not served)
+    and a row is opened only when its schema is one the cross-file rules read or one of a served row. Third value, for
+    check <id>: where the per-file problems start and end, and the ids of the index's own rows."""
     probs = []
     P = lambda d, m: probs.append((d, m))
     try:
         idx = load(INDEX)
         errs = validate_doc(idx, load(f"{SCHEMAS}/data-files.schema.json"))
         if errs:
-            return [("data-files", e) for e in errs]
+            return [("data-files", e) for e in errs], None, (0, 0, [])
         rs = idx["files"]
     except Exception as e:
-        return [("data-files", f"{INDEX}: {why(e)}")]
-    by, whole = {"_ids": [r["id"] for r in rs]}, {}
+        return [("data-files", f"{INDEX}: {why(e)}")], None, (0, 0, [])
+    by, whole = {"_ids": [r["id"] for r in rs], "_src": {}, "_rows": {}}, {}
     if len(set(by["_ids"])) != len(rs):
         P("data-files", "an id is listed twice in the index")
     own = [r for r in rs if r["format"] == "json" and same_path(r["path"], INDEX)]
@@ -532,44 +617,84 @@ def check(only=None):
                 re.compile(p)
             except re.error:
                 P(r["id"], f"redact_keys[{i}] is not a regular expression")
-    for rel in [idx[k] for k in ("event_log", "backup_dir", "applied_state", "role_table")] + [r["path"] for r in rs if r["format"] != "json"]:
+    for rel in [idx[k] for k in ("event_log", "backup_dir", "applied_state", "role_table")]:
         try:
             safe(rel)
         except DataError as e:
             P("data-files", str(e))
+    try:
+        table = load(idx["role_table"])
+    except Exception:
+        table = None   # reported below as a role-table problem
+    found, opened = layout(rs, owner_files(table))
+    probs += found
     head = len(probs)
-    for r in rs:
-        if r["format"] != "json":
-            continue   # shortcut: env files are not read here (the owner's file never is), `check` says so; upgrade with W3
+    want = NEEDED | {r["schema"] for r in rs if reads is not None and r["id"] in reads}
+    where = {}   # schema -> {entry id: the file that holds it}
+    for r, fs in opened:
+        if reads is not None and r["schema"] not in want:
+            continue
         try:
             if not r["schema"]:
                 raise DataError("no schema named")
-            sch = load(f"{SCHEMAS}/{r['schema']}.schema.json")
-            ds = docs_of(r, False)
-            for rel, d in ds:
+            name, sch = r["schema"], load(f"{SCHEMAS}/{r['schema']}.schema.json")
+            docs, ents = [], {}
+            for rel, _ in fs:
+                d = load(rel)
                 if not isinstance(d, dict) or "schema_version" not in d:
                     P(r["id"], f"{rel}: schema_version is missing")
                 for e in validate_doc(d, sch):
                     P(r["id"], f"{rel}: {e}")
-            by.setdefault(r["schema"], {}).update(entries(r, False))
-            whole.setdefault(r["schema"], ds[0][1] if ds else None)
+                if sch.get("x-one-document") is True and whole.get(name):
+                    P(r["id"], f"{rel}: schema {name} is one document, and {whole[name][0][2]} already holds it")
+                    continue
+                pairs = file_entries(r, rel, d)
+                whole.setdefault(name, []).append((r["id"], d, rel))
+                docs.append((rel, d))
+                for k, e in pairs:
+                    if k in where.setdefault(name, {}):
+                        P(r["id"], f"{rel}: duplicate entry id {k!r}" + ("" if where[name][k] == rel else f", also in {where[name][k]}"))
+                        continue
+                    where[name][k] = rel
+                    by.setdefault(name, {})[k] = ents[k] = e
+                    by["_src"].setdefault(name, {})[k] = r["id"]
+            by["_rows"][r["id"]] = (docs, ents)
         except Exception as e:
             P(r["id"], f"{r['path']}: {why(e)}")
     mid = len(probs)
-    try:
-        for m in role_problems(load(idx["role_table"])):
-            P("role-table", f"{idx['role_table']}: {m}")
-    except Exception as e:
-        P("role-table", f"{idx['role_table']}: {why(e)}")
+    if reads is None:
+        try:
+            for m in role_problems(load(idx["role_table"])):
+                P("role-table", f"{idx['role_table']}: {m}")
+        except Exception as e:
+            P("role-table", f"{idx['role_table']}: {why(e)}")
     have = {r["schema"] for r in rs if r["format"] == "json"}
     for n in sorted(NEEDED - have):
         P("data-files", f"cross-file rules could not run: no JSON data file has schema {n}")
     if NEEDED <= have:
         try:
-            cross_rules(by, whole, P, rs)
+            cross_rules(by, {k: [(rid, d) for rid, d, _ in v] for k, v in whole.items()}, P, rs)
         except Exception as e:
             P("data-files", f"cross-file rules could not run: {why(e)}")
-    return [p for i, p in enumerate(probs) if only is None or only in [r["id"] for r in own] or p[0] == only or i < head or i >= mid]
+    return probs, by, (head, mid, [r["id"] for r in own])
+
+
+def check(only=None):
+    """[(data id, problem)] over every data file in the index. With `only`: that file's problems, the index's own, and
+    every cross-file problem (a candidate file is judged against the rest of the data)."""
+    probs, _, (head, mid, own) = judge()
+    return [p for i, p in enumerate(probs) if only is None or only in own or p[0] == only or i < head or i >= mid]
+
+
+def served(ids):
+    """The merged view, for a read of the rows `ids`, after the rules `check` runs on them (schema and cross-file): a problem
+    of one of them, or of the index, refuses the read with that STL-CFG-310 line and no data."""
+    probs, by, cut = judge(reads=set(ids))
+    index = {"data-files", *cut[2]}   # the index's own problems refuse every read
+    bad = [f"{d}: {m}" for d, m in probs if d in ids or d in index]
+    if bad:
+        raise DataError(bad[0] + (f" (and {len(bad) - 1} more)" if len(bad) > 1 else ""))
+    return by
 
 
 # ---- reading ----
@@ -609,18 +734,28 @@ def known_json(did):
     return row
 
 
-def find_entries(row):
-    return entries(row) if row["format"] == "json" and (row["list_key"] or is_folder(row)) else {}
+def find_entries(row, by):
+    """{entry id: entry} of one row from the view served() returned; a row with no list and no folder has none."""
+    if row["format"] != "json" or not (row["list_key"] or is_folder(row)):
+        return {}
+    if row["id"] not in by["_rows"]:
+        raise DataError(f"{row['id']}: not read")   # served() refuses first; never serve a row the rules did not see
+    return by["_rows"][row["id"]][1]
 
 
 def masked(row, x, pats=None):
-    """x with every value under a key that matches the row's redact_keys (at any depth, free-form objects too), and a secret
-    setting's default, replaced. Every read command goes through here."""
+    """x with every value under a key that matches the row's redact_keys (at any depth, free-form objects too), a secret
+    setting's default, and every string a value pattern of the catalog matches (lists too), replaced. Every read command
+    goes through here."""
     if pats is None:
         try:
             pats = [re.compile(p) for p in row["redact_keys"]]
         except re.error:
             raise DataError(f"{row['id']}: a redact_keys pattern is not a regular expression") from None
+        if value_pats() is None:
+            raise DataError("the value patterns of the connections catalog cannot be read, so nothing is served")
+    if isinstance(x, str):
+        return "***" if hidden(x) else x
     if isinstance(x, dict):
         hide = x.get("sensitivity") == "secret"
         return {k: "***" if v is not None and ((hide and k == "default") or any(p.search(k) for p in pats)) else masked(row, v, pats)
@@ -681,34 +816,41 @@ def main(argv):
             errs = role_problems(doc)
             if not errs:
                 errs = class_problems(doc, set(load(row_of("data-policy")["path"])["data_classes"]))
-            errs = [f"STL-CFG-310 {alert_catalog.render('STL-CFG-310', {'problem': 'role table: ' + e})[0].split(chr(10))[1]}" for e in errs]
+        label = "role table" if args[0] == "roles" else f"{args[0]} file"
+        errs = [f"STL-CFG-310 {alert_catalog.render('STL-CFG-310', {'problem': f'{label}: {e}'})[0].split(chr(10))[1]}" for e in errs]
         print("\n".join(errs) or "valid")
         return 1 if errs else 0
     if cmd == "list" and len(args) <= 1:
         if args:
             row = known_json(args[0])
-            ents = {k: masked(row, e) for k, e in find_entries(row).items()}
+            ents = {k: masked(row, e) for k, e in find_entries(row, served([row["id"]])).items()}
             emit([{"id": k, **{f: e[f] for f in ("kind", "subkind", "label", "status", "summary") if f in e}} for k, e in ents.items()],
                  as_json, lambda x: "\t".join([shown(x["id"])] + [str(v) for v in list(x.values())[1:]]))
         else:
+            rs = rows()
+            by = served([r["id"] for r in rs])
             emit([{"id": r["id"], "path": r["path"], "schema": r["schema"], "owner_only": r["owner_only"],
-                   "entries": len(find_entries(r))} for r in rows()], as_json, lambda x: "\t".join(str(v) for v in x.values()))
+                   "entries": len(find_entries(r, by))} for r in rs], as_json, lambda x: "\t".join(str(v) for v in x.values()))
         return 0
     if cmd == "get" and 1 <= len(args) <= 2:
         row = known_json(args[0])
+        by = served([row["id"]])
         if len(args) == 1:
-            ents = entries(row) if row["list_key"] or is_folder(row) else {}   # also refuses an entry check refuses
-            emit(masked(row, ents if is_folder(row) else docs_of(row)[0][1]), True)
+            if row["id"] not in by["_rows"] or not (is_folder(row) or by["_rows"][row["id"]][0]):
+                raise DataError(f"{row['id']}: not read")
+            docs, ents = by["_rows"][row["id"]]
+            emit(masked(row, ents if is_folder(row) else docs[0][1]), True)
             return 0
-        ents = find_entries(row)
+        ents = find_entries(row, by)
         if args[1] not in ents:
             refuse(f"entry of {args[0]}", args[1])
         emit(masked(row, ents[args[1]]), True)
         return 0
     if cmd == "search" and args:
-        words, hits = [w.casefold() for w in args], []
-        for r in rows():
-            for k, e in find_entries(r).items():
+        words, hits, rs = [w.casefold() for w in args], [], rows()
+        by = served([r["id"] for r in rs])
+        for r in rs:
+            for k, e in find_entries(r, by).items():
                 e = masked(r, e)
                 text = " ".join([k, *leaves(e)]).casefold()
                 if all(w in text for w in words):
