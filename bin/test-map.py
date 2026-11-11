@@ -57,9 +57,15 @@ def tree():
     files left out) when the root is a git tree, else a walk."""
     if not os.path.exists(os.path.join(ROOT, ".git")):
         return {os.path.relpath(os.path.join(d, f), ROOT): None for d, _, fs in os.walk(ROOT) for f in fs}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}   # a caller's GIT_DIR (a git hook) must not point at another repo
+    # the caller's safe.directory is the one setting kept (a tree owned by another user is refused without it); no other
+    # global, system or XDG setting and no personal ignore list applies: the tree's own .gitignore decides
+    trust = [f"safe.directory={d}" for scope in ("--system", "--global") for d in subprocess.run(
+        ["git", "config", scope, "--get-all", "safe.directory"], capture_output=True, text=True, env=env).stdout.splitlines()]
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, HOME=os.devnull, XDG_CONFIG_HOME=os.devnull)
     def git(*args):
-        return subprocess.run(["git", "-C", ROOT, "ls-files", "-z", *args], capture_output=True, text=True, check=True,
-                              env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")}).stdout.split("\0")   # a caller's GIT_DIR (a git hook) must not point at another repo
+        return subprocess.run(["git", *[x for t in trust for x in ("-c", t)], "-C", ROOT, "ls-files", "-z", *args],
+                              capture_output=True, text=True, check=True, env=env).stdout.split("\0")
     files = dict.fromkeys(filter(None, git("-co", "--exclude-standard")))
     for line in filter(None, git("-s")):
         files[line.split("\t", 1)[1]] = line.split()[0]
