@@ -152,7 +152,7 @@ pr g2 '.data = ["*.json"] | .map[2].targets = ["a"]'; echo '{"hooks": ["notes/x.
 ok 'bad g1 "map row 3 (notes/\*) adds no target beyond the always gates (a), so it may match only prose, but it matches notes/x.sh: code" && bad g2 "matches notes/x.cfg: named by src/hooks.json"' \
    "26 a row whose targets are only always gates is refused like a row with no targets"
 pr g3 '.map[0].globs += ["src/a-tool.sh"]'; st "$T/g3/src/a-tool.sh"
-ok 'bad g3 "map row 1 (bin/a-selftest.sh, src/a\*) adds no target beyond the always gates (a), so it may match only prose, but it matches src/a-tool.sh" && ! grep -q "matches bin/a-selftest.sh" "$T/out" && chk good' \
+ok 'bad g3 "map row 1 (bin/a-selftest.sh, src/a\*, src/a-tool.sh) adds no target beyond the always gates (a), so it may match only prose, but it matches src/a-tool.sh" && ! grep -q "matches bin/a-selftest.sh" "$T/out" && chk good' \
    "26b the gate's own selftest file is the one code file such a row may match"
 pr g4 '.map += [{"globs": ["src/*", "*"], "targets": ["b"]}]'
 ok 'bad g4 "map row 4 (src/\*, \*) is not a scan row, and its glob \* matches every path"' "26c a glob that matches every path is refused in a row with targets too"
