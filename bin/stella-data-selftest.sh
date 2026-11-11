@@ -221,7 +221,7 @@ mk rtd; jq '.roles["qa-x"] = .roles.'"$FB"' | .roles["qa-x"].requirements.allowe
 ok 'refuses rtd validate roles "$T/rtd.json" && [ "$(grep -c "^STL-CFG-310 " "$T/o")" = 1 ] && grep -q "qa-x" "$T/o" && grep -q "allowed_data_classes\[1\]" "$T/o" && ! grep -q bogus "$T/o"' "82 a data class the data policy does not define: validate roles refuses it, one STL-CFG-310 line naming it"
 # R5: a role table under STELLA_ROOT is judged against that root's hook files, not the fixed stack root's
 mk r5a; mkdir -p "$T/r5a/docs/hermes-local/hooks/qa"; cp "$ROOT/docs/hermes-local/hooks/default/deny-write.sh" "$T/r5a/docs/hermes-local/hooks/qa/only-here.sh"
-ed r5a ../docs/hermes-local/roles.json ".roles[\"$R1\"].hooks += [{\"matcher\": \"^x\$\", \"file\": \"docs/hermes-local/hooks/qa/only-here.sh\", \"workers\": []}]"
+ed r5a ../docs/hermes-local/roles.json ".roles[\"$R1\"].hooks += [{\"matcher\": \"^x\$\", \"file\": \"docs/hermes-local/hooks/qa/only-here.sh\"}]"
 ok 'sd r5a validate roles "$T/r5a/docs/hermes-local/roles.json" >"$T/o" 2>&1 && sd r5a check >"$T/o" 2>&1' "83a a hook file that exists only under STELLA_ROOT is found there"
 mk r5b; rm "$T/r5b/docs/hermes-local/hooks/default/deny-write.sh"
 ok 'refuses r5b check && grep -q "deny-write.sh does not exist" "$T/o"' "83b a hook file missing under STELLA_ROOT is refused even when the stack root has it"
