@@ -25,7 +25,8 @@ mkdir -p "$STATE"
 . "$SUP/limits.env" || { echo "escalate.sh: cannot read $SUP/limits.env" >&2; exit 2; }
 . /workspace/bin/kanban-board.sh   # kanban(): every kanban call names its board (F4)
 # `timeout 0` means no timeout, so 0, empty or non-numeric CALL_TIMEOUT falls back to the default (warned below, D42).
-[[ "${CALL_TIMEOUT:-}" =~ ^[1-9][0-9]*[smhd]?$ ]] || { bad_timeout="${CALL_TIMEOUT:-}"; CALL_TIMEOUT=600; }
+# The fallback is the settings registry default (resolved after refuse() exists; unreadable = refuse, never no timeout).
+[[ "${CALL_TIMEOUT:-}" =~ ^[1-9][0-9]*[smhd]?$ ]] || { bad_timeout="${CALL_TIMEOUT:-}"; CALL_TIMEOUT=; }
 
 # Rate-limit / pool-exhausted output, verified in claude 2.1.310 (bin/claude.exe strings).
 POOL_PATTERNS=("You've hit your" "You've reached your" "You're out of usage credits" "You're out of extra usage"
@@ -44,9 +45,16 @@ log() {  # log <event> <exit_code|null> [model_used] [fallback] [cost] [detail]
     '{time: $time, card: $card, model: $model, purpose: $purpose, reason: $reason, event: $event,
       exit_code: $exit_code, model_used: $model_used, fallback: $fallback, cost_usd: $cost_usd, detail: $detail}' >>"$LOG"
 }
-[ -z "${bad_timeout+x}" ] || { log WARN null "" false null "CALL_TIMEOUT='$bad_timeout' is not a positive duration (0 would disable the timeout); using 600"
-  echo "escalate.sh: warning: CALL_TIMEOUT='$bad_timeout' is not a positive duration; using 600" >&2; }
 refuse() { log "$1" "$2" "" false null "$3"; echo "escalate.sh: $1: $3" >&2; exit "$2"; }
+stack_default() {  # stack_default <KEY> <min>: the integer default of a setting in the registry; refuses (exit 2, STL-CFG-310) if unreadable
+  local v; v=$(python3 -I /workspace/bin/stella_data.py get --json settings "$1" 2>/dev/null | jq -er --argjson m "$2" '.default | select(type == "number" and . == floor and . >= $m)') && [ -n "$v" ] && { echo "$v"; return; }
+  python3 -I /workspace/bin/alert_catalog.py preview STL-CFG-310 problem="the default of setting $1 cannot be read" >&2 2>/dev/null
+  refuse SETTING_UNREADABLE 2 "the default of setting $1 cannot be read; no call without a timeout, no unbounded queue"
+}
+[ -n "${CALL_TIMEOUT:-}" ] || CALL_TIMEOUT=$(stack_default CALL_TIMEOUT 1) || exit 2   # exit in the substitution's shell: refuse already logged it
+[ -n "${QUEUE_MAX:-}" ] || QUEUE_MAX=$(stack_default QUEUE_MAX 0) || exit 2
+[ -z "${bad_timeout+x}" ] || { log WARN null "" false null "CALL_TIMEOUT='$bad_timeout' is not a positive duration (0 would disable the timeout); using $CALL_TIMEOUT"
+  echo "escalate.sh: warning: CALL_TIMEOUT='$bad_timeout' is not a positive duration; using $CALL_TIMEOUT" >&2; }
 note() { kanban comment --author escalate.sh "$card" "$1" >/dev/null 2>&1; }
 . /workspace/bin/owner-config.sh   # once_per_hour, and alert_text (D44) through it
 QUEUE="$STATE/queue.jsonl"
@@ -54,10 +62,10 @@ queue() {  # queue <LIMIT|POOL_EXHAUSTED> <what happened>: one entry and one #al
   qid="" qnote="not queued"
   [ -z "${ESCALATE_REPLAY:-}" ] || { qnote="left in the queue as $ESCALATE_REPLAY"; rm -f "$prompt"; return 0; }
   exec 6>"$STATE/queue.lock"; flock 6
-  if [ "$(jq -s '[.[] | select(.state == "queued")] | length' "$QUEUE" 2>/dev/null || echo 0)" -ge "${QUEUE_MAX:-50}" ]; then
+  if [ "$(jq -s '[.[] | select(.state == "queued")] | length' "$QUEUE" 2>/dev/null || echo 0)" -ge "$QUEUE_MAX" ]; then
     flock -u 6; rm -f "$prompt"
-    qnote="not queued: the queue is full (QUEUE_MAX=${QUEUE_MAX:-50})"
-    once_per_hour queue-full && hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-LIM-403 max="${QUEUE_MAX:-50}" why="$1" card="$card" since="$(date -u +%FT%TZ)")" >/dev/null 2>&1
+    qnote="not queued: the queue is full (QUEUE_MAX=$QUEUE_MAX)"
+    once_per_hour queue-full && hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-LIM-403 max="$QUEUE_MAX" why="$1" card="$card" since="$(date -u +%FT%TZ)")" >/dev/null 2>&1
     return 0
   fi
   qid="q_$(date -u +%Y%m%dT%H%M%SZ)_${card}_$$"
