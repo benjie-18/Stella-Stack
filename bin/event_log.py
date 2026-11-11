@@ -30,9 +30,10 @@ def path(rel):
     STELLA_ROOT names another tree than this tool's own, when it lands inside this tool's own tree: pointing the tool at
     a parent folder of the real stack must not reach the real files."""
     p = os.path.realpath(os.path.join(ROOT, rel))
-    if p != ROOT and not p.startswith(ROOT + os.sep):
+    within = lambda d: p == d or p.startswith(d.rstrip(os.sep) + os.sep)   # rstrip: the root may be "/"
+    if not within(ROOT):
         raise ValueError(f"{rel} is outside the stack root")
-    if ROOT != OWN and (p == OWN or p.startswith(OWN + os.sep)):
+    if ROOT != OWN and within(OWN):
         raise ValueError(f"{rel} is inside another stack tree")
     return p
 

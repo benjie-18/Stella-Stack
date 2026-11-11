@@ -452,6 +452,8 @@ def main(argv):
         for s in sorted(SECRETS, key=len, reverse=True):
             msg = msg.replace(s, el.MASK)
         return el.fail(e.code, msg)
+    except sd.DataError as e:   # the data tool refuses a path or a row itself (leaves the root, bad index)
+        return el.fail("STL-CFG-313", str(e)[:300])
     except OSError as e:
         return el.fail("STL-CFG-313", f"{type(e).__name__}: {e.strerror}")
 
