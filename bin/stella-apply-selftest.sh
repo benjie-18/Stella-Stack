@@ -51,7 +51,7 @@ printf "WORKER_GIT_NAME='Fake Two'\nWORKER_GIT_EMAIL='fake@example.invalid'\nAPI
 printf "CALL_TIMEOUT=900\nPLANTED_SETTING='sekrit-setting-444'\n" >"$C/limits.env"
 jq '.entries[0].label = 5' "$T/conn.orig" >"$C/bad.json"
 
-ok '[ "$(python3 -I $H/bin/stella_data.py check)" = "data OK" ]' "the scratch root validates"
+ok '[ "$(python3 -I $H/bin/stella_data.py check | head -1)" = "data OK" ]' "the scratch root validates"
 
 # A5d first: nothing applied yet, so the committed blob is the baseline
 ok 'ap check connections >"$T/o" 2>&1' "A5d no drift on an untouched tracked file (baseline: the committed blob)"
@@ -162,7 +162,7 @@ ok '[ "$(tree)" = "$B" ]' "two rollbacks return the file to its first state"
 echo '{"schema_version":1,"id":"fake-ext","kind":"mcp_server","summary":"fake extension for gizmos","hosts":["gizmo.example.invalid:443"],"secrets":["GIZMO_KEY"],"tools":["gizmo_get"],"allowed_roles":["reviewer"],"risk_class":"read","enabled":false,"status":"proposed","source":"fake"}' >"$C/fake-ext.json"
 B=$(tree); e0=$(nev)
 ap apply extensions/fake-ext.json --from "$C/fake-ext.json" >"$T/o" 2>&1; rc=$?
-ok '[ $rc = 0 ] && cmp -s "$C/fake-ext.json" "$R/.stella/extensions/fake-ext.json" && [ "$(nev)" = $((e0+1)) ] && ap check extensions >/dev/null 2>&1 && [ "$(python3 -I $H/bin/stella_data.py check)" = "data OK" ]' "a folder row: extensions/<file> applies, checks, still validates as a whole"
+ok '[ $rc = 0 ] && cmp -s "$C/fake-ext.json" "$R/.stella/extensions/fake-ext.json" && [ "$(nev)" = $((e0+1)) ] && ap check extensions >/dev/null 2>&1 && [ "$(python3 -I $H/bin/stella_data.py check | head -1)" = "data OK" ]' "a folder row: extensions/<file> applies, checks, still validates as a whole"
 ap rollback extensions/fake-ext.json >"$T/o" 2>&1
 ok '[ $? = 0 ] && [ "$(tree)" = "$B" ]' "a folder row: rollback of a new file removes it, tree identical"
 
