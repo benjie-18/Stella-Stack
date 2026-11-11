@@ -29,7 +29,7 @@ root ghost; rm "$T/ghost/bin/b-selftest.sh"
 ok 'bad ghost "target b: bin/b-selftest.sh does not exist" && grep -q "suite entry b" "$T/out"' "5 a target or a suite entry with no selftest file fails"
 root noexec; chmod 644 "$T/noexec/bin/b-selftest.sh"
 ok 'bad noexec "bin/b-selftest.sh is not executable"' "6 a suite selftest that is not executable fails (the suite runs it directly)"
-root gitmode; git -C "$T/gitmode" init -q && git -C "$T/gitmode" add -A && git -C "$T/gitmode" update-index --chmod=-x bin/b-selftest.sh
+root gitmode '.map += [{"globs": [".stella/*", "bin/selftests.sh"], "targets": ["b"]}]'; git -C "$T/gitmode" init -q && git -C "$T/gitmode" add -A && git -C "$T/gitmode" update-index --chmod=-x bin/b-selftest.sh
 ok '[ -x "$T/gitmode/bin/b-selftest.sh" ] && bad gitmode "bin/b-selftest.sh is not executable in git (mode 100644)"' "6b executable on disk but not in the mode git records fails (a fresh checkout could not run it)"
 ok '( cd "$T" && git init -q other 2>/dev/null; GIT_DIR=$T/other/.git STELLA_ROOT=$T/gitmode python3 -I "$TM" check >"$T/out" 2>&1; [ $? = 1 ] && grep -q "not executable in git" "$T/out" )' "6d a GIT_DIR inherited from the caller does not hide the git mode"
 git -C "$T/gitmode" update-index --chmod=+x bin/b-selftest.sh
@@ -165,12 +165,42 @@ for g in $(jq -r '.always[]' "$BIN/../.stella/test-map.json"); do
   ok 'bad ship "is not a scan row, and its glob \* matches every path"' "26e the shipped map plus a row * -> [$g] (an always gate) is refused"
 done
 
-# select answers full when it cannot vouch for the map: a change to the map, its schema or this tool; a map that breaks a
-# rule that needs no file list; an empty selection.
+# The map, its schema and the tool select their users like any other file (the always gate of this tool runs check); select
+# answers full only for a map it cannot trust: one that breaks a rule that needs no file list, or an empty selection.
 root own '.map += [{"globs": [".stella/*", "bin/*.py"], "targets": ["b"]}]'
 ok 'chk own && [ "$(STELLA_ROOT=$T/own python3 -I "$TM" select bin/other.py 2>/dev/null)" = "a
-b" ] && ( for f in .stella/test-map.json .stella/schemas/test-map.schema.json bin/test-map.py; do [ "$(STELLA_ROOT=$T/own python3 -I "$TM" select "$f" 2>/dev/null)" = full ] || exit 1; done )' \
-   "27 a change to the map, its schema or the tool selects full whatever the map's full list and rows say"
+b" ] && ( for f in .stella/test-map.json .stella/schemas/test-map.schema.json bin/test-map.py; do [ "$(STELLA_ROOT=$T/own python3 -I "$TM" select "$f" 2>/dev/null)" = "a
+b" ] || exit 1; done )' \
+   "27 a change to the map, its schema or the tool selects the targets of its rows, like any other file"
+# a map edit that drops a reaching selftest from a row, with a change to that file: the gate stays selected and check fails
+root drop '.always = ["a"] | .map[1].globs += ["src/h.sh"] | .map += [{"globs": ["bin/c-selftest.sh"], "targets": ["c"]}]' "a b c"
+st "$T/drop/bin/c-selftest.sh"; st "$T/drop/bin/b-selftest.sh" 'bash "$(dirname "$0")/../src/h.sh"'; st "$T/drop/src/h.sh"
+ok 'chk drop' "27d control: the row for src/h.sh names b, the selftest that runs it: check passes"
+jq '.map[1].targets = ["c"]' "$T/drop/.stella/test-map.json" >"$T/m.json" && mv "$T/m.json" "$T/drop/.stella/test-map.json"
+me=$(basename "$0" | sed "s/-selftest\.sh$//")
+ok '[ "$(STELLA_ROOT=$T/drop python3 -I "$TM" select src/h.sh 2>/dev/null | tr "\n" " ")" = "a c " ] && bad drop "src/h.sh: its map rows leave out b, which can reach it" && jq -e --arg me "$me" ".always | index(\$me)" "$BIN/../.stella/test-map.json" >/dev/null' \
+   "27e the same edit dropping b selects the gate a and c, and check on that tree fails naming the file; the shipped gates hold this tool's selftest ($me), which runs check"
+
+# The map stays finished: a tracked file no row matches fails check; on the shipped tree no tracked file selects full.
+root rowless '.map += [{"globs": [".stella/*", "bin/selftests.sh"], "targets": ["b"]}]'; mkdir -p "$T/rowless/docs" "$T/rowless/scratch"
+echo x >"$T/rowless/docs/new.txt"; git -C "$T/rowless" init -q && git -C "$T/rowless" add -A; echo x >"$T/rowless/scratch/u.txt"
+ok 'bad rowless "docs/new.txt: no map row matches this tracked file; add a row whose targets are the selftests that use it (when unsure, its folder" && ! grep -q "scratch/u.txt" "$T/out"' \
+   "28 a tracked file that no row matches fails check, with what to do; an untracked one does not"
+jq '.map[-1].globs += ["docs/*"]' "$T/rowless/.stella/test-map.json" >"$T/m.json" && mv "$T/m.json" "$T/rowless/.stella/test-map.json"
+ok 'chk rowless' "28b the same tree passes once a row matches the file"
+sweep() { env -u STELLA_ROOT python3 -I - "$TM" <<'EOF'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("tm", sys.argv[1]); tm = importlib.util.module_from_spec(spec); spec.loader.exec_module(tm)
+m, files = tm.load(), tm.tree()
+sel = {f: tm.select([f], m) for f, mode in files.items() if mode}   # tracked files only
+full = sorted(f for f, s in sel.items() if s["full"])
+wide = max(sel, key=lambda f: (len(sel[f]["targets"]), f))
+print(len(sel), len(full), " ".join(full[:5]), len(sel[wide]["targets"]), wide, sep="\t")
+EOF
+}
+IFS=$'\t' read -r n_all n_full first_full n_wide f_wide < <(sweep)
+ok '[ "${n_all:-0}" -gt 0 ] && [ "$n_full" = 0 ]' "29 none of the $n_all tracked files of this tree selects the full suite (full: ${n_full:-?} ${first_full:-})"
+ok '[ "${n_wide:-0}" -gt 0 ]' "29b the widest selection of this tree: $n_wide selftests, for $f_wide"
 root wide '.map += [{"globs": ["*"], "targets": ["b"]}]'
 ok '( for f in src/a1.py notes/x.md bin/a-selftest.sh; do [ "$(STELLA_ROOT=$T/wide python3 -I "$TM" select "$f" 2>"$T/e")" = full ] && grep -q "matches every path" "$T/e" || exit 1; done )' \
    "27b a map that fails a check rule selects full for every file, with the reason on stderr"
