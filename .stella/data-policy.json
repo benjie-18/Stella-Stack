@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "data_classes": [
+    "public",
+    "internal",
+    "client",
+    "secret"
+  ],
+  "default": {
+    "mode": "open",
+    "allowed_providers": []
+  },
+  "projects": {}
+}

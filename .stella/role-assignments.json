@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "effort_modes": {
+    "standard": {
+      "allowed_localities": [
+        "local",
+        "cloud"
+      ],
+      "no_silent_fallback": false
+    },
+    "eco": {
+      "allowed_localities": [
+        "local",
+        "cloud"
+      ],
+      "no_silent_fallback": false
+    },
+    "max": {
+      "allowed_localities": [
+        "cloud"
+      ],
+      "no_silent_fallback": true
+    },
+    "local_only": {
+      "allowed_localities": [
+        "local"
+      ],
+      "no_silent_fallback": true
+    }
+  },
+  "assignments": [
+    {
+      "id": "global-dispatcher",
+      "scope": {
+        "level": "global"
+      },
+      "role": "dispatcher",
+      "effort_mode": "standard",
+      "chain": [
+        {
+          "provider": "local-model-server",
+          "model": "qwen3.5:9b-64k",
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "id": "global-builder",
+      "scope": {
+        "level": "global"
+      },
+      "role": "builder",
+      "effort_mode": "standard",
+      "chain": [
+        {
+          "provider": "local-model-server",
+          "model": "qwen3.5:9b-64k",
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "id": "global-reviewer",
+      "scope": {
+        "level": "global"
+      },
+      "role": "reviewer",
+      "effort_mode": "standard",
+      "chain": [
+        {
+          "provider": "local-model-server",
+          "model": "qwen3.5:9b-64k",
+          "parameters": {}
+        }
+      ]
+    }
+  ]
+}

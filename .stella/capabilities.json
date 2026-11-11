@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "id": "stella-data",
+      "kind": "command",
+      "summary": "Check, list, get and search the contract data files (connections, role assignments, data policy, capabilities, features, versions, settings, extensions)",
+      "keywords": [
+        "data",
+        "schema",
+        "check",
+        "catalog",
+        "capability",
+        "search",
+        "contract"
+      ],
+      "inputs": "a data id, an entry id or search words",
+      "outputs": "JSON or text; exit 1 with a catalog code when a file is invalid or an id is unknown",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/stella_data.py",
+      "triage": {
+        "result": "shipped"
+      }
+    },
+    {
+      "id": "test-map",
+      "kind": "command",
+      "summary": "Lint the test map and select the selftests a change can affect",
+      "keywords": [
+        "test",
+        "map",
+        "select",
+        "lint"
+      ],
+      "inputs": "changed file names",
+      "outputs": "selftest names, or full",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/test-map.py",
+      "triage": {
+        "result": "shipped"
+      }
+    },
+    {
+      "id": "alert-catalog",
+      "kind": "command",
+      "summary": "Render, explain and validate alert codes; regenerate docs/alert-codes.md",
+      "keywords": [
+        "alert",
+        "code",
+        "catalog",
+        "explain"
+      ],
+      "inputs": "an alert code",
+      "outputs": "the plain alert text",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/alert_catalog.py",
+      "triage": {
+        "result": "shipped"
+      }
+    }
+  ]
+}

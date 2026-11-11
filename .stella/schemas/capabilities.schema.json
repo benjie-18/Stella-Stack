@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Capability registry",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "kind": {
+            "enum": [
+              "tool",
+              "skill",
+              "mcp_server",
+              "command",
+              "extension"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "inputs": {
+            "type": "string"
+          },
+          "outputs": {
+            "type": "string"
+          },
+          "allowed_roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "risk_class": {
+            "enum": [
+              "read",
+              "write",
+              "post",
+              "send",
+              "pay",
+              "delete",
+              "sign_in"
+            ]
+          },
+          "hosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "secrets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]*$"
+            }
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "approved",
+              "disabled"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "triage": {
+            "type": "object",
+            "properties": {
+              "result": {
+                "enum": [
+                  "pending",
+                  "accepted",
+                  "rejected",
+                  "shipped"
+                ]
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "summary",
+          "keywords",
+          "inputs",
+          "outputs",
+          "allowed_roles",
+          "risk_class",
+          "hosts",
+          "secrets",
+          "status",
+          "source",
+          "triage"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "entries"
+  ],
+  "additionalProperties": false
+}

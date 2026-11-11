@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Data file index",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "event_log": {
+      "type": "string"
+    },
+    "backup_dir": {
+      "type": "string"
+    },
+    "applied_state": {
+      "type": "string"
+    },
+    "role_table": {
+      "type": "string"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "path": {
+            "type": "string"
+          },
+          "schema": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "format": {
+            "enum": [
+              "json",
+              "env"
+            ]
+          },
+          "owner_only": {
+            "type": "boolean"
+          },
+          "redact_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "list_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id_field": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "schema",
+          "format",
+          "owner_only",
+          "redact_keys",
+          "list_key",
+          "id_field"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "schema_version",
+    "event_log",
+    "backup_dir",
+    "applied_state",
+    "role_table",
+    "files"
+  ],
+  "additionalProperties": false
+}

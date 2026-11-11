@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Settings registry",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          },
+          "label": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "string",
+              "integer",
+              "boolean",
+              "enum"
+            ]
+          },
+          "validation": {
+            "type": "object",
+            "properties": {
+              "pattern": {
+                "type": "string"
+              },
+              "minimum": {
+                "type": "integer"
+              },
+              "maximum": {
+                "type": "integer"
+              },
+              "values": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "scope": {
+            "enum": [
+              "global",
+              "project",
+              "role"
+            ]
+          },
+          "sensitivity": {
+            "enum": [
+              "plain",
+              "identity_critical",
+              "secret"
+            ]
+          },
+          "default": {
+            "type": [
+              "string",
+              "integer",
+              "boolean",
+              "null"
+            ]
+          },
+          "store": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+              },
+              "key": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              }
+            },
+            "required": [
+              "data",
+              "key"
+            ],
+            "additionalProperties": false
+          },
+          "apply": {
+            "type": "object",
+            "properties": {
+              "script": {
+                "type": "string"
+              },
+              "needs_restart": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "script",
+              "needs_restart"
+            ],
+            "additionalProperties": false
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^STL-[A-Z]+-[0-9]{3}$"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "type",
+          "validation",
+          "scope",
+          "sensitivity",
+          "default",
+          "store",
+          "apply",
+          "code"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "entries"
+  ],
+  "additionalProperties": false
+}

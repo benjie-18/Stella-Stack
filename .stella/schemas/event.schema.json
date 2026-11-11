@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Event log line",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "time": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+    },
+    "type": {
+      "type": "string"
+    },
+    "who": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "channel": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "user": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "role",
+        "channel",
+        "user"
+      ],
+      "additionalProperties": false
+    },
+    "what": {
+      "type": "string"
+    },
+    "old": {},
+    "new": {},
+    "code": {
+      "type": "string",
+      "pattern": "^STL-[A-Z]+-[0-9]{3}$"
+    },
+    "detail": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "time",
+    "type",
+    "who",
+    "what"
+  ],
+  "additionalProperties": false
+}
