@@ -1,47 +1,48 @@
 #!/usr/bin/env bash
-# Hard-code lint (K12, standing rule 1): no literal profile, model, provider host, board, project or channel name in
-# scripts, hooks, SOULs or the board text outside the data files. The literals come from data, never from this file:
-# profile names (roles.json, the root profile "default" aside: Hermes's own word), the board (bin/kanban-board.sh), the
-# board's project slugs (projects.db), each profile's model and model-server host (`hermes config get model` in its home)
-# and the alerts channel (.supervisor/limits.env ALERT_TARGET), plus hardcode-allow.json "watch" (names no data file holds
-# yet: the other channels, Claude model names). docs/stella-recover.ps1 is scanned too. hardcode-allow.json lists what may stay:
-# "allow" (exact text, e.g. a Hermes API word) and "baseline" (per file and literal, at most `count` whole-word uses, each
-# with the phase that removes it). A new literal, or one more use than the baseline, fails. LINT_DUMP=1 prints the counts.
+# Self-test for bin/hardcode-lint.sh (K12, E8). The lint itself, and its header, say where the literals come from.
+# Case 1-3 run it on this tree; every planted case runs on a scratch copy of the scanned files (a temp root with its own
+# .stella/, a scratch HARDCODE_HOME), never the live tree. The planted names are invented here.
 set -u
-W=/workspace; A=${HARDCODE_ALLOW:-$W/docs/hermes-local/hardcode-allow.json}; fails=0
-watch=$(jq -r '.watch[]?' "$A")
+BIN=$(dirname "$(readlink -f "$0")"); W=$(dirname "$BIN"); L=$BIN/hardcode-lint.sh; A=${HARDCODE_ALLOW:-$W/docs/hermes-local/hardcode-allow.json}; fails=0
+T=$(mktemp -d -t hardcode-lint-selftest.XXXXXX); trap 'rm -rf "$T"' EXIT
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
-lits=$( {
-  jq -r '.profiles | keys[] | select(. != "default")' "$W/docs/hermes-local/roles.json"
-  sed -n 's/^KANBAN_BOARD=\([A-Za-z0-9_-]*\).*/\1/p' "$W/bin/kanban-board.sh"
-  python3 -c 'import sqlite3, os, sys; [print(r[0]) for r in sqlite3.connect("file:" + os.path.expanduser("~/.hermes/projects.db") + "?mode=ro", uri=True).execute("select slug from projects")]' 2>/dev/null
-  for h in ~/.hermes ~/.hermes/profiles/*/; do
-    HERMES_HOME=${h%/} timeout 20 hermes config get model 2>/dev/null | sed -n 's/^default: *//p; s#^base_url: *[a-z]*://\([^:/]*\).*#\1#p'
-  done
-  sed -n 's/^ALERT_TARGET="[a-z]*:\(#[A-Za-z0-9_-]*\)".*/\1/p' "$W/.supervisor/limits.env"
-  jq -r '.watch[]?' "$A"   # B2V-05: names no data file holds yet (other channels, Claude model names)
-} | tr -d "\"'" | sort -u | grep -v '^$')
-files=$(cd "$W" && { ls bin/*.sh bin/*.py | grep -v -e '-selftest\.sh$' -e '^bin/selftests\.sh$' -e '^bin/kanban-board\.sh$'
-  find docs/hermes-local/hooks docs/hermes-local/plugins -type f \( -name '*.py' -o -name '*.sh' \); ls docs/hermes-local/soul/*.md docs/hermes-local/board.md docs/stella-recover.ps1; } | sort)
-counts=$(cd "$W" && for f in $files; do
-  text=$(python3 -c 'import json, sys
-t = open(sys.argv[1]).read()
-for a in json.load(open(sys.argv[2])).get("allow", []):
-    if a["file"] == sys.argv[1]:
-        t = t.replace(a["text"], "")
-print(t)' "$f" "$A") || { echo "ERROR $f"; continue; }
-  while IFS= read -r l; do
-    ci=; grep -qxF -- "$l" <<<"$watch" && ci=i   # B2V-13: a watch name counts in any case (Sonnet, OPUS); data literals stay exact
-    n=$(grep -ow${ci}F -- "$l" <<<"$text" | wc -l); [ "$n" -gt 0 ] && printf '%s\t%s\t%s\n' "$f" "$l" "$n"
-  done <<<"$lits"
-done)
-[ "${LINT_DUMP:-}" = 1 ] && { printf '%s\n' "$counts"; exit 0; }
-ok '[ -n "$lits" ] && ! grep -q ^ERROR <<<"$counts"' "the literals come from data ($(wc -l <<<"$lits") found) and every scanned file was read"
-ok 'grep -q "^docs/hermes-local/plugins/.*\.py$" <<<"$files"' "the terminal backend plugin (docs/hermes-local/plugins) is scanned too"
-ok 'jq -e "(.schema_version == 1) and all(.baseline[]?; (.phase // \"\") != \"\" and (.count | type) == \"number\") and all(.allow[]?; (.phase // \"\") != \"\")" "$A" >/dev/null' "every allow-list entry names its phase (schema_version 1)"
-over=$(while IFS=$'\t' read -r f l n; do [ -n "$f" ] || continue
-  max=$(jq -r --arg f "$f" --arg l "$l" '[.baseline[]? | select(.file == $f and .literal == $l) | .count] | add // 0' "$A")
-  [ "$n" -le "$max" ] || echo "$f: \"$l\" x$n (allowed $max)"; done <<<"$counts")
-ok '[ -z "$over" ]' "no new hard-coded name in scripts, hooks, SOULs or the board text${over:+:
-$(sed 's/^/     /' <<<"$over")}"
+S=$T/root; H=$T/home
+fresh() {  # a clean scratch root with the scanned files, and a scratch home whose projects.db holds one slug
+  rm -rf "$S" "$H"; mkdir -p "$S/docs" "$S/.supervisor" "$H/.hermes"
+  cp -r "$W/bin" "$S/bin"; cp -r "$W/docs/hermes-local" "$S/docs/hermes-local"; cp "$W/docs/stella-recover.ps1" "$S/docs/"; cp -r "$W/.stella" "$S/.stella"
+  cp "$W/.supervisor/limits.env" "$S/.supervisor/"; cp "$A" "$S/docs/hermes-local/hardcode-allow.json"
+  python3 -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1] + "/.hermes/projects.db"); c.execute("create table projects (slug text)"); c.execute("insert into projects values (?)", (sys.argv[2],)); c.commit()' "$H" "$slug"
+}
+lint() { STELLA_ROOT=$S HARDCODE_ALLOW= HARDCODE_HOME=$H "$S/bin/hardcode-lint.sh" "$@" 2>&1; }   # empty HARDCODE_ALLOW: the copy's own list
+plant() { printf '\n# %s\n' "$2" >>"$S/$1"; }   # one use of a literal in a scanned file
+fails_on() { out=$(lint) ; [ $? = 1 ] && grep -qF -- "$1" <<<"$out"; }   # exit 1 and a line naming the literal
+slug=$(jq -r '.own_names[0].text | ltrimstr(".")' "$A")   # the stack's own name doubles as a retired project slug in the board data
+own=$(jq -r '.own_names[0].text' "$A")
+plug=$(cd "$W" && ls docs/hermes-local/plugins/*/*.py docs/hermes-local/plugins/*.py 2>/dev/null | head -1)
+row=$(jq -r '.baseline[0] | "\(.file)\t\(.literal)"' "$A"); rf=${row%%$'\t'*}; rl=${row#*$'\t'}
+fp=zzprov-testonly; fm=zzmodel:testonly-1b; fh=zz-testonly.invalid; fb=zzboard-testonly
+
+ok '"$L" --check >/dev/null 2>&1' "the lint passes on this tree (every scanned file read, every literal from data)"
+ok '[ -n "$plug" ]' "the terminal backend plugin (docs/hermes-local/plugins) is there to be scanned"
+ok 'jq -e "(.schema_version == 1) and all(.baseline[]?; (.phase // \"\") != \"\" and (.count | type) == \"number\") and all(.allow[]?, .own_names[]?; (.phase // \"\") != \"\")" "$A" >/dev/null' "every allow-list entry names its phase (schema_version 1)"
+fresh
+ok 'lint >/dev/null' "the untouched scratch copy passes"
+ok 'lint --dump | grep -q "	"' "--dump prints the counts"
+fresh; python3 - "$S/.stella/connections.json" "$fp" "$fm" "$fh" <<'P'
+import json, sys
+p, i, m, h = sys.argv[1:]; d = json.load(open(p)); e = json.loads(json.dumps(d["entries"][0]))
+e["id"], e["hosts"], e["models"] = i, [{"host": h, "port": 1, "purpose": "test"}], [dict(e["models"][0], id=m)]
+d["entries"].append(e); json.dump(d, open(p, "w"))
+P
+cp "$S/.stella/connections.json" "$T/cat.json"
+ok 'lint >/dev/null' "a fake provider added to a scratch catalog is picked up with no code change, and passes while unused"
+plant "bin/alert.sh" "$fp";  ok 'fails_on "\"$fp\""' "a planted new provider id fails"
+fresh; cp "$T/cat.json" "$S/.stella/connections.json"; plant "bin/alert.sh" "$fm"; ok 'fails_on "\"$fm\""' "a planted new model id fails"
+fresh; cp "$T/cat.json" "$S/.stella/connections.json"; plant "bin/alert.sh" "$fh"; ok 'fails_on "\"$fh\""' "a planted new host fails"
+fresh; sed -i "s/^KANBAN_BOARD=[A-Za-z0-9_-]*/KANBAN_BOARD=$fb/" "$S/bin/kanban-board.sh"
+plant "$plug" "$fb"; ok 'fails_on "\"$fb\""' "a planted board name fails (in the plugin folder, so it is scanned)"
+fresh; plant "$rf" "$rl"; ok 'fails_on "\"$rl\""' "one extra use of an already-baselined literal fails"
+fresh; plant "bin/alert.sh" "$slug"; ok 'fails_on "\"$slug\""' "the bare stack name used as a project slug fails"
+fresh; plant "bin/alert.sh" "$own/data"; ok 'lint >/dev/null' "the stack's own data folder name is allowed in every scanned file"
+fresh; echo '{}' >"$S/.stella/connections.json"; ok 'out=$(lint); [ $? = 2 ] && grep -q STL-CFG-310 <<<"$out"' "an unreadable catalog is refused with STL-CFG-310 and exit 2"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
