@@ -21,7 +21,9 @@
   "follow": [
     "*.py",
     "*.sh",
-    "*.ps1"
+    "*.ps1",
+    "*.js",
+    "*.html"
   ],
   "data": [
     "*.json",
@@ -32,8 +34,6 @@
     "*.conf",
     "*.env",
     "*.ini",
-    "*.js",
-    "*.html",
     "*Dockerfile*"
   ],
   "always": [

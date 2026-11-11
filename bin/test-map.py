@@ -301,7 +301,7 @@ def fail(problem, out=sys.stdout, where=""):
 
 def complain(probs, out=sys.stdout):
     where = WHERE
-    if len(where) > LIMIT // 2:
+    if probs and len(where) > LIMIT // 2:
         fail(f"the problems below are in the root {ROOT}, from STELLA_ROOT", out)
         where = ""
     for p in probs:
