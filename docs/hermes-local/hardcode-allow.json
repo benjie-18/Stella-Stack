@@ -4,6 +4,7 @@
   "own_names": [
     {"text": ".stella", "why": "the stack's data folder, where the contract data lives; not the project slug of the same name", "phase": "permanent (folder name)"},
     {"text": "stella-rules", "why": "the SOUL region marker, the stack's name, not the project slug", "phase": "permanent (marker in live SOULs)"},
+    {"text": "stella-apply", "why": "the apply tool's own file name (bin/stella-apply.py), not the project slug", "phase": "permanent (file name)"},
     {"text": "stella-recover.ps1", "why": "the recovery script's file name in docs/", "phase": "permanent (file name)"}
   ],
   "allow": [

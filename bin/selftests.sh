@@ -9,7 +9,7 @@ fails=0
 G=$(mktemp -d); trap 'rm -r "$G"' EXIT
 printf '#!/usr/bin/env bash\n[ "${1:-}" = send ] && { echo "selftests: hermes send refused in a selftest" >&2; exit 1; }\nexec %q "$@"\n' \
   "$(command -v hermes || echo /bin/false)" >"$G/hermes" && chmod +x "$G/hermes" && export PATH="$G:$PATH"
-for t in alert alert-page delegation escalate escalation-thread escalation-reply-poll escalation-reply-hook escalation-complete kanban-guard false-close-guard check-guard complete-gate roles-complete profile-hooks commit-guard owner-config owner-leak write-guard roles role-guard secret-read matcher-audit kanban-board merge-card owner-settings watchdog model-watch hardcode-lint init-firewall firewall-probe container-start post-edit-check box bench approval-sim omniroute-run reviewer-claude approval-evidence routing broker-put test-map stella-data; do
+for t in alert alert-page delegation escalate escalation-thread escalation-reply-poll escalation-reply-hook escalation-complete kanban-guard false-close-guard check-guard complete-gate roles-complete profile-hooks commit-guard owner-config owner-leak write-guard roles role-guard secret-read matcher-audit kanban-board merge-card owner-settings watchdog model-watch hardcode-lint init-firewall firewall-probe container-start post-edit-check box bench approval-sim omniroute-run reviewer-claude approval-evidence routing broker-put test-map stella-data event-log stella-apply; do
   out=$(/workspace/bin/$t-selftest.sh 2>&1 | grep -v setlocale)
   if printf '%s\n' "$out" | tail -1 | grep -q "selftest PASS"; then
     echo "ok   $t-selftest"

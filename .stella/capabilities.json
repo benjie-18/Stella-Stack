@@ -110,6 +110,108 @@
       "triage": {
         "result": "shipped"
       }
+    },
+    {
+      "id": "hardcode-lint",
+      "kind": "command",
+      "summary": "Count literal provider, model, host, board, project and channel names in code against the baseline",
+      "keywords": [
+        "lint",
+        "hard-code",
+        "literal",
+        "baseline"
+      ],
+      "inputs": "none, or --dump for the counts",
+      "outputs": "exit 0 clean, 1 over the baseline, 2 with STL-CFG-310 when an input cannot be read",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/hardcode-lint.sh",
+      "triage": {
+        "result": "shipped"
+      }
+    },
+    {
+      "id": "event-log",
+      "kind": "command",
+      "summary": "Append one line to the event log with secrets masked, or read its last lines",
+      "keywords": [
+        "event",
+        "log",
+        "audit",
+        "history"
+      ],
+      "inputs": "an event (who, what, old, new) or a line count",
+      "outputs": "one JSON line per event; STL-CFG-318 when the log cannot be written",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/event_log.py",
+      "triage": {
+        "result": "shipped"
+      }
+    },
+    {
+      "id": "apply-check",
+      "kind": "command",
+      "summary": "Report drift of an applied data file and list its apply history",
+      "keywords": [
+        "apply",
+        "drift",
+        "check",
+        "history",
+        "rollback"
+      ],
+      "inputs": "a data file id",
+      "outputs": "drift lines or history; STL-CFG-314 on drift",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/stella-apply.py",
+      "triage": {
+        "result": "shipped"
+      }
+    },
+    {
+      "id": "apply",
+      "kind": "command",
+      "summary": "Apply or roll back a data file through the apply contract: dry run, backup, idempotent apply, one event line",
+      "keywords": [
+        "apply",
+        "rollback",
+        "backup",
+        "dry-run",
+        "settings"
+      ],
+      "inputs": "a data file id and a candidate file",
+      "outputs": "the change summary; STL-CFG-312 for a worker on an owner-only file, STL-CFG-313 when the candidate is invalid",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/stella-apply.py",
+      "triage": {
+        "result": "shipped"
+      }
     }
   ]
 }

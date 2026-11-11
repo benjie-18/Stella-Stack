@@ -31,6 +31,8 @@
     "bin/selftests.sh",
     "bin/test-map.py",
     "bin/stella_data.py",
+    "bin/stella-apply.py",
+    "bin/event_log.py",
     "bin/hardcode-lint-selftest.sh",
     "bin/hardcode-lint.sh",
     "bin/*guard*",
@@ -76,16 +78,35 @@
     },
     {
       "globs": [
+        "bin/event-log-selftest.sh"
+      ],
+      "targets": [
+        "event-log"
+      ]
+    },
+    {
+      "globs": [
+        "bin/stella-apply-selftest.sh"
+      ],
+      "targets": [
+        "stella-apply"
+      ]
+    },
+    {
+      "globs": [
         ".claude/settings.json"
       ],
       "targets": [
         "box",
+        "event-log",
         "profile-hooks",
         "role-guard",
+        "stella-apply",
         "stella-data",
         "watchdog",
         "write-guard"
-      ]
+      ],
+      "why": "reached by base name: selftests that name the settings registry (.stella/settings.json) also count for this file"
     },
     {
       "globs": [
