@@ -12,7 +12,7 @@ selection leaves that selftest out.
 select: a file on the full list, or matched by no row, selects the full suite; so does no file name at all. `scan` rows add targets (a selftest that
 reads a whole folder) but do not count as a match. Pass both sides of a rename (`git diff --name-only --no-renames`):
 the new path alone can narrow the selection. A name with white space or a control character selects the full suite."""
-import fnmatch, json, os, re, subprocess, sys
+import fnmatch, json, os, re, subprocess, sys, textwrap
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -50,6 +50,28 @@ def load():
 
 def matches(f, globs):
     return any(fnmatch.fnmatchcase(f, g) for g in globs)
+
+
+LIMIT = 200   # alert_catalog.render keeps the first 200 characters of a value
+
+
+def esc(s):
+    return "".join(c if c.isprintable() else repr(c)[1:-1] for c in s)   # a name may hold a newline: keep the line whole
+
+
+WHERE = esc(f" (root {ROOT}, from STELLA_ROOT)") if os.environ.get("STELLA_ROOT") else ""   # so nobody fixes the wrong tree
+ROOM = LIMIT - (len(WHERE) if len(WHERE) <= LIMIT // 2 else 0)   # a longer root is named once, on its own lines
+
+
+def pack(head, names, tail):
+    """head + names + tail in as many lines as the names need, each within ROOM: no name is cut off."""
+    lines, cur = [], []
+    for n in names:
+        if cur and len(esc(head + ", ".join(cur + [n]) + tail)) > ROOM:
+            lines.append(cur)
+            cur = []
+        cur.append(n)
+    return [head + ", ".join(c) + tail for c in lines + [cur]]
 
 
 def tree():
@@ -225,23 +247,35 @@ def check():
         sel = select([f], m)
         missing = [] if sel["full"] else sorted(t for t in tests if f in reached[t] and t not in sel["targets"])
         if missing:
-            probs.append(f"{f}: its map rows leave out {', '.join(missing)}, which can reach it")
+            probs += pack(f"{f}: its map rows leave out ", missing, ", which can reach it")
     return probs + prose(m, files)
 
 
-def fail(problem, out=sys.stdout):
-    problem = "".join(c if c.isprintable() else repr(c)[1:-1] for c in problem)   # a file name may hold a newline: keep the line whole
-    print("STL-CFG-310 " + alert_catalog.render("STL-CFG-310", {"problem": problem})[0].split("\n")[1], file=out)   # the plain message line
+def fail(problem, out=sys.stdout, where=""):
+    """One catalog line per piece: a problem longer than the catalog keeps is split, `where` ends every piece."""
+    text = esc(problem)
+    parts = [text] if len(text) + len(where) <= LIMIT else textwrap.wrap(
+        text, LIMIT - len(where) - len("(part 99 of 99) "), break_on_hyphens=False, drop_whitespace=False)
+    for i, part in enumerate(parts, 1):
+        part = part if len(parts) == 1 else f"(part {i} of {len(parts)}) {part}"
+        print("STL-CFG-310 " + alert_catalog.render("STL-CFG-310", {"problem": part + where})[0].split("\n")[1], file=out)   # the plain message line
+
+
+def complain(probs, out=sys.stdout):
+    where = WHERE
+    if len(where) > LIMIT // 2:
+        fail(f"the problems below are in the root {ROOT}, from STELLA_ROOT", out)
+        where = ""
+    for p in probs:
+        fail(p, out, where)
 
 
 def main(argv):
     if argv == ["check"]:
         probs = check()
-        where = f" (root {ROOT}, from STELLA_ROOT)" if os.environ.get("STELLA_ROOT") else ""   # so nobody fixes the wrong tree
-        for p in probs:
-            fail(p + where)
+        complain(probs)
         if not probs:
-            print("test map ok" + where)
+            print("test map ok" + WHERE)
         return 1 if probs else 0
     if argv[:1] == ["select"]:
         files = [a for a in argv[1:] if a != "--json"]
@@ -251,8 +285,12 @@ def main(argv):
             # no file name at all (an empty stdin, no argument) is a failed diff, not "nothing changed": the full suite
             sel = select(files) if files else {"full": True, "reason": ["no file name given"], "targets": sorted(load()["always"])}
         except Exception as e:
-            fail(f"{MAP}: {type(e).__name__}: {e}", sys.stderr)
+            complain([f"{MAP}: {type(e).__name__}: {e}"], sys.stderr)
             return 1
+        if os.environ.get("STELLA_ROOT"):
+            sel["root"] = ROOT
+            if not sel["full"]:   # a narrow answer from another tree must say so; "full" runs everything whatever the tree
+                print(f"selected from the test map of {esc(ROOT)}, from STELLA_ROOT", file=sys.stderr)
         print(json.dumps(sel) if "--json" in argv else "full" if sel["full"] else "\n".join(sel["targets"]))
         return 0
     print(__doc__, file=sys.stderr)
