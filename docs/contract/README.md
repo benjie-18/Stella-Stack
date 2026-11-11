@@ -41,8 +41,9 @@ relative, has no `..` part and must resolve (symlinks followed) inside the stack
 and `get`, `list` and `search` never read it. The index row of the index is `owner_only`: it decides which files are.
 Two rows that resolve to one file (`./x` and `x`, a folder row and a row on one of its files) are refused, and neither is
 opened. A row whose file is one of the role table's `owner_settings` must be format `env` and `owner_only`; `check` and the
-read commands never open that file, whatever the row says (when the role table cannot say which files those are, no JSON
-data file is opened).
+read commands never open that file, whatever the row says. When the role table cannot be read, `check` says so, only the
+files of env rows stay closed, and the rules that read the table do not run: the rows they judge (role assignments,
+capabilities, extensions, connections) are refused, the others are still judged and served.
 
 **Every file a row names is judged by every rule of its schema.** All the files of all the rows of one schema form one merged
 view: the cross-file rules read every entry of it, and one entry id in two files (or twice in one) is refused. A schema that
