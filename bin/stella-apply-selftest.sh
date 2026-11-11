@@ -68,7 +68,7 @@ B=$(tree)
 ap apply connections --from "$C/conn.json" --dry-run >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && grep -q "Changed label" "$T/o" && [ "$(tree)" = "$B" ] && [ ! -e "$LOG" ]' "A5a dry run (json): diff shown, exit 0, no file changed, no event"
 ap apply owner-settings --from "$C/owner.env" --dry-run >"$T/o" 2>&1; rc=$?
-ok '[ $rc = 0 ] && grep -q "API_TOKEN=.\*\*\*" "$T/o" && ! grep -q sekrit- "$T/o" && grep -q "Fake Two" "$T/o" && [ "$(tree)" = "$B" ]' "A5a dry run (env): masked diff, nothing changed"
+ok '[ $rc = 0 ] && grep -q "API_TOKEN (masked)" "$T/o" && grep -q "WORKER_GIT_NAME (masked)" "$T/o" && ! grep -q "sekrit-\|Fake" "$T/o" && [ "$(tree)" = "$B" ]' "A5a dry run (env): every changed value is masked (secret and identity_critical), the changed keys are named, nothing changed"
 ap apply limits --from "$C/limits.env" --dry-run >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && grep -q "PLANTED_SETTING=.\*\*\*" "$T/o" && ! grep -q sekrit- "$T/o" && [ "$(tree)" = "$B" ]' "A5a dry run (secret setting): masked, nothing changed"
 ap apply connections --from "$C/bad.json" --dry-run >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-313 "$T/o" && [ "$(tree)" = "$B" ]' "A5a a dry run of an invalid candidate is refused"
@@ -318,7 +318,7 @@ rm "$R/.stella/extensions/fake-ext.json"; ap check extensions >"$T/o" 2>&1; ok '
 git -C "$R" checkout -q -- .stella/extensions; mkdir "$R/.stella/extensions/odd.json"; cp "$C/conn.json" "$R/.stella/connections.json"
 ap check >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-314.*connections differs" "$T/o" && grep -q "odd.json" "$T/o"' "G9 an entry it cannot read is one problem line, the other rows are still checked"
 for a in connections/ "extensions/$(printf 'a\nb').json" extensions/A_b-1.json/ "extensions/x y.json"; do
-  ap apply "$a" --from "$C/conn.json" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-31 "$T/o"' "G9 one name per row: refused: $(printf %s "$a" | tr '\n' '~')"
+  ap apply "$a" --from "$C/conn.json" >"$T/o" 2>&1; rc=$?; ok '[ $rc = 1 ] && grep -q STL-CFG-31 "$T/o"' "G9 one name per row: refused: $(printf %s "$a" | tr '\n' '~')"
 done
 mkr g9b; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; chmod 666 "$R/.supervisor/limits.env"
 ap check limits >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-314 "$T/o"' "G9 a mode change of an applied file is drift"
