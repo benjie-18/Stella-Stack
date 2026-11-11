@@ -9,7 +9,7 @@ payload=$(cat)
 cmd=$(jq -r 'if .tool_name == "terminal" then .tool_input.command // "" else "" end' <<<"$payload" 2>/dev/null) || cmd=""
 allowed="bash /workspace/bin/claude-review.sh"
 bg=$(jq -r 'if (.tool_input.background == true or .tool_input.pty == true) then "yes" else "" end' <<<"$payload" 2>/dev/null) || bg=""
-if [[ -n $cmd && $cmd == "$allowed" ]]; then
+if [[ -n $cmd && $cmd == "$allowed" ]] && jq -e --arg a "$allowed" '.tool_input.command == $a' <<<"$payload" >/dev/null 2>&1; then
   [[ -z $bg ]] && exit 0
   printf '%s\n' '{"action": "block", "message": "run the review command in the foreground (no background, no pty): its answer is read from the command output and a background run can never be read"}'; exit 2
 fi
@@ -17,6 +17,7 @@ fi
 case "$cmd" in "npm test"|"npm run test"|"npm run lint"|"node --test") printf '%s\n' '{"action": "block", "message": "this profile reads the work with its one review command and read-only git; it never runs the builder code"}'; exit 2;; esac
 # any other claude call: say what the one allowed command is (live T7e: told only about npm test, the driver gave up)
 if [[ $cmd =~ (^|[^[:alnum:]_/.-])claude([^[:alnum:]_-]|$)|claude-review ]]; then printf '%s\n' '{"action": "block", "message": "your one Claude call is the command '"$allowed"' with nothing before or after it (no cd, no arguments, no redirect; set the terminal workdir to your workspace_path). The stack builds the question from the card; you do not write it."}'; exit 2; fi
+case "$cmd" in "cd "*) printf '%s\n' '{"action": "block", "message": "no cd: the terminal already starts in your workspace. Run your command without cd, and run your one review command first: '"$allowed"' (nothing before or after it)."}'; exit 2;; esac
 partner=/workspace/docs/hermes-local/hooks/reviewer/test-only-terminal.sh
 [ -f "$partner" ] || { printf '%s\n' '{"action": "block", "message": "this terminal hook cannot find its partner hook"}'; exit 2; }
 printf '%s' "$payload" | bash "$partner"

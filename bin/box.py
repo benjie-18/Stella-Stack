@@ -61,6 +61,14 @@ def _worktree(ws):
         cd = ""
     if not cd or os.path.realpath(os.path.join(gd, cd)) != common:   # on the case-insensitive mount a builder can rewrite gd/COMMONDIR although commondir is a read-only bind: git would then read a config of its choosing
         raise BoxError(f"{ws}: the git dir {gd} has a changed commondir ({cd[:80]!r}); it must point at {common}")
+    try:
+        r = subprocess.run(["git", "config", "--file", common + "/config", "--type=bool", "--get", "extensions.worktreeConfig"], capture_output=True, text=True,
+                           timeout=60, env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"})
+        bad_cfg = r.returncode not in (0, 1) or r.stdout.strip() == "true"
+    except (OSError, subprocess.SubprocessError):
+        bad_cfg = True
+    if bad_cfg:   # <gd>/config.worktree is writable in a builder box and would become a config git reads; an unreadable or odd value refuses too
+        raise BoxError(f"{common}/config sets extensions.worktreeConfig (or git cannot read it): a worktree's own config file would be builder-writable")
     return ws, gd, common
 
 
@@ -87,10 +95,11 @@ def _broker(hermes_root, name):
     return val
 
 
-def _escaping_links(wt):
+def _escaping_links(wt, allow=()):
     """The first symlink in the worktree that resolves outside it, or whose target is under /proc ('' if none): a read-only role's box does not
-    start with one (follow-up 4, item 3). A folder that cannot be listed refuses the box (a link inside it would be invisible here).
-    shortcut: absolute links to tools (.venv/bin/python -> /usr/bin/python3) refuse the reviewing box too; allow-list them in data if that bites."""
+    start with one (follow-up 4, item 3). A folder that cannot be listed refuses the box (a link inside it would be invisible here). `allow` are absolute
+    folders from the role table (review_link_allow, each ending in /) that a link's REAL target may sit in (a tool link such as .venv/bin/python -> /usr/bin/python3);
+    /proc is never allowed."""
     stack = [wt]
     while stack:
         d = stack.pop()
@@ -99,7 +108,8 @@ def _escaping_links(wt):
                 for e in it:
                     if e.is_symlink():
                         t = os.path.realpath(e.path)
-                        if (t.casefold() != wt.casefold() and not t.casefold().startswith(wt.casefold() + "/")) or t.startswith("/proc"):
+                        inside = t.casefold() == wt.casefold() or t.casefold().startswith(wt.casefold() + "/")
+                        if (not inside and not any(t.startswith(a if a.endswith("/") else a + "/") for a in allow)) or t.startswith("/proc"):
                             return f"{os.path.relpath(e.path, wt)} -> {t}"
                     elif e.is_dir(follow_symlinks=False):
                         stack.append(e.path)
@@ -108,12 +118,14 @@ def _escaping_links(wt):
     return ""
 
 
-def trusted_answers(d, comments):
+def trusted_answers(d, comments, prefix):
     """The owner's answers recorded on a card: comment bodies that start with the escalation poller's prefix AND were written by a profile that takes
     no cards (the dispatcher's, which the poller runs as). The kanban guard also refuses that text from agents, but it is fail-open; the author is the second check."""
+    if not prefix:
+        return []
     poller = {n for n, pr in d["profiles"].items() if d["roles"][pr["role"]].get("assignable") is False}
     return [c["body"] for c in comments or [] if isinstance(c, dict) and c.get("author") in poller and isinstance(c.get("body"), str)
-            and c["body"].startswith("UNBLOCK: escalation reply from ")]
+            and c["body"].startswith(prefix)]
 
 
 def _clip(text, n):
@@ -130,7 +142,7 @@ def _git_ro(common, *a):
     return subprocess.run(base + list(a), env=env, capture_output=True, timeout=60)
 
 
-def _export_tip(common, branch, dest_root, card, max_files, max_bytes):
+def _export_tip(common, branch, dest_root, card, max_files, max_bytes, allow, keep_hours):
     """Export exactly the committed tree of `branch` (git archive, read in-process) to <dest_root>/<card>-<tip>; returns that folder.
     Claude reads this folder, not the builder's worktree: what is not committed is not there, and a detached HEAD, an index flag or an
     ignore file in the worktree changes nothing. Regular files and folders first, symlinks last and only where the parent folder really is
@@ -142,10 +154,22 @@ def _export_tip(common, branch, dest_root, card, max_files, max_bytes):
     safe_card = re.sub(r"[^A-Za-z0-9_.-]", "_", card)[:40]
     dest = os.path.join(dest_root, f"{safe_card}-{tip[:16]}")
     os.makedirs(dest_root, exist_ok=True)
-    for old in os.listdir(dest_root):   # an older export of the same card
-        if old.startswith(safe_card + "-") and os.path.join(dest_root, old) != dest:
-            shutil.rmtree(os.path.join(dest_root, old), ignore_errors=True)
-    if os.path.isdir(dest):
+    for old in os.listdir(dest_root):   # an older export of the same card, and any export (finished cards) older than review_export_keep_hours
+        full = os.path.join(dest_root, old)
+        if full == dest:
+            continue
+        try:
+            stale = time.time() - os.lstat(full).st_mtime > keep_hours * 3600
+        except OSError:
+            stale = False
+        if old.startswith(safe_card + "-") or stale:
+            shutil.rmtree(full, ignore_errors=True)
+    if os.path.isdir(dest):   # reuse: refresh its age (another card's call must not prune it mid-review) and check its links again against the current allow-list
+        with contextlib.suppress(OSError):
+            os.utime(dest)
+        bad = _escaping_links(dest, allow)
+        if bad:
+            raise BoxError(f"the cached export of {branch} holds a symlink that leaves it ({bad}); the reviewing box does not start")
         return dest
     tmp = dest + ".part"
     shutil.rmtree(tmp, ignore_errors=True)
@@ -200,7 +224,7 @@ def _export_tip(common, branch, dest_root, card, max_files, max_bytes):
     finally:
         proc.stdout.close(); proc.wait()
         shutil.rmtree(empty, ignore_errors=True)
-    bad = _escaping_links(tmp)
+    bad = _escaping_links(tmp, allow)
     if bad:
         shutil.rmtree(tmp, ignore_errors=True)
         raise BoxError(f"the committed tree holds a symlink that leaves it ({bad}); the reviewing box does not start")
@@ -208,7 +232,7 @@ def _export_tip(common, branch, dest_root, card, max_files, max_bytes):
     return dest
 
 
-def _review_prompt(path, proof, common):
+def _review_prompt(path, proof, common, lim):
     """The text Claude is asked (follow-up 4, item 5): the owner's fixed template with four slots filled by the stack, in one pass, from the
     card (id, body, the owner's recorded answers) and from git read over the shared object store only: {{CARD}}, {{BODY}}, {{ANSWERS}}, {{EVIDENCE}}.
     The commit subjects and file names inside the evidence are still the worker's own text; the template says so."""
@@ -224,13 +248,13 @@ def _review_prompt(path, proof, common):
             out = r.stdout.decode("utf-8", "replace").strip() if r.returncode == 0 else f"(unavailable: git exited {r.returncode})"
         except (OSError, subprocess.TimeoutExpired) as e:
             out = f"(unavailable: {type(e).__name__})"
-        return f"{label}\n{_clip(out, 2500) or '(none)'}"
+        return f"{label}\n{_clip(out, lim['review_clip_evidence']) or '(none)'}"
 
     evidence = "\n\n".join([
         g("The newest commits on the card's branch, with the files each one changed (newest first):",
-          "log", "-n", "5", "--stat", "--no-ext-diff", "--no-textconv", "--format=commit %h %s", f"refs/heads/{branch}", "--")])
-    vals = {"CARD": str(proof.get("card") or "")[:40], "BODY": _clip(str(proof.get("body") or ""), 3000),
-            "ANSWERS": _clip("\n".join(str(x) for x in proof.get("answers") or []) or "(none)", 1500), "EVIDENCE": evidence}
+          "log", "-n", str(lim["review_commits"]), "--stat", "--no-ext-diff", "--no-textconv", "--format=commit %h %s", f"refs/heads/{branch}", "--")])
+    vals = {"CARD": str(proof.get("card") or "")[:40], "BODY": _clip(str(proof.get("body") or ""), lim["review_clip_body"]),
+            "ANSWERS": _clip("\n".join(str(x) for x in proof.get("answers") or []) or "(none)", lim["review_clip_answers"]), "EVIDENCE": evidence}
     vals = {k: v.replace("===", "= = =") for k, v in vals.items()}   # the template's fence lines cannot be forged from inside a slot
     return re.sub(r"\{\{(CARD|BODY|ANSWERS|EVIDENCE)\}\}", lambda m: vals[m[1]], template)
 
@@ -298,9 +322,10 @@ def plan(d, profile, proof, *, hermes_root, home, roots, stack_root=None, spec=N
             ov_r = sb["profile_overrides"].get(profile, {})
             rpath = ov_r.get("review_prompt")
             if rpath:
-                if not (isinstance(ov_r.get("review_max_files"), int) and isinstance(ov_r.get("review_max_mb"), int)):
-                    raise BoxError("a review_prompt needs review_max_files and review_max_mb in the role table (no limit is hard-coded)")
-                text = _review_prompt(os.path.join(stack, rpath), proof, common)
+                missing = [k for k in roles.REVIEW_INT_KEYS if not isinstance(ov_r.get(k), int)]
+                if missing or not isinstance(ov_r.get("review_answer_prefix"), str):
+                    raise BoxError(f"a review_prompt needs {', '.join(missing + ([] if isinstance(ov_r.get('review_answer_prefix'), str) else ['review_answer_prefix']))} in the role table (no limit is hard-coded)")
+                text = _review_prompt(os.path.join(stack, rpath), proof, common, ov_r)
                 tmp_for_prompt = sb["tmp_dir"].replace("{profile_dir}", pdir)
                 os.makedirs(tmp_for_prompt, exist_ok=True)
                 rdir = pdir + "/review"   # host-only: bound read-only into the box, so nothing in the box can change the prompt or the export (red-team S6M-RC C-04)
@@ -318,10 +343,11 @@ def plan(d, profile, proof, *, hermes_root, home, roots, stack_root=None, spec=N
                 if ov_r.get("review_model"):
                     env["REVIEW_MODEL"] = ov_r["review_model"]
                 env["REVIEW_EXPORT_DIR"] = _export_tip(common, proof.get("branch") or "", os.path.join(rdir, "export"), card,
-                                                       ov_r["review_max_files"], ov_r["review_max_mb"] * 1024 * 1024)
+                                                       ov_r["review_max_files"], ov_r["review_max_mb"] * 1024 * 1024,
+                                                       ov_r.get("review_link_allow", []), ov_r["review_export_keep_hours"])
                 review_mount = rdir
             env["GIT_COMMON_DIR"] = common   # a rewritten commondir cannot send git to a config of the builder's choosing
-            bad = _escaping_links(wt)
+            bad = _escaping_links(wt, ov_r.get("review_link_allow", []))
             if bad:   # a read-only role's tools follow links: one to the login, /proc or anywhere else outside the card would read it
                 raise BoxError(f"the worktree holds a symlink that leaves it ({bad}); the reviewing box does not start")
             must[wt], must[common] = [("ro", wt, wt)], [("ro", common, common)]

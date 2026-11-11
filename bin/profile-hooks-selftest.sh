@@ -27,8 +27,12 @@ for c in "hermes kanban list" "hermes kanban show t_a837104f" "/workspace/bin/es
          "ls -la /workspace/.worktrees" "cat /workspace/SUPERVISOR.md 2>/dev/null || echo missing" \
          "grep -n 'kanban|block' /workspace/SUPERVISOR.md | head -5" "tail -20 /workspace/.supervisor/escalations.log" \
          "wc -l /workspace/decisions.md" "jq -r .event /workspace/.supervisor/escalations.log 2>&1" \
-         "cd /workspace && git log --oneline -3" "echo '=== status' && pwd" "/workspace/bin/alert-explain.sh STL-ESC-210"; do
+         "git -C /workspace log --oneline -3" "echo '=== status' && pwd" "/workspace/bin/alert-explain.sh STL-ESC-210"; do
   ok '[ "$(term $R "$c")" = 0 ]' "terminal allowed: $c"
+done
+# follow-up 5 (red-team F5RT-01): the session keeps a cd for the next call and the hook judges relative paths against the process folder, so the dispatcher's terminal has no cd
+for c in "cd /workspace" "cd /workspace && git log --oneline -3" "cd bin && ls" "cd /home/node/.hermes" "cd /proc"; do
+  ok '[ "$(term $R "$c")" = 2 ]' "terminal refused (no cd, the next call would inherit the folder): $c"
 done
 for c in "touch /tmp/x" "ls > /tmp/x" "cat a >> b" "cat a | tee b" "rm x" "mv a b" "cp a b" "mkdir -p /workspace/27/10" \
          "chmod +x a" "git add -A" "git commit -m x" "git push" "git reset --mixed HEAD" "git checkout main" \

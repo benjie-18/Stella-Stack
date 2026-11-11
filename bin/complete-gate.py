@@ -54,7 +54,7 @@ def approval_evidence(profile, session_id, ev):
         # end_reason "compression"; on this stack compression.in_place is true, so it usually does not). The run is the chain, child to parents
         # (never parent to children), bounded and cycle-safe, any other kind of parent link is not followed.
         chain = [session_id]
-        while len(chain) < 50:
+        while len(chain) < ev["chain_max"]:
             r = c.execute("select s.parent_session_id from sessions s join sessions p on p.id = s.parent_session_id "
                           "where s.id = ? and p.end_reason = 'compression'", (chain[-1],)).fetchone()
             if not r or not r[0] or r[0] in chain:

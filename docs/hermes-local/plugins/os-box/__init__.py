@@ -51,6 +51,15 @@ def _ctx():
     raise RuntimeError(f"STL-GRD-603: {hh} is not a profile folder with a row in roles.json")
 
 
+def _proof(d, profile, j):
+    """The card facts the box needs: id, folder, branch, body, and the owner's recorded answers (the escalation poller's comments only: their author is a profile
+    that takes no cards; the prefix comes from the profile's row in the role table)."""
+    t = j["task"]
+    prefix = roles.sandbox(d)["profile_overrides"].get(profile, {}).get("review_answer_prefix") or ""
+    return {"card": t["id"], "workspace": t.get("workspace_path") or "", "branch": t.get("branch_name") or "", "body": t.get("body") or "",
+            "answers": box.trusted_answers(d, j.get("comments"), prefix)}
+
+
 class BoxEnvironment(BaseEnvironment):
     def __init__(self, cwd="", timeout=60, env=None):
         self._d, self._profile, self._root = _ctx()
@@ -60,15 +69,13 @@ class BoxEnvironment(BaseEnvironment):
         j, why = _prove(self._profile)
         if why:
             raise RuntimeError(f"STL-GRD-603: the card cannot be proven, terminal refused: {why}")
-        t = j["task"]
-        self._proof = {"card": t["id"], "workspace": t.get("workspace_path") or "", "branch": t.get("branch_name") or "", "body": t.get("body") or "",
-                       "answers": box.trusted_answers(self._d, j.get("comments"))}   # the escalation poller's comments only (its author is a profile that takes no cards)
+        self._proof = _proof(self._d, self._profile, j)
         pdir = roles.pdir(self._root, self._profile, self._d["profiles"][self._profile])
         self._tmp = sb["tmp_dir"].replace("{profile_dir}", pdir)
         os.makedirs(self._tmp, exist_ok=True)
         for old in glob.glob(os.path.join(self._tmp, "hermes-snap-*")):   # session snapshots keep exported variables: none outlives the day (delta red-team S6O-06)
             with contextlib.suppress(OSError):
-                if time.time() - os.lstat(old).st_mtime > 12 * 3600:
+                if time.time() - os.lstat(old).st_mtime > roles.sandbox(self._d)["snapshot_keep_hours"] * 3600:
                     os.unlink(old)
         self._wt = os.path.realpath(self._proof["workspace"])
         self._argv()   # a plan that cannot be built (hidden path in a bind, bad branch, hard link) refuses now, not at the first command

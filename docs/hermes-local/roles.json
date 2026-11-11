@@ -24,7 +24,7 @@
     "builder-claude": {"role": "builder", "worker": "claude-code", "soul": "builder-claude.md"},
     "reviewer": {"role": "reviewer", "worker": "opencode", "soul": "reviewer.md"},
     "reviewer-claude": {"role": "reviewer", "worker": "claude-code", "soul": "reviewer-claude.md", "review_callers": ["dispatcher", "card"],
-      "approval_evidence": {"tool": "terminal", "command": "^bash /workspace/bin/claude-review\\.sh$", "output": "^[\\s*_#>]*APPROVE\\b", "exit_code": 0,
+      "approval_evidence": {"tool": "terminal", "command": "^bash /workspace/bin/claude-review\\.sh$", "output": "^[\\s*_#>]*APPROVE\\b", "exit_code": 0, "chain_max": 50,
         "hint": "Run your one Claude call now: the terminal command bash /workspace/bin/claude-review.sh with the workdir set to your workspace_path and nothing before or after it. The stack builds the question from the card and sends it. Approve only if the answer starts with APPROVE. If Claude answered CHANGES, call kanban_request_changes; if the call failed or was refused, block with kind capability."}}
   },
   "roles": {
@@ -108,6 +108,7 @@
     "home_ro": [".local/bin", ".local/share/uv"],
     "home_protect": [".local/bin/", ".local/lib/", ".bash_profile", ".bash_login", ".profile", ".bashrc", ".gitconfig", ".config/git/", ".jq", ".pip/", ".config/pip/", ".hermes/"],
     "hide": [".scratch"],
+    "snapshot_keep_hours": 12,
     "env_unset": ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"],
     "sibling_dirs": [".worktrees"],
     "canary": "boxcanary/canary.txt",
@@ -125,7 +126,14 @@
         "review_prompt": "docs/hermes-local/review-prompt.txt",
         "review_model": "sonnet",
         "review_max_files": 50000,
-        "review_max_mb": 100
+        "review_max_mb": 100,
+        "review_clip_body": 3000,
+        "review_clip_evidence": 2500,
+        "review_clip_answers": 1500,
+        "review_commits": 5,
+        "review_export_keep_hours": 24,
+        "review_answer_prefix": "UNBLOCK: escalation reply from ",
+        "review_link_allow": ["/usr/bin/", "/usr/local/bin/", "/bin/"]
       }
     },
     "env": {

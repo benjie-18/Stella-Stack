@@ -202,13 +202,13 @@ def secret_why(cmd, cwd):
     return None
 # --- end secret paths
 
-READ = {"ls", "cat", "head", "tail", "grep", "wc", "jq", "echo", "pwd", "cd", "/workspace/bin/escalations-status.sh",
+READ = {"ls", "cat", "head", "tail", "grep", "wc", "jq", "echo", "pwd", "/workspace/bin/escalations-status.sh",
         "/workspace/bin/alert-explain.sh"}   # D44: prints one alert catalog entry, nothing else
 GIT_READ = {"status", "log", "show", "diff", "rev-parse"}
 SEP = {"&&", "||", ";", "|"}
 ALLOWED = ("hermes kanban list|show, /workspace/bin/escalations-status.sh, /workspace/bin/alert-explain.sh <code>, "
            "git status|log|show|diff|rev-parse, "
-           "ls, cat, head, tail, grep, wc, jq, echo, pwd, cd")
+           "ls, cat, head, tail, grep, wc, jq, echo, pwd (no cd: use absolute paths or git -C)")
 
 
 def _git_dir_why(here):
@@ -263,15 +263,8 @@ def why_not(cmd, cwd):
     for s in segs:
         if not s:
             return "empty command in a chain"
-        if s[0] == "cd":
-            tos = [a for a in s[1:] if not a.startswith("-") or a == "-"]   # cd -- X, cd -P X; a lone - is the previous folder
-            if tos:
-                if re.search(r"[*?\[{$]|~[^/]", tos[0]) or tos[0] == "-":
-                    return "cd into a folder written as a pattern, a variable, a ~ form or -"
-                here = os.path.normpath(os.path.join(here, os.path.expanduser(tos[0])))
-                bad = _git_dir_why(here)   # the session keeps a cd for the next call, so no cd may end in a card worktree
-                if bad:
-                    return bad
+        if s[0] == "cd":   # the session keeps the folder of a cd for the NEXT call while the hook judges relative paths against its own process folder (red-team F5RT-01)
+            return "cd is not allowed: the next call would inherit the folder; use absolute paths or git -C"
         if s[0] == "hermes":
             if s[1:2] != ["kanban"] or s[2:3] not in (["list"], ["ls"], ["show"]):
                 return "hermes: only kanban list|show"

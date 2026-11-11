@@ -179,6 +179,8 @@ ok '[ "$(gate "$CP" s_xk)" = 2 ]' "verifier MEDIUM-1: a result in the child with
 ok '[ "$(gate "$CP" s_err)" = 2 ]' "an error with exit 0 is not an answer"
 ok '[ "$(gate "$CP" s_ck)" = 2 ]' "a failed call in the child after a parent's APPROVE refuses (the last result decides; repeat the call)"
 ok '[ "$(gate "$CP" s_long49)" = 0 ] && [ "$(gate "$CP" s_long50)" = 2 ]' "the chain cap: 50 sessions are walked (49 parents), the 51st is not"
+jq --arg cp "$CP" '.profiles[$cp].approval_evidence.chain_max = 10' "$RJ" >"$T/roles-cap10.json"
+ok '[ "$(ROLES_FILE=$T/roles-cap10.json gate "$CP" s_long9)" = 0 ] && [ "$(ROLES_FILE=$T/roles-cap10.json gate "$CP" s_long10)" = 2 ]' "D122 the chain cap is read from the row (10 here): 9 parents are walked, the 10th is not"
 rm -f "$DB"; ok '[ "$(gate "$CP" s_ok)" = 2 ]' "an unreadable session store refuses (fail closed)"
 python3 - "$DB" <<'P'
 import sqlite3, sys
@@ -191,7 +193,10 @@ bad() { jq --arg cp "$CP" "$1" "$RJ" >"$T/bad.json"; ROLES_FILE=$T/bad.json pyth
 ok 'bad ".profiles[\$cp].approval_evidence.command = \"^ok\""' "control: roles.py check accepts a valid approval_evidence on the fixture root"
 ok '! bad ".profiles[\$cp].approval_evidence.command = \"(\""' "roles.py check refuses an approval_evidence regex that does not compile"
 ok '! bad ".profiles[\$cp].approval_evidence = \"x\""' "roles.py check refuses approval_evidence that is not an object"
-ok '! bad "del(.profiles[\$cp].approval_evidence.output) | .profiles[\$cp].approval_evidence = {tool: \"terminal\", command: \"x\"}"' "roles.py check refuses approval_evidence without an output pattern"
+ok '! bad "del(.profiles[\$cp].approval_evidence.output) | .profiles[\$cp].approval_evidence = {tool: \"terminal\", command: \"x\", chain_max: 50}"' "roles.py check refuses approval_evidence without an output pattern"
+ok '! bad "del(.profiles[\$cp].approval_evidence.chain_max)"' "D122 follow-up 5: roles.py check refuses approval_evidence without chain_max (the session chain cap is data, not a literal)"
+ok '! bad ".profiles[\$cp].approval_evidence.chain_max = 0"' "chain_max must be a positive integer"
+ok 'jq -e ".profiles[\"$CP\"].approval_evidence.chain_max | type == \"number\" and . > 0" "$RJ" >/dev/null' "the shipped table gives the Claude reviewer a chain_max"
 ok 'jq -e ".profiles[\"$CP\"].approval_evidence.command | length > 0" "$RJ" >/dev/null' "the shipped table gives the Claude reviewer an approval_evidence rule"
 ok '! jq -e ".profiles[\"$NP\"].approval_evidence" "$RJ" >/dev/null 2>&1' "the 9B reviewer has none"
 # follow-up 4 (item 5): the call is the stack's review command; the hint spells it out exactly as the terminal hook allows it

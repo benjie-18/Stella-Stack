@@ -38,7 +38,7 @@ done
 for c in "cd $T/lw" 'cd /workspace && cd / && git -C ~- status' 'git -C $OLDPWD status' 'cd ~- && git status' 'git -C "$OLDPWD" status' 'cd ~root && git status'; do
   ok '[ "$(term $R "$c")" = 2 ]' "Stella refused: ${c//$T/T}"
 done
-for c in 'git -C /workspace log --oneline -5' 'cd /workspace && git status --short' 'git -C /workspace/bin log --oneline -2'; do
+for c in 'git -C /workspace log --oneline -5' 'git -C /workspace status --short' 'git -C /workspace/bin log --oneline -2'; do
   ok '[ "$(term $R "$c")" = 0 ]' "Stella allowed: $c"
 done
 # delta red-team S6O-07: only the standard streams as written are exempt, not a link that resolves to one
@@ -81,7 +81,11 @@ done
 for c in 'cd bin && grep -rn TODO' 'cd docs && find -name "*.md"' 'grep -rn TODO bin docs' 'grep -r -m 5 TODO bin'; do
   ok '[ "$(term $S "$c")" = 0 ]' "builder allowed (no owner settings file in the folder searched): $c"
 done
-ok '[ "$(term $R "cd bin && grep -rn TODO")" = 0 ]' "Stella allowed: cd bin && grep -rn TODO (RT7-01 control)"
+ok '[ "$(term $R "grep -rn TODO /workspace/bin")" = 0 ] && [ "$(term $R "cd bin && grep -rn TODO")" = 2 ]' "Stella allowed with an absolute folder, refused with cd (follow-up 5, F5RT-01: the session would keep the cd)"
+# follow-up 5 (red-team F5RT-01): a cd in one dispatcher call is kept by the session; the hook would resolve the next call's relative path against the wrong folder
+for c in 'cd /home/node/.hermes' 'cd /proc' 'cd /home/node/.claude' 'cd /workspace/config' 'cd ..' 'cd'; do
+  ok '[ "$(term $R "$c")" = 2 ]' "Stella refused: $c"
+done
 # B2V-14/15 controls: ordinary git and diff reads, and wrapped commands on an ordinary folder, still pass
 for c in 'git diff --stat main...HEAD' 'git diff' 'git -C /workspace diff --stat' 'git diff --name-only HEAD~1 HEAD' \
          'diff bin/alert.sh bin/alert.sh' 'timeout 5 grep -rn x bin' 'if cd bin; then grep -rn x; fi'; do
