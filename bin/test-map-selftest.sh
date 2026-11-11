@@ -141,4 +141,51 @@ ok '[ "$(STELLA_ROOT=$T/good python3 -I "$TM" select -- --json 2>/dev/null)" = f
 ok '[ "$(printf " src/a1.py\n" | sel - | jq -r .full)" = true ] && [ "$(printf "src/a1.py \n" | sel - | jq -r .full)" = true ]' "25b a name on stdin with white space at either end selects full, as an argument does"
 root case '.full += ["*guard*"]'
 ok '[ "$(STELLA_ROOT=$T/case python3 -I "$TM" select src/aGuard.py 2>/dev/null)" = full ] && [ "$(STELLA_ROOT=$T/case python3 -I "$TM" select src/a1.py 2>/dev/null)" = a ]' "25c a full-list glob matches without regard to case"
+ok '[ "$(printf "src/a1.py\n" | sel -- - | jq -r .full)" = true ] && [ "$(printf "src/a1.py\n" | STELLA_ROOT=$T/good python3 -I "$TM" select -- - 2>/dev/null)" = full ]' "25d a name \"-\" after \"--\" is a name (leading dash: full), not a read of stdin"
+ok '[ "$(printf "src/a\xe9.py\n" | LC_ALL=C.UTF-8 sel - | jq -r .full)" = true ] && [ "$(sel "$(printf "src/a\xe9.py")" | jq -r .full)" = true ]' "25e a name that is not valid UTF-8 text (on stdin or as an argument) selects full"
+ok '! STELLA_ROOT=$T/good python3 -I "$TM" select - <&- >"$T/o" 2>"$T/e" && [ ! -s "$T/o" ] && grep -q "^STL-CFG-310 .*stdin" "$T/e" && ! grep -q "test-map.json" "$T/e" && ! grep -q Traceback "$T/e"' \
+   "25f stdin that cannot be read fails with its own message, which does not blame the map"
+
+# A row is judged by what it adds beyond the always gates (a is the gate here): adding none, it may match only prose.
+pr g1 '.map[2].targets = ["a"]'; echo x >"$T/g1/notes/x.sh"
+pr g2 '.data = ["*.json"] | .map[2].targets = ["a"]'; echo '{"hooks": ["notes/x.cfg"]}' >"$T/g2/src/hooks.json"; echo x >"$T/g2/notes/x.cfg"
+ok 'bad g1 "map row 3 (notes/\*) adds no target beyond the always gates (a), so it may match only prose, but it matches notes/x.sh: code" && bad g2 "matches notes/x.cfg: named by src/hooks.json"' \
+   "26 a row whose targets are only always gates is refused like a row with no targets"
+pr g3 '.map[0].globs += ["src/a-tool.sh"]'; st "$T/g3/src/a-tool.sh"
+joined() { val | sed "s/^(part [0-9]* of [0-9]*) //; s/ (root .*//" | tr -d "\n"; }   # a long problem is split into parts
+ok '! chk g3 && joined | grep -qF "map row 1 (bin/a-selftest.sh, src/a*, src/a-tool.sh) adds no target beyond the always gates (a), so it may match only prose, but it matches src/a-tool.sh" && ! grep -q "matches bin/a-selftest.sh" "$T/out" && chk good' \
+   "26b the gate's own selftest file is the one code file such a row may match"
+pr g4 '.map += [{"globs": ["src/*", "*"], "targets": ["b"]}]'
+ok 'bad g4 "map row 4 (src/\*, \*) is not a scan row, and its glob \* matches every path"' "26c a glob that matches every path is refused in a row with targets too"
+pr g5 '.data = [] | .map[2].targets = ["a"]'; echo '{"hooks": ["notes/x.cfg"]}' >"$T/g5/src/hooks.json"; echo x >"$T/g5/notes/x.cfg"
+ok 'bad g5 "matches notes/x.cfg: named by src/hooks.json"' "26d an empty data list means every file is data (it cannot switch the rule off)"
+mkdir -p "$T/ship/.stella"
+for g in $(jq -r '.always[]' "$BIN/../.stella/test-map.json"); do
+  jq --arg g "$g" '.map += [{globs: ["*"], targets: [$g]}]' "$BIN/../.stella/test-map.json" >"$T/ship/.stella/test-map.json"
+  ok 'bad ship "is not a scan row, and its glob \* matches every path"' "26e the shipped map plus a row * -> [$g] (an always gate) is refused"
+done
+
+# select answers full when it cannot vouch for the map: a change to the map, its schema or this tool; a map that breaks a
+# rule that needs no file list; an empty selection.
+root own '.map += [{"globs": [".stella/*", "bin/*.py"], "targets": ["b"]}]'
+ok 'chk own && [ "$(STELLA_ROOT=$T/own python3 -I "$TM" select bin/other.py 2>/dev/null)" = "a
+b" ] && ( for f in .stella/test-map.json .stella/schemas/test-map.schema.json bin/test-map.py; do [ "$(STELLA_ROOT=$T/own python3 -I "$TM" select "$f" 2>/dev/null)" = full ] || exit 1; done )' \
+   "27 a change to the map, its schema or the tool selects full whatever the map's full list and rows say"
+root wide '.map += [{"globs": ["*"], "targets": ["b"]}]'
+ok '( for f in src/a1.py notes/x.md bin/a-selftest.sh; do [ "$(STELLA_ROOT=$T/wide python3 -I "$TM" select "$f" 2>"$T/e")" = full ] && grep -q "matches every path" "$T/e" || exit 1; done )' \
+   "27b a map that fails a check rule selects full for every file, with the reason on stderr"
+root none '.always = []'
+ok '[ "$(STELLA_ROOT=$T/none python3 -I "$TM" select notes/x.md 2>/dev/null)" = full ] && [ "$(STELLA_ROOT=$T/none python3 -I "$TM" select --json notes/x.md 2>/dev/null | jq -r .full)" = true ]' \
+   "27c an empty selection is never printed: full"
+
+# git answers for the tree: the tree's own untracked settings (info/exclude, a local excludesFile or worktree) hide nothing
+# and run nothing (core.fsmonitor).
+root gl; git -C "$T/gl" init -q; st "$T/gl/bin/c-test.sh"; echo 'bin/c-test.sh' >>"$T/gl/.git/info/exclude"; echo 'c-*' >"$T/gl-ign"; mkdir -p "$T/gl-wt"
+git -C "$T/gl" config core.excludesFile "$T/gl-ign"; git -C "$T/gl" config core.worktree "$T/gl-wt"
+printf '#!/bin/sh\ntouch "%s"\nexit 1\n' "$T/gl-ran" >"$T/gl-mon"; chmod 755 "$T/gl-mon"; git -C "$T/gl" config core.fsmonitor "$T/gl-mon"
+ok 'bad gl "bin/c-test.sh looks like a test" && [ ! -e "$T/gl-ran" ]' "24b info/exclude, a repo-local excludesFile or worktree hide no untracked test, and the tree's fsmonitor program is not run"
+
+# A problem in 100 or more parts keeps the whole root note on every part.
+root parts ".map += [{globs: ([range(100)] | map(\"docs/$(printf 'g%.0s' $(seq 240))\\(.).md\") + [\"*\"]), targets: []}]"   # globs longer than a line: every part is cut at full width
+ok '! chk parts && [ "$(grep -c "" "$T/out")" -ge 100 ] && allroot parts' "23f a problem split into 100 or more parts keeps the root note on every part"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
