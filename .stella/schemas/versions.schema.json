@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Version pins",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "pins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "integrity": {
+            "type": "string"
+          },
+          "tested_with": {
+            "type": "object",
+            "properties": {
+              "stack_commit": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              },
+              "with": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "stack_commit",
+              "date",
+              "with"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "version",
+          "source",
+          "tested_with"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "pins"
+  ],
+  "additionalProperties": false
+}

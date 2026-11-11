@@ -1,0 +1,239 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "id": "local-model-server",
+      "kind": "provider",
+      "subkind": "openai-compatible-local",
+      "label": "Local model server",
+      "enabled": true,
+      "locality": "local",
+      "hosts": [
+        {
+          "host": "host.docker.internal",
+          "port": 11434,
+          "purpose": "model API (the one firewall rule to the host)"
+        }
+      ],
+      "auth_types": [
+        "none"
+      ],
+      "secrets": [],
+      "actions": [
+        {
+          "id": "complete",
+          "approval_class": "read"
+        }
+      ],
+      "models": [
+        {
+          "id": "qwen3.5:9b-64k",
+          "capabilities": {
+            "tool_calling": true,
+            "json_mode": null,
+            "context_tokens": null,
+            "vision": null,
+            "streaming": true
+          },
+          "probed_at": null,
+          "probe_source": "observed in live use (cards complete through tool calls); not a probe",
+          "cost": null,
+          "limits": null
+        }
+      ],
+      "cost": null,
+      "limits": null,
+      "data_policy": {
+        "retention": "local",
+        "training_use": "none",
+        "region": "local",
+        "zero_retention_available": null,
+        "data_classes_allowed": [
+          "public",
+          "internal",
+          "client"
+        ]
+      },
+      "tos": {
+        "status": "not_applicable"
+      }
+    },
+    {
+      "id": "claude-subscription",
+      "kind": "provider",
+      "subkind": "direct-subscription",
+      "label": "Claude subscription (Claude Code CLI)",
+      "enabled": true,
+      "locality": "cloud",
+      "hosts": [
+        {
+          "host": "api.anthropic.com",
+          "port": 443,
+          "purpose": "API"
+        }
+      ],
+      "auth_types": [
+        "oauth_subscription"
+      ],
+      "secrets": [
+        "CLAUDE_CODE_OAUTH_TOKEN"
+      ],
+      "actions": [
+        {
+          "id": "complete",
+          "approval_class": "read"
+        }
+      ],
+      "models": [
+        {
+          "id": "haiku",
+          "capabilities": {
+            "tool_calling": null,
+            "json_mode": null,
+            "context_tokens": null,
+            "vision": null,
+            "streaming": null
+          },
+          "probed_at": null,
+          "probe_source": null,
+          "cost": null,
+          "limits": null
+        },
+        {
+          "id": "sonnet",
+          "capabilities": {
+            "tool_calling": null,
+            "json_mode": null,
+            "context_tokens": null,
+            "vision": null,
+            "streaming": null
+          },
+          "probed_at": null,
+          "probe_source": null,
+          "cost": null,
+          "limits": null
+        },
+        {
+          "id": "opus",
+          "capabilities": {
+            "tool_calling": null,
+            "json_mode": null,
+            "context_tokens": null,
+            "vision": null,
+            "streaming": null
+          },
+          "probed_at": null,
+          "probe_source": null,
+          "cost": null,
+          "limits": null
+        }
+      ],
+      "cost": null,
+      "limits": null,
+      "data_policy": {
+        "retention": null,
+        "training_use": null,
+        "region": null,
+        "zero_retention_available": null,
+        "data_classes_allowed": []
+      },
+      "tos": {
+        "status": "unverified",
+        "subscription_login_by_agent": "unverified"
+      }
+    },
+    {
+      "id": "fallback-gateway",
+      "kind": "provider",
+      "subkind": "openai-compatible-aggregator",
+      "label": "Fallback gateway (aggregator proxy)",
+      "enabled": false,
+      "locality": "cloud",
+      "hosts": [
+        {
+          "host": "127.0.0.1",
+          "port": 20128,
+          "purpose": "the gateway's own API (loopback)"
+        },
+        {
+          "host": "openrouter.ai",
+          "port": 443,
+          "purpose": "outbound host of the provider it forwards to"
+        }
+      ],
+      "auth_types": [
+        "api_key"
+      ],
+      "secrets": [],
+      "actions": [
+        {
+          "id": "complete",
+          "approval_class": "read"
+        }
+      ],
+      "models": [],
+      "cost": null,
+      "limits": null,
+      "data_policy": {
+        "retention": null,
+        "training_use": null,
+        "region": null,
+        "zero_retention_available": null,
+        "data_classes_allowed": [],
+        "free_tiers_may_retain_or_train": true
+      },
+      "tos": {
+        "status": "unverified"
+      }
+    },
+    {
+      "id": "discord",
+      "kind": "channel",
+      "subkind": "chat",
+      "label": "Discord (connected chat channel)",
+      "enabled": true,
+      "locality": "cloud",
+      "hosts": [
+        {
+          "host": "discord.com",
+          "port": 443,
+          "purpose": "REST API"
+        },
+        {
+          "host": "gateway.discord.gg",
+          "port": 443,
+          "purpose": "gateway"
+        }
+      ],
+      "auth_types": [
+        "bot_token"
+      ],
+      "secrets": [
+        "DISCORD_BOT_TOKEN"
+      ],
+      "actions": [
+        {
+          "id": "read-thread",
+          "approval_class": "read"
+        },
+        {
+          "id": "post-message",
+          "approval_class": "post"
+        }
+      ],
+      "models": [],
+      "cost": null,
+      "limits": null,
+      "data_policy": {
+        "retention": null,
+        "training_use": null,
+        "region": null,
+        "zero_retention_available": null,
+        "data_classes_allowed": []
+      },
+      "tos": {
+        "status": "unverified"
+      }
+    }
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Role assignments",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "effort_modes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "allowed_localities": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "local",
+                "cloud"
+              ]
+            },
+            "minItems": 1
+          },
+          "no_silent_fallback": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "allowed_localities",
+          "no_silent_fallback"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "assignments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "scope": {
+            "type": "object",
+            "properties": {
+              "level": {
+                "enum": [
+                  "global",
+                  "project",
+                  "card"
+                ]
+              },
+              "project": {
+                "type": "string"
+              },
+              "card": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "level"
+            ],
+            "additionalProperties": false
+          },
+          "role": {
+            "type": "string"
+          },
+          "effort_mode": {
+            "type": "string"
+          },
+          "chain": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "parameters": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "provider",
+                "model",
+                "parameters"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1
+          }
+        },
+        "required": [
+          "id",
+          "scope",
+          "role",
+          "effort_mode",
+          "chain"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "effort_modes",
+    "assignments"
+  ],
+  "additionalProperties": false
+}
