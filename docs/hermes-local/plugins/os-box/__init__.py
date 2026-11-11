@@ -53,7 +53,7 @@ def _ctx():
 
 def _proof(d, profile, j):
     """The card facts the box needs: id, folder, branch, body, and the owner's recorded answers (the escalation poller's comments only: their author is a profile
-    that takes no cards; the prefix comes from the profile's row in the role table)."""
+    whose role has `may_answer_for_owner`; the prefix comes from the profile's row in the role table)."""
     t = j["task"]
     prefix = roles.sandbox(d)["profile_overrides"].get(profile, {}).get("review_answer_prefix") or ""
     return {"card": t["id"], "workspace": t.get("workspace_path") or "", "branch": t.get("branch_name") or "", "body": t.get("body") or "",

@@ -15,7 +15,7 @@ kanban_claim and delegate_task. It reads the role table (bin/roles.py) and names
      protected list) or a main checkout; no request to change the creator's own configuration (a configuration kind
      next to its role, profile or display name). The board's projects come from Hermes's projects.db, read at call
      time; unreadable = refused (STL-GRD-602).
-  4. kanban_comment (A1-01): a role that takes cards, or a profile with no row, names no other card than its own proven
+  4. kanban_comment (A1-01): a role without `may_answer_for_owner` (listed or not), or a profile with no row, names no other card than its own proven
      running card (roles.prove_card). Hermes itself rejects a call without task_id, so the guard lets that through.
 Exit 2 + block JSON refuses; any error refuses."""
 import json, os, re, sys

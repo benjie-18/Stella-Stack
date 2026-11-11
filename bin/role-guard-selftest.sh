@@ -284,7 +284,7 @@ if [ -n "$RCP" ]; then
   fi
 fi
 # A1-01: a role that takes cards, or a profile with no row, comments on its own proven running card only. Fake worker's
-# process tree again (D48); the coordinator (a listed role that takes no cards) comments anywhere.
+# process tree again (D48); the coordinator (the role with may_answer_for_owner) comments anywhere.
 DISP=$(for q in $PROFILES; do [ "$(jq -r --arg p "$q" '.roles[.profiles[$p].role].may_answer_for_owner' "$RF")" = true ] && echo "$q" && break; done)   # W2-RT-01: the field, never `assignable`
 cm() { printf '{"task_id":"%s","comment":"UNBLOCK: escalation reply\\nGo on."}' "$1"; }
 export TREE_TOOL=kanban_comment
@@ -295,7 +295,7 @@ ok '[ "$(tree "$WT" "$(cm t_0000c0de)" other)" = 2 ] && grep -qF "assigned to" "
 ok '[ "$(tree "$WT" "$(cm t_0000c0de)" nobind)" = 2 ] && [ "$(tree "$WT" "$(cm t_0000c0de)" stranger)" = 2 ]' "A1-01: own card without a bound worker run in the caller's ancestors: refused"
 ok '[ "$(tree "$WT" "{\"task_id\":[\"t_0000c0de\"],\"comment\":\"x\"}" ok)" = 2 ] && [ "$(tree "$WT" "{\"task_id\":\" t_0000c0de\",\"comment\":\"x\"}" ok)" = 2 ]' "A1-01: a task_id that is not exactly a card id: refused (fail closed)"
 ok '[ "$(run no-such-profile kanban_comment "$(cm t_0000c001)")" = 2 ] && [ "$(run no-such-profile kanban_comment "{\"comment\":\"x\"}")" = 0 ]' "A1-01: a profile with no row: cross-card refused; no task_id left to Hermes: allowed"
-[ -n "$DISP" ] && ok '[ "$(run "$DISP" kanban_comment "$(cm t_0000c001)")" = 0 ]' "A1-01: $DISP ($(role "$DISP"), takes no cards) comments on any card: allowed"
+[ -n "$DISP" ] && ok '[ "$(run "$DISP" kanban_comment "$(cm t_0000c001)")" = 0 ]' "A1-01: $DISP ($(role "$DISP"), may_answer_for_owner) comments on any card: allowed"
 [ -n "$RV1" ] && ok '[ "$(tree "$RV1" "$(cm t_0000beef)" wrongcard)" = 2 ]' "A1-01: the reviewing role is a worker too: other card refused"
 ok '[ -n "$DISP" ] && [ "$(jq "[.roles[] | select(.may_answer_for_owner == true)] | length" "$RF")" = 1 ]' "W2-RT-01: exactly one role has may_answer_for_owner, and a profile has it ($DISP)"
 # W2-RT-01: a role without the field is a worker for this rule, listed or not, whatever its `assignable`: foreign comment refused
