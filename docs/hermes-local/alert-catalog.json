@@ -495,7 +495,7 @@
       "severity": "warning",
       "title": "a hard-coded name is used more than its baseline allows",
       "message": "A name that must come from the data files (a provider, model, host, board, project, channel or role) is written into a script or a prompt more often than its baseline allows: {problem}. The lines after this one give each file, the name and the count.",
-      "action": "move the value to the data file it belongs in and read it from there, or ask the owner to raise the baseline in docs/hermes-local/hardcode-allow.json. See STL-CFG-320 in docs/alert-codes.md.",
+      "action": "move the value to the data file it belongs in and read it from there, or ask the owner to raise the baseline in hardcode-allow.json. See STL-CFG-320 in docs/alert-codes.md.",
       "cause": "A change wrote a name into code or text instead of reading it from data, or removed a use that the baseline still counts.",
       "check": "`bin/hardcode-lint.sh --dump` (every file, name and count); `bin/hardcode-lint.sh` (the uses over the baseline).",
       "related": "F1 W5; bin/hardcode-lint.sh; docs/hermes-local/hardcode-allow.json",
