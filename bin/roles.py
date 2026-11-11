@@ -8,6 +8,8 @@ CLI: roles.py check [hermes-root]     validate the table and its coverage of the
      roles.py spec [hermes-root]      JSON {profile: {dir, role, listed, platform_toolsets, skills_disabled, hook_files,
                                        config}} for bin/register-toolsets.sh and bin/apply-hermes-local.sh
      roles.py field <profile> <key>   one permission of the profile's role, as JSON (unlisted profiles get fallback_role)
+     roles.py requirements <role>     JSON {tool_calling, min_context_tokens, vision, allowed_data_classes}: what a model needs
+                                       to hold the role (exit 1 and STL-CFG-311 for a role not in the table)
      roles.py reviewers               JSON list of the profiles whose role may review (K8)
      roles.py prove [--profile P] [--task T]   the card whose own worker run this process belongs to (prove_card): JSON
                                        {card, workspace, branch} and exit 0; else the failed proof on stderr, exit 1
@@ -30,6 +32,9 @@ BOX_SHELL_ENV = {"BASH_ENV", "ENV", "PATH", "IFS", "SHELLOPTS", "BASHOPTS", "PRO
 BOX_DENY_ENV_PREFIX = ("LD_", "PYTHON")   # dynamic loader and interpreter start-up variables
 REVIEW_INT_KEYS = ("review_max_files", "review_max_mb", "review_clip_body", "review_clip_evidence", "review_clip_answers", "review_commits", "review_export_keep_hours")
 OVERRIDE_KEYS = {"claude_config_dir", "ro_over", "hide_files", "broker_env", "broker_when", "review_prompt", "review_model", "review_answer_prefix", "review_link_allow"} | set(REVIEW_INT_KEYS)
+REQ_BOOLS = ("tool_calling", "vision")
+REQ_KEYS = set(REQ_BOOLS) | {"min_context_tokens", "allowed_data_classes"}
+SCHEMA_VERSION = 1
 ROOT_PROFILE = "default"   # Hermes's own name for the profile that lives in the root of ~/.hermes
 
 
@@ -57,10 +62,11 @@ def validate(d):
     roles, profs = d.get("roles") if isinstance(d, dict) else None, d.get("profiles") if isinstance(d, dict) else None
     if not isinstance(roles, dict) or not isinstance(profs, dict) or not roles:
         return ["profiles and roles must be objects, roles not empty"]
-    errs = []
+    errs = [] if d.get("schema_version") == SCHEMA_VERSION and not isinstance(d["schema_version"], bool) else [f"schema_version must be {SCHEMA_VERSION}"]
     for n, r in roles.items():
         if not NAME.fullmatch(n) or not isinstance(r, dict):
             errs.append(f"role {n!r}: bad name or not an object"); continue
+        errs += validate_requirements(n, r.get("requirements"))
         errs += [f"role {n}: {k} must be true or false" for k in PERMS if not isinstance(r.get(k), bool)]
         if r.get("workspace") not in WORKSPACES:
             errs.append(f"role {n}: workspace must be one of {', '.join(WORKSPACES)}")
@@ -136,6 +142,20 @@ def validate(d):
                                                    for x in os_)):
         errs.append("owner_settings needs a non-empty list of paths relative to the stack repo")
     return errs + validate_sandbox(d)
+
+
+def validate_requirements(n, q):
+    """E3: what a model needs to hold role n: all four keys, nothing else."""
+    if not isinstance(q, dict):
+        return [f"role {n}: requirements must be an object"]
+    errs = [f"role {n}: requirements has unknown key {k}" for k in sorted(set(q) - REQ_KEYS)]
+    errs += [f"role {n}: requirements.{k} must be true or false" for k in REQ_BOOLS if not isinstance(q.get(k), bool)]
+    c, dc = q.get("min_context_tokens"), q.get("allowed_data_classes")
+    if not isinstance(c, int) or isinstance(c, bool) or c < 0:
+        errs.append(f"role {n}: requirements.min_context_tokens must be a non-negative integer")
+    if not (isinstance(dc, list) and all(isinstance(x, str) and NAME.fullmatch(x) for x in dc) and len(set(dc)) == len(dc)):
+        errs.append(f"role {n}: requirements.allowed_data_classes must be a list of distinct class names")
+    return errs
 
 
 def _rel(x):
@@ -523,6 +543,11 @@ if __name__ == "__main__":
         sys.exit(1 if gaps else 0)
     elif cmd == "spec":
         print(json.dumps(spec(d, H), indent=1))
+    elif cmd == "requirements" and len(args) == 1:
+        if args[0] not in d["roles"]:
+            print(f"roles: no role {args[0]}: {log_alert('STL-CFG-311', id=args[0])}", file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps(d["roles"][args[0]]["requirements"]))
     elif cmd == "reviewers":
         print(json.dumps(reviewers(d)))
     elif cmd == "field" and len(args) == 2:

@@ -22,6 +22,7 @@ mk() { mkdir -p "$1"; printf 'model: x\n' >"$1/config.yaml"; echo '{"approvals":
 # The scratch table: the real one plus role "planner" (assignable, delegates, creates cards, one hook) and profile planner-x.
 jq '.roles.planner = {assignable: true, workspace: "git-worktree", may_complete: true, may_unblock: false, may_claim: true,
       may_delegate: true, may_create_cards: true, may_review: false, allowed_overrides: [], background_review: false,
+      requirements: {tool_calling: true, min_context_tokens: 8000, vision: false, allowed_data_classes: ["public"]},
       platform_toolsets: {cli: ["file", "terminal"]},
       hooks: [{matcher: "^(write_file|patch|skill_manage)$", file: "docs/hermes-local/hooks/reviewer/deny-write.sh"}]}
     | .profiles["planner-x"] = {role: "planner", soul: "reviewer.md"}
@@ -136,4 +137,33 @@ want=$(jq -r 'map("`" + . + "`") | join(", ")' <<<"$(cw <<<"$exp")"); want2=$(jq
 ok '[ "$(sv "$RF" "$BP")" = "$want" ]' "K8: {{REVIEWERS}} renders the reviewing profiles from the table ($want)"
 ok '[ "$(sv "$T/rv.json" "$BP")" = "$want2" ]' "K8: {{REVIEWERS}} follows the table when another role may review"
 ok '[ "$(sv "$T/rv0.json" "$BP")" = "(no reviewing profile listed)" ]' "K8: {{REVIEWERS}} with no reviewing role: '(no reviewing profile listed)', never empty"
+# F1 W2 (E3): role requirements, schema_version, the eight fail-closed roles, a fake role with requirements.
+RQ='{"tool_calling": true, "min_context_tokens": 8000, "vision": false, "allowed_data_classes": ["public"]}'
+ok '[ "$(jq -r .schema_version "$RF")" = 1 ] && jq -e "[.roles[] | has(\"requirements\")] | all" "$RF" >/dev/null' "W2: the real table has schema_version 1 and requirements on every role"
+for r in tester validator verifier red-team router voice look proposer; do
+  ok 'jq -e --arg r "$r" ".roles[\$r] as \$x | \$x != null and ([\"assignable\",\"may_complete\",\"may_unblock\",\"may_claim\",\"may_delegate\",\"may_create_cards\",\"may_review\"] | all(\$x[.] == false)) and \$x.workspace == \"none\" and \$x.allowed_overrides == [] and ([.profiles[].role] | index(\$r)) == null and (\$x.hooks == .roles[.fallback_role].hooks) and (\$x.platform_toolsets == null)" "$RF" >/dev/null' "W2: role $r exists, opens nothing, no profile, the fallback role's hooks"
+  ok '[ "$(python3 $S/roles.py requirements $r | jq -c "keys")" = "[\"allowed_data_classes\",\"min_context_tokens\",\"tool_calling\",\"vision\"]" ]' "W2: roles.py requirements $r returns its requirements as JSON"
+done
+ok '[ "$(python3 $S/roles.py requirements look | jq .vision)" = true ] && [ "$(python3 $S/roles.py requirements router | jq .vision)" = false ]' "W2: look needs vision, router does not"
+ok '[ "$(python3 $S/roles.py requirements no-such-role >"$T/out" 2>&1; echo $?)" = 1 ]' "W2: roles.py requirements of an unknown role exits 1"
+jq --argjson q "$RQ" '.roles["fake-role"] = (.roles.unlisted + {requirements: $q})' "$RF" >"$T/fr.json"
+H2="$T/h2"; mkdir -p "$H2"; echo x >"$H2/config.yaml"; for p in $(jq -r '.profiles | keys[] | select(. != "default")' "$RF"); do mkdir -p "$H2/profiles/$p"; echo x >"$H2/profiles/$p/config.yaml"; done
+ok '[ "$(ROLES_FILE=$RF python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?)" = 0 ] && [ "$(ROLES_FILE=$T/fr.json python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?)" = 0 ] && [ "$(ROLES_FILE=$T/fr.json python3 $S/roles.py requirements fake-role | jq -S -c .)" = "$(jq -Sc . <<<"$RQ")" ]' "W2: a fake role with requirements passes check and answers, no code change"
+chk() { ROLES_FILE=$T/b.json python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?; }
+for r in $(jq -r '.roles | keys[]' "$RF"); do
+  jq --arg r "$r" 'del(.roles[$r].requirements)' "$RF" >"$T/b.json"
+  ok '[ "$(chk)" = 1 ] && grep -q "role $r: requirements" "$T/out"' "W2: role $r without requirements: check fails"
+done
+bad() { jq "$1" "$RF" >"$T/b.json"; pat=$2; ok '[ "$(chk)" = 1 ] && grep -q "$pat" "$T/out"' "W2: $3: check fails"; }
+bad '.roles.builder.requirements.min_context_tokens = -1' 'min_context_tokens' "negative context"
+bad '.roles.builder.requirements.min_context_tokens = true' 'min_context_tokens' "boolean context"
+bad '.roles.builder.requirements.min_context_tokens = 1.5' 'min_context_tokens' "fractional context"
+bad '.roles.builder.requirements.colour = 1' 'colour' "unknown requirements key"
+bad '.roles.builder.requirements.vision = "yes"' 'vision' "vision not a boolean"
+bad '.roles.builder.requirements.tool_calling = null' 'tool_calling' "tool_calling not a boolean"
+bad '.roles.builder.requirements.allowed_data_classes = "public"' 'allowed_data_classes' "data classes not a list"
+bad '.roles.builder.requirements.allowed_data_classes = ["public","public"]' 'allowed_data_classes' "duplicate data class"
+bad 'del(.roles.builder.requirements.vision)' 'vision' "a requirements key missing"
+bad '.schema_version = 2' 'schema_version' "wrong schema_version"
+bad 'del(.schema_version)' 'schema_version' "missing schema_version"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
