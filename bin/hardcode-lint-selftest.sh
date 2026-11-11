@@ -93,7 +93,7 @@ ok 'lint >/dev/null' "L4: a text that only contains a literal stays allowed"
 # L5: the suite clears the lint's switches as it clears STELLA_ROOT
 ok 'grep -Eq "unset[^#]*HARDCODE_ALLOW" "$BIN/selftests.sh" && grep -Eq "unset[^#]*HARDCODE_HOME" "$BIN/selftests.sh"' "L5: bin/selftests.sh clears HARDCODE_ALLOW and HARDCODE_HOME"
 # L6: the lint's own failures carry a catalog code
-fresh; plant "$rf" "$rl"; ok 'fails_on "$rl" && [ "$(grep -c STL-CFG-320 <<<"$out")" = 1 ]' "L6: exit 1 prints STL-CFG-320 once, then the per-file lines"
+fresh; plant "$rf" "$rl"; ok 'fails_on "$rl" && [ "$(grep -c "\[STL-CFG-320\]" <<<"$out")" = 1 ]' "L6: exit 1 prints STL-CFG-320 once, then the per-file lines"
 fresh; ok 'out=$(lint --bogus); [ $? = 2 ] && grep -q STL-CFG-310 <<<"$out"' "L6: the usage error prints STL-CFG-310"
 # L7: role names are literals except the plain words listed in the allow list
 np=$(jq -r --argjson pw "$(jq '[.plain_words[].word]' "$A")" '.roles | keys[] | select(IN($pw[]) | not)' "$W/docs/hermes-local/roles.json" | head -1)
