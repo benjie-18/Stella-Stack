@@ -1,7 +1,7 @@
 """OS box (option A), stdlib only: the bubblewrap mount list for one terminal call of a boxed profile.
 plan() turns the card proof and the `sandbox` block of roles.json into mounts; box_argv() makes the bwrap argv. No profile,
 role, path or project is named here: they come from the table, the card proof and the board's project roots. A path
-the box must not show (owner settings, the canary, secret classes, hidden folders) is never mounted: every parent of
+the box must not show (owner settings, the apply tool's backups, applied state and event log named by the data index, the canary, secret classes, hidden folders) is never mounted: every parent of
 one is a tmpfs and each safe child is bound on its own, because /workspace is case-insensitive (9p) and a bind over one
 spelling hides only that spelling. Any doubt raises BoxError and the terminal is refused (fail closed).
 The card's branch ref is not bound from the shared refs/heads/<project> folder (HH-05: on the case-insensitive 9p mount a bind

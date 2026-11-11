@@ -357,7 +357,7 @@ PY
 ok '[ "$(ROLES_FILE=$T/roles.json python3 -I "$T/ta.py" "$S" "$PX" "$P")" = "[\"UNBLOCK: escalation reply from discord:u in thread 1: blue\"]" ]' "3.79 only the escalation poller's comments (a profile whose role has may_answer_for_owner) count as owner answers: a worker's text with the prefix, a plain note and an author-less comment do not"
 # W2-RT-01: a profile whose role lacks may_answer_for_owner (listed or not, whatever its `assignable`) is no trusted author
 for r in $(jq -r '.roles | to_entries[] | select(.value.may_answer_for_owner != true) | .key' "$RF"); do
-  jq --arg r "$r" '.profiles["qa-p"] = {"role": $r}' "$T/roles.json" >"$T/roles-x.json"
+  jq --arg r "$r" '.profiles["qa-p"] = {"role": $r} | .sandbox.boxed_profiles += ["qa-p"]' "$T/roles.json" >"$T/roles-x.json"
   ok '[ -n "$PX" ] && [ "$(ROLES_FILE=$T/roles-x.json python3 -I "$T/ta.py" "$S" qa-p "$P")" = "[]" ]' "W2-RT-01: role $r (no may_answer_for_owner): its comments are not the owner's answers"
 done
 # cluster C round (red-team S6M-RC C-01, C-03, C-04, C-05, C-08, C-09)

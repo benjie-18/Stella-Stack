@@ -59,7 +59,7 @@ try:
         RT = roles.load()
         PROTECTED, CONFIG = roles.protected(RT)
         OWNER_FILES = roles.owner_settings(RT)
-        OWNER_REL = roles.owner_paths(RT) + roles.state_paths(RT)   # G1/B1: owner data and the apply tool's state, from the index and the table, never named here
+        OWNER_REL = [p for p in roles.owner_paths(RT) if p not in RT["owner_settings"]] + roles.state_paths(RT)   # G1/B1: owner data and the apply tool's state, from the index and the table, never named here (the owner settings keep their older refusals)
         OWNER_CMDS = roles.owner_commands(RT)
         BY_NAME = [os.path.basename(c).casefold() for c in OWNER_CMDS if c[len(ROOT) + 1:] in RT["owner_commands_by_name"]]
     except Exception as e:   # every call is refused below until the table (and the index it names) can be read
@@ -554,6 +554,8 @@ def command_reason(cmd, base):
             else:
                 cur.append(t)
         for raw in simple:
+            if any(b in w.casefold() for w in raw for b in BY_NAME):   # a spelling the text match missed (merge''-card.sh): the shell's word is the name
+                return ob(next(m for c, m in CMDS.items() if any(os.path.basename(c) in w.casefold() for w in raw)))
             if any("HERMES_DELEG" in w for w in raw) and (any(re.fullmatch(r"HERMES_DELEG\w*=.*", w) for w in raw) or
                     {w.rsplit("/", 1)[-1] for w in raw} & {"unset", "export", "env", "declare", "typeset", "readonly", "local"}):
                 return KANBAN_CLI

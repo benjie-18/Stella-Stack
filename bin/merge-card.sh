@@ -76,7 +76,7 @@ odata=$(python3 -I "$here/roles.py" owner-data "$here/.." 2>/dev/null | jq -r '.
 [ -n "$odata" ] || refuse "the owner data list cannot be read (role table or data index), so what $branch changes cannot be checked; nothing was merged"
 bnd=$(python3 -I "$here/roles.py" boundary 2>/dev/null | jq -r '.[]?' 2>/dev/null)
 [ -n "$bnd" ] || refuse "the boundary path list cannot be read from the role table; nothing was merged"
-under() { local f=${1,,} p; while IFS= read -r p; do [[ $f == "${p,,}" || $f == "${p,,}/"* ]] && return 0; done <<<"$2"; return 1; }   # lower-cased: /workspace is case-insensitive
+under() { local f=${1,,} p; while IFS= read -r p; do [[ $f == "${p,,}" || $f == "${p,,}/"* ]] && return 0; done <<<"$2"; return 1; }   # lower-cased: the stack mount is case-insensitive
 hits=; bhits=
 for f in "${changed[@]}"; do
   if under "$f" "$odata"; then hits+="${hits:+, }$f"; elif under "$f" "$bnd"; then bhits+="${bhits:+, }$f"; fi

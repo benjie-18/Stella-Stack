@@ -443,7 +443,7 @@ G2GIT
   : >"$WGA"
   ok '[ "$(wg "echo x > /workspace/bin/y")" = 2 ] && ! grep -qF "STL-CFG-312" "$T/out" && [ ! -s "$WGA" ]' "G4 $p: an older refusal keeps its text and writes no alert line"
 done
-ROLES_BAD=$T/roles-typeerr.json; jq '.roles[.profiles["builder-local"].role].allowed_overrides = [{}]' /workspace/docs/hermes-local/roles.json >"$ROLES_BAD"
+ROLES_BAD=$T/roles-typeerr.json; jq '.roles[(.profiles | to_entries[0].value.role)].allowed_overrides = [{}]' /workspace/docs/hermes-local/roles.json >"$ROLES_BAD"
 ok '[ "$(jq -nc "{tool_name: \"terminal\", tool_input: {command: \"ls\"}, cwd: \"/tmp\", profile: \"x\"}" | ROLES_FILE=$ROLES_BAD python3 "$G" >"$T/out" 2>"$T/err"; echo $?)" = 2 ] && ! grep -q Traceback "$T/err" && grep -q "STL-" "$T/out"' "CV-12: a table that makes validation raise (not a RolesError) is a refusal with a coded line, never a traceback"
 ok '[ "$(echo "{" | python3 "$G" >"$T/out" 2>"$T/err"; echo $?)" = 2 ] && ! grep -q Traceback "$T/err" && grep -q "STL-CFG-312" "$T/out"' "an exception inside the guard (unreadable payload) is a coded refusal"
 ok '[ "$(ls -A /workspace/.worktrees 2>/dev/null | sort)" = "$REAL_BEFORE" ]' "the real /workspace/.worktrees gained no entries during the run"
