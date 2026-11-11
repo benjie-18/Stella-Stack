@@ -52,7 +52,7 @@ cp "$LOG" "$T/before"; mv "$LOG" "$T/log.real"; cp "$T/before" "$R/.supervisor/l
 $EL append --type t --what x >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 1 ] && grep -q STL-CFG-318 "$T/o" && cmp -s "$T/before" "$R/.supervisor/logs/real.jsonl"' "G2 a log that is a symbolic link (inside the root) is refused (318), its target untouched"
 rm "$LOG" "$R/.supervisor/logs/real.jsonl"; mv "$T/log.real" "$LOG"
-ok '$EL append --type t --what x --code STL-CFG-399 >"$T/o" 2>&1; [ $? = 1 ] && grep -q STL-CFG-313 "$T/o"' "G6 a code that is not in the alert catalog is refused"
+ok '$EL append --type t --what x --code STL-CFG-""399 >"$T/o" 2>&1; [ $? = 1 ] && grep -q STL-CFG-313 "$T/o"' "G6 a code that is not in the alert catalog is refused"
 ok '$EL append --type t --what x --code STL-CFG-313 >/dev/null 2>&1' "G6 a code in the catalog is accepted"
 $EL append --type t --what x --old not-json >"$T/o" 2>&1
 ok '! grep -q "not-json" "$T/o"' "G7 a usage error does not echo the argument"
