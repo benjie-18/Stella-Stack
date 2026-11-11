@@ -1671,7 +1671,7 @@
         ".gitignore"
       ],
       "targets": [],
-      "why": "prose no selftest names. PLAN.md (named in docs/hermes-local/fallback-routing.json) and .claude/agents/*.md (tester.md is test-like) may not be here: no row, so they select the full suite"
+      "why": "prose no selftest names. PLAN.md (named in docs/hermes-local/fallback-routing.json) and .claude/agents/*.md (tester.md is test-like) may not be here (the prose rule refuses them): they have their own rows"
     },
     {
       "scan": true,
