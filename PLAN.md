@@ -34,6 +34,27 @@ Run exactly these; all must exit 0.
 # e.g. npm run lint
 ```
 
+### Core contract (core cards only; delete for other cards)
+
+A core card is not done until it ships all fourteen. Tick each with the evidence line that shows it, or write why it does not apply.
+
+- [ ] 1. Data first: behavior comes from versioned data files, each with a schema and a `--check` validator; no names in code.
+- [ ] 2. Headless core, JSON out: a CLI with `--json` read commands; write commands go through the same gate path as approvals.
+- [ ] 3. One approval service, channel-neutral: approvals and escalations go through the one interface; gate rules live once.
+- [ ] 4. One event log: append-only JSONL with a schema version; no secret values.
+- [ ] 5. Codes from the catalog: every failure has a catalog code and a plain message.
+- [ ] 6. Selftest, a fake entry, and the hard-code lint: a fake entry in a scratch root works with no code change; the lint passes.
+- [ ] 7. Unknown fails closed: the most restrictive treatment plus one alert.
+- [ ] 8. Apply contract: every write is applied by the idempotent script (`--check`, `--dry-run`, backup, rollback); no direct edit of live config.
+- [ ] 9. Versioned and portable: `schema_version` in every data file; migrations are scripts; no secret in an export; pins in `.stella/versions.json`.
+- [ ] 10. Adapter boundary: the engine and each worker CLI sit behind one adapter module each.
+- [ ] 11. Extension manifest: hosts, secrets, tools, allowed roles and risk class declared; install needs approval; a disable switch.
+- [ ] 12. Feature registry: the feature is listed in `.stella/features.json` (id, owner phase, status, depends_on, flag).
+- [ ] 13. Host-OS interface: no new hard-coded paths, users or hosts in host scripts.
+- [ ] 14. Supportable: logs redact secrets; `docs/alert-codes.md` is generated from the catalog.
+
+Every new test is registered in `.stella/test-map.json` (`python3 -I bin/test-map.py check`).
+
 ### Evidence
 
 _Filled in when closing: commands run, exit codes, trimmed output, screenshot paths._
@@ -553,3 +574,8 @@ Owner instructions: ignore `docs/spec/`; one real Claude review on the final cod
 | 7 Tests | targeted selftests only: box, reviewer-claude, approval-evidence, roles, routing, hardcode-lint, owner-config, profile-hooks, secret-read, owner-leak, complete-gate, owner-settings, write-guard: all PASS. **The full suite and the freeze verification were not re-run.** The freeze manifest was regenerated for the final tree. | `targeted-results.txt` |
 
 Left for you: the trap I planted at `.scratch/s6-scratch/.worktrees/t_393087ae/notes` (the permission layer refused my delete; harmless, ignored folder); the stray profile folders `~/.hermes/profiles/cache` and `installs`; the Hermes patch for S6N-01 (D121, whenever you decide); the PR.
+
+## Build phase F1: the core contract (2026-11-10 onward; branch `build/F1`)
+
+- Freeze: the Stage 5/6 freeze was lifted for F1 by the owner, 2026-11-10 (the owner's answers in the session: "Passed, run all of F1"; "Lift it now, run F1"). The manifest `.supervisor/state/stage5-freeze.sha256` was not touched by this phase (owner: "Leave it, report only"); the phase report lists the covered files this branch changes.
+- State of the phase (work items, checks, evidence, findings per QA round) is in `.scratch/F1/`: `progress.md`, `tests.json`, `work-items.json`, `evidence/`, `findings/`, `REPORT.md`. The evidence table below is filled for the final tested hash.
