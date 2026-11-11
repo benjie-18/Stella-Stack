@@ -9,7 +9,7 @@ target or an always gate has no selftest file; a selftest is missing from the su
 cannot be read); a suite selftest is not executable, on disk or in the mode git records; a file that looks like a test
 (test_like) is neither a suite selftest nor listed in not_tests; or a selftest can reach a file (see reach) whose
 selection leaves that selftest out.
-select: a file on the full list, or matched by no row, selects the full suite. `scan` rows add targets (a selftest that
+select: a file on the full list, or matched by no row, selects the full suite; so does no file name at all. `scan` rows add targets (a selftest that
 reads a whole folder) but do not count as a match. Pass both sides of a rename (`git diff --name-only --no-renames`):
 the new path alone can narrow the selection."""
 import fnmatch, json, os, re, subprocess, sys
@@ -30,13 +30,19 @@ def no_repeats(pairs):
     return d
 
 
-def load():
+def read():
+    """(map, schema problems)."""
     with open(os.path.join(ROOT, MAP), encoding="utf-8") as f:
         m = json.load(f, object_pairs_hook=no_repeats)
     with open(SCHEMA, encoding="utf-8") as f:
         errs = stella_data.validate_doc(m, json.load(f))
     if not errs and type(m["schema_version"]) is not int:
         errs = ["$.schema_version: must be the integer 1"]   # true and 1.0 equal 1 in Python
+    return m, errs
+
+
+def load():
+    m, errs = read()
     if errs:
         raise ValueError("; ".join(errs))
     return m
@@ -118,9 +124,11 @@ def select(files, m=None):
 
 def check():
     try:
-        m = load()
+        m, errs = read()
     except Exception as e:
         return [f"{MAP}: {type(e).__name__}: {e}"]
+    if errs:
+        return [f"{MAP}: ValueError: {e}" for e in errs]   # one line per problem
     try:
         files = tree()
     except Exception as e:
@@ -134,6 +142,7 @@ def check():
     targets = {t for row in m["map"] for t in row["targets"]}
     probs = [f"{tests[t]} is not a target of any map row" for t in sorted(tests.keys() - targets)]
     probs += [f"target {t}: {path(t)} does not exist" for t in sorted((targets | set(m["always"])) - tests.keys())]
+    # shortcut: a test is known by its name only (test_like globs), a test named otherwise is not seen; upgrade when a second test runner arrives
     probs += [f"{f} looks like a test but is neither a suite selftest nor listed in not_tests" for f in sorted(files)
               if f not in tests.values() and matches(f.lower(), m["test_like"]) and not matches(f, m["not_tests"])]
     try:
@@ -164,19 +173,19 @@ def fail(problem, out=sys.stdout):
 def main(argv):
     if argv == ["check"]:
         probs = check()
+        where = f" (root {ROOT}, from STELLA_ROOT)" if os.environ.get("STELLA_ROOT") else ""   # so nobody fixes the wrong tree
         for p in probs:
-            fail(p)
+            fail(p + where)
         if not probs:
-            print("test map ok" + (f" (root {ROOT}, from STELLA_ROOT)" if os.environ.get("STELLA_ROOT") else ""))
+            print("test map ok" + where)
         return 1 if probs else 0
     if argv[:1] == ["select"]:
         files = [a for a in argv[1:] if a != "--json"]
         try:
             if files == ["-"]:
                 files = [line.strip() for line in sys.stdin if line.strip()]
-                sel = select(files) if files else {"full": True, "reason": ["no file name on stdin"], "targets": sorted(load()["always"])}
-            else:
-                sel = select(files)
+            # no file name at all (an empty stdin, no argument) is a failed diff, not "nothing changed": the full suite
+            sel = select(files) if files else {"full": True, "reason": ["no file name given"], "targets": sorted(load()["always"])}
         except Exception as e:
             fail(f"{MAP}: {type(e).__name__}: {e}", sys.stderr)
             return 1

@@ -4,7 +4,9 @@
   "runner": "bin/selftests.sh",
   "test_file": "bin/{name}-selftest.sh",
   "test_like": [
-    "*test*"
+    "*test*",
+    "*.spec.*",
+    "*_spec.*"
   ],
   "not_tests": [
     "bin/selftests.sh",
@@ -13,8 +15,8 @@
     ".stella/schemas/test-map.schema.json",
     "bench/tasks/*",
     "tests/fixtures/*",
-    "docs/hermes-local/hooks/*",
-    ".claude/agents/*"
+    "docs/hermes-local/hooks/reviewer/test-only-terminal.sh",
+    ".claude/agents/*.md"
   ],
   "follow": [
     "*.py",

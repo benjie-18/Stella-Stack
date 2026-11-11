@@ -44,12 +44,20 @@ i=0; for f in '.schema_version = 2' '.schema_version = true' '.schema_version = 
   i=$((i+1)); root "s$i" "$f"
   ok 'bad "s$i" "test-map.json: ValueError" && [ "$(grep -c "" "$T/out")" = 1 ]' "9.$i a map that breaks the schema fails with one line: $f"
 done
+root float; sed -i 's/"schema_version": 1,/"schema_version": 1.0,/' "$T/float/.stella/test-map.json"
+ok 'grep -q "\"schema_version\": 1.0," "$T/float/.stella/test-map.json" && bad float "test-map.json: ValueError"' "9.14 schema_version 1.0 (written as a float) fails"
+root two 'del(.follow) | .extra = 1'
+ok 'bad two "test-map.json: ValueError" && [ "$(grep -c "^STL-CFG-310 " "$T/out")" = 2 ]' "9.15 two schema problems are two lines"
+ok 'grep -q "(root $T/two, from STELLA_ROOT)" "$T/out"' "9.16 a failure line names the scratch root"
 root dup; sed -i 's/^{/{"full": ["x"],/' "$T/dup/.stella/test-map.json"
 ok 'bad dup "a key is repeated"' "9b a repeated key fails (the last one would win silently)"
 
 root like; st "$T/like/bin/c-test.sh"; st "$T/like/bin/d-SELFTEST.sh"; st "$T/like/bin/.e-selftest.sh"; mkdir -p "$T/like/fixtures"; st "$T/like/fixtures/test.sh"
 ok 'bad like "bin/c-test.sh looks like a test" && grep -q "bin/d-SELFTEST.sh looks like a test" "$T/out" && grep -q "bin/.e-selftest.sh is not a target of any map row" "$T/out" && ! grep -q fixtures "$T/out"' \
    "17 a test-like file outside the suite fails by name (another name, another case, a dot file); a not_tests fixture does not"
+root spec ".test_like = $(jq -c .test_like "$BIN/../.stella/test-map.json")"; mkdir -p "$T/spec/spec"; st "$T/spec/spec/roles.spec.js"; st "$T/spec/src/x_spec.rb"; echo x >"$T/spec/src/a-spec.md"
+ok 'bad spec "spec/roles.spec.js looks like a test" && grep -q "src/x_spec.rb looks like a test" "$T/out" && ! grep -q "a-spec.md" "$T/out"' \
+   "17b the shipped test_like globs also know the spec naming (x.spec.js, x_spec.rb), not a document named -spec"
 
 helper='bash "$(dirname "$0")/../src/a-helper.sh"'   # selftest a is an always gate, so b is the one a row can leave out
 root dep; st "$T/dep/bin/b-selftest.sh" "$helper"; st "$T/dep/src/a-helper.sh" 'cat notes/data.txt'; mkdir -p "$T/dep/notes"; echo x >"$T/dep/notes/data.txt"
@@ -71,7 +79,7 @@ ok '[ "$(sel src/b/x/y.py | jq -c "[.full, .targets]")" = "[false,[\"a\",\"b\"]]
 ok '[ "$(sel notes/x.md | jq -c "[.full, .targets]")" = "[false,[\"a\"]]" ]' "12 a row with no targets selects the always gates only"
 ok '[ "$(sel src/a1.py other/z | jq -r .full)" = true ] && sel src/a1.py other/z | jq -e ".reason | any(test(\"other/z\"))" >/dev/null' "13 a file no row matches selects the full suite, and the reason names it"
 ok '[ "$(sel lock.json | jq -r .full)" = true ]' "14 a full-suite glob selects the full suite"
-ok '[ "$(sel | jq -c "[.full, .targets]")" = "[false,[\"a\"]]" ]' "15 no changed file selects the always gates"
+ok '[ "$(sel | jq -c "[.full, .targets]")" = "[true,[\"a\"]]" ] && [ "$(STELLA_ROOT=$T/good python3 -I "$TM" select)" = full ]' "15 no file name at all selects the full suite (as 16b: a failed diff is not \"nothing changed\")"
 ok '[ "$(printf "src/a1.py\nsrc/b/q\n" | STELLA_ROOT=$T/good python3 -I "$TM" select --json - | jq -c .targets)" = "[\"a\",\"b\"]" ]' "16 file names are also read from stdin (-), one per line"
 ok '[ "$(sel - </dev/null | jq -r .full)" = true ] && [ "$(STELLA_ROOT=$T/good python3 -I "$TM" select - </dev/null)" = full ]' "16b an empty list on stdin selects the full suite (a failed diff is not \"nothing changed\")"
 root scan '.map += [{"scan": true, "globs": ["src/*", "new/*"], "targets": ["b"]}]'
