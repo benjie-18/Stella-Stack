@@ -8,6 +8,7 @@
 #                                               done or archived: marked stale and skipped.
 #        escalate-drain.sh --drop <id>          mark it dropped
 # A prompt file is removed when its entry leaves the queued state. Exit 0, or 2 on a usage error or an unknown id.
+# A line of the queue file that is not JSON (a cut write) is skipped by every read and kept as it is by every rewrite; --list warns about it.
 set -uo pipefail
 export LC_ALL=C.UTF-8
 export PATH="$PATH:/home/node/.local/bin:/home/node/.hermes/hermes-agent/.hermes/bin:/usr/local/share/npm-global/bin:/usr/local/bin:/usr/bin:/bin"
@@ -17,9 +18,12 @@ Q="$STATE/queue.jsonl"
 . /workspace/bin/kanban-board.sh
 usage() { echo "usage: escalate-drain.sh --list | --replay <id> | --all | --drop <id>" >&2; exit 2; }
 mkdir -p "$STATE"; exec 6>"$STATE/queue.lock"
-entry() { jq -c --arg id "$1" 'select(.id == $id)' "$Q" 2>/dev/null | tail -1; }
+# A line that is not JSON (a cut write) is skipped by every read here and kept as it is by every rewrite; --list reports it. The
+# entries after it are read and replayed like any other. escalate.sh refuses to queue while the file has such a line (RT2-03).
+rows() { jq -cR 'fromjson? | select(type == "object")' "$Q" 2>/dev/null; }
+entry() { rows | jq -c --arg id "$1" 'select(.id == $id)' | tail -1; }
 setstate() {  # setstate <id> <state>; the caller holds the lock
-  jq -c --arg id "$1" --arg s "$2" --arg t "$(date -u +%FT%TZ)" 'if .id == $id then .state = $s | .updated = $t else . end' \
+  jq -rR --arg id "$1" --arg s "$2" --arg t "$(date -u +%FT%TZ)" '. as $l | (try (fromjson | if type == "object" and .id == $id then .state = $s | .updated = $t else . end | tojson) catch $l)' \
     "$Q" >"$Q.tmp" && mv "$Q.tmp" "$Q"
 }
 
@@ -53,11 +57,13 @@ replay() {
 case "${1:-}" in
   --list)
     [ -s "$Q" ] || { echo "queue empty"; exit 0; }
-    jq -r '[.id, .state, .reason, .card, (.model + " (" + .purpose + ")"), .created] | @tsv' "$Q" ;;
+    rows | jq -r '[.id, .state, .reason, .card, (.model + " (" + .purpose + ")"), .created] | @tsv'
+    bad=$(jq -cR 'select(try (fromjson | type == "object") catch false | not)' "$Q" 2>/dev/null | wc -l)   # the lines no read can use
+    [ "$bad" = 0 ] || echo "warning: $bad line(s) of $Q are not queue entries and are skipped (the entries after them are listed); fix or remove them" >&2 ;;
   --replay) [ -n "${2:-}" ] || usage; replay "$2" ;;
   --all)
     rc=0
-    for id in $(jq -r 'select(.state == "queued") | .id' "$Q" 2>/dev/null); do replay "$id" || rc=$?; done
+    for id in $(rows | jq -r 'select(.state == "queued") | .id'); do replay "$id" || rc=$?; done
     exit "$rc" ;;
   --drop)
     [ -n "${2:-}" ] || usage

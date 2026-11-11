@@ -5,7 +5,9 @@
 # Exit: 0 ok, 2 usage or a refusal (a setting's registry default unreadable: STL-CFG-310, nothing run), 3 over a limit (never retried), 75 pool exhausted, else claude's exit code.
 # Queue (F15, F28, F29): a call refused by a zeroed or exceeded limit (Opus slots, Haiku per day) and every pool-exhausted
 # call is recorded in state/queue.jsonl with its prompt file, and raises one #alerts line; the caller still gets 3 or 75.
-# Nothing retries it: bin/escalate-drain.sh (manual) replays it. Beyond QUEUE_MAX queued entries the call is refused
+# A queue file that cannot be read, parsed or written is never read as empty and never reported as written: the call is not queued,
+# the caller still gets 3 or 75, and the stderr line, the card note and one STL-CFG-310 alert say it was lost. A refusal for an
+# unreadable settings registry raises the same alert. Nothing retries it: bin/escalate-drain.sh (manual) replays it. Beyond QUEUE_MAX queued entries the call is refused
 # unqueued (one #alerts line an hour). ESCALATE_REPLAY=<id> (set by the drain) never queues or alerts again.
 # Test hook (Stage 6 T15): ESCALATE_FORCE_POOL_EXHAUSTED=1 skips claude and takes the fallback path. The fallback config
 # (FALLBACK_CONFIG, default docs/hermes-local/fallback-routing.json) says whether a low-risk call is served by a fallback runner
@@ -24,6 +26,7 @@ mkdir -p "$STATE"
 # shellcheck source=/dev/null
 . "$SUP/limits.env" || { echo "escalate.sh: cannot read $SUP/limits.env" >&2; exit 2; }
 . /workspace/bin/kanban-board.sh   # kanban(): every kanban call names its board (F4)
+. /workspace/bin/owner-config.sh   # once_per_hour, and alert_text (D44) through it
 
 # Rate-limit / pool-exhausted output, verified in claude 2.1.310 (bin/claude.exe strings).
 POOL_PATTERNS=("You've hit your" "You've reached your" "You're out of usage credits" "You're out of extra usage"
@@ -48,6 +51,8 @@ registry() {  # registry <KEY>: sets reg_def reg_min reg_max from the settings r
   v=$(python3 -I /workspace/bin/stella_data.py get --json settings "$1" 2>/dev/null | jq -er '[.default, .validation.minimum, .validation.maximum]
     | select(all(type == "number" and . == floor) and .[1] <= .[0] and .[0] <= .[2]) | @tsv') && read -r reg_def reg_min reg_max <<<"$v" && [ -n "$reg_max" ] && return
   python3 -I /workspace/bin/alert_catalog.py preview STL-CFG-310 problem="$p" >&2 2>/dev/null || echo "STL-CFG-310 $p" >&2   # fallback: no catalog, still a code
+  # Nothing is queued (the queue bound is what could not be read) and the prompt is not read: the caller keeps it. The owner is told on the alerts channel.
+  hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-CFG-310 problem="$p; escalate.sh refused the call for card ${card:-?} ($model $purpose): it was not run and not queued, the caller still holds the prompt")" >/dev/null 2>&1
   refuse SETTING_UNREADABLE 2 "$p; no call without a timeout, no unbounded queue"
 }
 # A limit that is set but outside the registry's type and range is treated like a bad timeout: one warning, then the registry
@@ -66,14 +71,21 @@ elif ! [[ "$QUEUE_MAX" =~ ^[0-9]{1,9}$ ]] || [ "$((10#$QUEUE_MAX))" -lt "$qm_min
   echo "escalate.sh: warning: QUEUE_MAX='$QUEUE_MAX' is not a whole number from $qm_min to $qm_max; using $qm_def" >&2; QUEUE_MAX=$qm_def
 else QUEUE_MAX=$((10#$QUEUE_MAX)); fi
 note() { kanban comment --author escalate.sh "$card" "$1" >/dev/null 2>&1; }
-. /workspace/bin/owner-config.sh   # once_per_hour, and alert_text (D44) through it
 QUEUE="$STATE/queue.jsonl"
+queue_failed() {  # queue_failed <what>: the call is not in the queue, and every message says so (the prompt goes: nothing points at it)
+  flock -u 6; rm -f "$prompt"; qid=""
+  qnote="NOT queued: $1; fix the file (the call is lost, run it again)"
+  echo "escalate.sh: warning: $1" >&2
+  hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-CFG-310 problem="$1; the $model $purpose call for card $card ($reason) was not queued and is lost")" >/dev/null 2>&1
+}
 queue() {  # queue <LIMIT|POOL_EXHAUSTED> <what happened>: one entry and one #alerts line; sets qid ("" if not queued), qnote
   qid="" qnote="not queued"
   [ -z "${ESCALATE_REPLAY:-}" ] || { qnote="left in the queue as $ESCALATE_REPLAY"; rm -f "$prompt"; return 0; }
   exec 6>"$STATE/queue.lock"; flock 6
-  : >>"$QUEUE"   # the file exists from the first call on: jq -s on a missing file prints 0 and fails, which made the count two numbers
-  nq=$(jq -s '[.[] | select(.state == "queued")] | length' "$QUEUE" 2>/dev/null) || nq=0
+  nq=0   # a missing file is an empty queue; a file that cannot be read or parsed is not (the count is unknown, so nothing is queued past the limit)
+  if [ -e "$QUEUE" ] && ! nq=$(jq -s '[.[] | select(.state == "queued")] | length' "$QUEUE" 2>/dev/null); then
+    queue_failed "the queue file state/queue.jsonl cannot be read or parsed"; return 0
+  fi
   if [ "$nq" -ge "$QUEUE_MAX" ]; then
     flock -u 6; rm -f "$prompt"
     qnote="not queued: the queue is full (QUEUE_MAX=$QUEUE_MAX)"
@@ -81,11 +93,14 @@ queue() {  # queue <LIMIT|POOL_EXHAUSTED> <what happened>: one entry and one #al
     return 0
   fi
   qid="q_$(date -u +%Y%m%dT%H%M%SZ)_${card}_$$"
-  jq -nc --arg id "$qid" --arg card "$card" --arg model "$model" --arg purpose "$purpose" --arg call_reason "$reason" \
+  entry=$(jq -nc --arg id "$qid" --arg card "$card" --arg model "$model" --arg purpose "$purpose" --arg call_reason "$reason" \
     --argjson claude_args "$(if [ ${#extra_args[@]} -gt 0 ]; then printf '%s\n' "${extra_args[@]}" | jq -Rsc 'split("\n")[:-1]'; else echo '[]'; fi)" \
     --arg why "$1" --arg detail "$2" --arg created "$(date -u +%FT%TZ)" --arg prompt_file "$prompt" \
     '{id: $id, card: $card, model: $model, purpose: $purpose, call_reason: $call_reason, claude_args: $claude_args,
-      reason: $why, detail: $detail, created: $created, state: "queued", prompt_file: $prompt_file}' >>"$QUEUE"
+      reason: $why, detail: $detail, created: $created, state: "queued", prompt_file: $prompt_file}')
+  # a cut last line (no newline) would swallow this entry: end it first; a write that fails is not a queued call
+  { [ ! -s "$QUEUE" ] || [ -z "$(tail -c1 "$QUEUE")" ] || echo >>"$QUEUE"; } && printf '%s\n' "$entry" >>"$QUEUE" \
+    || { queue_failed "the queue file state/queue.jsonl cannot be written"; return 0; }
   flock -u 6
   qnote="recorded in the queue as $qid; run bin/escalate-drain.sh"
   log QUEUED null none "$([ "$1" = POOL_EXHAUSTED ] && echo true || echo false)" null "$1; $qid"
