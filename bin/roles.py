@@ -170,7 +170,7 @@ def validate(d):
         v = d.get(k)
         if not (isinstance(v, list) and v and _set(v) and all(_rel(x) for x in v)):
             errs.append(f"{k} needs a non-empty list of {what}, relative to the stack repo, no . or .. segment, no path twice")
-    if not _rel(d.get("data_index")):   # the data index (.stella/data-files.json): names the backup folder, applied state and event log
+    if not _rel(d.get("data_index")):   # the data index: names the backup folder, applied state and event log
         errs.append("data_index needs a path relative to the stack repo, no . or .. segment")
     wm = d.get("worker_markers")   # the environment variables that mark a worker's process (commit guard, apply tool, settings tool)
     if not (isinstance(wm, list) and wm and _set(wm) and all(KEY.fullmatch(x) for x in wm)):
