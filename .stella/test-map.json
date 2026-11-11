@@ -4,6 +4,7 @@
   "always": [
     "hardcode-lint",
     "owner-leak",
+    "stella-data",
     "test-map"
   ],
   "full": [
@@ -468,6 +469,18 @@
       ],
       "targets": [
         "test-map"
+      ]
+    },
+    {
+      "globs": [
+        "bin/stella-data-selftest.sh",
+        "bin/stella_data.py",
+        ".stella/*.json",
+        ".stella/schemas/*",
+        ".stella/extensions/*"
+      ],
+      "targets": [
+        "stella-data"
       ]
     }
   ]
