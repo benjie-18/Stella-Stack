@@ -278,7 +278,7 @@ mk m2a; ed m2a role-assignments.json ".assignments[0].chain[0].parameters = {api
 ed m2a connections.json ".entries[0].cost = {token:\"$V\"} | .entries[0].limits = {secret:\"$V\"} | .entries[0].models[0].cost = {password:\"$V\"}"
 ok 'sd m2a check >/dev/null 2>&1 && for c in "get role-assignments" "get role-assignments global-dispatcher" "get connections" "get connections local-model-server" "search qafake" "list connections" "list role-assignments"; do sd m2a $c >>"$T/m2" 2>&1 || exit 1; done; ! grep -q qafake "$T/m2"' "103 a key value in parameters, cost or limits (data check accepts) is masked by get, list and search"
 mk m2b; ed m2b connections.json ".entries[0].tos.auth_key = \"$V\""   # tos is closed: refused, never masked (W1-VER4-06: its own root)
-ok 'refuses m2b check && for c in "get connections" "get connections local-model-server" "search qafake" "list connections"; do sd m2b $c >>"$T/m2b" 2>&1; done; ! grep -q qafake "$T/m2b" "$T/o"' "103b a key pasted into the closed tos object is refused, and no read prints it"
+ok 'refuses m2b check && for c in "get connections" "get connections local-model-server" "search qafake" "list connections"; do sd m2b $c >>"$T/m2bo" 2>&1; done; ! grep -q qafake "$T/m2bo" "$T/o"' "103b a key pasted into the closed tos object is refused, and no read prints it"
 ok '! { for d in $(jq -r ".files[] | select(.format == \"json\") | .id" "$ROOT/.stella/data-files.json"); do python3 -I "$SD" get $d; done 2>&1 | grep -q "\*\*\*"; }' "104 no field of the shipped data is masked by mistake"
 # M3 redact_keys patterns compile; list and search mask like get
 mk m3a; ed m3a data-files.json '(.files[] | select(.id == "capabilities")).redact_keys = ["("]'
@@ -408,19 +408,19 @@ ok 'refuses fake validate event <(jq "del(.time)" "$T/ev.json") && grep -q "^STL
 ms() { local t0=$(date +%s%N); timeout 20 env STELLA_ROOT="$T/$1" python3 -I "$SD" "${@:2}" >"$T/o" 2>&1; rc=$?; el=$(( ($(date +%s%N) - t0) / 1000000 )); }
 # S1 one-document conflict: every row of the schema is refused, whatever the row order (red team d1, c2)
 QCB='.assignments += [{id:"qa-cloud-builder",scope:{level:"global"},role:"builder",effort_mode:"max",chain:[{provider:"claude-subscription",model:"sonnet",parameters:{}}]}]'
-mk d1; ed d1 connections.json "$OPEN"; ed d1 role-assignments.json "$QCB"
-ok 'sd d1 check >"$T/o" 2>&1 && sd d1 get role-assignments qa-cloud-builder >/dev/null 2>&1' "155 control: a max-mode cloud assignment under the open shipped policy passes check and is served"
-ed d1 data-policy.json '.default.mode = "local_only"'
-ok 'refuses d1 get role-assignments qa-cloud-builder' "156 control: the same assignment under a local_only policy is refused"
-jq '.default.mode = "open"' "$T/d1/.stella/data-policy.json" >"$T/d1/.stella/dp0.json"
+mk pd1; ed pd1 connections.json "$OPEN"; ed pd1 role-assignments.json "$QCB"
+ok 'sd pd1 check >"$T/o" 2>&1 && sd pd1 get role-assignments qa-cloud-builder >/dev/null 2>&1' "155 control: a max-mode cloud assignment under the open shipped policy passes check and is served"
+ed pd1 data-policy.json '.default.mode = "local_only"'
+ok 'refuses pd1 get role-assignments qa-cloud-builder' "156 control: the same assignment under a local_only policy is refused"
+jq '.default.mode = "open"' "$T/pd1/.stella/data-policy.json" >"$T/pd1/.stella/dp0.json"
 for at in 0 1; do
-  cp -r "$T/d1" "$T/d1-$at"; ed d1-$at data-files.json "(.files | map(.id) | index(\"data-policy\")) as \$i | .files |= .[:\$i+$at] + [(.[\$i] | .id = \"dp0\" | .path = \".stella/dp0.json\")] + .[\$i+$at:]"
-  ok 'refuses d1-'$at' check && grep -q "^STL-CFG-310 .*dp0: .*one document" "$T/o" && grep -q "^STL-CFG-310 .*data-policy: .*one document" "$T/o" && refuses d1-'$at' get role-assignments qa-cloud-builder && grep -q "data-policy\|dp0" "$T/o" && ! grep -q "data-files" "$T/o" && refuses d1-'$at' get role-assignments && refuses d1-'$at' get data-policy && refuses d1-'$at' get dp0' "157.$at a second data-policy row (placed $([ $at = 0 ] && echo before || echo after) the shipped one): both rows are refused, and the assignments judged against the policy are not served"
+  cp -r "$T/pd1" "$T/pd1-$at"; ed pd1-$at data-files.json "(.files | map(.id) | index(\"data-policy\")) as \$i | .files |= .[:\$i+$at] + [(.[\$i] | .id = \"dp0\" | .path = \".stella/dp0.json\")] + .[\$i+$at:]"
+  ok 'refuses pd1-'$at' check && grep -q "^STL-CFG-310 .*dp0: .*one document" "$T/o" && grep -q "^STL-CFG-310 .*data-policy: .*one document" "$T/o" && refuses pd1-'$at' get role-assignments qa-cloud-builder && grep -q "data-policy\|dp0" "$T/o" && ! grep -q "data-files" "$T/o" && refuses pd1-'$at' get role-assignments && refuses pd1-'$at' get data-policy && refuses pd1-'$at' get dp0' "157.$at a second data-policy row (placed $([ $at = 0 ] && echo before || echo after) the shipped one): both rows are refused, and the assignments judged against the policy are not served"
 done
 # S1 a file that fails its schema never feeds a rule (red team d2)
-mk d2; ed d2 connections.json "$LMS.enabled = \"false\""
-ok 'refuses d2 check && grep -q "connections: .*enabled" "$T/o" && refuses d2 get role-assignments global-builder && grep -q "connections" "$T/o" && ! grep -q "data-files" "$T/o"' "158 a provider whose enabled is the string \"false\" (schema-invalid) feeds no rule: the chain to it is not served, the refusal names connections"
-ok 'sd d2 get --json settings CALL_TIMEOUT | jq -e ".default | type == \"number\"" >/dev/null && sd d2 get versions >/dev/null 2>&1 && sd d2 get capabilities >/dev/null 2>&1' "159 control: reads whose rules do not read the connections catalog are still served"
+mk pd2; ed pd2 connections.json "$LMS.enabled = \"false\""
+ok 'refuses pd2 check && grep -q "connections: .*enabled" "$T/o" && refuses pd2 get role-assignments global-builder && grep -q "connections" "$T/o" && ! grep -q "data-files" "$T/o"' "158 a provider whose enabled is the string \"false\" (schema-invalid) feeds no rule: the chain to it is not served, the refusal names connections"
+ok 'sd pd2 get --json settings CALL_TIMEOUT | jq -e ".default | type == \"number\"" >/dev/null && sd pd2 get versions >/dev/null 2>&1 && sd pd2 get capabilities >/dev/null 2>&1' "159 control: reads whose rules do not read the connections catalog are still served"
 # S1 the validator's three variants: a bad field in one file stops only the reads that depend on it
 mk v1; ed v1 capabilities.json '.entries[0].allowed_roles = null'
 ok 'refuses v1 check && grep -q "^STL-CFG-310 .*capabilities: " "$T/o" && ! grep -q "data-files" "$T/o"' "160 a null allowed_roles in the capability registry: check names capabilities, not the index"
