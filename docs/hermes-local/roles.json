@@ -222,7 +222,7 @@
       "requirements": {"tool_calling": false, "min_context_tokens": 0, "vision": false, "allowed_data_classes": ["public"]},
       "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
-      "config": {"kanban.auto_decompose": false},
+      "config": {"kanban.auto_decompose": false, "gateway.strict": true, "gateway.trust_recent_files": false},
       "platform_toolsets": {
         "cli": ["file", "terminal"],
         "telegram": ["file", "terminal"],

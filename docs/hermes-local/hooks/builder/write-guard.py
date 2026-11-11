@@ -109,10 +109,25 @@ GIT_PATCHES = {"apply", "am"}      # take their paths from a patch
 INTERPRETERS = {"bash", "sh", "zsh", "dash", "ksh", "source", ".", "python", "perl", "node", "ruby", "php", "awk", "gawk", "mawk", "lua", "deno", "bun"}
 CD_MSG = ("the terminal stays inside your worktree: Hermes keeps its folder between calls, so a later relative path would "
           "write wherever it moved. Use absolute paths to read or write elsewhere (for example /tmp)")
-# F1 W4: one rule per owner command (roles.json owner_commands): matched by the file a command word or an interpreter's argument
-# resolves to (its real path, without regard to case), so a project's own file with the same base name is no mention.
-CMDS = {os.path.realpath(c).casefold(): f"{c[len(ROOT) + 1:]} is an owner command: no role runs it (the owner runs it from the owner's own path; merging a card into main is the owner's step, F31)"
+# F1 W4: one rule per owner command (roles.json owner_commands): matched by the file a command word or an interpreter's argument resolves to
+# (its real path, without regard to case): the stack's own file or its copy in a card worktree of the stack (a copy runs on whatever tree
+# STELLA_ROOT names); a project's own file with the same base name is no mention.
+CMDS = {c[len(ROOT) + 1:]: f"{c[len(ROOT) + 1:]} is an owner command: no role runs it (the owner runs it from the owner's own path; merging a card into main is the owner's step, F31)"
         for c in OWNER_CMDS}
+CMD_RX = {rel: re.compile(re.escape(ROOT.casefold()) + r"(?:/\.worktrees/[^/]+)?/" + re.escape(rel.casefold())) for rel in CMDS}
+
+
+def owner_cmd_of(rp):
+    """The refusal text when rp (a resolved path) is an owner command of the stack, or its copy in a card worktree of the stack; else None."""
+    low = rp.casefold()
+    return next((CMDS[rel] for rel, rx in CMD_RX.items() if rx.fullmatch(low)), None)
+
+
+def named_cmd(text):
+    """The refusal text of the first owner_commands_by_name command whose name appears in text (already lower-cased), else None."""
+    return next((m for rel, m in CMDS.items() if os.path.basename(rel).casefold() in text and os.path.basename(rel).casefold() in BY_NAME), None)
+
+
 FINAL = {OWNER_ENV, KANBAN_CLI}
 
 
@@ -501,8 +516,8 @@ def owner_cmd_why(words, cwd, names):
         if wd == rest[0] and "/" not in wd and (found := shutil.which(wd)):
             paths.append(os.path.realpath(found))
         for p in paths:
-            if p.casefold() in CMDS:
-                return ob(CMDS[p.casefold()])
+            if owner_cmd_of(p):
+                return ob(owner_cmd_of(p))
     script = next((w for w in cmdw[1:] if not w.startswith("-")), None) if cmdw and norm(cmdw[0]) in INTERPRETERS else None
     for wd in cmdw[:1] + ([script] if script else []):
         if words_of(wd, cwd, names)[1]:
@@ -545,7 +560,7 @@ def command_reason(cmd, base):
     if any(os.path.basename(f).casefold() in low for f in OWNER_FILES):   # K6: the owner settings files, from roles.json
         return OWNER_ENV
     if any(b in low for b in BY_NAME):   # owner_commands_by_name: any command text naming it (the breadth it had at 900d9b3)
-        return ob(next(m for c, m in CMDS.items() if os.path.basename(c) in low))
+        return ob(named_cmd(low))
     for toks in all_tokens(cmd):   # K1b/K1c: per simple command, on the command word (a quoted message or a read is not a run)
         simple, cur = [], []
         for t in toks + [";"]:
@@ -555,7 +570,7 @@ def command_reason(cmd, base):
                 cur.append(t)
         for raw in simple:
             if any(b in w.casefold() for w in raw for b in BY_NAME):   # a spelling the text match missed (merge''-card.sh): the shell's word is the name
-                return ob(next(m for c, m in CMDS.items() if any(os.path.basename(c) in w.casefold() for w in raw)))
+                return ob(named_cmd(" ".join(raw).casefold()))
             if any("HERMES_DELEG" in w for w in raw) and (any(re.fullmatch(r"HERMES_DELEG\w*=.*", w) for w in raw) or
                     {w.rsplit("/", 1)[-1] for w in raw} & {"unset", "export", "env", "declare", "typeset", "readonly", "local"}):
                 return KANBAN_CLI
