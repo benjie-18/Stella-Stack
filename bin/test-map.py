@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
 """Test map (product rule 8), stdlib only: the lint over .stella/test-map.json and the selection of test targets.
-CLI: test-map.py check                      lint: exit 1 and one STL-CFG-310 line per problem
-     test-map.py select [--json] <file>...  the selftests a change to these files can affect ("-" reads names from stdin);
-                                            prints "full" (exit 0) when the whole suite must run, else one target per line
-The stack root is the parent of this file's folder, or STELLA_ROOT (a scratch root in tests; `check` then names the root).
+CLI: test-map.py check                           lint: exit 1 and one STL-CFG-310 line per problem
+     test-map.py select [--json] [--] <file>...  the selftests a change to these files can affect ("-" alone reads names
+                                                 from stdin, one per line); prints "full" (exit 0) when the whole suite
+                                                 must run, else one target per line. Only the first argument may be an
+                                                 option; "--" ends the options.
+The stack root is the parent of this file's folder, or STELLA_ROOT (a scratch root in tests). Under STELLA_ROOT every
+`check` line ends with the root (a root too long for that is named once, first), a narrow `select` names it on stderr,
+and `select --json` has a `root` key. A problem longer than the catalog keeps is split into numbered parts, and a long
+list of selftests into whole lines: nothing is cut. git runs with no global, system or XDG config and no personal
+ignore list (only the caller's safe.directory is kept).
 check fails when: the map is unreadable, repeats a key or breaks its schema; a selftest is not a target of any row; a
 target or an always gate has no selftest file; a selftest is missing from the suite list of the runner (or the list
 cannot be read); a suite selftest is not executable, on disk or in the mode git records; a file that looks like a test
-(test_like) is neither a suite selftest nor listed in not_tests; or a selftest can reach a file (see reach) whose
-selection leaves that selftest out.
-select: a file on the full list, or matched by no row, selects the full suite; so does no file name at all. `scan` rows add targets (a selftest that
-reads a whole folder) but do not count as a match. Pass both sides of a rename (`git diff --name-only --no-renames`):
-the new path alone can narrow the selection. A name with white space or a control character selects the full suite."""
-import fnmatch, json, os, re, subprocess, sys
+(test_like) is neither a suite selftest nor listed in not_tests; a selftest can reach a file (see reach) whose
+selection leaves that selftest out; or a row with no targets matches more than prose (see prose).
+select: a file on the full list (matched without regard to case), or matched by no row, selects the full suite; so does
+no file name at all. `scan` rows add targets (a selftest that reads a whole folder) but do not count as a match. Pass
+both sides of a rename (`git diff --name-only --no-renames`): the new path alone can narrow the selection. A name with
+white space (at either end too, on stdin as well), a control character or a leading dash selects the full suite."""
+import fnmatch, json, os, re, subprocess, sys, textwrap
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -52,14 +59,42 @@ def matches(f, globs):
     return any(fnmatch.fnmatchcase(f, g) for g in globs)
 
 
+LIMIT = 200   # alert_catalog.render keeps the first 200 characters of a value
+
+
+def esc(s):
+    return "".join(c if c.isprintable() else repr(c)[1:-1] for c in s)   # a name may hold a newline: keep the line whole
+
+
+WHERE = esc(f" (root {ROOT}, from STELLA_ROOT)") if os.environ.get("STELLA_ROOT") else ""   # so nobody fixes the wrong tree
+ROOM = LIMIT - (len(WHERE) if len(WHERE) <= LIMIT // 2 else 0)   # a longer root is named once, on its own lines
+
+
+def pack(head, names, tail):
+    """head + names + tail in as many lines as the names need, each within ROOM: no name is cut off."""
+    lines, cur = [], []
+    for n in names:
+        if cur and len(esc(head + ", ".join(cur + [n]) + tail)) > ROOM:
+            lines.append(cur)
+            cur = []
+        cur.append(n)
+    return [head + ", ".join(c) + tail for c in lines + [cur]]
+
+
 def tree():
     """{path: the mode git records, or None} for every file of the root: git's list (tracked and untracked, ignored
     files left out) when the root is a git tree, else a walk."""
     if not os.path.exists(os.path.join(ROOT, ".git")):
         return {os.path.relpath(os.path.join(d, f), ROOT): None for d, _, fs in os.walk(ROOT) for f in fs}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}   # a caller's GIT_DIR (a git hook) must not point at another repo
+    # the caller's safe.directory is the one setting kept (a tree owned by another user is refused without it); no other
+    # global, system or XDG setting and no personal ignore list applies: the tree's own .gitignore decides
+    trust = [f"safe.directory={d}" for scope in ("--system", "--global") for d in subprocess.run(
+        ["git", "config", scope, "--get-all", "safe.directory"], capture_output=True, text=True, env=env).stdout.splitlines()]
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, HOME=os.devnull, XDG_CONFIG_HOME=os.devnull)
     def git(*args):
-        return subprocess.run(["git", "-C", ROOT, "ls-files", "-z", *args], capture_output=True, text=True, check=True,
-                              env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")}).stdout.split("\0")   # a caller's GIT_DIR (a git hook) must not point at another repo
+        return subprocess.run(["git", *[x for t in trust for x in ("-c", t)], "-C", ROOT, "ls-files", "-z", *args],
+                              capture_output=True, text=True, check=True, env=env).stdout.split("\0")
     files = dict.fromkeys(filter(None, git("-co", "--exclude-standard")))
     for line in filter(None, git("-s")):
         files[line.split("\t", 1)[1]] = line.split()[0]
@@ -68,6 +103,63 @@ def tree():
 
 def words(text):
     return {w.strip(".") for w in re.findall(r"[\w.-]+", text)}
+
+
+def content(f):
+    try:
+        with open(os.path.join(ROOT, f), encoding="utf-8") as fh:
+            return fh.read()
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def uncommented(text):
+    return re.sub(r"(?m)^[ \t]*#(?!!).*$", "", text)
+
+
+# shortcut: a glob is taken to match every path when it matches these unlikely names; upgrade if a real glob needs them
+PROBES = ("zq9", ".zq9", "zq9/.zq9/zq9.zq9")
+
+
+def prose(m, files):
+    """A row with no targets may match only prose, since a change to its files runs no selftest: refuse a row whose glob
+    matches every path, or that matches code (follow, #!), an executable, a test-like file, or a file that a code or data
+    file (the `data` globs; every file when the map has none) names, by the name search reach uses. One problem per row."""
+    rows = [(i, r["globs"]) for i, r in enumerate(m["map"], 1) if not r["targets"] and not r.get("scan")]
+    if not rows:
+        return []
+    by_base, named = {}, {}
+    for f in files:
+        by_base.setdefault(os.path.basename(f), set()).add(f)
+    for g in sorted(files):
+        text = content(g)
+        if g != MAP and (text.startswith("#!") or matches(g, m["follow"]) or matches(g, m.get("data", ["*"]))):
+            for w in words(uncommented(text)) & by_base.keys():
+                for f in by_base[w] - {g}:
+                    named.setdefault(f, g)
+
+    def why(f):
+        if matches(f, m["follow"]):
+            return "code (a follow pattern)"
+        if os.access(os.path.join(ROOT, f), os.X_OK) or files[f] == "100755":
+            return "an executable file"
+        if content(f).startswith("#!"):
+            return "a script (#!)"
+        if matches(f.lower(), m["test_like"]):
+            return "a test-like file"
+        return f in named and f"named by {named[f]}"
+
+    probs = []
+    for i, globs in rows:
+        row = f"map row {i} ({', '.join(globs)}) has no targets"
+        wide = [g for g in globs if all(fnmatch.fnmatchcase(p, g) for p in PROBES)]
+        if wide:
+            probs.append(f"{row} and its glob {wide[0]} matches every path")
+            continue
+        bad = next(((f, w) for f in sorted(files) if matches(f, globs) for w in [why(f)] if w), None)
+        if bad:
+            probs.append(f"{row}, so it may match only prose, but it matches {bad[0]}: {bad[1]}")
+    return probs
 
 
 def reach(m, files, tests):
@@ -83,14 +175,10 @@ def reach(m, files, tests):
 
     def names(f):
         if f not in named:
-            try:
-                with open(os.path.join(ROOT, f), encoding="utf-8") as fh:
-                    text = fh.read()
-            except (OSError, UnicodeDecodeError):
-                text = ""
+            text = content(f)
             named[f] = set()
             if text.startswith("#!") or matches(f, m["follow"]):
-                text = re.sub(r"(?m)^[ \t]*#(?!!).*$", "", text)
+                text = uncommented(text)
                 seen = words(text)
                 imports = words(" ".join(re.findall(r"\b(?:import|from)\s+([\w., ]+)", text)))
                 for index, hits in ((by_base, seen), (mods, imports)):
@@ -111,11 +199,11 @@ def select(files, m=None):
     m = m or load()
     targets, reason = set(m["always"]), []
     for f in files:
-        if re.search(r"[\s\x00-\x1f\x7f]", f):   # several names joined into one (a quoted $(git diff), -z output) would match one narrow row
-            reason.append(f"{f!r}: not one plain file name (white space or a control character)")
+        if re.search(r"[\s\x00-\x1f\x7f]", f) or f.startswith("-"):   # several names joined into one (a quoted $(git diff), -z output) would match one narrow row
+            reason.append(f"{f!r}: not one plain file name (white space, a control character or a leading dash)")
             continue
         f = os.path.normpath(f)
-        if matches(f, m["full"]):
+        if matches(f.lower(), [g.lower() for g in m["full"]]):   # a guard is a guard in any case (Guard.js)
             reason.append(f"{f}: a shared contract (full list)")
             continue
         if not any(matches(f, row["globs"]) for row in m["map"] if not row.get("scan")):
@@ -166,35 +254,54 @@ def check():
         sel = select([f], m)
         missing = [] if sel["full"] else sorted(t for t in tests if f in reached[t] and t not in sel["targets"])
         if missing:
-            probs.append(f"{f}: its map rows leave out {', '.join(missing)}, which can reach it")
-    return probs
+            probs += pack(f"{f}: its map rows leave out ", missing, ", which can reach it")
+    return probs + prose(m, files)
 
 
-def fail(problem, out=sys.stdout):
-    problem = "".join(c if c.isprintable() else repr(c)[1:-1] for c in problem)   # a file name may hold a newline: keep the line whole
-    print("STL-CFG-310 " + alert_catalog.render("STL-CFG-310", {"problem": problem})[0].split("\n")[1], file=out)   # the plain message line
+def fail(problem, out=sys.stdout, where=""):
+    """One catalog line per piece: a problem longer than the catalog keeps is split, `where` ends every piece."""
+    text = esc(problem)
+    parts = [text] if len(text) + len(where) <= LIMIT else textwrap.wrap(
+        text, LIMIT - len(where) - len("(part 99 of 99) "), break_on_hyphens=False, drop_whitespace=False)
+    for i, part in enumerate(parts, 1):
+        part = part if len(parts) == 1 else f"(part {i} of {len(parts)}) {part}"
+        print("STL-CFG-310 " + alert_catalog.render("STL-CFG-310", {"problem": part + where})[0].split("\n")[1], file=out)   # the plain message line
+
+
+def complain(probs, out=sys.stdout):
+    where = WHERE
+    if len(where) > LIMIT // 2:
+        fail(f"the problems below are in the root {ROOT}, from STELLA_ROOT", out)
+        where = ""
+    for p in probs:
+        fail(p, out, where)
 
 
 def main(argv):
     if argv == ["check"]:
         probs = check()
-        where = f" (root {ROOT}, from STELLA_ROOT)" if os.environ.get("STELLA_ROOT") else ""   # so nobody fixes the wrong tree
-        for p in probs:
-            fail(p + where)
+        complain(probs)
         if not probs:
-            print("test map ok" + where)
+            print("test map ok" + WHERE)
         return 1 if probs else 0
     if argv[:1] == ["select"]:
-        files = [a for a in argv[1:] if a != "--json"]
+        files, as_json = argv[1:], argv[1:2] == ["--json"]   # only the first argument may be an option
+        files = files[as_json:]
+        files = files[files[:1] == ["--"]:]   # "--" ends the options; every later argument is a name
         try:
             if files == ["-"]:
-                files = [line.strip() for line in sys.stdin if line.strip()]
+                sys.stdin.reconfigure(newline="")   # no CR translation, no strip: white space at either end selects full
+                files = [f for f in sys.stdin.read().split("\n") if f]
             # no file name at all (an empty stdin, no argument) is a failed diff, not "nothing changed": the full suite
             sel = select(files) if files else {"full": True, "reason": ["no file name given"], "targets": sorted(load()["always"])}
         except Exception as e:
-            fail(f"{MAP}: {type(e).__name__}: {e}", sys.stderr)
+            complain([f"{MAP}: {type(e).__name__}: {e}"], sys.stderr)
             return 1
-        print(json.dumps(sel) if "--json" in argv else "full" if sel["full"] else "\n".join(sel["targets"]))
+        if os.environ.get("STELLA_ROOT"):
+            sel["root"] = ROOT
+            if not sel["full"]:   # a narrow answer from another tree must say so; "full" runs everything whatever the tree
+                print(f"selected from the test map of {esc(ROOT)}, from STELLA_ROOT", file=sys.stderr)
+        print(json.dumps(sel) if as_json else "full" if sel["full"] else "\n".join(sel["targets"]))
         return 0
     print(__doc__, file=sys.stderr)
     return 2

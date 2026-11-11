@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "about": "Which selftests a changed file can affect (product rule 8). bin/test-map.py reads this: `check` is the lint (in npm test through bin/test-map-selftest.sh), `select` picks the targets. A file on the full list or matched by no row selects the full suite. `check` refuses a map whose rows leave out a selftest that can reach the file (see reach in bin/test-map.py); the error names what to add. `scan` rows are for selftests that read a whole folder.",
+  "about": "Which selftests a changed file can affect (product rule 8). bin/test-map.py reads this: `check` is the lint (in npm test through bin/test-map-selftest.sh), `select` picks the targets. A file on the full list or matched by no row selects the full suite. `check` refuses a map whose rows leave out a selftest that can reach the file (see reach in bin/test-map.py); the error names what to add. `scan` rows are for selftests that read a whole folder. A row with no targets may match only prose: no code, executable, test-like file, or file a code or data file (`data`) names.",
   "runner": "bin/selftests.sh",
   "test_file": "bin/{name}-selftest.sh",
   "test_like": [
@@ -22,6 +22,19 @@
     "*.py",
     "*.sh",
     "*.ps1"
+  ],
+  "data": [
+    "*.json",
+    "*.yaml",
+    "*.yml",
+    "*.toml",
+    "*.txt",
+    "*.conf",
+    "*.env",
+    "*.ini",
+    "*.js",
+    "*.html",
+    "*Dockerfile*"
   ],
   "always": [
     "hardcode-lint",
@@ -650,13 +663,11 @@
     },
     {
       "globs": [
-        "PLAN.md",
         "docs/contract/*.md",
-        ".claude/agents/*.md",
         ".gitignore"
       ],
       "targets": [],
-      "why": "prose no selftest names"
+      "why": "prose no selftest names. PLAN.md (named in docs/hermes-local/fallback-routing.json) and .claude/agents/*.md (tester.md is test-like) may not be here: no row, so they select the full suite"
     },
     {
       "scan": true,

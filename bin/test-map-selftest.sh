@@ -90,4 +90,55 @@ root scan '.map += [{"scan": true, "globs": ["src/*", "new/*"], "targets": ["b"]
 ok '[ "$(STELLA_ROOT=$T/scan python3 -I "$TM" select --json src/a1.py | jq -c "[.full, .targets]")" = "[false,[\"a\",\"b\"]]" ] && [ "$(STELLA_ROOT=$T/scan python3 -I "$TM" select new/x)" = full ]' \
    "20 a scan row adds its targets and does not count as a match (an unmapped file still selects the full suite)"
 ok '! STELLA_ROOT=$T/broken python3 -I "$TM" select x >"$T/o" 2>"$T/e" && [ ! -s "$T/o" ] && grep -q "^STL-CFG-310 " "$T/e" && ! grep -q Traceback "$T/e"' "21 select on an unreadable map exits 1 with the catalog code and prints no selection"
+
+# A row with no targets (notes/*, map row 3) may match only prose: nothing that runs, nothing read as code or data names it.
+pr() { root "$1" "${2:-.}"; mkdir -p "$T/$1/notes"; }
+pr catch '.map += [{"globs": ["**"], "targets": []}]'
+ok 'bad catch "map row 4 (\*\*) has no targets and its glob \*\* matches every path"' "22 a row with no targets whose glob matches every path is refused"
+pr k1; echo x >"$T/k1/notes/x.sh"
+pr k2; echo x >"$T/k2/notes/run"; chmod 755 "$T/k2/notes/run"
+pr k3; printf '#!/bin/sh\n' >"$T/k3/notes/tool"
+pr k4 '.not_tests += ["notes/*"]'; echo x >"$T/k4/notes/test-plan.md"
+pr k5 '.data = ["*.json"]'; echo '{"hooks": ["notes/x.cfg"]}' >"$T/k5/src/hooks.json"; echo x >"$T/k5/notes/x.cfg"
+pr k6; echo 'notes/y.md' >"$T/k6/src/list"; echo x >"$T/k6/notes/y.md"
+ok 'bad k1 "map row 3 (notes/\*) has no targets, so it may match only prose, but it matches notes/x.sh: code" \
+ && bad k2 "matches notes/run: an executable file" && bad k3 "matches notes/tool: a script" && bad k4 "matches notes/test-plan.md: a test-like file" \
+ && bad k5 "matches notes/x.cfg: named by src/hooks.json" && bad k6 "matches notes/y.md: named by src/list"' \
+   "22b a row with no targets that matches code, an executable, a #! script, a test-like file (even in not_tests) or a file a data file names is refused"
+pr k7 '.data = ["*.json"]'; echo x >"$T/k7/notes/x.sh"; echo x >"$T/k7/notes/y.sh"
+ok 'bad k7 "notes/x.sh: code" && [ "$(grep -c "map row 3" "$T/out")" = 1 ]' "22c one line per row, naming the first offending file"
+pr k8 '.data = ["*.json"]'; mkdir -p "$T/k8/docs"; echo 'see notes/plan.md' >"$T/k8/docs/guide.md"; echo x >"$T/k8/notes/plan.md"
+ok 'chk k8' "22d a row with no targets that matches only prose (named only in a file that is not data) passes"
+
+# Every line says where it looked, stays one line, and loses nothing to the catalog's 200-character limit.
+val() { sed -n 's/^STL-CFG-310 A data file that Stella reads is not valid: \(.*\)\. What the file describes.*$/\1/p' "$T/out"; }
+allroot() { [ "$(grep -c "" "$T/out")" = "$(grep -cF "(root $T/$1, from STELLA_ROOT)" "$T/out")" ]; }
+root long; long=$(printf 'x%.0s' $(seq 170)); echo x >"$T/long/bin/$long-test.sh"
+ok '! chk long && allroot long && [ "$(grep -c "" "$T/out")" -gt 1 ] && val | sed "s/^(part [0-9]* of [0-9]*) //; s/ (root .*//" | tr -d "\n" | grep -q "bin/$long-test.sh looks like a test"' \
+   "23 a problem longer than the limit is split: every piece names the root, and the pieces join to the whole problem"
+names=$(seq -f 'b%g' 60 | tr '\n' ' '); root many '.map[0].globs = ["bin/a-selftest.sh", "src/shared.sh"]' "a b $names"
+jq --arg n "$names" '.map[1] = {globs: ["bin/b*-selftest.sh"], targets: (["b"] + ($n | split(" ") | map(select(. != ""))))}' "$T/many/.stella/test-map.json" >"$T/m.json" && mv "$T/m.json" "$T/many/.stella/test-map.json"
+for t in $names; do st "$T/many/bin/$t-selftest.sh" 'bash "$(dirname "$0")/../src/shared.sh"'; done; st "$T/many/src/shared.sh"
+miss() { for t in $names; do grep -q "src/shared.sh: its map rows leave out \(.*, \)\?$t\(, .*\)\?, which can reach it" "$T/out" || return 1; done; }
+ok '! chk many && allroot many && [ "$(grep -c "" "$T/out")" -gt 1 ] && miss' "23b a list of selftests longer than the limit is split into whole lines: every name is there, every line names the root"
+nlr=$'nlroot\nSTL-CFG-310 forged'; NLR=$T/$nlr; root "$nlr"
+ok 'STELLA_ROOT=$NLR python3 -I "$TM" check >"$T/out" 2>&1 && [ "$(grep -c "" "$T/out")" = 1 ] && ! grep -q "^STL-CFG-310" "$T/out"' "23c the pass line is escaped: a root with a newline stays one line"
+deep=$(printf 'd%.0s' $(seq 150)); root "$deep/r"; echo x >"$T/$deep/r/bin/c-test.sh"
+ok '! chk "$deep/r" && val | sed "s/^(part [0-9]* of [0-9]*) //" | tr -d "\n" | grep -qF "$T/$deep/r" && grep -q "bin/c-test.sh looks like a test" "$T/out"' \
+   "23d a root too long to ride on every line is named once, in whole pieces"
+ok 'STELLA_ROOT=$T/good python3 -I "$TM" select src/a1.py 2>"$T/e" >/dev/null && grep -qF "$T/good" "$T/e" && [ "$(sel src/a1.py | jq -r .root)" = "$T/good" ] && ! env -u STELLA_ROOT python3 -I "$TM" select --json bin/test-map.py | jq -e "has(\"root\")" >/dev/null' \
+   "23e select names the root it used when STELLA_ROOT is set (stderr, and root in --json), and only then"
+
+# git answers for the tree, not for the caller: no personal config or ignore list hides an untracked file.
+root gcfg; git -C "$T/gcfg" init -q; mkdir -p "$T/gh" "$T/gx/git"; st "$T/gcfg/bin/c-test.sh"
+printf '*-test.sh\n' >"$T/gx/git/ignore"; printf 'bin/c-test.sh\n' >"$T/gh/ign"; printf '[core]\n\texcludesFile = %s\n' "$T/gh/ign" >"$T/gh/.gitconfig"
+ok 'HOME=$T/gh XDG_CONFIG_HOME=$T/gx STELLA_ROOT=$T/gcfg python3 -I "$TM" check >"$T/out" 2>&1; [ $? = 1 ] && grep -q "bin/c-test.sh looks like a test" "$T/out"' \
+   "24 a global ignore list (core.excludesFile, XDG git/ignore) does not hide an untracked test"
+
+# A name is a name: only the first argument may be an option, "--" ends the options, stdin is not stripped, the full list ignores case.
+ok '[ "$(STELLA_ROOT=$T/good python3 -I "$TM" select -- --json 2>/dev/null)" = full ] && [ "$(STELLA_ROOT=$T/good python3 -I "$TM" select src/a1.py --json 2>/dev/null)" = full ] && [ "$(sel -- src/a1.py | jq -c .targets)" = "[\"a\"]" ]' \
+   "25 a changed file named --json is a name (after \"--\", or not first), and selects full"
+ok '[ "$(printf " src/a1.py\n" | sel - | jq -r .full)" = true ] && [ "$(printf "src/a1.py \n" | sel - | jq -r .full)" = true ]' "25b a name on stdin with white space at either end selects full, as an argument does"
+root case '.full += ["*guard*"]'
+ok '[ "$(STELLA_ROOT=$T/case python3 -I "$TM" select src/aGuard.py 2>/dev/null)" = full ] && [ "$(STELLA_ROOT=$T/case python3 -I "$TM" select src/a1.py 2>/dev/null)" = a ]' "25c a full-list glob matches without regard to case"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
