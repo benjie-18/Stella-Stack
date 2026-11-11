@@ -13,6 +13,7 @@
 # Inputs: STELLA_ROOT (the tree scanned, default: parent of bin/), HARDCODE_ALLOW (default <root>/docs/hermes-local/
 # hardcode-allow.json), HARDCODE_HOME (default $HOME: where ~/.hermes/projects.db and the Hermes homes live).
 set -u
+jq() { env -u HOME jq "$@"; }   # jq always loads ~/.jq; every script under bin/ runs it without HOME (RT-RTA-02)
 R=${STELLA_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}; A=${HARDCODE_ALLOW:-$R/docs/hermes-local/hardcode-allow.json}
 H=${HARDCODE_HOME:-$HOME}; mode=${1:---check}
 case $mode in --check|--dump) ;; *) echo "usage: hardcode-lint.sh [--check | --dump]" >&2; exit 2;; esac
