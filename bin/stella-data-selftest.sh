@@ -388,18 +388,18 @@ ok '(for c in "get role-assignments" "get role-assignments global-dispatcher" "g
 ok 'sd c1 get versions >/dev/null 2>&1 && sd c1 list capabilities >/dev/null 2>&1' "147 control: a file with no problem of its own is still served while another file has one"
 # D value patterns (the catalog's redaction_patterns) mask every read and every key name a problem line would print
 VP='(.entries[] | select(.kind == "channel")).redaction_patterns += ["qafake0[a-z0-9]+"]'
-mk d1; ed d1 connections.json "$VP | $LMS.limits = {bearer:\"qafake0limit\"}"
-ed d1 role-assignments.json '.assignments[0].chain[0].parameters = {auth:"qafake0auth", headers:["X-Auth qafake0header"], deep:[{a:["qafake0deep"]}]}'
-ok 'sd d1 check >/dev/null 2>&1 && { for c in "get role-assignments" "get role-assignments global-dispatcher" "get --json connections" "get connections local-model-server" "list role-assignments" "search qafake0auth" "search --json qafake0"; do sd d1 $c; done >"$T/o" 2>&1; ! grep -q "qafake0" "$T/o"; } && sd d1 get role-assignments global-dispatcher | grep -q "\*\*\*" && [ "$(sd d1 search qafake0auth)" = "" ]' "148 a value a catalog redaction pattern matches is masked by every read, inside lists too, and search does not answer for it"
-mk d2; ed d2 connections.json "$VP | $LMS.tos.qafake0key = true | $LMS.tos.zz_plain = true"; ed d2 role-assignments.json '.effort_modes.qafake0mode = 1'
-ok 'refuses d2 check && ! grep -q "qafake0" "$T/o" && grep -q "a masked key" "$T/o" && grep -q "zz_plain" "$T/o"' "149 a key name a value pattern matches is not printed (a masked key at its path); other key names are"
-mk d3; ed d3 connections.json "$VP"; printf '{"schema_version":1,"entries":[],"qafake0dup":1,"qafake0dup":2}' >"$T/d3/.stella/capabilities.json"
-ok 'refuses d3 check && grep -q "repeated key" "$T/o" && ! grep -q qafake0 "$T/o" && refuses d3 get capabilities && ! grep -q qafake0 "$T/o"' "150 a repeated key a value pattern matches is not printed by check or get"
-mk d4; sed -i '0,/"parameters": {}/s//"parameters": {"t": 1e-400}/' "$T/d4/.stella/role-assignments.json"
-ok 'grep -q 1e-400 "$T/d4/.stella/role-assignments.json" && refuses d4 check && grep -q "^STL-CFG-310 " "$T/o" && refuses d4 get role-assignments' "151 a non-zero number that reads as zero is refused"
-mk d5; sed -i '0,/"parameters": {}/s//"parameters": {"t": 0.0, "u": 0e5, "v": -0.0, "w": 5e-324}/' "$T/d5/.stella/role-assignments.json"
-ok 'grep -q 0e5 "$T/d5/.stella/role-assignments.json" && sd d5 check >/dev/null' "152 control: zero written as zero, and the smallest double, load"
-mk d6; ed d6 connections.json "$LMS |= (.cost = {token:\"qafake-c\"} | .limits = {secret:\"qafake-l\"} | .models[0].cost = {password:\"qafake-m\"})"
-ok 'sd d6 check >/dev/null 2>&1 && sd d6 get --json connections local-model-server >"$T/o" && ! grep -q qafake "$T/o" && [ "$(jq "[.cost.token, .limits.secret, .models[0].cost.password] | map(select(. == \"***\")) | length" "$T/o")" = 3 ]' "153 a connections entry that passes check shows *** for a secret-named key in cost, limits and a model's cost"
+mk vp1; ed vp1 connections.json "$VP | $LMS.limits = {bearer:\"qafake0limit\"}"
+ed vp1 role-assignments.json '.assignments[0].chain[0].parameters = {auth:"qafake0auth", headers:["X-Auth qafake0header"], deep:[{a:["qafake0deep"]}]}'
+ok 'sd vp1 check >/dev/null 2>&1 && { for c in "get role-assignments" "get role-assignments global-dispatcher" "get --json connections" "get connections local-model-server" "list role-assignments" "search qafake0auth" "search --json qafake0"; do sd vp1 $c; done >"$T/o" 2>&1; ! grep -q "qafake0" "$T/o"; } && sd vp1 get role-assignments global-dispatcher | grep -q "\*\*\*" && [ "$(sd vp1 search qafake0auth)" = "" ]' "148 a value a catalog redaction pattern matches is masked by every read, inside lists too, and search does not answer for it"
+mk vp2; ed vp2 connections.json "$VP | $LMS.tos.qafake0key = true | $LMS.tos.zz_plain = true"; ed vp2 role-assignments.json '.effort_modes.qafake0mode = 1'
+ok 'refuses vp2 check && ! grep -q "qafake0" "$T/o" && grep -q "a masked key" "$T/o" && grep -q "zz_plain" "$T/o"' "149 a key name a value pattern matches is not printed (a masked key at its path); other key names are"
+mk vp3; ed vp3 connections.json "$VP"; printf '{"schema_version":1,"entries":[],"qafake0dup":1,"qafake0dup":2}' >"$T/vp3/.stella/capabilities.json"
+ok 'refuses vp3 check && grep -q "repeated key" "$T/o" && ! grep -q qafake0 "$T/o" && refuses vp3 get capabilities && ! grep -q qafake0 "$T/o"' "150 a repeated key a value pattern matches is not printed by check or get"
+mk vp4; sed -i '0,/"parameters": {}/s//"parameters": {"t": 1e-400}/' "$T/vp4/.stella/role-assignments.json"
+ok 'grep -q 1e-400 "$T/vp4/.stella/role-assignments.json" && refuses vp4 check && grep -q "^STL-CFG-310 " "$T/o" && refuses vp4 get role-assignments' "151 a non-zero number that reads as zero is refused"
+mk vp5; sed -i '0,/"parameters": {}/s//"parameters": {"t": 0.0, "u": 0e5, "v": -0.0, "w": 5e-324}/' "$T/vp5/.stella/role-assignments.json"
+ok 'grep -q 0e5 "$T/vp5/.stella/role-assignments.json" && sd vp5 check >/dev/null' "152 control: zero written as zero, and the smallest double, load"
+mk vp6; ed vp6 connections.json "$LMS |= (.cost = {token:\"qafake-c\"} | .limits = {secret:\"qafake-l\"} | .models[0].cost = {password:\"qafake-m\"})"
+ok 'sd vp6 check >/dev/null 2>&1 && sd vp6 get --json connections local-model-server >"$T/o" && ! grep -q qafake "$T/o" && [ "$(jq "[.cost.token, .limits.secret, .models[0].cost.password] | map(select(. == \"***\")) | length" "$T/o")" = 3 ]' "153 a connections entry that passes check shows *** for a secret-named key in cost, limits and a model's cost"
 ok 'refuses fake validate event <(jq "del(.time)" "$T/ev.json") && grep -q "^STL-CFG-310 " "$T/o" && ! grep -qv "^STL-CFG-310 " "$T/o"' "154 validate prints every problem as a STL-CFG-310 line, for any schema"
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
