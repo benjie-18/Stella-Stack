@@ -270,6 +270,23 @@ def policy_allows(pol, prov):
         or (pol["mode"] == "allowed_providers" and prov["id"] in pol["allowed_providers"])
 
 
+def class_problems(table, classes):
+    return [f"{n}: data class {k!r} is not in data-policy data_classes" for n, r in table["roles"].items()
+            for k in r.get("requirements", {}).get("allowed_data_classes", []) if k not in classes]
+
+
+def role_problems(doc):
+    """A role table is valid only when its schema AND bin/roles.py's own validation pass (the one source of the rules the schema subset
+    cannot say); roles.py stays dependency-free, so it is imported here and never the other way round."""
+    import roles
+    try:
+        return validate_doc(doc, load(f"{SCHEMAS}/roles.schema.json")) + roles.validate(doc)
+    except DataError:
+        raise
+    except Exception as e:
+        return [f"bin/roles.py could not validate the table ({type(e).__name__})"]
+
+
 def cross_rules(by_id, whole, P):
     """Cross-file rules. by_id: data id -> {entry id: entry}; whole: data id -> the parsed file. P(data id, problem) records one."""
     conn, feats, sets = by_id.get("connections", {}), by_id.get("features", {}), by_id.get("settings", {})
@@ -286,10 +303,8 @@ def cross_rules(by_id, whole, P):
             for k in c["data_policy"]["data_classes_allowed"]:
                 if k not in classes:
                     P("connections", f"{c['id']}: data class {k!r} is not in data-policy data_classes")
-        for n, r in table["roles"].items():
-            for k in r.get("requirements", {}).get("allowed_data_classes", []):
-                if k not in classes:
-                    P("role-table", f"{n}: data class {k!r} is not in data-policy data_classes")
+        for m in class_problems(table, classes):
+            P("role-table", m)
     if ra:
         seen = {}
         for a in ra["assignments"]:
@@ -426,6 +441,11 @@ def check(only=None):
             P(r["id"], f"{r['path']}: {why(e)}")
     mid = len(probs)
     try:
+        for m in role_problems(load(idx["role_table"])):
+            P("role-table", f"{idx['role_table']}: {m}")
+    except Exception as e:
+        P("role-table", f"{idx['role_table']}: {why(e)}")
+    try:
         cross_rules(by_id, whole, P)
     except Exception as e:
         P("data-files", f"cross-file rules could not run: {why(e)}")
@@ -530,7 +550,13 @@ def main(argv):
                 print(f"not opened (env format, read by the apply tool): {', '.join(skipped)}")
         return 1 if probs else 0
     if cmd == "validate" and len(args) == 2:
-        errs = validate_doc(jload(args[1]), load(f"{SCHEMAS}/{args[0]}.schema.json"))
+        doc = jload(args[1])
+        errs = [] if args[0] == "roles" else validate_doc(doc, load(f"{SCHEMAS}/{args[0]}.schema.json"))
+        if args[0] == "roles":   # the role table has two judges, and a data class must be one the data policy defines
+            errs = role_problems(doc)
+            if not errs:
+                errs = class_problems(doc, set(load(row_of("data-policy")["path"])["data_classes"]))
+            errs = [f"STL-CFG-310 {alert_catalog.render('STL-CFG-310', {'problem': 'role table: ' + e})[0].split(chr(10))[1]}" for e in errs]
         print("\n".join(errs) or "valid")
         return 1 if errs else 0
     if cmd == "list" and len(args) <= 1:

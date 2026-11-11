@@ -9,7 +9,8 @@ CLI: roles.py check [hermes-root]     validate the table and its coverage of the
                                        config}} for bin/register-toolsets.sh and bin/apply-hermes-local.sh
      roles.py field <profile> <key>   one permission of the profile's role, as JSON (unlisted profiles get fallback_role)
      roles.py requirements <role>     JSON {tool_calling, min_context_tokens, vision, allowed_data_classes}: what a model needs
-                                       to hold the role (exit 1 and STL-CFG-311 for a role not in the table)
+                                       to hold the role (exit 1, nothing on stdout, the code and its message on stderr: STL-CFG-311 for a role not in the
+                                       table, STL-CFG-303 for a table that fails validation)
      roles.py reviewers               JSON list of the profiles whose role may review (K8)
      roles.py prove [--profile P] [--task T]   the card whose own worker run this process belongs to (prove_card): JSON
                                        {card, workspace, branch} and exit 0; else the failed proof on stderr, exit 1
@@ -18,7 +19,7 @@ CLI: roles.py check [hermes-root]     validate the table and its coverage of the
 import json, os, pwd, re, sqlite3, subprocess, sys
 
 ROOT = "/workspace"   # the stack repo: roles.json, the protected repo paths and the hook sources live here
-PERMS = ("assignable", "may_complete", "may_unblock", "may_claim", "may_delegate", "may_create_cards", "may_review")
+PERMS = ("assignable", "may_answer_for_owner", "may_complete", "may_unblock", "may_claim", "may_delegate", "may_create_cards", "may_review")
 WORKSPACES = ("git-worktree", "read-parent-worktree", "none")
 OVERRIDES = ("model", "provider")
 NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
@@ -34,6 +35,7 @@ REVIEW_INT_KEYS = ("review_max_files", "review_max_mb", "review_clip_body", "rev
 OVERRIDE_KEYS = {"claude_config_dir", "ro_over", "hide_files", "broker_env", "broker_when", "review_prompt", "review_model", "review_answer_prefix", "review_link_allow"} | set(REVIEW_INT_KEYS)
 REQ_BOOLS = ("tool_calling", "vision")
 REQ_KEYS = set(REQ_BOOLS) | {"min_context_tokens", "allowed_data_classes"}
+MAX_TOKENS = 2**53 - 1   # the largest integer every JSON reader (a double) holds exactly
 SCHEMA_VERSION = 1
 ROOT_PROFILE = "default"   # Hermes's own name for the profile that lives in the root of ~/.hermes
 
@@ -46,9 +48,27 @@ def path():
     return os.environ.get("ROLES_FILE") or f"{ROOT}/docs/hermes-local/roles.json"
 
 
+def _pairs(pairs):
+    d = {}
+    for k, v in pairs:
+        if k in d:
+            raise ValueError(f"a key is repeated: {k!r}")   # json would keep the last copy, so a reader of the first is shown another table
+        d[k] = v
+    return d
+
+
+def _int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _set(v):
+    """A list the code treats as a set: no repeated entry."""
+    return isinstance(v, list) and all(isinstance(x, str) for x in v) and len(set(v)) == len(v)
+
+
 def load():
     try:
-        d = json.load(open(path(), encoding="utf-8"))
+        d = json.load(open(path(), encoding="utf-8"), object_pairs_hook=_pairs)
     except Exception as e:
         raise RolesError(f"{path()}: {type(e).__name__}: {e}")
     errs = validate(d)
@@ -62,7 +82,7 @@ def validate(d):
     roles, profs = d.get("roles") if isinstance(d, dict) else None, d.get("profiles") if isinstance(d, dict) else None
     if not isinstance(roles, dict) or not isinstance(profs, dict) or not roles:
         return ["profiles and roles must be objects, roles not empty"]
-    errs = [] if d.get("schema_version") == SCHEMA_VERSION and not isinstance(d["schema_version"], bool) else [f"schema_version must be {SCHEMA_VERSION}"]
+    errs = [] if _int(d.get("schema_version")) and d["schema_version"] == SCHEMA_VERSION else [f"schema_version must be {SCHEMA_VERSION}"]
     for n, r in roles.items():
         if not NAME.fullmatch(n) or not isinstance(r, dict):
             errs.append(f"role {n!r}: bad name or not an object"); continue
@@ -71,8 +91,8 @@ def validate(d):
         if r.get("workspace") not in WORKSPACES:
             errs.append(f"role {n}: workspace must be one of {', '.join(WORKSPACES)}")
         ov = r.get("allowed_overrides")
-        if not isinstance(ov, list) or not set(ov) <= set(OVERRIDES):
-            errs.append(f"role {n}: allowed_overrides must be a list of {', '.join(OVERRIDES)}")
+        if not isinstance(ov, list) or not set(ov) <= set(OVERRIDES) or len(set(ov)) != len(ov):
+            errs.append(f"role {n}: allowed_overrides must be a list of {', '.join(OVERRIDES)}, each once")
         if "background_review" in r and not isinstance(r["background_review"], bool):
             errs.append(f"role {n}: background_review must be true or false")
         cm = r.get("complete_metadata")   # S3A-03: the metadata pairs a reviewing role's kanban_complete must carry
@@ -82,8 +102,11 @@ def validate(d):
         if "complete_needs_review" in r and not isinstance(r["complete_needs_review"], bool):   # S3A-04
             errs.append(f"role {n}: complete_needs_review must be true or false")
         workers = r.get("workers", [])
-        if not isinstance(workers, list) or not all(isinstance(w, str) and w for w in workers):
-            errs.append(f"role {n}: workers must be a list of worker kinds")
+        if not _set(workers) or not all(workers):
+            errs.append(f"role {n}: workers must be a list of worker kinds, each once")
+        sd_, pt = r.get("skills_disabled", []), r.get("platform_toolsets", {})
+        if not _set(sd_) or not isinstance(pt, dict) or not all(_set(v) for v in pt.values()):
+            errs.append(f"role {n}: skills_disabled and each platform_toolsets entry must be a list of names, each once")
         if not isinstance(r.get("config", {}), dict):
             errs.append(f"role {n}: config must be an object")
         gi = r.get("git_identity")
@@ -107,6 +130,8 @@ def validate(d):
         errs.append("fallback_role must name a role")
     elif any(fb.get(k) for k in PERMS) or fb.get("workspace") != "none" or fb.get("allowed_overrides"):
         errs.append("fallback_role must open nothing: every may_* and assignable false, workspace none, no overrides")
+    elif not errs:
+        errs += fallback_problems(d)
     for p, row in profs.items():
         if not NAME.fullmatch(p) or not isinstance(row, dict):
             errs.append(f"profile {p!r}: bad name or not an object"); continue
@@ -135,13 +160,32 @@ def validate(d):
                                 or profs[fbp].get("role") != row["role"]):   # RT10-01: a list or object is named, not a crash
             errs.append(f"profile {p}: capability_fallback must name another profile of the same role")
     pr = d.get("protected")
-    if not isinstance(pr, dict) or not all(isinstance(pr.get(k), list) and pr[k] for k in ("repo", "home")):
-        errs.append("protected needs non-empty repo and home lists")
+    if not isinstance(pr, dict) or not all(_set(pr.get(k)) and pr[k] for k in ("repo", "home")):
+        errs.append("protected needs non-empty repo and home lists, no entry twice")
     os_ = d.get("owner_settings")   # K6: the owner's settings files, refused to every agent role for reading and writing
-    if not (isinstance(os_, list) and os_ and all(isinstance(x, str) and x and not x.startswith("/") and ".." not in x.split("/")
+    if not (isinstance(os_, list) and os_ and _set(os_) and all(x and not x.startswith("/") and ".." not in x.split("/")
                                                    for x in os_)):
-        errs.append("owner_settings needs a non-empty list of paths relative to the stack repo")
+        errs.append("owner_settings needs a non-empty list of paths relative to the stack repo, no path twice")
     return errs + validate_sandbox(d)
+
+
+def _hooks(r):
+    return {(h["matcher"], h.get("file"), h.get("command")) for h in r.get("hooks", [])}
+
+
+def fallback_problems(d):
+    """The fallback is the narrowest row: it allows no data class another role lacks, has hooks, and every role no profile
+    names (so a profile never reaches it by a row) carries at least its hooks. Run on a table whose rows are already well formed."""
+    roles, fbn = d["roles"], d["fallback_role"]
+    fb, named = roles[fbn], {row.get("role") for row in d["profiles"].values() if isinstance(row, dict)}
+    errs = [f"fallback_role {fbn} allows data class {c!r}, which role {n} does not (the fallback is the narrowest)"
+            for c in fb["requirements"]["allowed_data_classes"]
+            for n in [next((n for n, r in roles.items() if c not in r["requirements"]["allowed_data_classes"]), None)] if n]
+    if not _hooks(fb):
+        errs.append(f"fallback_role {fbn} must have at least one hook")
+    errs += [f"role {n} is named by no profile and lacks a hook the fallback role {fbn} has" for n, r in roles.items()
+             if n != fbn and n not in named and not _hooks(fb) <= _hooks(r)]
+    return errs
 
 
 def validate_requirements(n, q):
@@ -151,8 +195,8 @@ def validate_requirements(n, q):
     errs = [f"role {n}: requirements has unknown key {k}" for k in sorted(set(q) - REQ_KEYS)]
     errs += [f"role {n}: requirements.{k} must be true or false" for k in REQ_BOOLS if not isinstance(q.get(k), bool)]
     c, dc = q.get("min_context_tokens"), q.get("allowed_data_classes")
-    if not isinstance(c, int) or isinstance(c, bool) or c < 0:
-        errs.append(f"role {n}: requirements.min_context_tokens must be a non-negative integer")
+    if not _int(c) or not 0 <= c <= MAX_TOKENS:
+        errs.append(f"role {n}: requirements.min_context_tokens must be an integer from 0 to {MAX_TOKENS}")
     if not (isinstance(dc, list) and all(isinstance(x, str) and NAME.fullmatch(x) for x in dc) and len(set(dc)) == len(dc)):
         errs.append(f"role {n}: requirements.allowed_data_classes must be a list of distinct class names")
     return errs
@@ -170,7 +214,7 @@ def validate_sandbox(d):
     if not isinstance(sb, dict):
         return ["sandbox must be an object"]
     errs = [f"sandbox: unknown key {k!r}" for k in sb if k not in SANDBOX_KEYS]
-    if sb.get("schema_version") != 1:
+    if not _int(sb.get("schema_version")) or sb["schema_version"] != 1:
         errs.append("sandbox: schema_version must be 1")
     names = [sb.get(k) for k in ("backend", "unboxed_backend")]
     if not all(isinstance(n, str) and BACKEND.fullmatch(n) for n in names) or names[0] == names[1]:
@@ -515,6 +559,18 @@ def log_alert(code, streak="", **kv):
         return f"{code} ({type(e).__name__})"
 
 
+def fail(code, **kv):
+    """Exit 1 with the alert line logged and the catalog's plain message (not its title) on stderr."""
+    tag = log_alert(code, **kv)
+    try:
+        import alert_catalog
+        msg = alert_catalog.render(code, kv)[0].split("\n")[1]
+    except Exception:
+        msg = tag
+    print(f"{code} {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
 if __name__ == "__main__":
     cmd, args = (sys.argv[1] if len(sys.argv) > 1 else ""), sys.argv[2:]
     if cmd == "prove":   # needs no role table: the board and the kernel only
@@ -530,6 +586,8 @@ if __name__ == "__main__":
     try:
         d = load()
     except RolesError as e:
+        if cmd == "requirements":   # a JSON read: stdout stays empty; the code, its plain message and one alert line say why
+            fail("STL-CFG-303", problem=str(e)[:300])
         print(f"roles: INVALID {e}")
         if cmd == "check":
             print(log_alert("STL-CFG-303", problem=str(e)[:300]))
@@ -545,8 +603,7 @@ if __name__ == "__main__":
         print(json.dumps(spec(d, H), indent=1))
     elif cmd == "requirements" and len(args) == 1:
         if args[0] not in d["roles"]:
-            print(f"roles: no role {args[0]}: {log_alert('STL-CFG-311', id=args[0])}", file=sys.stderr)
-            sys.exit(1)
+            fail("STL-CFG-311", problem=f"role {args[0][:80]} is not in the role table")
         print(json.dumps(d["roles"][args[0]]["requirements"]))
     elif cmd == "reviewers":
         print(json.dumps(reviewers(d)))

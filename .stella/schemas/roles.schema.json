@@ -1,15 +1,16 @@
 {
+  "description": "The role table. A table is valid only when BOTH this schema and the validation in bin/roles.py pass; python3 bin/stella_data.py check and validate roles run both (roles.py also holds the rules this schema cannot say: a profile's role exists, fallback_role names a role and opens nothing, a hook has a file or a command and not both, a matcher compiles).",
   "type": "object",
   "required": ["schema_version", "fallback_role", "protected", "owner_settings", "profiles", "roles"],
   "properties": {
-    "schema_version": {"enum": [1]},
+    "schema_version": {"type": "integer", "enum": [1]},
     "fallback_role": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"},
     "protected": {"type": "object", "required": ["repo", "home"], "properties": {"repo": {"$ref": "#/$defs/paths"}, "home": {"$ref": "#/$defs/paths"}}},
     "owner_settings": {"$ref": "#/$defs/paths"},
     "self_config_kinds": {"type": "array", "items": {"type": "string"}},
-    "profiles": {"type": "object", "additionalProperties": {"$ref": "#/$defs/profile"}},
-    "roles": {"type": "object", "additionalProperties": {"$ref": "#/$defs/role"}},
-    "sandbox": {"type": "object", "required": ["schema_version"], "properties": {"schema_version": {"enum": [1]}}}
+    "profiles": {"type": "object", "propertyNames": {"pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"}, "additionalProperties": {"$ref": "#/$defs/profile"}},
+    "roles": {"type": "object", "propertyNames": {"pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"}, "additionalProperties": {"$ref": "#/$defs/role"}},
+    "sandbox": {"type": "object", "required": ["schema_version"], "properties": {"schema_version": {"type": "integer", "enum": [1]}}}
   },
   "$defs": {
     "paths": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
@@ -30,18 +31,19 @@
       "additionalProperties": false,
       "properties": {
         "tool_calling": {"type": "boolean"},
-        "min_context_tokens": {"type": "integer", "minimum": 0},
+        "min_context_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
         "vision": {"type": "boolean"},
         "allowed_data_classes": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"}}
       }
     },
     "role": {
       "type": "object",
-      "required": ["requirements", "assignable", "workspace", "may_complete", "may_unblock", "may_claim", "may_delegate",
+      "required": ["requirements", "assignable", "may_answer_for_owner", "workspace", "may_complete", "may_unblock", "may_claim", "may_delegate",
                    "may_create_cards", "may_review", "allowed_overrides"],
       "properties": {
         "requirements": {"$ref": "#/$defs/requirements"},
         "assignable": {"type": "boolean"},
+        "may_answer_for_owner": {"type": "boolean"},
         "workspace": {"enum": ["git-worktree", "read-parent-worktree", "none"]},
         "may_complete": {"type": "boolean"},
         "may_unblock": {"type": "boolean"},
@@ -51,7 +53,10 @@
         "may_review": {"type": "boolean"},
         "allowed_overrides": {"type": "array", "uniqueItems": true, "items": {"enum": ["model", "provider"]}},
         "background_review": {"type": "boolean"},
-        "workers": {"type": "array", "items": {"type": "string"}},
+        "workers": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "skills_disabled": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "platform_toolsets": {"type": "object", "additionalProperties": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}},
+        "git_identity": {"type": "object", "required": ["name", "email"], "additionalProperties": false, "properties": {"name": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}, "email": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}}},
         "hooks": {"type": "array", "items": {"type": "object", "required": ["matcher"], "properties": {"matcher": {"type": "string"}}}}
       }
     }
