@@ -31,6 +31,7 @@ root noexec; chmod 644 "$T/noexec/bin/b-selftest.sh"
 ok 'bad noexec "bin/b-selftest.sh is not executable"' "6 a suite selftest that is not executable fails (the suite runs it directly)"
 root gitmode; git -C "$T/gitmode" init -q && git -C "$T/gitmode" add -A && git -C "$T/gitmode" update-index --chmod=-x bin/b-selftest.sh
 ok '[ -x "$T/gitmode/bin/b-selftest.sh" ] && bad gitmode "bin/b-selftest.sh is not executable in git (mode 100644)"' "6b executable on disk but not in the mode git records fails (a fresh checkout could not run it)"
+ok '( cd "$T" && git init -q other 2>/dev/null; GIT_DIR=$T/other/.git STELLA_ROOT=$T/gitmode python3 -I "$TM" check >"$T/out" 2>&1; [ $? = 1 ] && grep -q "not executable in git" "$T/out" )' "6d a GIT_DIR inherited from the caller does not hide the git mode"
 git -C "$T/gitmode" update-index --chmod=+x bin/b-selftest.sh
 ok 'chk gitmode' "6c the same git tree passes once git records the mode"
 root broken; echo '{' >"$T/broken/.stella/test-map.json"
@@ -82,6 +83,9 @@ ok '[ "$(sel lock.json | jq -r .full)" = true ]' "14 a full-suite glob selects t
 ok '[ "$(sel | jq -c "[.full, .targets]")" = "[true,[\"a\"]]" ] && [ "$(STELLA_ROOT=$T/good python3 -I "$TM" select)" = full ]' "15 no file name at all selects the full suite (as 16b: a failed diff is not \"nothing changed\")"
 ok '[ "$(printf "src/a1.py\nsrc/b/q\n" | STELLA_ROOT=$T/good python3 -I "$TM" select --json - | jq -c .targets)" = "[\"a\",\"b\"]" ]' "16 file names are also read from stdin (-), one per line"
 ok '[ "$(sel - </dev/null | jq -r .full)" = true ] && [ "$(STELLA_ROOT=$T/good python3 -I "$TM" select - </dev/null)" = full ]' "16b an empty list on stdin selects the full suite (a failed diff is not \"nothing changed\")"
+ok '[ "$(sel "$(printf "src/a1.py\nlock.json")" | jq -r .full)" = true ] && [ "$(sel "src/a1.py lock.json" | jq -r .full)" = true ] && [ "$(printf "src/a1.py\0lock.json\0" | STELLA_ROOT=$T/good python3 -I "$TM" select --json - | jq -r .full)" = true ]' "16c names joined into one (newline, space, NUL) select the full suite, never the first name's row"
+root nl; st "$T/nl/bin/$(printf 'a\nb-test.sh')"
+ok '! chk nl && [ "$(grep -c "" "$T/out")" = 1 ] && grep -q "looks like a test" "$T/out"' "17c a file name with a newline stays one whole problem line"
 root scan '.map += [{"scan": true, "globs": ["src/*", "new/*"], "targets": ["b"]}]'
 ok '[ "$(STELLA_ROOT=$T/scan python3 -I "$TM" select --json src/a1.py | jq -c "[.full, .targets]")" = "[false,[\"a\",\"b\"]]" ] && [ "$(STELLA_ROOT=$T/scan python3 -I "$TM" select new/x)" = full ]' \
    "20 a scan row adds its targets and does not count as a match (an unmapped file still selects the full suite)"

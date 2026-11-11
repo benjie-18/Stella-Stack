@@ -11,7 +11,7 @@ cannot be read); a suite selftest is not executable, on disk or in the mode git 
 selection leaves that selftest out.
 select: a file on the full list, or matched by no row, selects the full suite; so does no file name at all. `scan` rows add targets (a selftest that
 reads a whole folder) but do not count as a match. Pass both sides of a rename (`git diff --name-only --no-renames`):
-the new path alone can narrow the selection."""
+the new path alone can narrow the selection. A name with white space or a control character selects the full suite."""
 import fnmatch, json, os, re, subprocess, sys
 
 BIN = os.path.dirname(os.path.abspath(__file__))
@@ -58,7 +58,8 @@ def tree():
     if not os.path.exists(os.path.join(ROOT, ".git")):
         return {os.path.relpath(os.path.join(d, f), ROOT): None for d, _, fs in os.walk(ROOT) for f in fs}
     def git(*args):
-        return subprocess.run(["git", "-C", ROOT, "ls-files", "-z", *args], capture_output=True, text=True, check=True).stdout.split("\0")
+        return subprocess.run(["git", "-C", ROOT, "ls-files", "-z", *args], capture_output=True, text=True, check=True,
+                              env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")}).stdout.split("\0")   # a caller's GIT_DIR (a git hook) must not point at another repo
     files = dict.fromkeys(filter(None, git("-co", "--exclude-standard")))
     for line in filter(None, git("-s")):
         files[line.split("\t", 1)[1]] = line.split()[0]
@@ -110,6 +111,9 @@ def select(files, m=None):
     m = m or load()
     targets, reason = set(m["always"]), []
     for f in files:
+        if re.search(r"[\s\x00-\x1f\x7f]", f):   # several names joined into one (a quoted $(git diff), -z output) would match one narrow row
+            reason.append(f"{f!r}: not one plain file name (white space or a control character)")
+            continue
         f = os.path.normpath(f)
         if matches(f, m["full"]):
             reason.append(f"{f}: a shared contract (full list)")
@@ -167,6 +171,7 @@ def check():
 
 
 def fail(problem, out=sys.stdout):
+    problem = "".join(c if c.isprintable() else repr(c)[1:-1] for c in problem)   # a file name may hold a newline: keep the line whole
     print("STL-CFG-310 " + alert_catalog.render("STL-CFG-310", {"problem": problem})[0].split("\n")[1], file=out)   # the plain message line
 
 
