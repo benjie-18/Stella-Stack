@@ -55,7 +55,7 @@ def path():
     return os.environ.get("ROLES_FILE") or f"{ROOT}/docs/hermes-local/roles.json"
 
 
-# A scratch table alerts into a scratch folder beside it, never into the stack's own state (as bin/stella_data.py does for STELLA_ROOT).
+# A scratch table alerts into a scratch folder beside it, never into the stack's own state (as the data tool does for STELLA_ROOT).
 if os.environ.get("ROLES_FILE") and not os.environ.get("ESCALATE_SUP_DIR") \
         and os.path.realpath(path()) != os.path.realpath(f"{ROOT}/docs/hermes-local/roles.json"):
     os.environ["ESCALATE_SUP_DIR"] = os.path.join(os.path.dirname(os.path.realpath(path())), ".supervisor")
