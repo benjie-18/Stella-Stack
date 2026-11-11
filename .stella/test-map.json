@@ -32,6 +32,7 @@
     "bin/test-map.py",
     "bin/stella_data.py",
     "bin/hardcode-lint-selftest.sh",
+    "bin/hardcode-lint.sh",
     "bin/*guard*",
     ".stella/*",
     "docs/hermes-local/*",
