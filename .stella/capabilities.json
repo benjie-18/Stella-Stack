@@ -212,6 +212,29 @@
       "triage": {
         "result": "shipped"
       }
+    },
+    {
+      "id": "settings",
+      "kind": "command",
+      "summary": "The owner's command to read or change one setting from the settings registry: validates the value, then writes through the apply contract",
+      "keywords": [
+        "settings",
+        "owner",
+        "set",
+        "get",
+        "rollback"
+      ],
+      "inputs": "a setting key and, to change it, a value",
+      "outputs": "the value or the change summary; STL-CFG-311 for an unknown key, STL-CFG-312 for a worker, STL-CFG-315 for a bad value, STL-CFG-317 when an identity-critical setting is changed without a terminal",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/settings.py",
+      "triage": {
+        "result": "shipped"
+      }
     }
   ]
 }

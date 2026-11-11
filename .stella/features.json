@@ -172,7 +172,7 @@
     {
       "id": "owner-write-path",
       "owner_phase": "F1",
-      "status": "planned",
+      "status": "on",
       "depends_on": [
         "apply-contract"
       ],
