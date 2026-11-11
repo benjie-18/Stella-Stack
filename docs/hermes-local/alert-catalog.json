@@ -402,13 +402,12 @@
       "code": "STL-CFG-312",
       "area": "CFG",
       "severity": "warning",
-      "status": "reserved",
-      "title": "a settings change was refused: not the owner's path",
-      "message": "A change to a setting or data file was refused because it did not come through the owner's path: {problem}. Nothing was changed.",
-      "action": "make the change as the owner, through the apply command. See STL-CFG-312 in docs/alert-codes.md.",
-      "cause": "A worker or another role tried to write an owner-only setting or data file.",
+      "title": "an owner-only action was refused: not the owner's path",
+      "message": "An action on an owner-only setting, data file or command was refused because it did not come through the owner's path: {problem}. Nothing was changed.",
+      "action": "if this was you, make the change as the owner, through the apply command; if not, look at the card or role the message names. See STL-CFG-312 in docs/alert-codes.md.",
+      "cause": "A worker or another role tried to read or change an owner-only setting, data file or state file, or to run an owner-only command, or a card branch changed owner data.",
       "check": "the event log and .supervisor/logs/alerts.log.",
-      "related": "F1 contract data; bin/stella_data.py",
+      "related": "F1 owner-only write path; bin/roles.py, bin/settings.py, bin/stella-apply.py, bin/merge-card.sh",
       "resolvable": false
     },
     {

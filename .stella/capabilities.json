@@ -225,13 +225,41 @@
         "rollback"
       ],
       "inputs": "a setting key and, to change it, a value",
-      "outputs": "the value or the change summary; STL-CFG-311 for an unknown key, STL-CFG-312 for a worker, STL-CFG-315 for a bad value, STL-CFG-317 when an identity-critical setting is changed without a terminal",
+      "outputs": "the value or the change summary; STL-CFG-311 for an unknown key, STL-CFG-312 for a worker, STL-CFG-313 for a store file that holds a key twice, STL-CFG-315 for a bad value, STL-CFG-317 when an identity-critical setting is changed without a terminal",
       "allowed_roles": [],
       "risk_class": "write",
       "hosts": [],
       "secrets": [],
       "status": "approved",
       "source": "bin/settings.py",
+      "triage": {
+        "result": "shipped"
+      }
+    },
+    {
+      "id": "owner-boundary",
+      "kind": "command",
+      "summary": "Which paths are owner settings and owner data, and which files define the owner boundary (a card that changes one needs the owner to say so at the merge)",
+      "keywords": [
+        "owner",
+        "owner data",
+        "boundary",
+        "merge",
+        "protected",
+        "owner-only"
+      ],
+      "inputs": "owner-data (optionally a root) or boundary",
+      "outputs": "a JSON list of paths; exit 1 when the role table or the data index cannot be read",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/roles.py",
       "triage": {
         "result": "shipped"
       }
