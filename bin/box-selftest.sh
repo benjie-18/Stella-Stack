@@ -658,8 +658,9 @@ ok 'attack x "git fetch -u --refmap=refs/heads/card/x:refs/heads/main origin ref
 # copy of its own ref, and box.py applies it to the real repo after the call.
 L=$(mktemp -d "${HH_TREE:-$W/.scratch/readiness}/hh-box.XXXXXX"); F2=$L/f
 trap '[ -n "${KEEP:-}" ] || rm -rf "$T" "$L"' EXIT
-mkdir -p "$F2/ws" "$F2/home/.hermes/profiles/$P/home" "$F2/home/.hermes/profiles/$P/skills" "$F2/R.git"
+mkdir -p "$F2/ws/.stella" "$F2/home/.hermes/profiles/$P/home" "$F2/home/.hermes/profiles/$P/skills" "$F2/R.git"
 PHH2=$F2/home/.hermes/profiles/$P/home; printf '[user]\n\temail = t@t\n\tname = t\n[safe]\n\tdirectory = *\n' >"$PHH2/.gitconfig"
+cp /workspace/.stella/data-files.json "$F2/ws/.stella/"   # B1: the box reads the data index of the tree it guards
 : >"$F2/ws/.alias-probe"
 ok '[ -e "$F2/ws/.ALIAS-PROBE" ]' "3.30 control: this tree is case-insensitive like /workspace (a case variant names the same file)"
 $G -C "$F2/ws" init -q && echo r >"$F2/ws/README" && $G -C "$F2/ws" add README && $G -C "$F2/ws" commit -qm r
@@ -876,8 +877,8 @@ PP=$NB plug ok; unset PP; ok '[ "$(pj .avail)" = false ]' "4.12 without bwrap on
 # ---- 5. bin/register-toolsets.sh: the per-profile backend, the plugin files and the plugin enable (scratch HOME, stub hermes)
 A5=$T/home5; H5=$A5/.hermes; mkdir -p "$A5/bin" "$H5/profiles/$P" "$H5/profiles/$R"
 for d in "$H5" "$H5/profiles/$P" "$H5/profiles/$R"; do printf 'model: x\n' >"$d/config.yaml"; done
-printf '#!/usr/bin/env bash\necho "$*" >> "%s/calls"\ncase "$*" in *"config get"*) echo unset;; esac\nexit 0\n' "$A5" >"$A5/bin/hermes"; chmod +x "$A5/bin/hermes"
-jq --arg p "$P" --arg r "$R" ".sandbox = $SB | .roles[].platform_toolsets = {} " "$RF" >"$T/roles5.json"
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/calls"\ncase "$*" in *"config get"*) echo unset;; *"tools list"*) printf "  ✓ enabled file\\n  ✓ enabled terminal\\n";; esac\nexit 0\n' "$A5" >"$A5/bin/hermes"; chmod +x "$A5/bin/hermes"
+jq --arg p "$P" --arg r "$R" "$NORM .sandbox = $SB | norm | .roles |= map_values(if .runs_unboxed then . else .platform_toolsets = {} end)" "$RF" >"$T/roles5.json"   # a role outside the box needs toolsets (B2): the stub lists the ones it wants, so nothing is changed for them
 for pp in $(jq -r '.profiles | keys[] | select(. != "default")' "$T/roles5.json"); do mkdir -p "$H5/profiles/$pp"; printf 'model: x\n' >"$H5/profiles/$pp/config.yaml"; done
 reg() { HOME="$A5" PATH="$A5/bin:$PATH" ROLES_FILE=$T/roles5.json "${REG:-$W/bin/register-toolsets.sh}" "$@" >"$T/out" 2>&1; echo $?; }
 : >"$A5/calls"; ok '[ "$(reg)" = 0 ]' "5.1 register-toolsets applies a table with a sandbox block"
