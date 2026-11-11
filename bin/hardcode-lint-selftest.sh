@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Self-test for bin/hardcode-lint.sh (K12, E8). The lint itself, and its header, say where the literals come from.
-# Case 1-3 run it on this tree; every planted case runs on a scratch copy of the scanned files (a temp root with its own
-# .stella/, a scratch HARDCODE_HOME), never the live tree. The planted names are invented here.
+# Case 1-3 run it on this tree with the real home; every planted case runs on a scratch root that holds only what the lint
+# lists (`hardcode-lint.sh --list`: the files it scans and the data it reads, never an owner setting or the apply tool's state)
+# with a scratch HARDCODE_HOME, never the live tree. The planted names are invented here.
 set -u
 BIN=$(dirname "$(readlink -f "$0")"); W=$(dirname "$BIN"); L=$BIN/hardcode-lint.sh; A=$W/docs/hermes-local/hardcode-allow.json; fails=0   # not HARDCODE_ALLOW: case 1 checks this tree with this list (L5)
 T=$(mktemp -d -t hardcode-lint-selftest.XXXXXX); trap 'rm -rf "$T"' EXIT
@@ -11,9 +12,16 @@ mkhome() {  # a scratch home whose projects.db holds one slug
   rm -rf "$H"; mkdir -p "$H/.hermes"
   python3 -I -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1] + "/.hermes/projects.db"); c.execute("create table projects (slug text)"); c.execute("insert into projects values (?)", (sys.argv[2],)); c.commit()' "$H" "$slug"
 }
-fresh() {  # a clean scratch root (the whole tree but .git and local state), and a fresh scratch home
+cp_listed() {  # cp_listed <source root> <dest>: copy the lint's own list of that root; a failed list, tar or extract is a failure
+  local l; l=$(STELLA_ROOT=$1 HARDCODE_ALLOW= "$L" --list) && printf '%s\n' "$l" >"$T/list" \
+    && ( set -o pipefail; tar -C "$1" --no-recursion -T "$T/list" -cf - | tar -C "$2" -xf - )
+}
+fresh() {  # a clean scratch root (the listed files only, never the tree), and a fresh scratch home; a failed copy ends the selftest
   rm -rf "$S"; mkdir -p "$S"; mkhome
-  tar -C "$W" --exclude=./.git --exclude=./node_modules --exclude=./docs/spec --exclude=./.scratch -cf - . | tar -C "$S" -xf -
+  cp_listed "$W" "$S" || { echo "FAIL fresh: the scratch root could not be made (the lint's list or the copy failed)"; echo "selftest FAIL"; exit 1; }
+}
+tree_check() {  # tree_check <lint>: the one case that checks THIS tree with THIS list and the machine's own home (the suite clears the switches)
+  env -u HARDCODE_ALLOW -u STELLA_ROOT -u HARDCODE_HOME "$1" --check 2>&1
 }
 lint() { STELLA_ROOT=$S HARDCODE_ALLOW= HARDCODE_HOME=$H "$S/bin/hardcode-lint.sh" "$@" 2>&1; }   # empty HARDCODE_ALLOW: the copy's own list
 plant() { printf '\n# %s\n' "$2" >>"$S/$1"; }   # one use of a literal in a scanned file
@@ -24,7 +32,9 @@ plug=$(cd "$W" && ls docs/hermes-local/plugins/*/*.py docs/hermes-local/plugins/
 row=$(jq -r '.baseline[0] | "\(.file)\t\(.literal)"' "$A"); rf=${row%%$'\t'*}; rl=${row#*$'\t'}
 fp=zzprov-testonly; fm=zzmodel:testonly-1b; fh=zz-testonly.invalid; fb=zzboard-testonly
 
-mkhome; ok 'env -u HARDCODE_ALLOW -u STELLA_ROOT HARDCODE_HOME=$H "$L" --check >/dev/null 2>&1' "the lint passes on this tree (every scanned file read, every literal from data)"
+out=$(tree_check "$L"); rc=$?; grep 'not checked' <<<"$out" | sed 's/^/info   /'   # F2: the real home; what it could not check is shown
+[ "$rc" = 0 ] || echo "$out" | head -20
+ok '[ "$rc" = 0 ]' "the lint passes on this tree with the real home (every tracked file read, every literal from data)"
 ok '[ -n "$plug" ]' "the terminal backend plugin (docs/hermes-local/plugins) is there to be scanned"
 ok 'jq -e "(.schema_version == 1) and all(.baseline[]?; (.phase // \"\") != \"\" and (.count | type) == \"number\") and all(.allow[]?, .own_names[]?; (.phase // \"\") != \"\")" "$A" >/dev/null' "every allow-list entry names its phase (schema_version 1)"
 fresh
@@ -32,11 +42,12 @@ ok 'lint >/dev/null' "the untouched scratch copy passes"
 ok 'lint --dump | grep -q "	"' "--dump prints the counts"
 fresh; python3 - "$S/.stella/connections.json" "$fp" "$fm" "$fh" <<'P'
 import json, sys
-p, i, m, h = sys.argv[1:]; d = json.load(open(p)); e = json.loads(json.dumps(d["entries"][0]))
+p, i, m, h = sys.argv[1:]; d = json.load(open(p)); e = json.loads(json.dumps(next(x for x in d["entries"] if x["kind"] == "provider" and x["locality"] != "local")))   # a remote provider: a local one must name a local host
 e["id"], e["hosts"], e["models"] = i, [{"host": h, "port": 1, "purpose": "test"}], [dict(e["models"][0], id=m)]
 d["entries"].append(e); json.dump(d, open(p, "w"))
 P
 cp "$S/.stella/connections.json" "$T/cat.json"
+ok 'STELLA_ROOT=$S python3 -I -B "$S/bin/stella_data.py" check >/dev/null 2>&1' "control: the fake provider is a valid entry (stella_data.py check passes in the scratch root)"
 ok 'lint >/dev/null' "a fake provider added to a scratch catalog is picked up with no code change, and passes while unused"
 plant "bin/alert.sh" "$fp";  ok 'fails_on "\"$fp\""' "a planted new provider id fails"
 fresh; cp "$T/cat.json" "$S/.stella/connections.json"; plant "bin/alert.sh" "$fm"; ok 'fails_on "\"$fm\""' "a planted new model id fails"
@@ -89,7 +100,7 @@ ok 'refused' "L4: an own_names text equal to a catalog provider id is refused"
 fresh; withcat; edit --arg t "$fm" '.allow += [{"file": "bin/alert.sh", "text": $t, "why": "x", "phase": "p"}]'
 ok 'refused' "L4: an allow text equal to a catalog model id is refused"
 fresh; withcat; edit --arg t "x$fh" '.own_names += [{"text": $t, "why": "x", "phase": "p"}]'
-ok 'lint >/dev/null' "L4: a text that only contains a literal stays allowed"
+ok 'refused' "L4 (was: a text that only contains a literal stays allowed): an own_names text with a literal glued to other letters is refused (RT2-07)"
 # L5: the suite clears the lint's switches as it clears STELLA_ROOT
 ok 'grep -Eq "unset[^#]*HARDCODE_ALLOW" "$BIN/selftests.sh" && grep -Eq "unset[^#]*HARDCODE_HOME" "$BIN/selftests.sh"' "L5: bin/selftests.sh clears HARDCODE_ALLOW and HARDCODE_HOME"
 # L6: the lint's own failures carry a catalog code
@@ -100,4 +111,76 @@ np=$(jq -r --argjson pw "$(jq '[.plain_words[].word]' "$A")" '.roles | keys[] | 
 pw=$(jq -r '.plain_words[0].word' "$A")
 fresh; plant bin/alert.sh "$np"; ok '[ -n "$np" ] && fails_on "\"$np\""' "L7: a role name that is not a plain word fails when planted"
 fresh; plant bin/alert.sh "$pw"; ok '[ -n "$pw" ] && lint >/dev/null' "L7: a plain word from the allow list passes when planted"
+# ---- round 3 (QA W5 r2): the cases below were written before the fix ----
+# F1: a scratch root holds what the lint lists, never an owner file or the apply tool's state, and a failed copy fails
+fresh; echo "info   one scratch root: $(find "$S" -type f | wc -l) files, $(du -sb "$S" | cut -f1) bytes (the tree: $(cd "$W" && git ls-files 2>/dev/null | wc -l) tracked files)"
+ow=$(jq -r '.owner_settings[0]' "$W/docs/hermes-local/roles.json"); idx=$(jq -r '.data_index' "$W/docs/hermes-local/roles.json")
+bk=$(jq -r '.backup_dir' "$W/$idx"); ap=$(jq -r '.applied_state' "$W/$idx"); ev=$(jq -r '.event_log' "$W/$idx")
+SRC=$T/src; rm -rf "$SRC"; mkdir -p "$SRC"; cp_listed "$W" "$SRC"   # a source tree with no git: the lint walks it
+for f in "$ow" "$bk/zz-backup.json" "$ap" "$ev"; do mkdir -p "$SRC/$(dirname "$f")"; printf 'FAKE %s\n' "$fp" >"$SRC/$f"; done
+lst=$(STELLA_ROOT=$SRC HARDCODE_ALLOW= "$L" --list)
+ok '[ -n "$lst" ] && ! grep -qF -e "$ow" -e "$bk" -e "$ap" -e "$ev" <<<"$lst"' "F1: the lint lists no owner setting and none of the apply tool's state, though the scan list covers them"
+rm -rf "$T/dst"; mkdir "$T/dst"; cp_listed "$SRC" "$T/dst"
+ok '[ ! -e "$T/dst/$ow" ] && [ ! -e "$T/dst/$bk" ] && [ ! -e "$T/dst/$ap" ] && [ ! -e "$T/dst/$ev" ] && [ -f "$T/dst/bin/hardcode-lint.sh" ]' "F1: a scratch root made from a tree with a fake owner file and a fake backup holds neither"
+fresh; for f in "$ow" "$bk/zz-backup.json"; do mkdir -p "$S/$(dirname "$f")"; printf '%s\n' "$fp" >"$S/$f"; done
+ok 'lint >/dev/null' "F1: a literal in an owner file or a backup file is never read, so never counted"
+mkdir -p "$T/badtar"; printf '#!/bin/sh\ncase " $* " in *" -xf "*) exit 1;; esac\nexec /usr/bin/tar "$@"\n' >"$T/badtar/tar"; chmod +x "$T/badtar/tar"
+ok '! (PATH=$T/badtar:$PATH; fresh) >/dev/null 2>&1' "F1: a copy step that fails makes the selftest fail (the extract fails)"
+printf '#!/bin/sh\ncase " $* " in *" -cf "*) exit 1;; esac\nexec /usr/bin/tar "$@"\n' >"$T/badtar/tar"
+ok '! (PATH=$T/badtar:$PATH; fresh) >/dev/null 2>&1' "F1: a copy step that fails makes the selftest fail (the archive fails)"
+ok '! (L=/nonexistent; fresh) >/dev/null 2>&1' "F1: a list that cannot be made makes the selftest fail"
+# F2: the case that checks this tree reads the machine's home: a project slug planted in a script and in a home's projects database fails it
+fresh; H2=$T/home2; mkdir -p "$H2/.hermes"
+python3 -I -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1] + "/.hermes/projects.db"); c.execute("create table projects (slug text)"); c.execute("insert into projects values (?)", (sys.argv[2],)); c.commit()' "$H2" zzproj-testonly
+plant bin/alert.sh zzproj-testonly
+ok 'out=$(HOME=$H2 tree_check "$S/bin/hardcode-lint.sh"); [ $? = 1 ] && grep -qF "\"zzproj-testonly\"" <<<"$out"' "F2: the tree check fails on a slug planted in a script and in HOME's projects database"
+ok 'out=$(HOME=$H tree_check "$S/bin/hardcode-lint.sh"); [ $? = 0 ]' "F2: the same tree passes with a home that does not hold that slug"
+ok 'grep -q "tree_check \"\$L\"" "$0"' "F2: case 1 runs this tree's lint through tree_check with no home switch"
+# F3: every tracked file is scanned, minus the skip rows
+fresh; withcat
+mkdir -p "$S/lib" "$S/deep/er" "$S/bin/lib" "$S/bin/__pycache__"; printf '# x\n' >"$S/lib/zz-net.sh"; printf '# x\n' >"$S/.zzrc"; printf 'x\n' >"$S/deep/er/x.txt"
+printf '# x\n' >"$S/bin/zz-selftest.sh"; printf '# x\n' >"$S/bin/lib/zz-selftest.sh"; printf '# x\n' >"$S/bin/alert-selftest.sh"; printf 'x\n' >"$S/bin/__pycache__/zz.cpython-312.pyc"
+for f in lib/zz-net.sh .zzrc deep/er/x.txt bin/zz-selftest.sh bin/lib/zz-selftest.sh bin/__pycache__/zz.cpython-312.pyc; do plant "$f" "$fp"
+  ok 'fails_on "\"$fp\"" && grep -qF -- "$f" <<<"$out"' "F3: a provider id in $f (new folder, dot file, subfolder, a helper named like a selftest, a compiled file) is counted with no data change"; done
+fresh; withcat; printf '# x\n' >"$S/bin/alert-selftest.sh"; plant bin/alert-selftest.sh "$fp"
+ok 'lint >/dev/null' "F3: a file the suite runner lists as a selftest (bin/alert-selftest.sh) is skipped by its row"
+fresh; withcat; git -C "$S" init -q && git -C "$S" add -A 2>/dev/null; printf '# %s\n' "$fp" >"$S/bin/zz-untracked.sh"; plant bin/alert.sh "$fp"
+ok 'out=$(lint --dump); grep -q "^bin/alert.sh	" <<<"$out" && ! grep -q "zz-untracked" <<<"$out"' "F3: with git the tracked files are scanned, not what git does not track"
+git -C "$S" add bin/zz-untracked.sh 2>/dev/null; ok 'lint --dump | grep -q "^bin/zz-untracked.sh	"' "F3: a file git tracks is scanned"
+fresh; ln -s /etc/hostname "$S/bin/zz-link"; ok 'refused' "F6/RT2-09: a scanned file that resolves outside the root is refused"
+fresh; edit '.scan = ["../**/*"]';       ok 'refused' "F6/RT2-09: a scan pattern with a .. segment is refused"
+fresh; edit '.scan = ["/etc/*"]';        ok 'refused' "F6/RT2-09: an absolute scan pattern is refused"
+fresh; edit '.skip += [{"file": "*", "why": "x"}]'; ok 'refused' "F3: a skip row that is only wildcards is refused"
+# F5/F6 cheap ones
+fresh; ok '! lint --dump | grep -q "^bin/kanban-board.sh	"' "F5: the line the board value is read from is not counted (VER2-06)"
+ok 'jq -e "all(.allow[]; .file != \"bin/kanban-board.sh\")" "$A" >/dev/null' "F5: the allow list has no row for the board value line"
+ok 'jq -e ".about | test(\"scan\") and test(\"skip\") and test(\"plain_words\") and test(\"bin/hardcode-lint.sh\")" "$A" >/dev/null' "F5: the about text describes scan, skip, plain_words and names the reader (VER2-07)"
+ok '! jq -r ".baseline[].phase" "$A" | grep -q "red-team\|red team" || ! jq -r ".baseline[] | select(.phase | test(\"red.team\"; \"i\")) | .phase" "$A" | grep -vq "comment"' "F5: a baseline label that mentions the red team says the uses are comments citing a finding (VER2-07)"
+fresh; withcat; plant bin/alert.sh "$fp"; printf '#x\n' >"$S/bin/zz-unreadable.sh"; chmod 000 "$S/bin/zz-unreadable.sh"
+ok 'refused && ! grep -q "x1 (allowed" <<<"$out"' "F6/RT2-10: a refusal after a hit prints no partial count line"
+fresh; ok 'out=$(env -u HOME -u HARDCODE_HOME STELLA_ROOT=$S "$S/bin/hardcode-lint.sh" 2>&1); [ $? = 2 ] && grep -q STL-CFG-310 <<<"$out" && ! grep -q "unbound" <<<"$out"' "F5: with neither HOME nor HARDCODE_HOME the lint exits 2 with the code (VER2-09)"
+# own_names: a whole word-like token of 4 or more characters, removed at word borders; a repeated baseline row is refused
+for t in ' ' 'o' '--model opus' 'model opus'; do fresh; withcat; printf '\nclaude -p --model opus --output-format json\n' >>"$S/bin/alert.sh"; edit --arg t "$t" '.own_names += [{"text": $t, "why": "x", "phase": "p"}]'
+  ok 'refused' "F6/RT2-07: an own_names text '$t' is refused (not one word-like token of 4 or more characters)"; done
+fresh; withcat; printf '\n%s\n' "$fp-x" >>"$S/bin/alert.sh"; edit '.own_names += [{"text": "zzprov-testonly-x", "why": "x", "phase": "p"}]'
+ok 'lint >/dev/null' "F6/RT2-07: an own_names token removes a text at word borders only (a name that is no literal is removed)"
+fresh; withcat; plant bin/alert.sh "$fp"; edit --arg t "q$fp" '.own_names += [{"text": $t, "why": "x", "phase": "p"}]'; plant bin/alert.sh "q$fp"
+ok 'refused' "F6/RT2-07: an own_names text that holds a literal glued to other letters is refused"
+fresh; edit '.baseline += [.baseline[0]]'; ok 'refused' "F6/RT2-08: a baseline row repeated (same file and literal) is refused"
+# F5/F6: the CLI's model answer is read by model_watch.py's rule; no model line is a "not checked" line, never silence
+rxl='^\s*([A-Za-z_]+):\s*(\S.*?)\s*$'
+ok 'grep -qF -- "$rxl" "$W/bin/model_watch.py" && grep -qF -- "$rxl" "$L"' "F6/RT2-05: the lint and bin/model_watch.py read the CLI answer with the same regex"
+mdl=zzlocal-testonly:9b; mh=zz-rt2.invalid
+modelcase() {  # modelcase <answer text>: the stub hermes prints it (exit 0)
+  fresh; withcat; : >"$H/.hermes/config.yaml"; plant bin/alert.sh "model $mdl on $mh"; printf '#!/bin/sh\ncat "%s/model.out"\n' "$T" >"$T/stub/hermes"; printf '%s' "$1" >"$T/model.out"; }
+modelcase $'default: '"$mdl"$'\nprovider: custom\nbase_url: http://'"$mh"$':1/v1\n'; ok 'fails_on "\"$mdl\"" && grep -qF "\"$mh\"" <<<"$out"' "F6/RT2-05: control: column-0 lines: the model and the host are counted"
+modelcase $'  default: '"$mdl"$'\n  base_url: http://'"$mh"$':1/v1\n'; ok 'fails_on "\"$mdl\"" && grep -qF "\"$mh\"" <<<"$out"' "F6/RT2-05: indented lines (model_watch.py reads them) are counted"
+modelcase ''; ok 'out=$(lint); [ $? = 0 ] && grep -q "not checked: model" <<<"$out"' "F5/VER2-08: a home whose answer has no model line prints its not-checked line"
+modelcase $'default: '"$mdl"$'\nbase_url: http://[::1]:1/v1\n'; plant bin/alert.sh "::1"; ok 'fails_on "\"::1\""' "F6/RT2-05: a host is taken whole (an address in brackets is not the literal [)"
+printf '#!/bin/sh\nexit 1\n' >"$T/stub/hermes"
+fresh; mkdir -p "$H/.hermes/profiles/zzp"; ok 'out=$(lint); [ $? = 0 ] && grep -q "not checked: model and host of the Hermes profile .hermes/profiles/zzp" <<<"$out"' "F5/VER2-08: a profile folder with no config prints its not-checked line"
+fresh; mkdir -p "$H/.hermes/profiles/zzp"; chmod 000 "$H/.hermes/profiles/zzp"; ok 'refused && grep -q "zzp" <<<"$out"' "F5/VER2-08: a profile folder that cannot be read is refused"; chmod 755 "$H/.hermes/profiles/zzp"
+# F7: a source the data tool refuses makes the lint exit 2, naming what the tool names
+fresh; withcat; jq '.entries[-1].locality = "local"' "$S/.stella/connections.json" >"$T/x" && cp "$T/x" "$S/.stella/connections.json"
+ok 'refused && grep -q "connections" <<<"$out"' "F7: a catalog the data tool refuses (a local provider on a host not in the local list) is refused, the source is named"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
