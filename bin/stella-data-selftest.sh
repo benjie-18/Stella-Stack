@@ -216,4 +216,122 @@ done
 mk rtd; jq '.roles["qa-x"] = .roles.'"$FB"' | .roles["qa-x"].requirements.allowed_data_classes = ["public","bogus"]' "$RT" >"$T/rtd.json"
 ok 'refuses rtd validate roles "$T/rtd.json" && [ "$(grep -c "^STL-CFG-310 " "$T/o")" = 1 ] && grep -q bogus "$T/o"' "82 a data class the data policy does not define: validate roles refuses it, one STL-CFG-310 line naming it"
 ok '! grep -q "stella_data" "$BIN/roles.py"' "83 bin/roles.py does not import stella_data (it runs inside guards)"
+# ---- F1 W1 fix round 2 (QA round 2): P policy, M no leaks, L loader, I index, S schemas ----
+V=sk-ant-api03-qafake0123456789abcdef   # lower case on purpose: it fits the id pattern
+CM=$(jq -r '.entries[] | select(.id == "claude-subscription") | .models[0].id' "$ROOT/.stella/connections.json")
+CHAIN="[{provider:\"claude-subscription\",model:\"$CM\",parameters:{}}]"
+# P1 a chain entry's provider must allow every data class the role handles
+mk p1a; ed p1a role-assignments.json ".assignments[0].chain = $CHAIN"
+ok 'refuses p1a check && grep -q "data class" "$T/o"' "84 a chain to a provider that allows none of the role's data classes is refused"
+ed p1a connections.json '(.entries[] | select(.id == "claude-subscription")).data_policy.data_classes_allowed = ["public"]'
+ok 'refuses p1a check' "85 a provider that allows only some of the role's data classes is refused"
+ed p1a connections.json '(.entries[] | select(.id == "claude-subscription")).data_policy.data_classes_allowed = ["public","internal","client"]'
+ok 'sd p1a check' "86 control: the provider allowing every class of the role passes"
+# P2 locality is checked against data
+mk p2a; ed p2a connections.json '(.entries[] | select(.id == "fallback-gateway")).locality = "local"'
+ok 'refuses p2a check' "87 a provider declared local whose hosts include a host outside the local host list is refused"
+mk p2b; ed p2b connections.json '(.entries[] | select(.id == "local-model-server")).hosts = []'
+ok 'refuses p2b check' "88 a local provider with no host is refused"
+mk p2c; ed p2c connections.json '(.entries[] | select(.id == "local-model-server")).hosts[0].host = "qa-box.example.invalid"'
+ok 'refuses p2c check' "89 a local provider on a host outside the local host list is refused"
+ed p2c data-policy.json '.local_hosts += ["qa-box.example.invalid"]'
+ok 'sd p2c check' "90 the same host passes once the data policy lists it (the list is data)"
+mk p2d; ed p2d data-policy.json 'del(.local_hosts)'
+ok 'refuses p2d check' "91 a data policy with no local host list is refused"
+# P3 effort-mode ids, P4 one card, one project
+mk p3a; ed p3a role-assignments.json '.effort_modes["ｌocal_only"] = {allowed_localities:["local","cloud"],no_silent_fallback:false}'
+ok 'refuses p3a check' "92 an effort-mode id outside the lower-case ASCII pattern is refused"
+mk p4a; ed p4a data-policy.json '.projects["pa"] = {mode:"open",allowed_providers:[]} | .projects["pb"] = {mode:"open",allowed_providers:[]}'
+ed p4a role-assignments.json '.assignments += [(.assignments[0] | .id = "ca" | .scope = {level:"card",project:"pa",card:"t1"}), (.assignments[0] | .id = "cb" | .scope = {level:"card",project:"pb",card:"t1"})]'
+ok 'refuses p4a check' "93 one card id under two projects is refused"
+ed p4a role-assignments.json '.assignments[-1].scope.card = "t2"'
+ok 'sd p4a check' "94 control: two different cards under two projects pass"
+# M1 a problem line never prints a value taken from the file under check (unless it is an id that exists in the data)
+mk m1a; ed m1a role-assignments.json ".assignments[0].chain[0].model = \"$V\""
+ok 'refuses m1a check && ! grep -q qafake "$T/o" && grep -q "chain" "$T/o"' "95 a pasted key in chain.model is not printed; the line names the field"
+mk m1b; ed m1b role-assignments.json ".assignments[0].role = \"$V\""
+ok 'refuses m1b check && ! grep -q qafake "$T/o"' "96 a pasted key in role is not printed"
+mk m1c; ed m1c data-policy.json ".default.allowed_providers = [\"$V\"]"
+ok 'refuses m1c check && ! grep -q qafake "$T/o"' "97 a pasted key in an allowed_providers entry is not printed"
+mk m1d; ed m1d connections.json ".entries[0].data_policy.data_classes_allowed += [\"$V\"]"
+ok 'refuses m1d check && ! grep -q qafake "$T/o"' "98 a pasted key in a data class list is not printed"
+mk m1e; ed m1e capabilities.json ".entries[0].allowed_roles += [\"$V\"]"
+ok 'refuses m1e check && ! grep -q qafake "$T/o"' "99 a pasted key in an allowed_roles entry is not printed"
+mk m1f; ed m1f features.json ".entries[0].depends_on += [\"$V\"]"
+ok 'refuses m1f check && ! grep -q qafake "$T/o"' "100 a pasted key in depends_on is not printed"
+mk m1g; ed m1g role-assignments.json ".assignments[0].effort_mode = \"$V\""
+ok 'refuses m1g check && ! grep -q qafake "$T/o"' "101 a pasted key as an effort mode is not printed"
+mk m1h; ed m1h settings.json ".entries[0].store.data = \"$V\" | .entries[1].code = \"$V\""
+ok 'refuses m1h check && ! grep -q qafake "$T/o"' "102 a pasted key as a settings store or code is not printed"
+# M2 a key pasted into a free-form object is masked by every read (the row's redact_keys)
+mk m2a; ed m2a role-assignments.json ".assignments[0].chain[0].parameters = {api_key:\"$V\"}"
+ed m2a connections.json ".entries[0].cost = {token:\"$V\"} | .entries[0].limits = {secret:\"$V\"} | .entries[0].models[0].cost = {password:\"$V\"} | .entries[0].tos.auth_key = \"$V\""
+ok 'sd m2a check; for c in "get role-assignments" "get role-assignments global-dispatcher" "get connections" "get connections local-model-server" "search qafake" "list connections" "list role-assignments"; do sd m2a $c >>"$T/m2" 2>&1; done; ! grep -q qafake "$T/m2"' "103 a key value in parameters, cost, limits or tos is not printed by get, list or search"
+ok '! { for d in $(jq -r ".files[] | select(.format == \"json\") | .id" "$ROOT/.stella/data-files.json"); do python3 -I "$SD" get $d; done 2>&1 | grep -q "\*\*\*"; }' "104 no field of the shipped data is masked by mistake"
+# M3 redact_keys patterns compile; list and search mask like get
+mk m3a; ed m3a data-files.json '(.files[] | select(.id == "capabilities")).redact_keys = ["("]'
+ok 'refuses m3a check && grep -q "^STL-CFG-310 " "$T/o"' "105 a redact_keys pattern that does not compile is refused by check"
+ok '(for c in "get capabilities" "list capabilities" "search a"; do refuses m3a $c && grep -q "^STL-CFG-310 " "$T/o" && ! grep -q Traceback "$T/o" || exit 1; done)' "106 get, list and search end in a catalog line on a bad redact_keys pattern"
+mk m3b; ed m3b data-files.json '(.files[] | select(.id == "capabilities")).redact_keys = ["^summary$"]'
+CID=$(jq -r '.entries[0].id' "$ROOT/.stella/capabilities.json"); ed m3b capabilities.json '.entries[0].summary = "qafake-summary"'
+ok '! sd m3b get capabilities "$CID" | grep -q qafake && ! sd m3b list capabilities | grep -q qafake && ! sd m3b search "$CID" | grep -q qafake && ! sd m3b search "$CID" --json | grep -q qafake && ! sd m3b list capabilities --json | grep -q qafake' "107 get, list and search all mask a value under a redact_keys pattern"
+# M4 a plain setting under a redacted store key
+mk m4a; ed m4a settings.json '.entries += [{key:"QA_API_TOKEN",label:"x",type:"string",validation:{},scope:"global",sensitivity:"identity_critical",default:"qa-plain-value",store:{data:"owner-settings",key:"QA_API_TOKEN"},apply:{script:"bin/stella-apply.py",needs_restart:false},code:"STL-CFG-315"}]'
+ok 'refuses m4a check && refuses m4a get settings QA_API_TOKEN && ! grep -q qa-plain-value "$T/o"' "108 a non-secret setting stored under a redacted key is refused, and get does not show its default"
+# L loader and linter
+mk l1a; sed -i '0,/"cost": null/s//"cost": {"a": 1e400}/' "$T/l1a/.stella/connections.json"
+ok 'grep -q 1e400 "$T/l1a/.stella/connections.json" && refuses l1a check && grep -q "^STL-CFG-310 " "$T/o"' "109 a number that does not fit a float is refused at load"
+mk l2a; sed -i '0,/"label": "[^"]*"/s//"label": "x\\ud800"/' "$T/l2a/.stella/connections.json"
+ok 'grep -q ud800 "$T/l2a/.stella/connections.json" && refuses l2a check && refuses l2a get connections && grep -q "^STL-CFG-310 " "$T/o" && refuses l2a list connections && refuses l2a search a && ! grep -q Traceback "$T/o"' "110 a lone surrogate is refused at load; no command ends in a traceback"
+mkdir -p "$T/l2b/bin" "$T/l2b/docs/hermes-local"; cp "$BIN/alert_catalog.py" "$T/l2b/bin/"; cp "$ROOT/docs/hermes-local/alert-catalog.json" "$T/l2b/docs/hermes-local/"
+sed 's/^def rows():/def rows():\n    raise KeyError("qafake")/' "$SD" >"$T/l2b/bin/stella_data.py"; mk l2c
+ok '! STELLA_ROOT=$T/l2c python3 -I "$T/l2b/bin/stella_data.py" list >"$T/o" 2>&1; grep -q "^STL-CFG-310 .*KeyError" "$T/o" && ! grep -q "Traceback\|qafake" "$T/o"' "111 an unexpected exception becomes exit 1 and one STL-CFG-310 line naming the type, never the value"
+mk l4a; python3 -I -c "import json,sys; d=json.load(open(sys.argv[1])); x={}
+for i in range(300): x={'a':x}
+d['entries'][0]['cost']=x; json.dump(d,open(sys.argv[1],'w'))" "$T/l4a/.stella/connections.json"
+sd l4a check >/dev/null 2>&1; c1=$?; sd l4a get connections >/dev/null 2>&1; c2=$?
+ok '[ $c1 = 1 ] && [ $c2 = 1 ]' "112 check and get both refuse a deeply nested object"
+mk l5a; echo '{"schema_version":1,"entries":[{"id":"z1"}]}' >"$T/l5a/.stella/zz.json"
+ed l5a data-files.json '.files += [{id:"zz-ns",path:".stella/zz.json",schema:null,format:"json",owner_only:true,redact_keys:[],list_key:"entries",id_field:"id"}]'
+ok 'refuses l5a check && refuses l5a get zz-ns && refuses l5a list zz-ns && refuses l5a search z1 && refuses l5a list' "113 a JSON row with no schema is refused by check and served by no read command"
+mk l6a; echo '{"$defs":{"a/b":{"type":"string"}},"$ref":"#/$defs/a/b"}' >"$T/l6a/.stella/schemas/zz.schema.json"; echo '"x"' >"$T/d5"
+echo '{"$defs":{"a":{"$ref":"#/$defs/a"}},"$ref":"#/$defs/a"}' >"$T/l6a/.stella/schemas/zz2.schema.json"
+ok 'refuses l6a validate zz "$T/d5" && ! grep -q Traceback "$T/o" && refuses l6a validate zz2 "$T/d5" && grep -qi schema "$T/o" && ! grep -qi "nested too deeply" "$T/o"' "114 a \$defs name with a slash and a \$ref loop are schema errors, not data errors or a traceback"
+# I the index
+mk i1a; ed i1a data-files.json '(.files[] | select(.id == "connections")).schema = "extension"'
+ok 'refuses i1a check data-files' "115 check <the index id> reports the problems a full check reports"
+mk i2a; ed i2a data-files.json '(.files[] | select(.id == "role-assignments")).id = "ra-renamed"'
+ed i2a role-assignments.json '.assignments[0].chain[0].model = "no-such-model"'
+ok 'refuses i2a check' "116 a renamed index row does not switch the role-assignment rules off"
+mk i2b; ed i2b data-files.json '(.files[] | select(.id == "role-assignments")).format = "env"'
+ok 'refuses i2b check && grep -qi "could not run" "$T/o"' "117 a file a rule needs that has no JSON row: check says the rule could not run"
+mk i2c; ed i2c data-files.json '.files |= map(select(.id != "connections"))'
+ok 'refuses i2c check && grep -qi "could not run" "$T/o"' "118 the same when the row is missing"
+mk i3a; ed i3a data-files.json '(.files[] | select(.id == "data-files")).owner_only = false'
+ok 'refuses i3a check' "119 the index row of the index must be owner-only"
+mk i4a; cp "$T/fake/.stella/extensions/fake-ext.json" "$T/i4a/.stella/extensions/"; ln -s "$T/i4a" "$T/i4link"
+ok 'STELLA_ROOT=$T/i4link python3 -I "$SD" check >/dev/null 2>&1 && STELLA_ROOT=$T/i4link python3 -I "$SD" list extensions >/dev/null 2>&1' "120 a root reached through a symlink works"
+ok '[ "$(STELLA_ROOT=/ python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; print(s.safe(\"etc/hostname\"))" "$BIN")" = /etc/hostname ]' "121 a root of / works"
+# S schemas and entries
+mk s1a; ed s1a connections.json '(.entries[] | select(.id == "claude-subscription")).tos.zz_extra = "x"'
+ok 'refuses s1a check' "122 tos accepts no unknown key"
+mk s1b; ed s1b connections.json 'del((.entries[] | select(.id == "claude-subscription")).tos.subscription_login_by_agent)'
+ok 'refuses s1b check' "123 tos.subscription_login_by_agent is required"
+mk s1c; ed s1c connections.json 'del((.entries[] | select(.id == "claude-subscription")).allowed_roles)'
+ok 'refuses s1c check' "124 allowed_roles is required on a provider"
+mk s1d; ed s1d connections.json 'del((.entries[] | select(.id == "discord")).risk_class)'
+ok 'refuses s1d check' "125 risk_class is required on a channel"
+ok 'jq -e "[.entries[] | select(.kind == \"channel\") | (.scopes | length > 0) and (.redaction_patterns | length > 0)] | all" "$ROOT/.stella/connections.json" >/dev/null' "126 the shipped channel states its scopes and redaction patterns"
+mk s2a; echo "{\"schema_version\":1,\"hosts\":[$(row '*.com' 443 g o 2026-11-10T00:00:00Z null)]}" >"$T/s2a/.stella/approved-hosts.json"
+ok 'refuses s2a check' "127 a wildcard host with one label after it is refused"
+echo "{\"schema_version\":1,\"hosts\":[$(row '*.example.com' 443 g o 2026-11-10T00:00:00Z null)]}" >"$T/s2a/.stella/approved-hosts.json"
+ok 'sd s2a check' "128 a wildcard host with two labels after it passes"
+echo "{\"schema_version\":1,\"hosts\":[$(row a.example.com 443 g o 2026-13-45T00:00:00Z null)]}" >"$T/s2a/.stella/approved-hosts.json"
+ok 'refuses s2a check' "129 an approved_at that is not a real date is refused"
+echo "{\"schema_version\":1,\"hosts\":[$(row a.example.com 443 g o 2026-11-10T00:00:00Z '"2026-02-30T00:00:00Z"')]}" >"$T/s2a/.stella/approved-hosts.json"
+ok 'refuses s2a check' "130 an expires_at that is not a real date is refused"
+echo "{\"schema_version\":1,\"hosts\":[$(row a.example.com 443 g o 2026-11-10T00:00:00Z '"2026-11-09T00:00:00Z"')]}" >"$T/s2a/.stella/approved-hosts.json"
+ok 'refuses s2a check' "131 an expiry before the approval is refused"
+# S3 a known env row gets its own code and text
+ok 'refuses fake get owner-settings && ! grep -qi "not in Stella.s data files" "$T/o" && grep -q "^STL-CFG-319 " "$T/o"' "132 get on an env row answers with its own catalog code, not the unknown-name text"
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
