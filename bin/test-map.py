@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
 """Test map (product rule 8), stdlib only: the lint over .stella/test-map.json and the selection of test targets.
-CLI: test-map.py check                      lint: exit 1 and one STL-CFG-310 line per problem
-     test-map.py select [--json] <file>...  the selftests a change to these files can affect ("-" reads names from stdin);
-                                            prints "full" (exit 0) when the whole suite must run, else one target per line
-The stack root is the parent of this file's folder, or STELLA_ROOT (a scratch root in tests; `check` then names the root).
+CLI: test-map.py check                           lint: exit 1 and one STL-CFG-310 line per problem
+     test-map.py select [--json] [--] <file>...  the selftests a change to these files can affect ("-" alone reads names
+                                                 from stdin, one per line); prints "full" (exit 0) when the whole suite
+                                                 must run, else one target per line. Only the first argument may be an
+                                                 option; "--" ends the options.
+The stack root is the parent of this file's folder, or STELLA_ROOT (a scratch root in tests). Under STELLA_ROOT every
+`check` line ends with the root (a root too long for that is named once, first), a narrow `select` names it on stderr,
+and `select --json` has a `root` key. A problem longer than the catalog keeps is split into numbered parts, and a long
+list of selftests into whole lines: nothing is cut. git runs with no global, system or XDG config and no personal
+ignore list (only the caller's safe.directory is kept).
 check fails when: the map is unreadable, repeats a key or breaks its schema; a selftest is not a target of any row; a
 target or an always gate has no selftest file; a selftest is missing from the suite list of the runner (or the list
 cannot be read); a suite selftest is not executable, on disk or in the mode git records; a file that looks like a test
-(test_like) is neither a suite selftest nor listed in not_tests; or a selftest can reach a file (see reach) whose
-selection leaves that selftest out.
-select: a file on the full list, or matched by no row, selects the full suite; so does no file name at all. `scan` rows add targets (a selftest that
-reads a whole folder) but do not count as a match. Pass both sides of a rename (`git diff --name-only --no-renames`):
-the new path alone can narrow the selection. A name with white space or a control character selects the full suite."""
+(test_like) is neither a suite selftest nor listed in not_tests; a selftest can reach a file (see reach) whose
+selection leaves that selftest out; or a row with no targets matches more than prose (see prose).
+select: a file on the full list (matched without regard to case), or matched by no row, selects the full suite; so does
+no file name at all. `scan` rows add targets (a selftest that reads a whole folder) but do not count as a match. Pass
+both sides of a rename (`git diff --name-only --no-renames`): the new path alone can narrow the selection. A name with
+white space (at either end too, on stdin as well), a control character or a leading dash selects the full suite."""
 import fnmatch, json, os, re, subprocess, sys, textwrap
 
 BIN = os.path.dirname(os.path.abspath(__file__))
@@ -192,11 +199,11 @@ def select(files, m=None):
     m = m or load()
     targets, reason = set(m["always"]), []
     for f in files:
-        if re.search(r"[\s\x00-\x1f\x7f]", f):   # several names joined into one (a quoted $(git diff), -z output) would match one narrow row
-            reason.append(f"{f!r}: not one plain file name (white space or a control character)")
+        if re.search(r"[\s\x00-\x1f\x7f]", f) or f.startswith("-"):   # several names joined into one (a quoted $(git diff), -z output) would match one narrow row
+            reason.append(f"{f!r}: not one plain file name (white space, a control character or a leading dash)")
             continue
         f = os.path.normpath(f)
-        if matches(f, m["full"]):
+        if matches(f.lower(), [g.lower() for g in m["full"]]):   # a guard is a guard in any case (Guard.js)
             reason.append(f"{f}: a shared contract (full list)")
             continue
         if not any(matches(f, row["globs"]) for row in m["map"] if not row.get("scan")):
@@ -278,10 +285,13 @@ def main(argv):
             print("test map ok" + WHERE)
         return 1 if probs else 0
     if argv[:1] == ["select"]:
-        files = [a for a in argv[1:] if a != "--json"]
+        files, as_json = argv[1:], argv[1:2] == ["--json"]   # only the first argument may be an option
+        files = files[as_json:]
+        files = files[files[:1] == ["--"]:]   # "--" ends the options; every later argument is a name
         try:
             if files == ["-"]:
-                files = [line.strip() for line in sys.stdin if line.strip()]
+                sys.stdin.reconfigure(newline="")   # no CR translation, no strip: white space at either end selects full
+                files = [f for f in sys.stdin.read().split("\n") if f]
             # no file name at all (an empty stdin, no argument) is a failed diff, not "nothing changed": the full suite
             sel = select(files) if files else {"full": True, "reason": ["no file name given"], "targets": sorted(load()["always"])}
         except Exception as e:
@@ -291,7 +301,7 @@ def main(argv):
             sel["root"] = ROOT
             if not sel["full"]:   # a narrow answer from another tree must say so; "full" runs everything whatever the tree
                 print(f"selected from the test map of {esc(ROOT)}, from STELLA_ROOT", file=sys.stderr)
-        print(json.dumps(sel) if "--json" in argv else "full" if sel["full"] else "\n".join(sel["targets"]))
+        print(json.dumps(sel) if as_json else "full" if sel["full"] else "\n".join(sel["targets"]))
         return 0
     print(__doc__, file=sys.stderr)
     return 2
