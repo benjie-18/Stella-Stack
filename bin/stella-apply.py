@@ -23,7 +23,7 @@ file the index names: a symbolic link or a path that resolves elsewhere is refus
 Owner-only rows (index owner_only) are refused (312) for a worker: a worker marker variable is set (the names are the role
 table's `worker_markers`; missing or empty = refuse), or `roles.py prove` says this process is a worker or cannot tell.
 That gate is a second line only: a caller can clear its markers, shadow the board tool on PATH or detach from its parent. The
-boundary is the hooks of every role refusing to run this tool at all (item W4); see docs/contract/README.md.
+boundary is the hooks of every role refusing to run this tool at all (item W4); see the contract docs.
 Values under redact_keys / non-plain settings never appear in a diff, event, or message (***)."""
 import argparse, contextlib, datetime, difflib, hashlib, json, os, pwd, re, shutil, subprocess, sys, tempfile
 BIN = os.path.dirname(os.path.abspath(__file__))
