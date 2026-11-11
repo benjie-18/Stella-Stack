@@ -70,6 +70,63 @@ def words(text):
     return {w.strip(".") for w in re.findall(r"[\w.-]+", text)}
 
 
+def content(f):
+    try:
+        with open(os.path.join(ROOT, f), encoding="utf-8") as fh:
+            return fh.read()
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def uncommented(text):
+    return re.sub(r"(?m)^[ \t]*#(?!!).*$", "", text)
+
+
+# shortcut: a glob is taken to match every path when it matches these unlikely names; upgrade if a real glob needs them
+PROBES = ("zq9", ".zq9", "zq9/.zq9/zq9.zq9")
+
+
+def prose(m, files):
+    """A row with no targets may match only prose, since a change to its files runs no selftest: refuse a row whose glob
+    matches every path, or that matches code (follow, #!), an executable, a test-like file, or a file that a code or data
+    file (the `data` globs; every file when the map has none) names, by the name search reach uses. One problem per row."""
+    rows = [(i, r["globs"]) for i, r in enumerate(m["map"], 1) if not r["targets"] and not r.get("scan")]
+    if not rows:
+        return []
+    by_base, named = {}, {}
+    for f in files:
+        by_base.setdefault(os.path.basename(f), set()).add(f)
+    for g in sorted(files):
+        text = content(g)
+        if g != MAP and (text.startswith("#!") or matches(g, m["follow"]) or matches(g, m.get("data", ["*"]))):
+            for w in words(uncommented(text)) & by_base.keys():
+                for f in by_base[w] - {g}:
+                    named.setdefault(f, g)
+
+    def why(f):
+        if matches(f, m["follow"]):
+            return "code (a follow pattern)"
+        if os.access(os.path.join(ROOT, f), os.X_OK) or files[f] == "100755":
+            return "an executable file"
+        if content(f).startswith("#!"):
+            return "a script (#!)"
+        if matches(f.lower(), m["test_like"]):
+            return "a test-like file"
+        return f in named and f"named by {named[f]}"
+
+    probs = []
+    for i, globs in rows:
+        row = f"map row {i} ({', '.join(globs)}) has no targets"
+        wide = [g for g in globs if all(fnmatch.fnmatchcase(p, g) for p in PROBES)]
+        if wide:
+            probs.append(f"{row} and its glob {wide[0]} matches every path")
+            continue
+        bad = next(((f, w) for f in sorted(files) if matches(f, globs) for w in [why(f)] if w), None)
+        if bad:
+            probs.append(f"{row}, so it may match only prose, but it matches {bad[0]}: {bad[1]}")
+    return probs
+
+
 def reach(m, files, tests):
     """{selftest: the files it can reach}: its own file, every file it names (by base name, or a Python module by its
     import), and on through each named file that is code (starts with #! or matches a follow glob). Whole-line #
@@ -83,14 +140,10 @@ def reach(m, files, tests):
 
     def names(f):
         if f not in named:
-            try:
-                with open(os.path.join(ROOT, f), encoding="utf-8") as fh:
-                    text = fh.read()
-            except (OSError, UnicodeDecodeError):
-                text = ""
+            text = content(f)
             named[f] = set()
             if text.startswith("#!") or matches(f, m["follow"]):
-                text = re.sub(r"(?m)^[ \t]*#(?!!).*$", "", text)
+                text = uncommented(text)
                 seen = words(text)
                 imports = words(" ".join(re.findall(r"\b(?:import|from)\s+([\w., ]+)", text)))
                 for index, hits in ((by_base, seen), (mods, imports)):
@@ -167,7 +220,7 @@ def check():
         missing = [] if sel["full"] else sorted(t for t in tests if f in reached[t] and t not in sel["targets"])
         if missing:
             probs.append(f"{f}: its map rows leave out {', '.join(missing)}, which can reach it")
-    return probs
+    return probs + prose(m, files)
 
 
 def fail(problem, out=sys.stdout):

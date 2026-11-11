@@ -32,6 +32,10 @@
       "description": "Globs of code files; a file that starts with #! is code too. A selftest reaches the files its code names.",
       "$ref": "#/$defs/globs"
     },
+    "data": {
+      "description": "Globs of files read as data (JSON, YAML, text lists). A file that a code or data file names may not sit in a row with no targets. Without this list every file counts.",
+      "$ref": "#/$defs/globs"
+    },
     "always": {
       "description": "Fast gates: targets of every selection.",
       "$ref": "#/$defs/targets"
