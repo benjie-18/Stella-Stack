@@ -39,7 +39,7 @@ MAX_TOKENS = 2**53 - 1   # the largest integer every JSON reader (a double) hold
 SCHEMA_VERSION = 1
 # The keys each object of the table may carry: the one list validate() refuses everything else by, and the schema's property
 # lists must equal (roles-selftest checks it). A key a reader starts to use is added here and in the schema in the same change.
-ROLE_KEYS = set(PERMS) | {"workspace", "allowed_overrides", "requirements", "background_review", "complete_metadata",   # complete_needs_review: bin/complete-gate.py
+ROLE_KEYS = set(PERMS) | {"workspace", "allowed_overrides", "requirements", "background_review", "complete_metadata",
                           "complete_needs_review", "workers", "skills_disabled", "platform_toolsets", "config", "git_identity", "hooks"}
 PROFILE_KEYS = {"role", "worker", "dir", "soul", "display_name", "approval_evidence", "review_callers", "capability_fallback"}
 TOP_KEYS = {"_comment", "schema_version", "fallback_role", "protected", "owner_settings", "owner_data", "owner_commands", "data_index",
