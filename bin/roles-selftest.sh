@@ -193,7 +193,7 @@ big 9007199254740992; ok '[ "$(chk)" = 1 ] && grep -q min_context_tokens "$T/out
 python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1])); d["roles"][sys.argv[2]]["requirements"]["min_context_tokens"] = 10**39; json.dump(d, open(sys.argv[3], "w"))' "$RF" "$R1" "$T/b.json"
 ok '[ "$(chk)" = 1 ] && grep -q min_context_tokens "$T/out"' "W2-RT-07: min_context_tokens 10^39 fails"
 # W2-RT-04 / W2-RT-08: the fallback opens nothing in every field
-bad ".roles[\"$FB\"].requirements.allowed_data_classes += [\"zz-extra\"]" 'allowed_data_classes' "the fallback allows a data class another role lacks"
+bad ".roles[\"$FB\"].requirements.allowed_data_classes += [\"zz-extra\"]" 'zz-extra' "the fallback allows a data class another role lacks"
 bad ".roles[\"$FB\"].hooks = []" 'hook' "the fallback with no hooks"
 bad ".roles[\"qa-new\"] = (.roles[\"$FB\"] | .hooks = [])" 'qa-new' "a role no profile names, with fewer hooks than the fallback"
 bad ".roles[\"qa-new\"] = (.roles[\"$FB\"] | .hooks = [.hooks[0] | .matcher = \"x\"])" 'qa-new' "a role no profile names, without the fallback's hooks (other matcher)"
