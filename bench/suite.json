@@ -1,0 +1,7 @@
+{"schema_version":1,
+ "about":"R1.4 benchmark suite. Target 30-50 tasks; this is the first slice. Each task: repo/ (start state, red), solution/ (reference overlay, green), task.json (check, protected test files, subset flag). bin/bench.sh check proves red-then-green; bin/bench.sh run measures a card.",
+ "missing":[
+  {"category":"interrupted session","why":"needs a harness that kills a worker mid-task and resumes it; not built"},
+  {"category":"escalation-required","why":"needs a task the local model must hand to Claude; every run spends Pro pool, so it is run on request, not in the default subset"},
+  {"category":"discovery task","why":"needs the discovery-first rule scored by a reviewer, not a command; not built"},
+  {"category":"bulk","why":"30-50 tasks wanted, 5 written"}]}

@@ -14,7 +14,7 @@ import json, re, shlex, sys
 # unknown variable, $(…), an encoder).
 import codecs, fnmatch, glob, os, pwd, re, shlex
 SECRETS = (".env*", "*.pem", "*.key", "~/.hermes/.env", "~/.hermes/auth.json", "~/.claude/.credentials*",
-           "~/.local/share/opencode/auth.json", "~/.ssh", "~/.aws", "~/.config/gh")
+           "~/.local/share/opencode/auth.json", "~/.hermes/broker", "~/.ssh", "~/.aws", "~/.config/gh")
 SECRET_OK = (".env.example", ".env.sample", ".env.template")
 HOMES = sorted({pwd.getpwuid(os.getuid()).pw_dir, os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir})
 try:   # K6: the owner settings files (roles.json owner_settings) are read by no agent role; an unreadable table refuses all
@@ -24,8 +24,9 @@ try:   # K6: the owner settings files (roles.json owner_settings) are read by no
 except Exception:
     OWNER_FILES = None
 SECRET_DIRS = [f"{h}/{d}" for h in HOMES for d in (".hermes", ".claude", ".local/share/opencode", ".ssh", ".aws", ".config/gh")]
+SECRET_DIRS.append("/proc")   # a recursive search of /proc reads every process's environment
 SECRET_TEXT = re.compile(r"(?<![\w.-])\.env(?!\.(?:example|sample|template)\b)|\.claude/\.credentials|\.hermes/auth\.json|"
-                         r"opencode/auth\.json|(?<![\w.-])\.(?:ssh|aws)\b|\.config/gh\b")
+                         r"opencode/auth\.json|\.hermes/broker\b|(?:(?<![\w.~-])|(?<=-[A-Za-z]))/proc/(?:self|thread-self|\d|[*?\[$])|(?<![\w.-])\.(?:ssh|aws)\b|\.config/gh\b")
 RECURSIVE = {"rg", "ag", "ack", "rgrep", "find", "tar", "zip", "cp", "rsync", "scp", "diff"}   # diff: two folders compare every file (B2V-14)
 GIT_READERS = {"diff", "grep", "difftool"}   # B2V-14: a path outside the repo turns them into plain file readers
 WRAPPERS = {"sudo", "env", "nohup", "time", "command", "exec", "builtin", "timeout", "nice", "ionice", "stdbuf", "setsid",
@@ -41,6 +42,9 @@ def _owner_dir(p):
     return any(_within(os.path.realpath(p).casefold(), os.path.dirname(f)) for f in OWNER_FILES or ())
 
 def secret_path(p):
+    n = os.path.normpath(p)
+    if re.match(r"/proc/(?:self|thread-self|\d+)(?:/|$)", n):   # another process's environment, memory, fds: a review token lives there while a review runs
+        return True
     if OWNER_FILES is None or os.path.realpath(p).casefold() in OWNER_FILES:
         return True
     b = os.path.basename(p).casefold()   # B2V-01: .ENV is .env on a case-insensitive mount
@@ -73,8 +77,11 @@ def path_why(word, cwd, names=None, recursive=False):
     if len(words) > 64:
         return f"{word[:60]}… expands to more than 64 words, too many to check"
     for w in words:
+        if w in ("/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/fd/0", "/dev/fd/1", "/dev/fd/2"):
+            continue   # the standard streams as written (they resolve to this process's own pipes); a link that resolves to one is not exempt
         p = _where(w, cwd, names or {})
-        for x in [p] + (glob.glob(p) if glob.has_magic(p) else []):
+        raw = os.path.realpath(os.path.join(cwd or "/", os.path.expanduser(w)))   # without normpath first: the kernel follows a link before it applies ..
+        for x in [p, raw] + (glob.glob(p) if glob.has_magic(p) else []):
             for q in {x, os.path.realpath(x)}:
                 if OWNER_FILES and os.path.realpath(q).casefold() in OWNER_FILES:
                     return f"{word} is an owner settings file ({q})"   # B2V-16
@@ -195,13 +202,35 @@ def secret_why(cmd, cwd):
     return None
 # --- end secret paths
 
-READ = {"ls", "cat", "head", "tail", "grep", "wc", "jq", "echo", "pwd", "cd", "/workspace/bin/escalations-status.sh",
+READ = {"ls", "cat", "head", "tail", "grep", "wc", "jq", "echo", "pwd", "/workspace/bin/escalations-status.sh",
         "/workspace/bin/alert-explain.sh"}   # D44: prints one alert catalog entry, nothing else
 GIT_READ = {"status", "log", "show", "diff", "rev-parse"}
 SEP = {"&&", "||", ";", "|"}
 ALLOWED = ("hermes kanban list|show, /workspace/bin/escalations-status.sh, /workspace/bin/alert-explain.sh <code>, "
            "git status|log|show|diff|rev-parse, "
-           "ls, cat, head, tail, grep, wc, jq, echo, pwd, cd")
+           "ls, cat, head, tail, grep, wc, jq, echo, pwd (no cd: use absolute paths or git -C)")
+
+
+def _git_dir_why(here):
+    """Why git must not run in `here`: inside a card worktree (a sibling folder of the sandbox table) or inside any .git folder, where a builder's repo config
+    (a clean filter, fsmonitor, diff.external, gpg.program) would run code as this user (final red-team S6N-02). Compared case-insensitively (9p). An unreadable table refuses."""
+    try:
+        siblings = {x.casefold() for x in _roles.sandbox(_roles.load())["sibling_dirs"]}
+    except Exception:
+        return "the sandbox table cannot be read, so git is not run in a card folder"
+    rp = os.path.realpath(here)
+    a = rp
+    while a and a != "/":   # a linked worktree has a .git FILE: found by looking, so a short (8.3) or odd spelling of the path does not matter
+        if os.path.isfile(os.path.join(a, ".git")):
+            return f"git is not run inside a linked worktree ({here}): a builder's repo config could run code there"
+        a = os.path.dirname(a)
+    parts = [x.casefold() for x in rp.split("/") if x]
+    parts += [x.casefold() for x in os.path.normpath(here).split("/") if x]
+    if any(x in siblings for x in parts):
+        return f"git is not run inside a card worktree ({here}): a builder's repo config could run code there"
+    if ".git" in parts:
+        return f"git is not run inside a .git folder ({here})"
+    return None
 
 
 def why_not(cmd, cwd):
@@ -230,9 +259,12 @@ def why_not(cmd, cwd):
             cur.append(t)
         i += 1
     segs.append(cur)
+    here = cwd
     for s in segs:
         if not s:
             return "empty command in a chain"
+        if s[0] == "cd":   # the session keeps the folder of a cd for the NEXT call while the hook judges relative paths against its own process folder (red-team F5RT-01)
+            return "cd is not allowed: the next call would inherit the folder; use absolute paths or git -C"
         if s[0] == "hermes":
             if s[1:2] != ["kanban"] or s[2:3] not in (["list"], ["ls"], ["show"]):
                 return "hermes: only kanban list|show"
@@ -246,6 +278,18 @@ def why_not(cmd, cwd):
                 return f"git {s[j] if j < len(s) else ''}".strip()
             if any(a.startswith(("--output", "--ext-diff")) for a in s[j + 1:]):
                 return "git --output/--ext-diff"
+            gdir, k = here, 1
+            while k < j:   # every -C, in order: each one is relative to the one before
+                if s[k] == "-C":
+                    if re.search(r"[*?\[{$]|~[^/]", s[k + 1]):
+                        return "git -C a folder written as a pattern, a variable or a ~ form"
+                    gdir = os.path.normpath(os.path.join(gdir, os.path.expanduser(s[k + 1])))
+                    k += 2
+                else:
+                    k += 1
+            bad = _git_dir_why(gdir)
+            if bad:
+                return bad
         elif s[0] not in READ:
             return f"{s[0]} is not allowed"
     return None

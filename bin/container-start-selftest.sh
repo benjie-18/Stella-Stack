@@ -8,7 +8,7 @@ set -u
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/ws/bin" "$T/bin" "$T/home/.hermes/skills/writing/anti-ai-slop-writing" "$T/sup/state"
 echo "skill" > "$T/home/.hermes/skills/writing/anti-ai-slop-writing/SKILL.md"
-sed "s#/workspace/bin/apply-hermes-local.sh#$T/bin/apply-hermes-local.sh#g" "${CS_SRC:-/workspace/bin/container-start.sh}" > "$T/ws/bin/cs.sh"
+sed -e "s#/workspace/bin/apply-hermes-local.sh#$T/bin/apply-hermes-local.sh#g" -e "s#/workspace/bin/omniroute-ctl.sh#$T/bin/omniroute-ctl.sh#g" -e "s#/workspace/docs/hermes-local/fallback-routing.json#$T/fb.json#g" "${CS_SRC:-/workspace/bin/container-start.sh}" > "$T/ws/bin/cs.sh"
 REAL_JQ=$(command -v jq)
 cat > "$T/bin/jq" <<S
 #!/usr/bin/env bash
@@ -18,6 +18,7 @@ S
 printf '#!/usr/bin/env bash\n[ -z "${FAKE_CRONTAB_FAIL:-}" ]\n' > "$T/bin/crontab"
 printf '#!/usr/bin/env bash\necho ran > %s/apply.ran\n[ -z "${FAKE_APPLY_FAIL:-}" ] || exit 3\n' "$T" > "$T/bin/apply-hermes-local.sh"
 printf '#!/usr/bin/env bash\n[ "$1" = send ] && printf "%%s\\n" "$*" >> %s/sends\nexit 0\n' "$T" > "$T/bin/hermes"
+printf '#!/usr/bin/env bash\necho "$*" >> %s/gateway.started\n[ -z "${FAKE_GW_FAIL:-}" ]\n' "$T" > "$T/bin/omniroute-ctl.sh"
 chmod +x "$T/bin/"*
 fails=0
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
@@ -42,6 +43,18 @@ run FAKE_CRONTAB_FAIL=1
 ok '[ "$rc" != 0 ] && grep -q "crontab" "$T/err" && [ -f "$T/apply.ran" ]' "S7: crontab fails: logged, the later steps run (exit $rc)"
 run FAKE_APPLY_FAIL=1; run FAKE_APPLY_FAIL=1
 ok '[ "$rc" != 0 ] && grep -q "apply-hermes-local.sh failed (exit 3)" "$T/err" && [ "$(grep -c "guards may not be registered" "$T/sends" 2>/dev/null)" = 1 ]' "apply fails: logged, one #alerts line naming the guards across two runs (rate-limited), exit $rc"
+
+# D93: the fallback gateway starts at container start when the fallback is enabled (best effort, in the background, never fatal)
+gw() { rm -f "$T/gateway.started"; run "$@"; for _ in 1 2 3 4 5 6 7 8 9 10; do [ -e "$T/gateway.started" ] && break; sleep 0.3; done; }
+echo '{"schema_version":1,"enabled":true}' > "$T/fb.json"; gw
+ok '[ "$rc" = 0 ] && [ "$(cat "$T/gateway.started" 2>/dev/null)" = start ]' "D93: fallback enabled: the gateway is started (omniroute-ctl.sh start), the other steps are unaffected (exit $rc)"
+echo '{"schema_version":1,"enabled":false}' > "$T/fb.json"; gw; sleep 1
+ok '[ "$rc" = 0 ] && [ ! -e "$T/gateway.started" ]' "D93: fallback disabled: the gateway is not started"
+rm -f "$T/fb.json"; gw; sleep 1
+ok '[ "$rc" = 0 ] && [ ! -e "$T/gateway.started" ] && ! grep -v setlocale "$T/err" | grep -q .' "D93: no fallback config: nothing started, no error"
+echo '{"schema_version":1,"enabled":true}' > "$T/fb.json"; gw FAKE_GW_FAIL=1
+ok '[ "$rc" = 0 ] && [ -f "$T/apply.ran" ]' "D93: a gateway that fails to start does not fail container start or skip the apply step (exit $rc)"
+run FAKE_JQ_FAIL=1; ok '[ "$rc" != 0 ] && [ -f "$T/apply.ran" ]' "D93: with jq failing the later steps still run"
 
 # postStartCommand: the gateway session starts unless the firewall failed.
 PS=$(jq -r .postStartCommand /workspace/.devcontainer/devcontainer.json)

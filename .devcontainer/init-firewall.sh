@@ -123,6 +123,8 @@ add_github_ranges github-ssh '.git[]'
 #   api.osv.dev        - `hermes security audit` and SkillSpector OSV lookups (failed: "[Errno 113] No route to host")
 #   discord.com        - Discord REST, discord.py Route.BASE https://discord.com/api (failed: connect to discord.com:443)
 #   gateway.discord.gg - Discord websocket, discord.py DEFAULT_GATEWAY wss://gateway.discord.gg/
+# Stage 6 closeout (T14/T15): the OmniRoute gateway's one connected key-based provider, the owner's choice in its dashboard:
+#   openrouter.ai      - OmniRoute -> OpenRouter API (live: `curl https://openrouter.ai` fails with no route to host)
 for domain in \
     "registry.npmjs.org" \
     "api.anthropic.com" \
@@ -137,7 +139,8 @@ for domain in \
     "hermes-agent.nousresearch.com" \
     "api.osv.dev" \
     "discord.com" \
-    "gateway.discord.gg"; do
+    "gateway.discord.gg" \
+    "openrouter.ai"; do
     echo "Resolving $domain..."
     ips=$(/usr/bin/dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}' | sort -u)
     if [ -z "$ips" ]; then

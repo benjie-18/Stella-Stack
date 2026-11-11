@@ -129,8 +129,10 @@ for v in '"zz-no-such-profile"' "\"$FBP\"" "\"$OTHER\"" 1 '["builder-claude"]' '
 done
 # SOUL value {{REVIEWERS}}: the reviewing profiles, back-quoted, from the table; none listed says so (no placeholder left).
 sv() { PROJECTS_DB="$H/projects.db" ROLES_FILE=$1 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import roles; print(roles.soul_values(roles.load(), sys.argv[2])["REVIEWERS"])' "$S" "$2" 2>&1; }
-want=$(jq -r 'map("`" + . + "`") | join(", ")' <<<"$exp"); want2=$(jq -r 'map("`" + . + "`") | join(", ")' <<<"$exp2")
 BP=$(jq -r '.profiles | keys[]' "$RF" | head -1)
+# D101: a profile's SOUL lists the reviewers its role may name (review_callers; absent = anyone), so filter the table's reviewers by BP's role
+cw() { jq -c --arg r "$(jq -r --arg p "$BP" '.profiles[$p].role' "$RF")" --slurpfile d "$RF" '[.[] | select((($d[0].profiles[.] // {}).review_callers // null) as $c | ($c == null) or ($c | index($r) != null))]'; }
+want=$(jq -r 'map("`" + . + "`") | join(", ")' <<<"$(cw <<<"$exp")"); want2=$(jq -r 'map("`" + . + "`") | join(", ")' <<<"$(cw <<<"$exp2")")
 ok '[ "$(sv "$RF" "$BP")" = "$want" ]' "K8: {{REVIEWERS}} renders the reviewing profiles from the table ($want)"
 ok '[ "$(sv "$T/rv.json" "$BP")" = "$want2" ]' "K8: {{REVIEWERS}} follows the table when another role may review"
 ok '[ "$(sv "$T/rv0.json" "$BP")" = "(no reviewing profile listed)" ]' "K8: {{REVIEWERS}} with no reviewing role: '(no reviewing profile listed)', never empty"

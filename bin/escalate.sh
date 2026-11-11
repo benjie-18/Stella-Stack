@@ -7,7 +7,9 @@
 # call is recorded in state/queue.jsonl with its prompt file, and raises one #alerts line; the caller still gets 3 or 75.
 # Nothing retries it: bin/escalate-drain.sh (manual) replays it. Beyond QUEUE_MAX queued entries the call is refused
 # unqueued (one #alerts line an hour). ESCALATE_REPLAY=<id> (set by the drain) never queues or alerts again.
-# Test hook (Stage 6 T15): ESCALATE_FORCE_POOL_EXHAUSTED=1 skips claude and takes the fallback path.
+# Test hook (Stage 6 T15): ESCALATE_FORCE_POOL_EXHAUSTED=1 skips claude and takes the fallback path. The fallback config
+# (FALLBACK_CONFIG, default docs/hermes-local/fallback-routing.json) says whether a low-risk call is served by a fallback runner
+# when the pool is exhausted and which models it tries; disabled or missing = NO_REROUTE and queue.
 jq() { env -u HOME jq "$@"; }  # RT-RTA-02: ~/.jq is worker-writable and jq has no flag to skip it
 set -uo pipefail
 # cron/hook callers start with a minimal PATH; append so test stubs earlier in PATH still win.
@@ -15,6 +17,7 @@ export PATH="$PATH:/home/node/.local/bin:/home/node/.hermes/hermes-agent/.hermes
 export LC_ALL=C.UTF-8   # F19: the inherited en_US.UTF-8 is not installed, so bash falls back to C and ${s:0:N} cuts bytes
 
 SUP="${ESCALATE_SUP_DIR:-/workspace/.supervisor}"
+FALLBACK_CONFIG="${FALLBACK_CONFIG:-/workspace/docs/hermes-local/fallback-routing.json}"
 LOG="$SUP/escalations.log"
 STATE="$SUP/state"
 mkdir -p "$STATE"
@@ -126,13 +129,43 @@ for p in "${POOL_PATTERNS[@]}"; do
   [[ "$out$err" == *"$p"* ]] || continue
   alert_rc=none
   log POOL_EXHAUSTED "$rc" none true null "matched '$p'"
+  # High risk fails closed: the word "high" within 40 characters of "risk", in either order and any spelling, counts (zero-width
+  # characters removed, other unicode spaces made spaces), and so does a card whose JSON cannot be read. A false alarm only queues.
+  jq -e '(.task.body // "") | gsub("[\u00ad\u180e\u200b-\u200f\u2060-\u2064\ufeff]"; "") | gsub("[\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]"; " ") | test("risk.{0,40}high|high.{0,40}risk"; "is")' <<<"$card_json" >/dev/null 2>&1; jrc=$?
+  case $jrc in 1) high="" ;; *) high=1 ;; esac   # 0 match = high, 1 no match = low, anything else (unreadable card) = high
+  # T15: a low-risk call is served by the fallback runner (bin/omniroute-run.sh via the OmniRoute gateway) when the fallback config
+  # (docs/hermes-local/fallback-routing.json) is enabled; the runner gets the call's purpose as its role. High-risk calls queue, never reroute; a replay stays a queued Claude call. The result is labelled
+  # fallback with the model that served it and carries none of Claude's fields; a runner that names Claude or the
+  # requested model family is refused, so a fallback cannot pass for a Claude result.
+  FALLBACK_RUNNER=""
+  if [ -z "$high" ] && [ -z "${ESCALATE_REPLAY:-}" ] && jq -e '.enabled == true' "$FALLBACK_CONFIG" >/dev/null 2>&1; then
+    FALLBACK_RUNNER=$(jq -r '.runner // empty' "$FALLBACK_CONFIG"); [[ "$FALLBACK_RUNNER" == /* ]] || FALLBACK_RUNNER=/workspace/$FALLBACK_RUNNER
+  fi
+  skip_reason=""   # S6D-05: a prompt that looks like it holds a secret never leaves the machine (patterns are config data; the match is never logged)
+  if [ -x "$FALLBACK_RUNNER" ]; then
+    pi=0; while IFS= read -r pat; do pi=$((pi+1)); grep -Eq -- "$pat" "$prompt" 2>/dev/null && { skip_reason="the prompt matches blocked pattern #$pi (prompt_block_patterns)"; break; }; done < <(jq -r '.prompt_block_patterns[]? | strings' "$FALLBACK_CONFIG")
+    [ -z "$skip_reason" ] || { log FALLBACK_SKIPPED null none true null "$skip_reason; queued instead"; FALLBACK_RUNNER=""; }
+  fi
+  if [ -x "$FALLBACK_RUNNER" ]; then
+    fb=$(timeout "$CALL_TIMEOUT" "$FALLBACK_RUNNER" --role "$purpose" <"$prompt" 2>/dev/null); frc=$?
+    served=""; jq -s -e 'length == 1 and (.[0] | type == "object" and (.model_used | type == "string") and (.text | type == "string"))' <<<"$fb" >/dev/null 2>&1 \
+      && served=$(jq -r '.model_used' <<<"$fb"); sl=${served,,}
+    if [ "$frc" = 0 ] && [[ "$served" =~ ^[A-Za-z0-9._:/+@-]{1,128}$ ]] && [[ "$sl" != *claude* && "$sl" != *"$model"* ]]; then
+      log FALLBACK 0 "$served" true null "rerouted after POOL_EXHAUSTED (matched '$p')"
+      hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-LIM-404 card="$card" model="${model^}" served="$served" since="$(date -u +%FT%TZ)")" >/dev/null 2>&1; alert_rc=$?
+      note "escalate.sh FALLBACK: $model ($purpose) for '$reason' was answered by a fallback model, not Claude. model_used: $served, fallback: true. Alert to $ALERT_TARGET exit $alert_rc."
+      rm -f "$prompt"
+      jq -c --arg m "$served" '{type: "result", is_error: false, fallback: true, model_used: $m, text: (.text // "")}' <<<"$fb"
+      exit 0
+    fi
+    log FALLBACK_FAILED "$frc" "${served:-none}" true null "runner rc $frc, model '${served:-}': not usable; queued instead"
+  fi
   queue POOL_EXHAUSTED "pool exhausted at $(date -u +%FT%TZ) (matched '$p')"   # the one #alerts line for this call
-  # shortcut: no low-risk reroute, OmniRoute is deferred (T14); add it here when OmniRoute is installed.
-  if jq -e '.task.body // "" | test("(?im)^risk: *high")' <<<"$card_json" >/dev/null; then
+  if [ -n "$high" ]; then
     disposition="high-risk card; $qnote"
   else
-    log NO_REROUTE "$rc" none true null "low-risk card; OmniRoute reroute deferred; $qnote"
-    disposition="low-risk card, OmniRoute reroute deferred (NO_REROUTE); $qnote"
+    log NO_REROUTE "$rc" none true null "low-risk card; no usable fallback runner; $qnote"
+    disposition="low-risk card, no usable fallback runner (NO_REROUTE); $qnote"
   fi
   note "escalate.sh POOL_EXHAUSTED: $model ($purpose) for '$reason'. No result. model_used: none, fallback: true. $disposition. Alert to $ALERT_TARGET exit $alert_rc."
   echo "escalate.sh: POOL_EXHAUSTED ($p); $disposition" >&2

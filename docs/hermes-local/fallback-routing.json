@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "_about": "The one place that says how a low-risk Claude call is served when the Claude pool is exhausted (T14/T15). Read by bin/escalate.sh and bin/omniroute-run.sh; check it with `bin/omniroute-run.sh --check`. Changing a provider, model, fallback order or list is an edit of this file plus `bin/omniroute-run-selftest.sh`; no code names a model or provider. Model names are whatever the gateway accepts (its provider picker); the model below was chosen from a live probe (see _chosen_by): use whatever the gateway's /v1/models lists for the provider you picked. Turning `enabled` on needs a non-empty providers.allow (the runner refuses otherwise); the gateway's install folder (install_dir) is how the runner knows the process on its port is the real one. prompt_block_patterns: a prompt that matches any of these extended regexes is never sent to the gateway (it is queued instead); the match is never logged.",
+  "enabled": true,
+  "runner": "bin/omniroute-run.sh",
+  "gateway": {
+    "base_url": "http://127.0.0.1:20128",
+    "key_file": "/home/node/.hermes/omniroute/endpoint-key",
+    "timeout_s": 120,
+    "install_dir": "/home/node/.hermes/omniroute"
+  },
+  "evidence_log": ".supervisor/omniroute-calls.jsonl",
+  "providers": {
+    "allow": [
+      "openrouter"
+    ],
+    "avoid": []
+  },
+  "roles": {
+    "default": {
+      "chain": [
+        {
+          "model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
+        }
+      ]
+    }
+  },
+  "_chosen_by": "Live probe 2026-11-10 (copied into PLAN.md): of three free models probed, the first answered 200 in 1245 ms (cost recorded 0 on its later calls), the second 200 in 5495 ms (cost not recorded by the first runner version), the third 403 after 21.7 s; \"auto\" returned 402 on this $0-credit account. The choice is data in this file; change it here and re-probe.",
+  "prompt_block_patterns": [
+    "sk-[A-Za-z0-9_-]{20,}",
+    "gh[pousr]_[A-Za-z0-9]{30,}",
+    "github_pat_[A-Za-z0-9_]{20,}",
+    "xox[abpr]-[A-Za-z0-9-]{10,}",
+    "AKIA[0-9A-Z]{16}",
+    "-----BEGIN [A-Z ]*PRIVATE KEY-----",
+    "[Bb]earer [A-Za-z0-9._~+/=-]{20,}"
+  ]
+}

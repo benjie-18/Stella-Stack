@@ -9,7 +9,7 @@
      `Check: none: <reason>` (a decision card) still completes. A missing or doubled Check line is check-guard's refusal, not this one.
 Neither rule widens anything: this hook only adds refusals, the other guards on the tool still run.
 Payload on stdin: {tool_name, tool_input: {task_id, metadata, ...}, session_id, cwd, profile}. Any error refuses."""
-import json, os, re, sys
+import json, os, re, sqlite3, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import roles
 
@@ -38,6 +38,64 @@ def check_line(body):
     return ("none", n[1].strip()) if n else ("cmd", v) if v else None
 
 
+def approval_evidence(profile, session_id, ev):
+    """None when the profile's own session (read-only from its state.db) holds a call of ev["tool"] whose command matches ev["command"]
+    and whose result exited ev.get("exit_code", 0) with output matching ev["output"]; else the refusal text. Any error refuses."""
+    need = (f"approving needs this run's own evidence: a {ev['tool']} call matching /{ev['command']}/ whose answer matches /{ev['output']}/. "
+            + str(ev.get("hint") or ""))
+    if not isinstance(session_id, str) or not session_id:
+        return f"{need}. No session id came with this call"
+    row = (roles.load()["profiles"].get(profile) or {})
+    root = os.environ.get("HERMES_ROOT") or os.path.join(roles.homes()[0], ".hermes")
+    db = os.path.join(roles.pdir(root, profile, row), "state.db")
+    try:
+        c = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+        # A context compression mid-run can give the run a new session id whose parent_session_id is the old one (Hermes marks that parent's
+        # end_reason "compression"; on this stack compression.in_place is true, so it usually does not). The run is the chain, child to parents
+        # (never parent to children), bounded and cycle-safe, any other kind of parent link is not followed.
+        chain = [session_id]
+        while len(chain) < ev["chain_max"]:
+            r = c.execute("select s.parent_session_id from sessions s join sessions p on p.id = s.parent_session_id "
+                          "where s.id = ? and p.end_reason = 'compression'", (chain[-1],)).fetchone()
+            if not r or not r[0] or r[0] in chain:
+                break
+            chain.append(r[0])
+        verdict, refused = None, False   # an answered non-APPROVE is final for the run (S6L-RT-08: asking again is a re-roll); a call and its result must sit in the same session, the result after the call
+        for sid in reversed(chain):
+            calls = {}
+            for role, content, tc, tcid in c.execute("select role, content, tool_calls, tool_call_id from messages where session_id = ? order by id", (sid,)):
+                if role == "assistant" and tc:
+                    calls.clear()   # a call is answered before the model's next turn: an unanswered one never pairs with a later result (S6M-RA-04)
+                    for call in json.loads(tc):
+                        f = call.get("function") or {}
+                        if f.get("name") != ev["tool"]:
+                            continue
+                        try:
+                            args = json.loads(f.get("arguments") or "{}")
+                        except ValueError:
+                            continue   # a malformed call never ran: it is not evidence and not an error (S6M-RA-03)
+                        cmd = args.get("command") if isinstance(args, dict) else None
+                        if isinstance(cmd, str) and re.search(ev["command"], cmd):
+                            calls[call.get("call_id") or call.get("id")] = cmd
+                elif role == "tool" and tcid in calls:
+                    del calls[tcid]
+                    try:
+                        r = json.JSONDecoder().raw_decode(content)[0]   # Hermes may append hints after the stored JSON (S6M-RA-02)
+                    except ValueError:
+                        verdict = False
+                        continue
+                    if isinstance(r, dict) and r.get("session_id"):
+                        continue   # a background-start result is not the call's answer (S6M-RA-01)
+                    answered = bool(isinstance(r, dict) and r.get("exit_code") == ev.get("exit_code", 0) and not r.get("error") and isinstance(r.get("output"), str))
+                    verdict = answered and bool(re.search(ev["output"], r["output"]))
+                    refused = refused or (answered and not verdict)
+        if verdict and not refused:
+            return None
+    except Exception as e:
+        return f"{need}. The session store could not be read ({type(e).__name__})"
+    return need + ". None was found in this session"
+
+
 def main():
     p = json.load(sys.stdin)
     if p.get("tool_name") != "kanban_complete":
@@ -59,6 +117,11 @@ def main():
             refuse("completing a card is your verdict that the work is accepted, and the stack reads that verdict from the metadata. "
                    f"Call kanban_complete again with metadata exactly {json.dumps(need)} (your findings go in the summary). If the work "
                    "is not good enough, do not complete it: call kanban_request_changes with what must change")
+    ev = ((d["profiles"].get(profile) if isinstance(profile, str) else None) or {}).get("approval_evidence")
+    if ev:   # D100: this profile approves only on evidence in its own session (the profile row says which call and which answer)
+        why = approval_evidence(profile, p.get("session_id"), ev)
+        if why:
+            refuse(why)
     if role.get("complete_needs_review"):
         j, why = roles.prove_card(profile, str(a.get("task_id") or ""), roles.board())
         if why:

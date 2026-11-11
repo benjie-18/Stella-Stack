@@ -91,6 +91,9 @@ def create_problems(d, a, profile, b):
     if not row or not d["roles"][row["role"]]["assignable"]:
         return [f"assignee {assignee!r} is not an assignable worker. Valid assignees: {', '.join(workers)}"]
     arole = d["roles"][row["role"]]
+    if row.get("review_callers") is not None and roles.role_of(d, profile)[0] not in row["review_callers"]:   # D101
+        return [f"assignee {assignee!r} may only be assigned by the roles {', '.join(row['review_callers'])} (the owner's setting, "
+                "review_callers): it is reached through the review flow"]
     try:
         projects = roles.board_projects(a.get("board") or b)
     except Exception as e:
@@ -133,6 +136,27 @@ def create_problems(d, a, profile, b):
     return probs
 
 
+def review_by_card(d, p, a, named, callers):
+    """D101: True when the owner's setting lists "card" and this is the caller's own proven running card whose body, written by whoever
+    created the card (never a worker), has a line `Review-by: <named>`."""
+    if "card" not in callers:
+        return False
+    j, why = roles.prove_card(p.get("profile"), str(a.get("task_id") or ""), roles.board())
+    if why:
+        return False
+    body = ((j or {}).get("task") or {}).get("body") or ""
+    return re.search(rf"(?im)^[ \t]*review-by[ \t]*:[ \t]*{re.escape(named)}[ \t]*$", body) is not None
+
+
+def card_review_by(p, a):
+    """The set of profiles named by `Review-by:` lines in the caller's own proven running card (empty when none or no proof)."""
+    j, why = roles.prove_card(p.get("profile"), str(a.get("task_id") or ""), roles.board())
+    if why:
+        return set()
+    body = ((j or {}).get("task") or {}).get("body") or ""
+    return set(re.findall(r"(?im)^[ \t]*review-by[ \t]*:[ \t]*(\S+)[ \t]*$", body))
+
+
 def main():
     p = json.load(sys.stdin)
     tool, a = p.get("tool_name"), p.get("tool_input") or {}
@@ -142,11 +166,25 @@ def main():
         except roles.RolesError as e:
             roles.log_alert("STL-CFG-303", problem=str(e)[:300])
             refuse(f"[STL-CFG-303] the role table cannot be read, so {tool} is refused until it is fixed")
-        revs = [r for r in roles.reviewers(d) if r != p.get("profile")]
+        crole = roles.role_of(d, p.get("profile"))[0]
+        named = a.get("reviewer") if isinstance(a, dict) else None
+        row = d["profiles"].get(named) if isinstance(named, str) else None
+        via_card = False
+        if row and named != p.get("profile") and row.get("review_callers") is not None and crole not in row["review_callers"]:   # D101: the owner's setting
+            via_card = review_by_card(d, p, a, named, row["review_callers"])
+            if not via_card:
+                refuse(f"{named} reviews only when it is named by the roles {', '.join(c for c in row['review_callers'] if c != 'card')} or, "
+                       f"if the owner's setting (review_callers) allows, by a `Review-by: {named}` line in the card's own body; the {crole} "
+                       f"role names one of {', '.join(r for r in roles.reviewers(d, crole) if r != p.get('profile')) or '(none)'}")
+        revs = [r for r in roles.reviewers(d, crole) if r != p.get("profile")] + ([named] if via_card else [])
         if not isinstance(a, dict) or a.get("reviewer") not in revs:
             refuse(f"a review request names the profile that reviews the card, one of "
                    f"{', '.join(revs) or '(none listed: ask the owner)'}; call kanban_request_review again naming it. A card "
                    "is never reviewed by its own builder (K8)")
+        # S6I-04: a card that says `Review-by: <profile>` is reviewed by that profile, whoever the caller is (the line is the creator's choice)
+        want = card_review_by(p, a)
+        if want and a.get("reviewer") not in want:
+            refuse(f"this card's body says Review-by: {', '.join(sorted(want))}; name that profile in the review request")
         return
     if tool == "kanban_comment":   # A1-01: a card's worker comments on its own card only (Hermes leaves cross-card open), so a
         # comment on a card is never a worker's forged "owner answer". A role that takes no cards (the coordinator) is free.

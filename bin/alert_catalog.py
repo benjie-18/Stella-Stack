@@ -31,7 +31,7 @@ CLASSES = (
     (r"No space left|Permission denied|Read-only file system|Disk quota", "a disk or permissions problem"),
     (r"exit \d+|exit code|command not found|failed|non-zero", "a local command failed"),
 )
-SAMPLE = {"card": "t_0000a1b2", "commit": "abc1234", "count": "3", "title": "Sample card title", "model": "Haiku",
+SAMPLE = {"served": "a free model", "card": "t_0000a1b2", "commit": "abc1234", "count": "3", "title": "Sample card title", "model": "Haiku",
           "minutes": "12", "max": "50", "check": "test run", "restarted": "the Stella container",
           "failing": "the local model server", "requested": "a code that is not listed", "parts": "ssh,web443", "summary": "This is a sample.",
           "error": "<urlopen error [Errno -3] Temporary failure in name resolution>",

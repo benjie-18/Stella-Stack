@@ -23,11 +23,13 @@ NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 KEY = re.compile(r"[A-Z][A-Z0-9_]*")   # an owner config key (config/owner.env)
 BACKEND = re.compile(r"[a-z0-9_]+")   # a Hermes terminal.backend name
 SANDBOX_KEYS = {"schema_version", "backend", "unboxed_backend", "boxed_profiles", "plugin_dir", "tmp_dir", "home_ro", "hide",
-                "sibling_dirs", "canary", "env", "home_protect", "profile_overrides"}
+                "sibling_dirs", "canary", "env", "env_unset", "snapshot_keep_hours", "home_protect", "profile_overrides"}
 BOX_OWNED_ENV = {"HOME", "TMPDIR", "TMP", "TEMP", "CLAUDE_CONFIG_DIR", "HERMES_KANBAN_WORKSPACE", "HERMES_KANBAN_BRANCH",
                  "PATH", "BASH_ENV", "ENV", "IFS", "SHELL"}   # set by the box itself, or able to run code before the command
+BOX_SHELL_ENV = {"BASH_ENV", "ENV", "PATH", "IFS", "SHELLOPTS", "BASHOPTS", "PROMPT_COMMAND", "GIT_DIR", "GIT_WORK_TREE", "REVIEW_PROMPT_FILE", "REVIEW_MODEL", "REVIEW_EXPORT_DIR", "REVIEW_SENT_FILE"}   # a broker secret is a token, never one of these
 BOX_DENY_ENV_PREFIX = ("LD_", "PYTHON")   # dynamic loader and interpreter start-up variables
-OVERRIDE_KEYS = {"claude_config_dir", "ro_over"}
+REVIEW_INT_KEYS = ("review_max_files", "review_max_mb", "review_clip_body", "review_clip_evidence", "review_clip_answers", "review_commits", "review_export_keep_hours")
+OVERRIDE_KEYS = {"claude_config_dir", "ro_over", "hide_files", "broker_env", "broker_when", "review_prompt", "review_model", "review_answer_prefix", "review_link_allow"} | set(REVIEW_INT_KEYS)
 ROOT_PROFILE = "default"   # Hermes's own name for the profile that lives in the root of ~/.hermes
 
 
@@ -108,6 +110,20 @@ def validate(d):
             errs.append(f"profile {p}: worker {row['worker']!r} is not one of its role's workers")
         if ".." in str(row.get("dir", "")).split("/") or str(row.get("dir", "")).startswith("/"):
             errs.append(f"profile {p}: dir must be relative to ~/.hermes")
+        ae = row.get("approval_evidence")   # D100: complete-gate refuses this profile's completion without this evidence in its session
+        if ae is not None:
+            ok_ae = isinstance(ae, dict) and set(ae) <= {"tool", "command", "output", "exit_code", "hint", "chain_max"} \
+                and all(isinstance(ae.get(k), str) and ae[k] for k in ("tool", "command", "output")) \
+                and isinstance(ae.get("exit_code", 0), int) and isinstance(ae.get("hint", ""), str) \
+                and isinstance(ae.get("chain_max"), int) and not isinstance(ae.get("chain_max"), bool) and 0 < ae["chain_max"] <= 1000
+            if ok_ae:
+                try: re.compile(ae["command"]); re.compile(ae["output"])
+                except re.error: ok_ae = False
+            if not ok_ae:
+                errs.append(f"profile {p}: approval_evidence must be {{tool, command, output, chain_max[, exit_code, hint]}} with regexes that compile (hint is optional text, chain_max a positive integer)")
+        rc = row.get("review_callers")   # D101: the roles that may name this profile for a card review or assign a card to it
+        if rc is not None and not (isinstance(rc, list) and rc and all(isinstance(x, str) and (x in roles or x == "card") for x in rc)):
+            errs.append(f"profile {p}: review_callers must be a non-empty list of role names (and \"card\": the card's own Review-by line)")
         fbp = row.get("capability_fallback")   # B2V-08: the escalation thread suggests it; it must be a real peer
         if fbp is not None and (not isinstance(fbp, str) or fbp == p or not isinstance(profs.get(fbp), dict)
                                 or profs[fbp].get("role") != row["role"]):   # RT10-01: a list or object is named, not a crash
@@ -151,6 +167,12 @@ def validate_sandbox(d):
     for k in ("home_ro", "hide"):
         if not (isinstance(sb.get(k), list) and all(_rel(x) for x in sb[k])):
             errs.append(f"sandbox: {k} must be a list of relative paths without ..")
+    sk = sb.get("snapshot_keep_hours")
+    if not (isinstance(sk, int) and not isinstance(sk, bool) and 0 < sk <= 10000):
+        errs.append("sandbox: snapshot_keep_hours must be a positive integer (session snapshot files older than this are removed when a session starts)")
+    eu = sb.get("env_unset", [])
+    if not (isinstance(eu, list) and all(isinstance(x, str) and re.fullmatch(r"[A-Z][A-Z0-9_]*", x) for x in eu)):
+        errs.append("sandbox: env_unset must be a list of upper-case variable names the box removes from the parent environment")
     sd = sb.get("sibling_dirs")
     if not (isinstance(sd, list) and all(_rel(x) and "/" not in x for x in sd)):
         errs.append("sandbox: sibling_dirs must be a list of folder names")
@@ -172,6 +194,35 @@ def validate_sandbox(d):
         ro = o.get("ro_over", [])
         if not (isinstance(ro, list) and all(_rel(x) and "/" not in x for x in ro)):
             errs.append(f"sandbox: profile_overrides.{p}.ro_over must be a list of names inside the folder")
+        hf = o.get("hide_files", [])
+        if not (isinstance(hf, list) and all(isinstance(x, str) and _rel(x) and "/" not in x for x in hf)):
+            errs.append(f"sandbox: profile_overrides.{p}.hide_files must be a list of file names inside the folder")
+        for k in REVIEW_INT_KEYS:
+            v = o.get(k)
+            if v is not None and not (isinstance(v, int) and not isinstance(v, bool) and 0 < v <= 1_000_000):
+                errs.append(f"sandbox: profile_overrides.{p}.{k} must be a positive integer")
+        ap = o.get("review_answer_prefix")
+        if ap is not None and not (isinstance(ap, str) and 0 < len(ap) <= 200 and "\n" not in ap):
+            errs.append(f"sandbox: profile_overrides.{p}.review_answer_prefix must be a non-empty single-line text")
+        la = o.get("review_link_allow", [])
+        if not (isinstance(la, list) and all(isinstance(x, str) and x.startswith("/") and x.endswith("/") and ".." not in x.split("/") and len(x) > 1 for x in la)):
+            errs.append(f"sandbox: profile_overrides.{p}.review_link_allow must be a list of absolute folders ending in / without ..")
+        rm = o.get("review_model")
+        if rm is not None and not (isinstance(rm, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}", rm)):
+            errs.append(f"sandbox: profile_overrides.{p}.review_model must be a model name (letters, digits, . _ : -)")
+        rp = o.get("review_prompt")
+        if rp is not None and not (isinstance(rp, str) and _rel(rp)):
+            errs.append(f"sandbox: profile_overrides.{p}.review_prompt must be a path inside the stack folder, with no ..")
+        bw = o.get("broker_when")
+        if bw is not None:
+            try:
+                re.compile(bw)
+            except (re.error, TypeError):
+                errs.append(f"sandbox: profile_overrides.{p}.broker_when must be a regular expression for the one command that gets the broker's variables")
+        be = o.get("broker_env", {})
+        if not (isinstance(be, dict) and all(re.fullmatch(r"[A-Z][A-Z0-9_]*", k) and k not in BOX_OWNED_ENV and not k.startswith(BOX_DENY_ENV_PREFIX + ("GIT_",)) and k not in BOX_SHELL_ENV and isinstance(v, str) and re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,63}", v) and ".." not in v
+                                             for k, v in be.items())):
+            errs.append(f"sandbox: profile_overrides.{p}.broker_env must map variable names (A-Z0-9_) to broker secret names (a-z0-9_.-)")
     return errs
 
 
@@ -394,9 +445,11 @@ def board_projects(b):
     return [{"id": i, "slug": s, "repo": (p or "").rstrip("/")} for i, s, p in rows]
 
 
-def reviewers(d):
-    """K8: the profiles whose role may review a card (may_review); a builder's review request names one of them."""
-    return sorted(p for p, row in d["profiles"].items() if d["roles"][row["role"]].get("may_review"))
+def reviewers(d, caller_role=None):
+    """K8: the profiles whose role may review a card (may_review); a builder's review request names one of them. With caller_role,
+    only those the caller's role may name (a profile's review_callers, D101; absent = anyone)."""
+    return sorted(p for p, row in d["profiles"].items() if d["roles"][row["role"]].get("may_review")
+                  and (caller_role is None or row.get("review_callers") is None or caller_role in row["review_callers"]))
 
 
 def soul_values(d, profile):
@@ -407,7 +460,7 @@ def soul_values(d, profile):
                              ("may_unblock", "unblock a card"), ("may_delegate", "delegate to a subagent")) if not r[k]]
     projects = board_projects(board())
     return {"BOARD": board(),   # K12: the board name in a SOUL comes from bin/kanban-board.sh
-            "REVIEWERS":", ".join(f"`{p}`" for p in reviewers(d)) or "(no reviewing profile listed)",
+            "REVIEWERS":", ".join(f"`{p}`" for p in reviewers(d, role_of(d, profile)[0])) or "(no reviewing profile listed)",
             "CARD_ASSIGNEES": ", ".join(f"`{p}`" for p, row in sorted(d["profiles"].items())
                                         if d["roles"][row["role"]]["assignable"]),
             "CARD_PROJECTS": ", ".join(f"`{p['slug']}`" for p in projects) or "(none bound to the board)",

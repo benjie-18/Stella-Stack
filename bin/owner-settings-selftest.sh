@@ -41,9 +41,11 @@ hk() { printf '%s' "$2" | "$1" >"$T/out" 2>"$T/err"; echo $?; }   # <hook> <payl
 blocked() { [ "$1" = 2 ] && jq -e '.action == "block"' "$T/out" >/dev/null 2>&1; }
 pl() { jq -nc --arg t "$1" --argjson i "$2" --arg c "${3:-/workspace}" '{tool_name: $t, tool_input: $i, session_id: "s1", cwd: $c, profile: "p", extra: {}}'; }
 js() { jq -nc "$@"; }
-hooks_for() {   # <matcher table> <role> <tool>: the hooks (command or repo file) the role's matchers cover for <tool>; memoized in files
-  local f="$T/hc/$(basename "$1").$2.$3"
-  [ -f "$f" ] || { mkdir -p "$T/hc"; jq -r --arg r "$2" --arg t "$3" '.roles[$r].hooks[]? | select(.matcher as $m | $t | test($m)) | (.command // .file)' "$1" >"$f"; }
+CURW=   # the worker kind of the profile being exercised (a role's hook may be for one worker kind only, as roles.py hooks_for reads it)
+setw() { case $1 in role:*) CURW=;; *) CURW=$(jq -r --arg p "$1" '.profiles[$p].worker // ""' "$MT" 2>/dev/null) || CURW=;; esac; }
+hooks_for() {   # <matcher table> <role> <tool>: the hooks (command or repo file) the role's matchers cover for <tool> and the current profile's worker kind; memoized in files
+  local f="$T/hc/$(basename "$1").$2.$3.${CURW:-none}"
+  [ -f "$f" ] || { mkdir -p "$T/hc"; jq -r --arg r "$2" --arg t "$3" --arg w "$CURW" '.roles[$r].hooks[]? | select(.matcher as $m | $t | test($m)) | select((has("workers") | not) or (.workers | index($w) != null)) | (.command // .file)' "$1" >"$f"; }
   cat "$f"
 }
 MT=   # the table whose matchers pick each role's hooks
@@ -72,6 +74,7 @@ matrix() {
   ln -sfn "$own" "$T/lnk"
   rel=${own#/workspace/}; ex=${own%.env}.example.env
   while read -r lab role; do
+    setw "$lab"
     L="$tag $lab/$role"
     refuse "$L" "$role" read_file "$(js --arg p "$own" '{path: $p}')" "owner file"
     refuse "$L" "$role" read_file "$(js --arg p "../$rel" '{path: $p}')" "../ relative from /workspace/bin" /workspace/bin
@@ -117,7 +120,7 @@ matrix() {
     allow "$L" "$role" vision_analyze '{"image_url": "/workspace/docs/x.png", "question": "x"}' "ordinary image"
     allow "$L" "$role" skill_view '{"name": "x"}' "ordinary skill"
     okc=
-    for c in "cat package.json" "npm test"; do
+    for c in "cat package.json" "npm test" "git log --oneline"; do
       bad=0
       for h in $(hooks_for "$MT" "$role" terminal); do [ "$(hk "$(hf "$h")" "$(pl terminal "$(js --arg c "$c" '{command: $c}')")")" = 0 ] || bad=1; done
       [ $bad = 0 ] && { okc=$c; break; }
@@ -154,6 +157,7 @@ REAL=$(jq -r '.owner_settings[0] // empty' "$SRC")
 say "$([ -n "$REAL" ]; echo $?)" "3 the real table lists an owner settings file"
 if [ -n "$REAL" ]; then
   while read -r lab role; do
+    setw "$lab"
     refuse "3 $lab/$role" "$role" read_file "$(js --arg p "/workspace/$REAL" '{path: $p}')" "real owner file"
     refuse "3 $lab/$role" "$role" vision_analyze "$(js --arg p "/workspace/$REAL" '{image_url: $p, question: "x"}')" "real owner file"
     refuse "3 $lab/$role" "$role" skill_view "$(js --arg p "/workspace/$REAL" '{name: "x", file_path: $p}')" "real owner file"
@@ -176,6 +180,7 @@ tbl "$T/empty.json" '[]'; tbl "$T/dotdot.json" '["../etc/zz"]'; tbl "$T/abs.json
 for bad in "$T/missing.json" "$T/garbage.json" "$T/none.json" "$T/empty.json" "$T/dotdot.json" "$T/abs.json" "$T/str.json" "$T/mixed.json"; do
   export ROLES_FILE=$bad
   while read -r lab role; do
+    setw "$lab"
     refuse "4 $(basename "$bad") $lab/$role" "$role" read_file '{"path": "/workspace/SUPERVISOR.md"}' "ordinary file (fail closed)"
     refuse "4 $(basename "$bad") $lab/$role" "$role" terminal '{"command": "ls"}' "ls (fail closed)"
   done < <(pairs)
@@ -246,12 +251,12 @@ bhook() {  # bhook <mode> <script> <payload>: the hook two levels below the work
 }
 # brefuse / ballow <mode> <tool> <input> <description>: the builder-like role's hooks for <tool>, below the bound worker
 brefuse() {
-  local h by="" pay; pay=$(jq -nc --arg t "$2" --argjson i "$3" --arg c "$WS" --arg p "$BP" '{tool_name: $t, tool_input: $i, session_id: "s1", cwd: $c, profile: $p, extra: {}}')
+  local CURW=; local h by="" pay; pay=$(jq -nc --arg t "$2" --argjson i "$3" --arg c "$WS" --arg p "$BP" '{tool_name: $t, tool_input: $i, session_id: "s1", cwd: $c, profile: $p, extra: {}}')
   for h in $(hooks_for "$MT" "$BR" "$2"); do [ "$(bhook "$1" "$(hf "$h")" "$pay")" = 2 ] && by="$by $(basename "$h")"; done
   say "$([ -n "$by" ]; echo $?)" "$SEC $1 $BP: $2 $4: refused by${by:- (none)}"
 }
 ballow() {
-  local h bad="" pay; pay=$(jq -nc --arg t "$2" --argjson i "$3" --arg c "$WS" --arg p "$BP" '{tool_name: $t, tool_input: $i, session_id: "s1", cwd: $c, profile: $p, extra: {}}')
+  local CURW=; local h bad="" pay; pay=$(jq -nc --arg t "$2" --argjson i "$3" --arg c "$WS" --arg p "$BP" '{tool_name: $t, tool_input: $i, session_id: "s1", cwd: $c, profile: $p, extra: {}}')
   for h in $(hooks_for "$MT" "$BR" "$2"); do [ "$(bhook "$1" "$(hf "$h")" "$pay")" = 0 ] || bad="$bad $(basename "$h")"; done
   say "$([ -z "$bad" ]; echo $?)" "$SEC $1 $BP: $2 $4: allowed${bad:+ (refused by$bad)}"
 }

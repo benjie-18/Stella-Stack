@@ -66,7 +66,11 @@
     {"file":"docs/hermes-local/soul/builder-local.md","literal":"haiku","count":1,"phase":"session 2, A7 (Claude model names to data: the escalation model policy and the builder model guard; B2V-13: counted in any case)"},
     {"file":"docs/hermes-local/soul/builder-local.md","literal":"opus","count":1,"phase":"session 2, A7 (Claude model names to data: the escalation model policy and the builder model guard; B2V-13: counted in any case)"},
     {"file":"docs/hermes-local/soul/default.md","literal":"haiku","count":1,"phase":"session 2, A7 (Claude model names to data: the escalation model policy and the builder model guard; B2V-13: counted in any case)"},
-    {"file":"docs/hermes-local/soul/default.md","literal":"opus","count":1,"phase":"session 2, A7 (Claude model names to data: the escalation model policy and the builder model guard; B2V-13: counted in any case)"}
+    {"file":"docs/hermes-local/soul/default.md","literal":"opus","count":1,"phase":"session 2, A7 (Claude model names to data: the escalation model policy and the builder model guard; B2V-13: counted in any case)"},
+    {"file":"docs/hermes-local/hooks/reviewer/claude-review-terminal.sh","literal":"reviewer","count":5,"phase":"Stage 6 follow-up 2, D92 (the Claude reviewer's one allowed call: the hook regex, its partner-hook path and the SOUL text)"},
+    {"file":"docs/hermes-local/hooks/reviewer/claude-review-terminal.sh","literal":"sonnet","count":2,"phase":"Stage 6 follow-up 2, D92 (the Claude reviewer's one allowed call: the hook regex, its partner-hook path and the SOUL text)"},
+    {"file":"docs/hermes-local/soul/reviewer-claude.md","literal":"reviewer","count":2,"phase":"Stage 6 follow-up 2, D92 (the Claude reviewer's one allowed call: the hook regex, its partner-hook path and the SOUL text)"},
+    {"file":"docs/hermes-local/soul/reviewer-claude.md","literal":"sonnet","count":2,"phase":"Stage 6 follow-up 2, D92 (the Claude reviewer's one allowed call: the hook regex, its partner-hook path and the SOUL text)"}
   ],
   "watch": ["#escalations", "#supervisor", "opus", "sonnet", "haiku"]
 }

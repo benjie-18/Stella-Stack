@@ -14,7 +14,7 @@ import json, sys
 # unknown variable, $(…), an encoder).
 import codecs, fnmatch, glob, os, pwd, re, shlex
 SECRETS = (".env*", "*.pem", "*.key", "~/.hermes/.env", "~/.hermes/auth.json", "~/.claude/.credentials*",
-           "~/.local/share/opencode/auth.json", "~/.ssh", "~/.aws", "~/.config/gh")
+           "~/.local/share/opencode/auth.json", "~/.hermes/broker", "~/.ssh", "~/.aws", "~/.config/gh")
 SECRET_OK = (".env.example", ".env.sample", ".env.template")
 HOMES = sorted({pwd.getpwuid(os.getuid()).pw_dir, os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir})
 try:   # K6: the owner settings files (roles.json owner_settings) are read by no agent role; an unreadable table refuses all
@@ -24,8 +24,9 @@ try:   # K6: the owner settings files (roles.json owner_settings) are read by no
 except Exception:
     OWNER_FILES = None
 SECRET_DIRS = [f"{h}/{d}" for h in HOMES for d in (".hermes", ".claude", ".local/share/opencode", ".ssh", ".aws", ".config/gh")]
+SECRET_DIRS.append("/proc")   # a recursive search of /proc reads every process's environment
 SECRET_TEXT = re.compile(r"(?<![\w.-])\.env(?!\.(?:example|sample|template)\b)|\.claude/\.credentials|\.hermes/auth\.json|"
-                         r"opencode/auth\.json|(?<![\w.-])\.(?:ssh|aws)\b|\.config/gh\b")
+                         r"opencode/auth\.json|\.hermes/broker\b|(?:(?<![\w.~-])|(?<=-[A-Za-z]))/proc/(?:self|thread-self|\d|[*?\[$])|(?<![\w.-])\.(?:ssh|aws)\b|\.config/gh\b")
 RECURSIVE = {"rg", "ag", "ack", "rgrep", "find", "tar", "zip", "cp", "rsync", "scp", "diff"}   # diff: two folders compare every file (B2V-14)
 GIT_READERS = {"diff", "grep", "difftool"}   # B2V-14: a path outside the repo turns them into plain file readers
 WRAPPERS = {"sudo", "env", "nohup", "time", "command", "exec", "builtin", "timeout", "nice", "ionice", "stdbuf", "setsid",
@@ -41,6 +42,9 @@ def _owner_dir(p):
     return any(_within(os.path.realpath(p).casefold(), os.path.dirname(f)) for f in OWNER_FILES or ())
 
 def secret_path(p):
+    n = os.path.normpath(p)
+    if re.match(r"/proc/(?:self|thread-self|\d+)(?:/|$)", n):   # another process's environment, memory, fds: a review token lives there while a review runs
+        return True
     if OWNER_FILES is None or os.path.realpath(p).casefold() in OWNER_FILES:
         return True
     b = os.path.basename(p).casefold()   # B2V-01: .ENV is .env on a case-insensitive mount
@@ -73,8 +77,11 @@ def path_why(word, cwd, names=None, recursive=False):
     if len(words) > 64:
         return f"{word[:60]}… expands to more than 64 words, too many to check"
     for w in words:
+        if w in ("/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/fd/0", "/dev/fd/1", "/dev/fd/2"):
+            continue   # the standard streams as written (they resolve to this process's own pipes); a link that resolves to one is not exempt
         p = _where(w, cwd, names or {})
-        for x in [p] + (glob.glob(p) if glob.has_magic(p) else []):
+        raw = os.path.realpath(os.path.join(cwd or "/", os.path.expanduser(w)))   # without normpath first: the kernel follows a link before it applies ..
+        for x in [p, raw] + (glob.glob(p) if glob.has_magic(p) else []):
             for q in {x, os.path.realpath(x)}:
                 if OWNER_FILES and os.path.realpath(q).casefold() in OWNER_FILES:
                     return f"{word} is an owner settings file ({q})"   # B2V-16
