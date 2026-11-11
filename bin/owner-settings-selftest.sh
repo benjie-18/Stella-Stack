@@ -436,55 +436,20 @@ for m in main thread; do
   say "$([ "$(gc $m $PROBE)" != 0 ] && grep -qi "owner settings" "$T/bout" && [ "$(git -C "$WA" rev-list --count HEAD)" = "$N0" ]; echo $?)" "6 $m: the bound worker's commit staging the owner path: refused by the owner list, no commit made"
   N0=$(git -C "$WA" rev-list --count HEAD)
   say "$([ "$(gc $m "$OD/zz-w4-$m.json")" != 0 ] && grep -qi "owner data" "$T/bout" && [ "$(git -C "$WA" rev-list --count HEAD)" = "$N0" ]; echo $?)" "6 $m: the bound worker's commit staging owner data ($OD): refused as owner data, no commit made"
-  git -C "$WA" reset -q --hard; git -C "$WA" clean -qf
+  git -C "$WA" reset -q --hard; git -C "$WA" clean -qfd
 done
 # F1 W4: the worker markers come from the table: a marked commit nothing proves is refused, whatever the marker's name
 jq '.worker_markers += ["ZZ_W4_MARK"]' "$T/probe.json" >"$T/marks.json"; mktree treemark "$T/marks.json"
+mktree treenom "$T/nom.json"; mktree treeemd "$T/emd.json"; mktree treebmk "$T/bmk.json"
 echo y >"$T/repo/c"; git -C "$T/repo" add c
 say "$([ "$(cd "$T/repo" && ZZ_W4_MARK=1 "$T/treemark/bin/commit-guard.sh" >"$T/out" 2>&1; echo $?)" = 1 ] && grep -qi "cannot be proven" "$T/out"; echo $?)" "6 a marker variable that only the table names (ZZ_W4_MARK) marks a worker: the unproven commit is refused"
 say "$([ "$(cd "$T/repo" && ZZ_W4_MARK=1 "$T/tree/bin/commit-guard.sh" >"$T/out" 2>&1; echo $?)" = 0 ]; echo $?)" "6 the same variable is no marker in a table that does not list it (control)"
-mktree treenom "$T/nom.json"; mktree treeemd "$T/emd.json"; mktree treebmk "$T/bmk.json"
 for t in treenom treeemd treebmk; do
   say "$([ "$(cg $t)" = 1 ] && grep -qi "cannot be read" "$T/out"; echo $?)" "6 the worker marker or owner data list unreadable ($t): refused (fail closed)"
 done
-git -C "$T/repo" reset -q config/zz-owner-probe.env
-mkdir -p "$T/repo/CONFIG"; echo x >"$T/repo/CONFIG/zz-owner-probe.env"; git -C "$T/repo" add CONFIG/zz-owner-probe.env
-say "$([ "$(cg tree)" = 1 ] && grep -qi "owner settings" "$T/out"; echo $?)" "6 the owner path staged upper-cased (the same file on the case-insensitive /workspace): refused (B2V-01)"
-git -C "$T/repo" reset -q CONFIG/zz-owner-probe.env
-# F1 W4: owner_data is committed by the owner and refused only for a worker (below): with no worker proof the guard lets it through
-OD=$(jq -r '.owner_data[0]' "$T/probe.json"); mkdir -p "$T/repo/$OD"; echo x >"$T/repo/$OD/zz-w4.json"; git -C "$T/repo" add -f "$OD/zz-w4.json"
-say "$([ "$(cg tree)" = 0 ]; echo $?)" "6 owner data staged by the owner (no worker proof, no marker): allowed (the owner and the build commit it)"
-git -C "$T/repo" reset -q "$OD/zz-w4.json"; git -C "$T/repo" rm -q --cached -f b
-git -C "$T/repo" add sub/config/zz-owner-probe.env config/zz-owner-probe.example.env
-say "$([ "$(cg tree)" = 0 ]; echo $?)" "6 same file name in another folder, and the owner example file: allowed (the exact path decides)"
-# a real commit by the bound worker, in its card worktree on its card branch, the hook installed as the repo's pre-commit
-K=$T/k6; WA=$K/wa
-git init -q -b main "$K/main" && (cd "$K/main" && echo a >a && git add a && git commit -q -m init) \
-  && git -C "$K/main" worktree add -q -b "$BRA" "$WA" && ln -s "$T/tree/bin/commit-guard.sh" "$K/main/.git/hooks/pre-commit"
-mkdir -p "$WA/config"; WS=$WA
-gc() {  # gc <mode> <file>: add and commit <file> in the card worktree as the worker's tool call
-  bound "$1" '{}' env "HERMES_KANBAN_WORKSPACE=$WA" "HERMES_DELEGATED_CHILD_CONTEXT=$FENCE" \
-    sh -c 'cd "$1" && mkdir -p "$(dirname "$2")" && echo x >"$2" && git add -f -- "$2" && git commit -q -m "$2"' sh "$WA" "$2"
-}
-for m in main thread; do
-  N0=$(git -C "$WA" rev-list --count HEAD)
-  say "$([ "$(gc $m ok-$m.txt)" = 0 ] && [ "$(git -C "$WA" rev-list --count HEAD)" = $((N0+1)) ]; echo $?)" "6 $m: the bound worker's ordinary commit in its card worktree is allowed (control: the proof works)"
-  N0=$(git -C "$WA" rev-list --count HEAD)
-  say "$([ "$(gc $m $PROBE)" != 0 ] && grep -qi "owner settings" "$T/bout" && [ "$(git -C "$WA" rev-list --count HEAD)" = "$N0" ]; echo $?)" "6 $m: the bound worker's commit staging the owner path: refused by the owner list, no commit made"
-  N0=$(git -C "$WA" rev-list --count HEAD)
-  say "$([ "$(gc $m "$OD/zz-w4-$m.json")" != 0 ] && grep -qi "owner data" "$T/bout" && [ "$(git -C "$WA" rev-list --count HEAD)" = "$N0" ]; echo $?)" "6 $m: the bound worker's commit staging owner data ($OD): refused as owner data, no commit made"
-  git -C "$WA" reset -q --hard; git -C "$WA" clean -qf
-done
-# F1 W4: the worker markers come from the table: a marked commit nothing proves is refused, whatever the marker's name
-jq '.worker_markers += ["ZZ_W4_MARK"]' "$T/probe.json" >"$T/marks.json"; mktree treemark "$T/marks.json"
-echo y >"$T/repo/c"; git -C "$T/repo" add c
-say "$([ "$(cd "$T/repo" && ZZ_W4_MARK=1 "$T/treemark/bin/commit-guard.sh" >"$T/out" 2>&1; echo $?)" = 1 ] && grep -qi "cannot be proven" "$T/out"; echo $?)" "6 a marker variable that only the table names (ZZ_W4_MARK) marks a worker: the unproven commit is refused"
-say "$([ "$(cd "$T/repo" && ZZ_W4_MARK=1 "$T/tree/bin/commit-guard.sh" >"$T/out" 2>&1; echo $?)" = 0 ]; echo $?)" "6 the same variable is no marker in a table that does not list it (control)"
-for t in nom emd bmk; do mktree tree$t "$T/$([ $t = nom ] && echo nom || ([ $t = emd ] && echo emd || echo bmk)).json"
-  say "$([ "$(cg tree$t)" = 1 ] && grep -qi "cannot be read" "$T/out"; echo $?)" "6 the worker marker or owner data list unreadable ($t): refused (fail closed)"
-done
 git -C "$T/repo" reset -q c
 rm -f "$K/main/.git/hooks/pre-commit"
+
 
 # 7 RT6-01: the write guard in a project repo bound to the board, outside /workspace
 PR=$T/proj; OT=$T/other; mkdir -p "$PR" "$OT"; git init -q -b main "$PR"

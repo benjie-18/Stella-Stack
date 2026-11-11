@@ -24,10 +24,10 @@ tbl="$(dirname "$(readlink -f "$0")")/../docs/hermes-local/roles.json"
 marks=$(jq -r '.worker_markers[]?' "$tbl" 2>/dev/null); odata=$(jq -r '.owner_data[]?' "$tbl" 2>/dev/null)
 [ -n "$marks" ] && [ -n "$odata" ] || refuse "the worker marker or owner data list in roles.json cannot be read"
 marked=
-for m in $marks; do
+while IFS= read -r m; do
   [[ $m =~ ^[A-Z][A-Z0-9_]*$ ]] || refuse "a worker marker name in roles.json is not a variable name"   # ${!m} below must never see anything else
   [ -z "${!m:-}" ] || marked=1
-done
+done <<<"$marks"
 # shortcut: this hook runs in the committing process's own environment, so it stops mistakes, not a determined worker
 # (D40): a process re-parented out of the worker's tree (setsid) or a PATH that shadows python3/hermes is not caught.
 proof=$(python3 -I "$(dirname "$(readlink -f "$0")")/roles.py" prove 2>/dev/null)
