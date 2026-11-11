@@ -67,6 +67,20 @@ S=$(stat -c %s "$LOG"); LIM=$( (ulimit -f 64; trap '' XFSZ; head -c 200000 /dev/
 $EL append --type fill --what f --detail "$(head -c $((LIM - S - 400)) /dev/zero | tr '\0' x)" >/dev/null 2>&1; S=$(stat -c %s "$LOG")
 ( ulimit -f 64; trap '' XFSZ; $EL append --type big --what g --detail "$(head -c 600 /dev/zero | tr '\0' y)" ) >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 1 ] && grep -q STL-CFG-318 "$T/o" && [ "$(stat -c %s "$LOG")" = $S ] && [ "$(tail -c 1 "$LOG" | od -An -tx1 | tr -d " ")" = 0a ]' "G6 a short write: refused (318), the file is cut back to the size it had (no partial line)"
+# ---- round 3 (fix round 2) ----
+$EL append --type t --what x --new '{"API_TOKEN":"plant-cli-77"}' --detail "see plant-cli-77 here" >/dev/null 2>&1
+ok '! grep -q "plant-cli-77" "$LOG" && tail -n 1 "$LOG" | jq -e ".detail == \"see *** here\"" >/dev/null' "H7 --detail is scrubbed with the values masked in the same call, through the command line"
+$EL append --type "$(printf 'x\ny')" --what w >/dev/null 2>&1
+ok '[ "$($EL tail -n 1 2>/dev/null | wc -l)" = 1 ]' "H7 tail escapes the type it prints (a newline in it makes no second line)"
+deep() { python3 -I -c 'import sys; n=int(sys.argv[1]); print("{\"a\":"*n + "1" + "}"*n)' "$1"; }
+printf '{"schema_version":1,"time":"2026-01-01T00:00:00Z","type":"note","who":{"role":null,"channel":null,"user":"x"},"what":"deep","old":%s}\n' "$(deep 600)" >>"$LOG"
+$EL tail -n 3 >"$T/o" 2>"$T/e"; rc=$?
+ok '[ $rc = 0 ] && ! grep -q Traceback "$T/e" && grep -q "STL-CFG-318" "$T/e"' "H8 a deeply nested line is counted as unreadable, tail goes on"
+S=$(stat -c %s "$LOG"); $EL append --type t --what x --old "$(deep 100)" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-CFG-313 "$T/o" && [ "$(stat -c %s "$LOG")" = $S ]' "H8 the writer refuses a line the reader would not read back"
+rm -f "$LOG"; mkfifo "$LOG"; timeout 20 $EL append --type t --what x >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-CFG-318 "$T/o"' "H8 an event log that is a FIFO is refused (318), no hang (exit $rc)"
+rm -f "$LOG"; : >"$LOG"; chmod 600 "$LOG"
 rm -rf "$R/.supervisor/logs"
 $EL append --type fresh --what f >/dev/null 2>&1
 ok '[ "$(wc -l <"$LOG")" = 1 ] && [ "$(stat -c %a "$R/.supervisor/logs")" != "" ]' "G7 a missing log folder is created"
