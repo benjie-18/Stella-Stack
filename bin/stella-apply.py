@@ -782,9 +782,10 @@ def apply_locked(row, key, tgt, rel, cand):
     meta = {"path": rel, "existed": cur is not None, "mode": mode, "sha256": sha(cur) if cur is not None else None,
             "new_sha256": sha(cand), "prev_applied": prev, "seq": seq, "token": token, "status": "pending"}
     mkdir_p(os.path.dirname(bd))
-    replaced = recorded = False
+    replaced = recorded = entered = False
     try:
         register(key, name, token, seq)   # the applied state knows the backup before the file is touched: a kill leaves a known folder
+        entered = True
         os.mkdir(bd, 0o700)
         if cur is not None:
             atomic_write(os.path.join(bd, "file"), cur, 0o600)
@@ -803,8 +804,10 @@ def apply_locked(row, key, tgt, rel, cand):
                 restore(tgt, cur, mode)
             if recorded:
                 set_applied(key, prev)
-            drop_backup(bd)
-            unregister(key, name)
+            if os.path.isdir(bd):
+                drop_backup(bd)
+            if entered:
+                unregister(key, name)
         except BaseException as e2:
             raise EventError("STL-CFG-310", f"{key}: the change failed ({el.why(e)}) and putting things back failed too ({el.why(e2)}); "
                              f"the file and the backup {name} are as the change left them; run `rollback {key}` to sort it out") from e
