@@ -331,7 +331,7 @@ def role_problems(doc):
     cannot say); roles.py stays dependency-free, so it is imported here and never the other way round."""
     import roles
     try:
-        return validate_doc(doc, load(f"{SCHEMAS}/roles.schema.json")) + roles.validate(doc)
+        return validate_doc(doc, load(f"{SCHEMAS}/roles.schema.json")) + roles.validate(doc, ROOT)
     except DataError:
         raise
     except Exception as e:

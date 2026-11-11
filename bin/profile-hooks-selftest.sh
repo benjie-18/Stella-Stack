@@ -13,6 +13,7 @@ fails=0
 SUPT=$(dirname "$(dirname "$(readlink -f "$0")")")/.supervisor
 snap() { (cd "$SUPT" 2>/dev/null && find logs/alerts.log state/page -type f -printf '%p %s ' -exec sha256sum {} \; 2>/dev/null | sort); }
 SNAP0=$(snap)
+export ESCALATE_SUP_DIR=$T/sup-h1; mkdir -p "$ESCALATE_SUP_DIR/logs"   # every script run below that can raise an alert writes into the temp folder
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 # run <hook> <tool> <tool_input json>: the hook's exit code (2 = blocked); its stdout goes to $T/out
 run() { jq -nc --arg t "$2" --argjson i "$3" '{hook_event_name: "pre_tool_call", tool_name: $t, tool_input: $i}' | "$1" >"$T/out" 2>/dev/null; echo $?; }
@@ -374,7 +375,8 @@ echo '{}' > "$HA/kanban/boards/ai-stack/board.json"
 python3 -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("create table projects (id, slug, name, board_slug, primary_path, archived)"); c.execute("insert into projects values (?, ?, ?, ?, ?, 0)", ("p_0000aaaa", "proj-a", "A", sys.argv[2], "/workspace")); c.commit()' "$HA/projects.db" "$(. /workspace/bin/kanban-board.sh; echo "$KANBAN_BOARD")"   # D46: the board binding the SOUL renders
 printf 'My own first line\nmore hand-written text\n' > "$HA/profiles/reviewer/SOUL.md"
 printf 'You are Hermes Agent, a helpful assistant.\nold text\n' > "$HA/SOUL.md"
-printf '#!/usr/bin/env bash\necho "$*" >> "%s/calls"\ncase "$*" in *"config get"*|*"config set"*) exit 1;; esac\nexit 0\n' "$A" > "$A/bin/hermes"; chmod +x "$A/bin/hermes"
+# H1: the stub refuses `send` as bin/selftests.sh does, so no page is marked as sent
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/calls"\ncase "$*" in *"config get"*|*"config set"*|send*) exit 1;; esac\nexit 0\n' "$A" > "$A/bin/hermes"; chmod +x "$A/bin/hermes"
 ap() { HOME="$A" PATH="$A/bin:$PATH" OWNER_CONFIG=/workspace/config/owner.example.env /workspace/bin/apply-hermes-local.sh "$@" > "$A/out" 2>&1; echo $?; }
 # Guard: apply must touch nothing outside the scratch HOME. A literal /home/node/.hermes root (outside PATH lines and
 # comments) means a live write, so the scratch run is skipped and reported.

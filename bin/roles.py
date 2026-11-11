@@ -37,6 +37,13 @@ REQ_BOOLS = ("tool_calling", "vision")
 REQ_KEYS = set(REQ_BOOLS) | {"min_context_tokens", "allowed_data_classes"}
 MAX_TOKENS = 2**53 - 1   # the largest integer every JSON reader (a double) holds exactly
 SCHEMA_VERSION = 1
+# The keys each object of the table may carry: the one list validate() refuses everything else by, and the schema's property
+# lists must equal (roles-selftest checks it). A key a reader starts to use is added here and in the schema in the same change.
+ROLE_KEYS = set(PERMS) | {"workspace", "allowed_overrides", "requirements", "background_review", "complete_metadata",   # complete_needs_review: bin/complete-gate.py
+                          "complete_needs_review", "workers", "skills_disabled", "platform_toolsets", "config", "git_identity", "hooks"}
+PROFILE_KEYS = {"role", "worker", "dir", "soul", "display_name", "approval_evidence", "review_callers", "capability_fallback"}
+TOP_KEYS = {"_comment", "schema_version", "fallback_role", "protected", "owner_settings", "owner_data", "owner_commands", "data_index",
+            "worker_markers", "self_config_kinds", "profiles", "roles", "sandbox"}
 ROOT_PROFILE = "default"   # Hermes's own name for the profile that lives in the root of ~/.hermes
 
 
@@ -46,6 +53,12 @@ class RolesError(Exception):
 
 def path():
     return os.environ.get("ROLES_FILE") or f"{ROOT}/docs/hermes-local/roles.json"
+
+
+# A scratch table alerts into a scratch folder beside it, never into the stack's own state (as bin/stella_data.py does for STELLA_ROOT).
+if os.environ.get("ROLES_FILE") and not os.environ.get("ESCALATE_SUP_DIR") \
+        and os.path.realpath(path()) != os.path.realpath(f"{ROOT}/docs/hermes-local/roles.json"):
+    os.environ["ESCALATE_SUP_DIR"] = os.path.join(os.path.dirname(os.path.realpath(path())), ".supervisor")
 
 
 def _pairs(pairs):
@@ -66,9 +79,13 @@ def _set(v):
     return isinstance(v, list) and all(isinstance(x, str) for x in v) and len(set(v)) == len(v)
 
 
+def _const(c):
+    raise ValueError(f"{c} is not JSON")   # the data tool refuses it too: two judges of one table must agree
+
+
 def load():
     try:
-        d = json.load(open(path(), encoding="utf-8"), object_pairs_hook=_pairs)
+        d = json.load(open(path(), encoding="utf-8"), object_pairs_hook=_pairs, parse_constant=_const)
     except Exception as e:
         raise RolesError(f"{path()}: {type(e).__name__}: {e}")
     errs = validate(d)
@@ -77,15 +94,17 @@ def load():
     return d
 
 
-def validate(d):
-    """Problems with the table, as a list of strings (empty = valid)."""
+def validate(d, root=ROOT):
+    """Problems with the table, as a list of strings (empty = valid). root: the stack tree the table belongs to (its hook files)."""
     roles, profs = d.get("roles") if isinstance(d, dict) else None, d.get("profiles") if isinstance(d, dict) else None
     if not isinstance(roles, dict) or not isinstance(profs, dict) or not roles:
         return ["profiles and roles must be objects, roles not empty"]
-    errs = [] if _int(d.get("schema_version")) and d["schema_version"] == SCHEMA_VERSION else [f"schema_version must be {SCHEMA_VERSION}"]
+    errs = [f"unknown key {k!r} at the top level" for k in sorted(set(d) - TOP_KEYS)]
+    errs += [] if _int(d.get("schema_version")) and d["schema_version"] == SCHEMA_VERSION else [f"schema_version must be {SCHEMA_VERSION}"]
     for n, r in roles.items():
         if not NAME.fullmatch(n) or not isinstance(r, dict):
             errs.append(f"role {n!r}: bad name or not an object"); continue
+        errs += [f"role {n}: unknown key {k!r}" for k in sorted(set(r) - ROLE_KEYS)]
         errs += validate_requirements(n, r.get("requirements"))
         errs += [f"role {n}: {k} must be true or false" for k in PERMS if not isinstance(r.get(k), bool)]
         if r.get("workspace") not in WORKSPACES:
@@ -121,7 +140,7 @@ def validate(d):
             except re.error:
                 errs.append(f"role {n}: matcher {h['matcher']} is not a regex")
             src = h.get("file") or h["command"]
-            if ".." in src.split("/") or not os.path.isfile(src if "command" in h else f"{ROOT}/{src}"):
+            if ".." in src.split("/") or not os.path.isfile(src if "command" in h else f"{root}/{src}"):
                 errs.append(f"role {n}: hook {src} does not exist")
             if not set(h.get("workers", [])) <= set(workers):
                 errs.append(f"role {n}: hook {src} names a worker kind the role does not list")
@@ -135,6 +154,7 @@ def validate(d):
     for p, row in profs.items():
         if not NAME.fullmatch(p) or not isinstance(row, dict):
             errs.append(f"profile {p!r}: bad name or not an object"); continue
+        errs += [f"profile {p}: unknown key {k!r}" for k in sorted(set(row) - PROFILE_KEYS)]
         if row.get("role") not in roles:
             errs.append(f"profile {p}: role {row.get('role')!r} is not in roles"); continue
         if "worker" in row and row["worker"] not in roles[row["role"]].get("workers", []):
@@ -608,7 +628,7 @@ def fail(code, **kv):
     sys.exit(1)
 
 
-if __name__ == "__main__":
+def main():
     cmd, args = (sys.argv[1] if len(sys.argv) > 1 else ""), sys.argv[2:]
     if cmd == "prove":   # needs no role table: the board and the kernel only
         o = dict(zip(args[::2], args[1::2]))
@@ -649,3 +669,10 @@ if __name__ == "__main__":
     else:
         print(__doc__.split("\n", 1)[1], file=sys.stderr)
         sys.exit(2)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:   # no command ends in a traceback; the type only, a value may be owner data
+        fail("STL-CFG-303", problem=f"roles.py failed unexpectedly: {type(e).__name__}")
