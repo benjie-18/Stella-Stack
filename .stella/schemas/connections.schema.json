@@ -276,15 +276,10 @@
             }
           },
           "required": [
-            "status"
+            "status",
+            "subscription_login_by_agent"
           ],
-          "additionalProperties": {
-            "type": [
-              "string",
-              "boolean",
-              "null"
-            ]
-          }
+          "additionalProperties": false
         },
         "scopes": {
           "type": "array",

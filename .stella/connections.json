@@ -55,8 +55,23 @@
         ]
       },
       "tos": {
-        "status": "not_applicable"
-      }
+        "status": "not_applicable",
+        "subscription_login_by_agent": "not_applicable"
+      },
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer",
+        "tester",
+        "validator",
+        "verifier",
+        "red-team",
+        "router",
+        "voice",
+        "look",
+        "proposer"
+      ],
+      "risk_class": "read"
     },
     {
       "id": "claude-subscription",
@@ -140,7 +155,9 @@
       "tos": {
         "status": "unverified",
         "subscription_login_by_agent": "unverified"
-      }
+      },
+      "allowed_roles": [],
+      "risk_class": "send"
     },
     {
       "id": "fallback-gateway",
@@ -198,8 +215,11 @@
         "free_tiers_may_retain_or_train": true
       },
       "tos": {
-        "status": "unverified"
-      }
+        "status": "unverified",
+        "subscription_login_by_agent": "unverified"
+      },
+      "allowed_roles": [],
+      "risk_class": "send"
     },
     {
       "id": "discord",
@@ -247,8 +267,19 @@
         "data_classes_allowed": []
       },
       "tos": {
-        "status": "unverified"
-      }
+        "status": "unverified",
+        "subscription_login_by_agent": "not_applicable"
+      },
+      "allowed_roles": [],
+      "risk_class": "post",
+      "scopes": [
+        "read_message_history",
+        "send_messages"
+      ],
+      "redaction_patterns": [
+        "[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{6}\\.[A-Za-z0-9_-]{25,}",
+        "(?i)bearer\\s+[A-Za-z0-9._~+/=-]+"
+      ]
     }
   ]
 }
