@@ -126,6 +126,61 @@ that compiles, an enum with values). Patterns are read with `$` as the very end 
 `.stella/schemas/event.schema.json`, `approval-request.schema.json` and `approval-decision.schema.json` are schemas for
 lines and messages, not data files. Check a sample with `stella_data.py validate <schema> <file>`.
 
+## The apply tool and the event log (`bin/stella-apply.py`, `bin/event_log.py`)
+
+`stella-apply.py apply <id> --from <file> [--dry-run]`, `check [<id>] [--json]`, `rollback <id>`, `history <id> [--json]`.
+A single-file row is addressed by its id only; a folder row by `<id>/<name>`, where the name is letters, digits, dot, dash and
+underscore, starts with a letter, digit or underscore, and ends in `.json`. Exit 0 ok, 1 refused or failed (or drift), 2 usage.
+Every failure is one catalog code and its plain message: 310 data unreadable (the read commands), 311 unknown id, 312 owner-only,
+313 refused (invalid candidate, a link, a path clash, a restore that no longer validates), 314 drift or a hand edit rollback would
+overwrite, a setting's own code (today 315) for an env candidate that breaks the registry, 316 no or damaged backup, 318 event log.
+An unexpected exception is exit 1 and one coded line (the exception type, never a value).
+
+- **One change at a time.** One lock covers a whole apply or rollback, validation included, so the cross-file rules always judge
+  a set with every earlier change in it. `--dry-run` takes no lock and writes nothing; if the masked text is unchanged but the
+  bytes differ it says so in one line and names the changed keys (`-KEY (masked)` / `+KEY (masked)`).
+- **One row, one real file.** The target, each folder on the way, the backup folder, the applied-state file, the event log
+  and their locks must not be symbolic links and must resolve to the path the index names; no two rows (or a row and the index's
+  `event_log`, `backup_dir`, `applied_state`) may name one file. The index is read once per run. Applying the index itself
+  is refused when the candidate changes those three paths, drops the index's own row or a row that still has a backup.
+- **Validation.** A json candidate goes through the whole-set check with the candidate in place; a set whose cross-file rules
+  "could not run" is refused even when the current tree already had that problem (the candidate that removes the cause is the
+  way out). An env candidate is syntax-checked, then every setting the registry stores in that data file is checked with the
+  registry's own type and validation (`stella_data.setting_problems`), and a setting with no default must be present; a failure is
+  refused with that registry entry's own `code`. Keys the registry does not list stay allowed (the files hold more keys than the
+  registry lists). The registry is found through the index row whose schema is `settings`.
+- **Backup and rollback.** Before a file is replaced its bytes, mode, previous applied record and both hashes are saved in
+  `backup_dir/<key>/<counter>-<time>/` (`file`, `meta.json`; folders 0700, files 0600). **The backup folder holds full copies of
+  owner files until a rollback removes them; nothing in this tool keeps a role out of it. W4's path rules (read and write refusals
+  for every role) are what does.** Backups are ordered by a counter kept in the applied state, never by the clock. A new file of an
+  owner-only row or a row with `redact_keys` is created 0600; an existing file keeps its mode. Temp files are 0600 and the next
+  run for that row sweeps this tool's own (`.stella-apply.*`) while it holds the lock. A backup folder without a readable
+  `meta.json` is reported by `check` (314), blocks `apply`, and is removed by `rollback`.
+  Rollback restores only what the tool saved: the saved copy must match its recorded sha256 (else 316, never a delete), the file
+  must hold the bytes the apply wrote or the bytes it replaced (anything else is a hand edit: 314, untouched), and the restored
+  content goes through the same validation as a candidate (else 313: apply the content you want instead).
+- **Interrupted runs.** A rollback marks its backup `rollback-pending` first; a kill at any step is finished by the next
+  `rollback`, which writes the event line the killed one did not. An apply killed after the replace is finished by repeating it
+  (the missing bookkeeping and event line are written); otherwise `rollback` restores the file. The "nothing to restore" branch
+  writes an event line too.
+- **Check.** Drift is a sha256 or mode that differs from the last applied record, or (never applied) from the committed blob.
+  Folder rows list the entries on disk, the applied ones and the committed ones (a deleted committed entry is drift); an entry
+  that cannot be read is one problem line and the other rows are still checked. Applying the bytes a hand edit already put there
+  records them (applied state and an `adopt` event line, no backup).
+- **Event log.** One JSON line per state change, ASCII only (no value can hold a line separator), written whole or not at all
+  under the log's lock: a log that does not end in a newline gets one first, and after a failed or short write the file is cut
+  back to its earlier size (318). Readers split on `\n` only; a line that is not a JSON object is counted and reported
+  (`STL-CFG-318` on stderr, `unreadable_lines` in `history --json`), never dropped silently. Values of keys that match a row's
+  `redact_keys`, and of every registry setting whose `sensitivity` is not `plain`, are `***`; a scalar `old` / `new` of an
+  owner-only row or a row with redact keys is `***` whole; `--detail` goes through the same scrub as an error message; no file
+  hash is written for such a row. A new file's event has `old: null`. `append --code` must be in the alert catalog.
+- **Limits that remain.** The owner-only gate (`worker_markers` in the role table, then `roles.py prove`) cannot prove an owner
+  from inside the process: a caller can clear its marker variables, shadow the board tool on `PATH` or detach from its parent.
+  **The boundary is the hooks of every role refusing to run `bin/stella-apply.py` (and writing the owner files) at all (item W4).**
+  `who` in an event line is the OS user name only, and any caller that can run `event_log.py append` can append a line of any
+  type; W4's path rules keep roles from writing the log directly. The applied state keeps a sha256 of each file (drift needs it),
+  also for owner-only rows. A restore that deletes a file the apply created is not checked against the whole set.
+
 ## Alert codes
 `STL-CFG-310` (a data file is invalid) and `STL-CFG-311` (a name is not in the data) are used by `stella_data.py`.
-`STL-CFG-312` to `318` are reserved for the apply and settings tools.
+`STL-CFG-312` to `318` are used by the apply and event-log tools (see above).
