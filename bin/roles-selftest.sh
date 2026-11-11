@@ -138,7 +138,7 @@ ok '[ "$(sv "$RF" "$BP")" = "$want" ]' "K8: {{REVIEWERS}} renders the reviewing 
 ok '[ "$(sv "$T/rv.json" "$BP")" = "$want2" ]' "K8: {{REVIEWERS}} follows the table when another role may review"
 ok '[ "$(sv "$T/rv0.json" "$BP")" = "(no reviewing profile listed)" ]' "K8: {{REVIEWERS}} with no reviewing role: '(no reviewing profile listed)', never empty"
 # F1 W2 (E3): role requirements, schema_version, the eight fail-closed roles, a fake role with requirements.
-RQ='{tool_calling: true, min_context_tokens: 8000, vision: false, allowed_data_classes: ["public"]}'
+RQ='{"tool_calling": true, "min_context_tokens": 8000, "vision": false, "allowed_data_classes": ["public"]}'
 ok '[ "$(jq -r .schema_version "$RF")" = 1 ] && jq -e "[.roles[] | has(\"requirements\")] | all" "$RF" >/dev/null' "W2: the real table has schema_version 1 and requirements on every role"
 for r in tester validator verifier red-team router voice look proposer; do
   ok 'jq -e --arg r "$r" ".roles[\$r] as \$x | \$x != null and ([\"assignable\",\"may_complete\",\"may_unblock\",\"may_claim\",\"may_delegate\",\"may_create_cards\",\"may_review\"] | all(\$x[.] == false)) and \$x.workspace == \"none\" and \$x.allowed_overrides == [] and ([.profiles[].role] | index(\$r)) == null and (\$x.hooks == .roles[.fallback_role].hooks) and (\$x.platform_toolsets == null)" "$RF" >/dev/null' "W2: role $r exists, opens nothing, no profile, the fallback role's hooks"
@@ -148,13 +148,13 @@ ok '[ "$(python3 $S/roles.py requirements look | jq .vision)" = true ] && [ "$(p
 ok '[ "$(python3 $S/roles.py requirements no-such-role >"$T/out" 2>&1; echo $?)" = 1 ]' "W2: roles.py requirements of an unknown role exits 1"
 jq --argjson q "$RQ" '.roles["fake-role"] = (.roles.unlisted + {requirements: $q})' "$RF" >"$T/fr.json"
 H2="$T/h2"; mkdir -p "$H2"; echo x >"$H2/config.yaml"; for p in $(jq -r '.profiles | keys[] | select(. != "default")' "$RF"); do mkdir -p "$H2/profiles/$p"; echo x >"$H2/profiles/$p/config.yaml"; done
-ok '[ "$(ROLES_FILE=$RF python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?)" = 0 ] && [ "$(ROLES_FILE=$T/fr.json python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?)" = 0 ] && [ "$(ROLES_FILE=$T/fr.json python3 $S/roles.py requirements fake-role | jq -S -c .)" = "$(jq -nSc "$RQ")" ]' "W2: a fake role with requirements passes check and answers, no code change"
+ok '[ "$(ROLES_FILE=$RF python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?)" = 0 ] && [ "$(ROLES_FILE=$T/fr.json python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?)" = 0 ] && [ "$(ROLES_FILE=$T/fr.json python3 $S/roles.py requirements fake-role | jq -S -c .)" = "$(jq -Sc . <<<"$RQ")" ]' "W2: a fake role with requirements passes check and answers, no code change"
 chk() { ROLES_FILE=$T/b.json python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?; }
 for r in $(jq -r '.roles | keys[]' "$RF"); do
   jq --arg r "$r" 'del(.roles[$r].requirements)' "$RF" >"$T/b.json"
   ok '[ "$(chk)" = 1 ] && grep -q "role $r: requirements" "$T/out"' "W2: role $r without requirements: check fails"
 done
-bad() { jq "$1" "$RF" >"$T/b.json"; ok '[ "$(chk)" = 1 ] && grep -q "$2" "$T/out"' "W2: $3: check fails"; }
+bad() { jq "$1" "$RF" >"$T/b.json"; pat=$2; ok '[ "$(chk)" = 1 ] && grep -q "$pat" "$T/out"' "W2: $3: check fails"; }
 bad '.roles.builder.requirements.min_context_tokens = -1' 'min_context_tokens' "negative context"
 bad '.roles.builder.requirements.min_context_tokens = true' 'min_context_tokens' "boolean context"
 bad '.roles.builder.requirements.min_context_tokens = 1.5' 'min_context_tokens' "fractional context"
