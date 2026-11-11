@@ -100,6 +100,9 @@ echo x >"$F/ws/bin/a"; echo x >"$F/ws/docs/b"; echo S >"$F/ws/config/owner.env";
 echo c >"$F/ws/boxcanary/canary.txt"; echo S >"$F/ws/.env"; echo ok >"$F/ws/.env.example"; echo S >"$F/ws/id.pem"; echo S >"$F/ws/x.key"
 echo h >"$F/ws/.scratch/hidden"; echo k >"$F/home/.claude/.credentials.json"; echo s >"$F/ws/CaSe"
 ln -s "$F/ws/config/owner.env" "$F/ws/via-link"; ln -s /etc "$F/ws/out-link"; ln -s "$F/ws/bin" "$F/ws/in-link"
+mkdir -p "$F/ws/.stella" "$F/ws/.supervisor/state/backups/owner-settings/x" "$F/ws/.supervisor/logs"   # B1 (F1 W4): the apply tool's state, named by the data index
+cp /workspace/.stella/data-files.json "$F/ws/.stella/"; echo SECRET-OLD >"$F/ws/.supervisor/state/backups/owner-settings/x/file"
+echo SECRET-APPLIED >"$F/ws/.supervisor/state/applied.json"; echo SECRET-EVENT >"$F/ws/.supervisor/logs/events.jsonl"; echo alert-line >"$F/ws/.supervisor/logs/alerts.log"
 G="git -c user.name=t -c user.email=t@t -c init.defaultBranch=main"
 $G -C "$F/ws" init -q && echo r >"$F/ws/README" && $G -C "$F/ws" add README && $G -C "$F/ws" commit -qm r
 $G -C "$F/ws" worktree add -q "$F/ws/.worktrees/card1" -b card/x; $G -C "$F/ws" worktree add -q "$F/ws/.worktrees/sib1" -b card/s
@@ -136,6 +139,11 @@ ok '! hasre "via-link" && ! hasre "out-link"' "2.9 a symlink to the owner file o
 ok 'has "ro $WS/bin $WS/in-link"' "2.10 a symlink inside the root is bound by its resolved target"
 ok '! hasre "\.scratch"' "2.11 nothing of .scratch is mounted for a card outside it"
 ok '! hasre "sib1"' "2.12 a sibling worktree is not bound"
+ok '! hasre "backups|applied\.json|events\.jsonl|SECRET"' "B1 2.47: no mount names the apply tool's backups, applied state or event log (the three paths come from the data index)"
+ok 'has "tmpfs $WS/.supervisor/logs" && has "ro $WS/.supervisor/logs/alerts.log $WS/.supervisor/logs/alerts.log"' "B1 2.48: the folders that hold them are tmpfs parents; their other children (the alert log) are bound"
+jq '.data_index = ".stella/zz-no-index.json"' "$T/roles.json" >"$T/roles-noidx.json"
+ROLES_FILE=$T/roles-noidx.json python3 "$T/plan.py" "$S" "$F" "$P" "$WT" card/x >"$T/plan2.txt" 2>"$T/out"
+ok 'grep -q "^REFUSED.*data index" "$T/plan2.txt"' "B1 2.49: a data index the box cannot read: the box does not start (fail closed)"
 ok 'has "rw $WT $WT"' "2.13 a worker role gets its card worktree read-write at the real path"
 G1=$(sed -n 's/^gitdir: //p' "$WT/.git"); ID=$(basename "$G1"); CD=$(realpath "$F/ws/.git")
 ok 'has "ro $CD $CD"' "2.14 the repo git dir is read-only"
@@ -243,6 +251,10 @@ ok 'inb "echo hi" && grep -q hi "$T/out"' "3.1 a command runs in the box"
 ok 'inb "echo hi > $WT/new && git add new && git commit -qm n && git log --oneline | head -1" && grep -q " n$" "$T/out"' "3.2 a commit in the card worktree works in the box (pre-commit proof falls back to the marker)"
 ok '! inb "test -e $WS/boxcanary/canary.txt" && ! inb "test -e $WS/BOXCANARY/CANARY.TXT" && ! inb "test -e $WS/config/owner.env" && ! inb "test -e $WS/Config/OWNER.ENV"' "3.3 the canary, the owner file and their case variants are absent in the box"
 ok 'test -r "$WS/boxcanary/canary.txt"' "3.4 negative control: the canary is readable outside the box by a plain read"
+ok '! inb "test -e $WS/.supervisor/state/backups" && ! inb "test -e $WS/.supervisor/state/applied.json" && ! inb "test -e $WS/.supervisor/logs/events.jsonl" && ! inb "cat $WS/.supervisor/logs/events.jsonl" && ! grep -q SECRET "$T/out"' "B1 3.4b: the backups, the applied state and the event log are absent in the box (no file)"
+ok 'inb "ls $WS/.supervisor/state $WS/.supervisor/logs" && ! grep -qE "backups|applied.json|events.jsonl" "$T/out" && grep -q alerts.log "$T/out"' "B1 3.4c: ...and absent from a listing, while their sibling (the alert log) is listed"
+ok '! inb "python3 -c \"print(open(\\\"$WS/.supervisor/state/applied.json\\\").read())\"" && ! grep -q SECRET "$T/out" && inb "python3 -c \"import glob; print(glob.glob(\\\"$WS/.supervisor/state/backups/*/*/file\\\"))\"" && ! grep -q owner-settings "$T/out"' "B1 3.4d: an interpreter one-liner naming the state path finds nothing in the box (the path sits in the code, not in a shell word)"
+ok 'inb "cat $WS/.supervisor/logs/alerts.log" && grep -q alert-line "$T/out"' "B1 3.4e: control: the alert log beside them is readable in the box"
 ok '! inb "touch $WS/newfile" && grep -qi "read-only" "$T/out"' "3.5 a new file in the project root fails (EROFS)"
 ok '! inb "echo x > $WS/bin/a" && grep -qi "read-only" "$T/out"' "3.6 a bound child is read-only"
 ok 'inb "echo x > $WT/f2" && [ -f "$WT/f2" ]' "3.7 the card worktree is writable"

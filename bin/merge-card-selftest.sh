@@ -140,6 +140,37 @@ ok '[ "$(cd "$T/repo" && bound bind t_00000013 builder-x "$T/repo/.worktrees/t_0
 rm -f "$FAKE_CARDS"/*.json; card t_00000014 f14.txt fourteen 'exit 0'
 h14=$(head_of "$T/repo")
 ok '[ "$(cd "$T/repo" && FAKE_UNREADABLE=1 FAKE_APPROVED=t_00000014 "$M" t_00000014 --owner-approved >"$T/out" 2>&1; echo $?)" = 3 ] && [ "$(head_of "$T/repo")" = "$h14" ]' "an owner shell with the board unreadable, --owner-approved: refused, main untouched"
+# F1 W4 round 2 (B3): the merge is the single place every card change passes. Owner data is refused however the commit was made, the boundary
+# itself needs the owner's explicit flag, and an ordinary branch (the cases above) merges as before.
+export ESCALATE_SUP_DIR=$T/sup; mkdir -p "$T/sup/logs"; : >"$T/sup/logs/alerts.log"
+mkdir -p "$T/repo/.stella/extensions" "$T/repo/.stella/schemas"; printf '{}\n' >"$T/repo/.stella/extensions/zz-own.json"; printf '{}\n' >"$T/repo/.stella/schemas/zz.schema.json"
+g add -f .stella; g -c core.hooksPath=/dev/null commit -qm "owner data, as the owner committed it"
+wcard() {  # wcard <id>: a worktree on a new branch off main; the commands that change it follow
+  g worktree add -q -b "stella/$1-x" "$T/repo/.worktrees/$1" main; }
+wcommit() {  # wcommit <id>: commit everything staged in the worktree, no hook
+  git -C "$T/repo/.worktrees/$1" -c core.hooksPath=/dev/null commit -qm "card $1"; }
+wcard t_0000c001   # plumbing only: hash-object, update-index --cacheinfo, write-tree, commit-tree, update-ref (no commit hook ever runs)
+W1=$T/repo/.worktrees/t_0000c001
+sha=$(printf '{"x": 1}\n' | git -C "$W1" hash-object -w --stdin)
+git -C "$W1" update-index --add --cacheinfo 100644,$sha,.stella/settings.json
+tr1=$(git -C "$W1" write-tree); c1=$(git -C "$W1" commit-tree "$tr1" -p HEAD -m plumbing); git -C "$W1" update-ref refs/heads/stella/t_0000c001-x "$c1"; git -C "$W1" reset -q --hard
+h=$(head_of "$T/repo")
+ok '[ "$(FAKE_APPROVED=t_0000c001 mc t_0000c001)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -q ".stella/settings.json" "$T/out" && grep -q "nothing was merged" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ] && [ "$(grep -c "^STL-CFG-312 " "$T/sup/logs/alerts.log")" = 1 ]' "B3: an owner-data file added by plumbing (hash-object, update-index, commit-tree, update-ref): refused with the code, one alert line, main untouched"
+ok '[ "$(mc t_0000c001 --owner-approved)" = 3 ] && grep -q "owner data" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "B3: --owner-approved does not lift it (owner data changes only through the apply tool)"
+wcard t_0000c002; git -C "$T/repo/.worktrees/t_0000c002" mv .stella/extensions/zz-own.json moved-out.json; wcommit t_0000c002
+ok '[ "$(FAKE_APPROVED=t_0000c002 mc t_0000c002)" = 3 ] && grep -q ".stella/extensions/zz-own.json" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "B3: a rename out of an owner folder is refused (both sides of a rename count)"
+wcard t_0000c003; mkdir -p "$T/repo/.worktrees/t_0000c003/.stella/extensions"; echo x >"$T/repo/.worktrees/t_0000c003/.stella/extensions/é.json"; git -C "$T/repo/.worktrees/t_0000c003" add -f -A; wcommit t_0000c003
+ok '[ "$(FAKE_APPROVED=t_0000c003 mc t_0000c003)" = 3 ] && grep -q "owner data" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "B3: a non-ASCII name under owner data is refused"
+wcard t_0000c004; git -C "$T/repo/.worktrees/t_0000c004" rm -q .stella/schemas/zz.schema.json; wcommit t_0000c004
+ok '[ "$(FAKE_APPROVED=t_0000c004 mc t_0000c004)" = 3 ] && grep -q "owner data" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "B3: a deletion of owner data is refused"
+wcard t_0000c005; mkdir -p "$T/repo/.worktrees/t_0000c005/config"; echo x >"$T/repo/.worktrees/t_0000c005/config/owner.env"; git -C "$T/repo/.worktrees/t_0000c005" add -f -A; wcommit t_0000c005
+ok '[ "$(FAKE_APPROVED=t_0000c005 mc t_0000c005)" = 3 ] && grep -q "owner" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "B3: an owner settings file is refused too"
+wcard t_0000c006; mkdir -p "$T/repo/.worktrees/t_0000c006/docs/hermes-local/hooks/builder"; echo '#!/bin/sh' >"$T/repo/.worktrees/t_0000c006/docs/hermes-local/hooks/builder/zz-guard.sh"; git -C "$T/repo/.worktrees/t_0000c006" add -A; wcommit t_0000c006
+ok '[ "$(FAKE_APPROVED=t_0000c006 mc t_0000c006)" = 3 ] && grep -q "define the boundary" "$T/out" && grep -q "docs/hermes-local/hooks/builder/zz-guard.sh" "$T/out" && grep -q "i-have-read-the-boundary-changes" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "B3: a branch that edits a hook is refused without the flag, the paths listed"
+ok '[ "$(FAKE_APPROVED=t_0000c006 mc t_0000c006 --i-have-read-the-boundary-changes)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ]' "B3: the same branch merges with the flag"
+h=$(head_of "$T/repo")
+wcard t_0000c007; mkdir -p "$T/repo/.worktrees/t_0000c007/.stella"; echo '{"x": 2}' >"$T/repo/.worktrees/t_0000c007/.stella/capabilities.json"; echo '{}' >"$T/repo/.worktrees/t_0000c007/.stella/test-map.json"; git -C "$T/repo/.worktrees/t_0000c007" add -f -A; wcommit t_0000c007
+ok '[ "$(FAKE_APPROVED=t_0000c007 mc t_0000c007)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ]' "B3/G1: the capability registry and the test map (not owner-only rows) merge as before (product rules 4 and 8)"
 # K8/K12: the approval is read from runs of the profiles the role table lists as reviewing (roles.py reviewers), not from the
 # literal name "reviewer". Fixture change: the stub's reviewer run takes its profile from FAKE_REVIEWER (default unchanged).
 RT=${ROLES_FILE:-/workspace/docs/hermes-local/roles.json}
@@ -147,7 +178,7 @@ RVP=$(jq -r '. as $d | [.profiles | to_entries[] | select($d.roles[.value.role].
 BLP=$(jq -r '. as $d | [.profiles | to_entries[] | select($d.roles[.value.role].may_review != true and $d.roles[.value.role].assignable == true) | .key][0]' "$RT")
 ok '[ "$RVP" != null ] && [ "$BLP" != null ]' "K8: the role table has a reviewing profile ($RVP) and a non-reviewing assignable one ($BLP)"
 rm -f "$FAKE_CARDS"/*.json
-jq --arg o "$RVP" '.profiles["qa-x"] = .profiles[$o] | del(.profiles[$o])' "$RT" >"$T/renamed.json"   # the reviewing role, another profile name
+jq --arg o "$RVP" '.profiles["qa-x"] = .profiles[$o] | del(.profiles[$o]) | .sandbox.boxed_profiles += ["qa-x"]' "$RT" >"$T/renamed.json"   # the reviewing role, another profile name
 echo not-json >"$T/garbage.json"; jq 'del(.roles[].may_review)' "$RT" >"$T/nomr.json"
 card t_00000020 f20.txt twenty 'exit 0'; card t_00000021 f21.txt twentyone 'exit 0'; card t_00000022 f22.txt twentytwo 'exit 0'
 card t_00000023 f23.txt twentythree 'exit 0'; card t_00000024 f24.txt twentyfour 'exit 0'; card t_00000025 f25.txt twentyfive 'exit 0'

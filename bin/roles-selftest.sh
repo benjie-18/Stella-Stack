@@ -20,12 +20,12 @@ echo '{}' >"$H/kanban/boards/$BOARD/board.json"
 printf '#!/usr/bin/env bash\necho "$*" >> "%s/calls"\ncase "$*" in *"config get"*) echo unset;; esac\nexit 0\n' "$A" >"$A/bin/hermes"; chmod +x "$A/bin/hermes"
 mk() { mkdir -p "$1"; printf 'model: x\n' >"$1/config.yaml"; echo '{"approvals": []}' >"$1/shell-hooks-allowlist.json"; }
 # The scratch table: the real one plus role "planner" (assignable, delegates, creates cards, one hook) and profile planner-x.
-jq '.roles.planner = {assignable: true, may_answer_for_owner: false, workspace: "git-worktree", may_complete: true, may_unblock: false, may_claim: true,
+jq '.roles.planner = {runs_unboxed: false, assignable: true, may_answer_for_owner: false, workspace: "git-worktree", may_complete: true, may_unblock: false, may_claim: true,
       may_delegate: true, may_create_cards: true, may_review: false, allowed_overrides: [], background_review: false,
       requirements: {tool_calling: true, min_context_tokens: 8000, vision: false, allowed_data_classes: ["public"]},
       platform_toolsets: {cli: ["file", "terminal"]},
       hooks: [{matcher: "^(write_file|patch|skill_manage)$", file: "docs/hermes-local/hooks/reviewer/deny-write.sh"}]}
-    | .profiles["planner-x"] = {role: "planner", soul: "reviewer.md"}
+    | .profiles["planner-x"] = {role: "planner", soul: "reviewer.md"} | .sandbox.boxed_profiles += ["planner-x"]
     | .roles.planner.git_identity = {name: "FAKE_GIT_NAME", email: "FAKE_GIT_EMAIL"}' "$RF" >"$T/roles.json"
 export ROLES_FILE="$T/roles.json"
 for d in $(python3 -c 'import sys; sys.path.insert(0, "/workspace/bin"); import roles; [print(f) for _, f, _, l in roles.profiles(roles.load(), sys.argv[1]) if l]' "$H"); do mk "$d"; done
@@ -61,7 +61,7 @@ mk "$H/profiles/x-new"; : >"$SUP/logs/alerts.log"
 rc=$(ap)
 X="$H/profiles/x-new"
 ok '[ "$rc" = 1 ] && grep -q "x-new: no row in roles.json, registering role unlisted" "$T/out" && [ "$(grep -c "^STL-CFG-303" "$SUP/logs/alerts.log")" = 1 ]' "unlisted profile: apply exits 1, says so, one STL-CFG-303 alerts.log line"
-ok 'grep -qF "/workspace/bin/role-guard.py" "$X/config.yaml" && grep -qF "$X/hooks/write-guard.py" "$X/config.yaml" && grep -qF "$X/hooks/secret-guard.py" "$X/config.yaml" && [ -s "$X/hooks/write-guard.py" ]' "unlisted profile: role guard, write and secret guards registered (never left unguarded)"
+ok 'grep -qF "/workspace/bin/role-guard.py" "$X/config.yaml" && grep -qF "$X/hooks/read-only-terminal.py" "$X/config.yaml" && grep -qF "$X/hooks/deny-write.sh" "$X/config.yaml" && grep -qF "$X/hooks/secret-guard.py" "$X/config.yaml" && [ -s "$X/hooks/read-only-terminal.py" ] && ! grep -qF "write-guard.py" "$X/config.yaml"' "F1 W4 B2 (replaces: write and secret guards): unlisted profile: role guard, the read-only terminal, deny-write and secret guard registered, no write guard (a role outside the box refuses every write; never left unguarded)"
 ok '[ "$(g x-new kanban_create "{}")" = 2 ] && [ "$(g x-new delegate_task "{}")" = 2 ] && [ "$(g x-new kanban_complete "{}")" = 2 ]' "unlisted profile: create, delegate and complete refused"
 rm -rf "$X"
 
@@ -221,8 +221,8 @@ bad '.data_index = ""' 'data_index' "W4: data_index empty"
 bad '.data_index = "../x.json"' 'data_index' "W4: data_index with .."
 bad '.worker_markers += ["not a name"]' 'worker_markers' "W4: worker_markers with a name that is not an environment variable name"
 bad '.worker_markers += ["a[$(id)]"]' 'worker_markers' "W4: worker_markers with a name a shell would evaluate"
-ok '[ "$(python3 -I -c "import sys,os; os.environ[\"ROLES_FILE\"]=sys.argv[2]; sys.path.insert(0, sys.argv[1]); import roles; d=roles.load(); print(roles.owner_data(d)[0], roles.owner_commands(d)[0], roles.worker_markers(d)[0])" "$S" "$RF")" = "/workspace/$(jq -r .owner_data[0] "$RF") /workspace/$(jq -r .owner_commands[0] "$RF") $(jq -r .worker_markers[0] "$RF")" ]' "W4: roles.py exposes the three lists (paths made absolute)"
-ok 'jq -e "(.owner_commands | index(\"bin/merge-card.sh\") != null) and (.owner_commands | index(\"bin/stella-apply.py\") != null) and (.owner_commands | index(\"bin/settings.py\") != null) and (.owner_data | index(\".stella\") != null) and (.worker_markers | index(\"HERMES_KANBAN_WORKSPACE\") != null)" "$RF" >/dev/null' "W4: the real table lists the apply tool, the settings tool and merge-card as owner commands, .stella as owner data and the worker marker variables"
+ok '[ "$(python3 -I -c "import sys,os; os.environ[\"ROLES_FILE\"]=sys.argv[2]; sys.path.insert(0, sys.argv[1]); import roles; d=roles.load(); print(roles.owner_data(d)[-1], roles.owner_commands(d)[0], roles.worker_markers(d)[0])" "$S" "$RF")" = "/workspace/$(jq -r .owner_data[0] "$RF") /workspace/$(jq -r .owner_commands[0] "$RF") $(jq -r .worker_markers[0] "$RF")" ]' "W4 (G1 replaces owner_data[0]: owner_data is now the sorted union, the table list sorts last): roles.py exposes the three lists (paths made absolute)"
+ok 'jq -e "(.owner_commands | index(\"bin/merge-card.sh\") != null) and (.owner_commands | index(\"bin/stella-apply.py\") != null) and (.owner_commands | index(\"bin/settings.py\") != null) and (.owner_data | index(\".stella/schemas\") != null) and (.owner_commands | index(\"bin/event_log.py\") != null) and (.worker_markers | index(\"HERMES_KANBAN_WORKSPACE\") != null)" "$RF" >/dev/null' "W4: the real table lists the apply tool, the settings tool and merge-card as owner commands, .stella as owner data and the worker marker variables"
 # W2-RT-05 / W2-RT-06: failures of the read command carry a code, a plain message and one alert line
 mkdir -p "$T/fl" "$T/rs/logs"; printf '#!/usr/bin/env bash\nexit 1\n' >"$T/fl/hermes"; chmod +x "$T/fl/hermes"
 rq() { ESCALATE_SUP_DIR="$T/rs" PATH="$T/fl:$PATH" python3 $S/roles.py requirements "$@" >"$T/ro" 2>"$T/re"; echo $?; }
@@ -248,5 +248,34 @@ ok '! grep -q SECRETVALUE "$T/out"' "R3: the message names the key, not its valu
 bad "del(.roles[\"$R1\"].complete_needs_review) | .roles[\"$R1\"].complete_needs_reveiw = true" 'complete_needs_reveiw' "R3: a misspelt optional role key"
 bad ".profiles[\"$P1\"].qa_unknown_key = 1" 'profile '"$P1"'.*qa_unknown_key' "R3: an unknown key on a profile row"
 bad '.qa_unknown_key = 1' 'qa_unknown_key' "R3: an unknown key at the top level"
-ok '[ "$(python3 -I -c "import json, sys; sys.path.insert(0, sys.argv[1]); import roles; s = json.load(open(sys.argv[2])); o = lambda n: s[\"\$defs\"][n] if n else s; print(all(set(o(n)[\"properties\"]) == k and o(n)[\"additionalProperties\"] is False for n, k in ((None, roles.TOP_KEYS), (\"role\", roles.ROLE_KEYS), (\"profile\", roles.PROFILE_KEYS))))" "$S" "$(dirname "$S")/.stella/schemas/roles.schema.json")" = True ]' "R3: the schema closes the table, a role and a profile row with exactly roles.py's key lists"
+ok '[ "$(python3 -I -c "import json, sys; sys.path.insert(0, sys.argv[1]); import roles; s = json.load(open(sys.argv[2])); o = lambda n: s[\"\$defs\"][n] if n else s; print(all(set(o(n)[\"properties\"]) == k and o(n)[\"additionalProperties\"] is False for n, k in ((None, roles.TOP_KEYS), (\"role\", roles.ROLE_KEYS), (\"profile\", roles.PROFILE_KEYS))) and set(s[\"\$defs\"][\"role\"][\"properties\"][\"hooks\"][\"items\"][\"properties\"]) == roles.HOOK_KEYS and s[\"\$defs\"][\"role\"][\"properties\"][\"hooks\"][\"items\"][\"additionalProperties\"] is False)" "$S" "$(dirname "$S")/.stella/schemas/roles.schema.json")" = True ]' "R3: the schema closes the table, a role and a profile row with exactly roles.py's key lists (hook entries too)"
+
+# F1 W4 round 2, B2: a role that runs outside the OS box refuses every write by its hooks (data, checked here).
+RUB=$(jq -r '.sandbox.boxed_profiles[0]' "$RF"); RUBR=$(jq -r --arg p "$RUB" '.profiles[$p].role' "$RF"); COORD=$(jq -r '[.roles | to_entries[] | select(.value.may_answer_for_owner == true) | .key][0]' "$RF")
+ok 'jq -e "[.roles[] | has(\"runs_unboxed\")] | all" "$RF" >/dev/null && jq -e --arg c "$COORD" --arg f "$FB" "[.roles | to_entries[] | select(.value.runs_unboxed) | .key] | sort == ([\$c, \$f] | sort)" "$RF" >/dev/null' "W4 B2: runs_unboxed is on every role; true only for the coordinator and the fallback role"
+bad "del(.roles[\"$R1\"].runs_unboxed)" 'runs_unboxed' "W4 B2: a role without runs_unboxed"
+bad ".roles[\"$R1\"].runs_unboxed = \"yes\"" 'runs_unboxed' "W4 B2: runs_unboxed not a boolean"
+bad ".roles[\"$FB\"].runs_unboxed = false" 'must have runs_unboxed true' "W4 B2: the fallback role with runs_unboxed false"
+bad ".sandbox.boxed_profiles -= [\"$RUB\"]" 'runs_unboxed true' "W4 B2: a profile that is not boxed, with a role that is not marked runs_unboxed"
+bad "del(.sandbox)" 'runs_unboxed true' "W4 B2 (replaces: no sandbox block is valid): no sandbox block means nothing is boxed, so every profile's role must refuse every write"
+bad ".roles[\"$FB\"].hooks += [{matcher: \"^terminal\$\", file: \"docs/hermes-local/hooks/builder/write-guard.py\", writes: \"judged\"}]" 'judges writes\|only judges' "W4 B2: a role outside the box that lists a write-guard-style hook (writes: judged)"
+bad ".roles[\"$FB\"].hooks |= map(select(.file | test(\"read-only-terminal\") | not))" 'no hook that refuses' "W4 B2: a role outside the box with a write tool no refusing hook covers"
+bad ".roles[\"$FB\"].hooks |= map(select(.matcher | test(\"\\\\(\\\\?!\") | not))" 'any tool name' "W4 B2: the fallback role without a hook for a tool name no other matcher names"
+bad "del(.roles[\"$FB\"].platform_toolsets)" 'platform_toolsets' "W4 B2: a role outside the box without explicit toolsets"
+bad ".roles[\"$R1\"].hooks[0].qa_unknown = 1" 'unknown key' "W4 B2: an unknown key on a hook entry"
+bad ".roles[\"$R1\"].hooks[0].writes = \"sometimes\"" 'writes' "W4 B2: a hook's writes with another value"
+bad ".roles[\"$R1\"].hooks[0].timeout = \"x\" | del(.roles[\"$R1\"].hooks[0].writes) | .qa_x = 1" 'qa_x' "W4 B2: (control) the closed table still names a stray key"
+ok 'jq -e --arg f "$FB" ".roles[\$f].hooks | map(select(.matcher | test(\"^\\\\^\\\\(\\\\?!\"))) | length == 1" "$RF" >/dev/null' "W4 B2: the fallback role has one catch-all hook"
+ok '[ "$(python3 -I -c "import json, re, sys; d = json.load(open(sys.argv[1])); f = d[\"roles\"][d[\"fallback_role\"]]; h = f[\"hooks\"]; print(all(len([x for x in h if re.fullmatch(x[\"matcher\"], t) and \"(?!\" in x[\"matcher\"]]) == 0 for t in d[\"write_tools\"]) and any(re.fullmatch(x[\"matcher\"], \"zz-new-tool\") for x in h))" "$RF")" = True ]' "W4 B2: the catch-all matches a tool no other hook names and none of the write tools"
+# G1: one definition of owner data (the index, every owner_only row, the table's own list)
+mkdir -p "$T/g1/.stella"; jq . /workspace/.stella/data-files.json >"$T/g1/.stella/data-files.json"
+od() { python3 -I -c 'import json, os, sys; sys.path.insert(0, sys.argv[1]); os.environ["ROLES_FILE"] = sys.argv[2]; import roles; print(json.dumps(roles.owner_paths(roles.load(), sys.argv[3])))' "$S" "$RF" "$T/g1"; }
+ok '[ "$(od | jq -c "[.[] | select(. == \".stella/settings.json\" or . == \".stella/data-files.json\" or . == \".stella/schemas\" or . == \".supervisor/limits.env\")] | length")" = 4 ] && ! od | jq -e "index(\".stella/capabilities.json\") or index(\".stella/versions.json\") or index(\".stella/test-map.json\")" >/dev/null' "W4 G1: owner data = the index, the schemas folder, the owner_only rows (limits.env, settings.json); the capability registry, the versions file and the test map are not"
+jq '(.files[] | select(.id == "capabilities") | .owner_only) = true | (.files[] | select(.id == "settings") | .owner_only) = false' "$T/g1/.stella/data-files.json" >"$T/g1/x.json"; cp "$T/g1/x.json" "$T/g1/.stella/data-files.json"
+ok 'od | jq -e "index(\".stella/capabilities.json\") and (index(\".stella/settings.json\") | not)" >/dev/null' "W4 G1: flip a row's owner_only flag in a scratch index and the same file moves in or out of the set, with no other edit"
+printf '{"x": 1}' >"$T/g1/.stella/data-files.json"
+ok '[ "$(od 2>&1 | grep -c RolesError)" -ge 1 ]' "W4 G1: an index that cannot be read raises (every caller refuses)"
+ok '[ "$(python3 -I $S/roles.py owner-data | jq -r "map(select(. == \".stella/schemas\")) | length")" = 1 ] && [ "$(python3 -I $S/roles.py boundary | jq -r "map(select(. == \"docs/hermes-local/roles.json\" or . == \"bin/box.py\" or . == \"docs/hermes-local/hooks/builder/write-guard.py\" or . == \"bin/false-close-guard.py\")) | length")" = 4 ]' "W4 G1/B3: roles.py owner-data and boundary print the sets (the boundary holds the table, the box, the hook files and the commands the table names)"
+# B1: the apply tool's state paths come from the index
+ok '[ "$(python3 -I -c "import os, sys; sys.path.insert(0, sys.argv[1]); os.environ[\"ROLES_FILE\"] = sys.argv[2]; import roles; print(\" \".join(roles.state_paths(roles.load())))" "$S" "$RF")" = "$(jq -r "[.backup_dir, .applied_state, .event_log] | join(\" \")" /workspace/.stella/data-files.json)" ]' "W4 B1: state_paths = the backup folder, the applied state and the event log, from the index"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

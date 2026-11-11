@@ -88,6 +88,38 @@ ok '[ "$(guard "$W" HERMES_KANBAN_WORKSPACE="$W" HERMES_KANBAN_BRANCH=stella/t_b
 ok '[ "$(guard "$R")" = 0 ]' "The owner's normal commit (no worker marker) allowed, on main too"
 ok '[ "$(guard "$R" GIT_AUTHOR_EMAIL=test@test.com)" = 1 ] && grep -q "test@test.com" "$T/err"' "author test@test.com refused"
 ok '[ "$(guard "$R" GIT_AUTHOR_EMAIL=)" = 1 ] && grep -q "empty" "$T/err"' "empty author email refused"
+# F1 W4 round 2 (G3, G1): the staged names are read whole (-z, no rename detection); owner data is the one definition in bin/roles.py.
+WK=(HERMES_KANBAN_WORKSPACE="$W" HERMES_KANBAN_BRANCH="$BR")
+mkdir -p "$W/.stella/extensions" "$W/.stella/schemas"; echo x >"$W/.stella/schemas/zz-w4.json"
+git -C "$W" add -f .stella/schemas/zz-w4.json && git -C "$W" -c core.hooksPath=/dev/null commit -q -m "owner data, as the owner committed it"
+echo x >"$W/.stella/extensions/é.json"; git -C "$W" add -f ".stella/extensions/é.json"
+ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "G3: a non-ASCII name under owner data (it printed quoted and escaped before -z): refused for a worker"
+ok '[ "$(guard "$W")" = 0 ]' "G3: the same name staged by the owner (no worker marker): allowed"
+git -C "$W" reset -q; rm -f "$W/.stella/extensions/é.json"
+git -C "$W" mv .stella/schemas/zz-w4.json moved-w4.json
+ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "G3: a rename out of an owner folder (the old path is listed, no rename detection): refused for a worker"
+git -C "$W" reset -q --hard
+git -C "$W" rm -q .stella/schemas/zz-w4.json
+ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "G3: a deletion of owner data: refused for a worker"
+ok '[ "$(guard "$W")" = 0 ]' "G3: the same deletion by the owner: allowed"
+git -C "$W" reset -q --hard
+mkdir -p "$W/.stella"; echo x >"$W/.stella/settings.json"; echo x >"$W/.stella/capabilities.json"; echo x >"$W/.stella/test-map.json"
+git -C "$W" add -f .stella/settings.json
+ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "G1: a worker staging an owner_only index row (settings.json): refused"
+git -C "$W" reset -q; git -C "$W" add -f .stella/capabilities.json .stella/test-map.json
+ok '[ "$(guard "$W" "${WK[@]}")" = 0 ]' "G1: a worker staging the capability registry and the test map (rows that are not owner-only; product rules 4 and 8): allowed"
+git -C "$W" reset -q
+# G1: flip a row's flag in a scratch index and the same file moves in or out of the refusal, with no other edit
+GT=$T/gt; mkdir -p "$GT/bin" "$GT/docs/hermes-local" "$GT/.stella"; cp "$CG" /workspace/bin/roles.py "$GT/bin/"; cp /workspace/docs/hermes-local/roles.json "$GT/docs/hermes-local/"
+jq '(.files[] | select(.id == "capabilities") | .owner_only) = true | (.files[] | select(.id == "settings") | .owner_only) = false' /workspace/.stella/data-files.json >"$GT/.stella/data-files.json"
+git -C "$W" add -f .stella/capabilities.json
+ok '[ "$(CG=$GT/bin/commit-guard.sh guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "G1: capabilities.json made owner_only in a scratch index: now refused for a worker"
+git -C "$W" reset -q; git -C "$W" add -f .stella/settings.json
+ok '[ "$(CG=$GT/bin/commit-guard.sh guard "$W" "${WK[@]}")" = 0 ]' "G1: settings.json made not owner_only in the scratch index: now allowed (no other edit)"
+git -C "$W" reset -q
+printf '{}' >"$GT/.stella/data-files.json"; git -C "$W" add -f .stella/capabilities.json
+ok '[ "$(CG=$GT/bin/commit-guard.sh guard "$W")" = 1 ] && grep -qi "cannot be read" "$T/err"' "G1: an index the guard cannot read: every commit is refused, the owner's too (fail closed)"
+git -C "$W" reset -q --hard "$(git -C "$R" rev-parse main)"   # back to the first commit: the end-to-end counts below start there
 # End to end: the guard as the repo's real pre-commit hook, through git commit (worktrees share .git/hooks).
 ln -s "$CG" "$R/.git/hooks/pre-commit"
 ok '! (cd "$R" && echo b > b && git add b && HERMES_KANBAN_WORKSPACE="$W" git commit -q -m x 2>/dev/null) && [ "$(git -C "$R" rev-list --count HEAD)" = 1 ]' "git commit by a worker on main: refused, no commit made"
