@@ -213,6 +213,22 @@ ok 'grep -q STL-CFG-310 "$T/err" && [ "$(runs)" = "$n" ]' "W5: ... with STL-CFG-
 cp "$T/limits.keep" "$T/sup/limits.env"; setlimit CALL_TIMEOUT abc
 check 2 "W5: unreadable registry, bad CALL_TIMEOUT: refused, no call without a timeout" env STELLA_ROOT=$R sh -c "echo hi | $E t_aaaa0103 haiku judge why"
 ok 'grep -q STL-CFG-310 "$T/err" && [ "$(runs)" = "$n" ]' "W5: ... with STL-CFG-310 and no claude run"
+# W5 r2 (E1, E2): a limit that is set but outside the registry's range is handled like a bad timeout; the queue count is one number
+cp "$T/limits.keep" "$T/sup/limits.env"; cp "$Q" "$T/queue.keep"; setlimit HAIKU_MAX_PER_DAY 0; setlimit QUEUE_MAX abc
+for i in $(seq 50); do printf '{"id":"q_full_%s","card":"t_aaaa0000","state":"queued","prompt_file":"/nonexistent"}\n' "$i"; done >"$Q"
+check 3 "E1: QUEUE_MAX=abc with 50 queued (the registry default): refused over the limit" sh -c "echo hi | $E t_aaaa0201 haiku judge why 2>$T/err1"
+ok '[ "$(jq -s "[.[] | select(.state == \"queued\")] | length" "$Q")" = 50 ] && grep -q "QUEUE_MAX=.abc" "$T/err1" && ! grep -q "expression" "$T/err1" "$T/err"' "E1: ... nothing queued beyond 50, a warning names the bad QUEUE_MAX, no shell error"
+setlimit QUEUE_MAX 0; rm -f "$Q"
+check 3 "E1: QUEUE_MAX=0 and no queue file yet: refused over the limit" sh -c "echo hi | $E t_aaaa0202 haiku judge why"
+ok '[ ! -s "$Q" ] && ! grep -q "expression" "$T/err"' "E1: ... nothing queued, no shell error (the count is one number)"
+cp "$T/queue.keep" "$Q"; setlimit HAIKU_MAX_PER_DAY 40; setlimit QUEUE_MAX 50; setlimit CALL_TIMEOUT 99999999d; : >"$T/timeout_args"
+ok '[ "$(PATH="$T/tbin:$PATH" sh -c "echo hi | $E t_aaaa0203 haiku judge why 2>$T/err1" >/dev/null; echo $?)" = 0 ] && [ "$(cat "$T/timeout_args")" -le 86400 ] && grep -q "using 600" "$T/err1"' "E1: CALL_TIMEOUT above the registry maximum gets the registry default (600) and a warning"
+# E2: the refusal prints the catalog code itself when the catalog tool fails
+cp "$T/limits.keep" "$T/sup/limits.env"; mkdir -p "$T/pbin"; py=$(command -v python3)
+printf '#!/bin/sh\ncase "$*" in *alert_catalog*) exit 1;; esac\nexec %s "$@"\n' "$py" >"$T/pbin/python3"; chmod +x "$T/pbin/python3"
+R="$T/reg"; mkdir -p "$R"; cp -r /workspace/.stella "$R/.stella"; echo '{' >"$R/$REG"
+check 2 "E2: unreadable registry and a failing catalog tool: still refused" env STELLA_ROOT=$R PATH="$T/pbin:$PATH" sh -c "echo hi | $E t_aaaa0204 haiku judge why"
+ok 'grep -q "^STL-CFG-310 " "$T/err"' "E2: ... and the refusal prints STL-CFG-310 and the problem itself"
 cp "$T/limits.keep" "$T/sup/limits.env"; rm -rf "$R"
 
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
