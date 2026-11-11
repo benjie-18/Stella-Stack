@@ -217,11 +217,20 @@ EOF" '{command: $c}')" "git apply of a patch given on stdin naming $d"
       say $bad "$L terminal control: cat of owner data $d allowed"
     fi
   done
+  # the apply tool's backup folder holds owner values in clear: no role reads or writes it; its applied state and event log (and the lock) are not written
+  r1 read_file "$(js --arg p "$BK/zz-probe/file" '{path: $p}')" "backup folder file"
+  r1 search_files "$(js --arg p "$BK" '{pattern: "x", path: $p}')" "backup folder (content search)"
+  for c in "cat $BK/zz-probe/file" "grep -r x $BK" "cp -r $BK /tmp/x" "echo x > $BK/zz-probe/file" "rm -r $BK" "echo x > $APS" "cp /tmp/x $EVL" "echo x >> $EVL" "echo x > $EVL.lock"; do
+    r1 terminal "$(js --arg c "$c" '{command: $c}')" "$c"
+  done
+  r1 write_file "$(js --arg p "$EVL" '{path: $p, content: "x"}')" "event log"
+  r1 write_file "$(js --arg p "$APS" '{path: $p, content: "x"}')" "applied state"
+  r1 write_file "$(js --arg p "$BK/zz-probe/file" '{path: $p, content: "x"}')" "backup folder file"
   for c in $CS; do
     b=${c##*/}; q="${b:0:2}''${b:2}"; dir=${c%/*}
     for x in "/workspace/$c" "bash /workspace/$c" "sh /workspace/$c x" "source /workspace/$c" ". /workspace/$c" "env X=1 /workspace/$c" "X=1 /workspace/$c" \
              "python3 -I /workspace/$c set A b" "bash -c '/workspace/$c x'" "bash /workspace/$dir/$q" "./$c" "/workspace/$dir/../$c" "timeout 5 /workspace/$c" \
-             "echo y | /workspace/$c"; do
+             "echo y | /workspace/$c" "setsid -f /workspace/$c" "nohup setsid python3 /workspace/$c" "env -u HERMES_KANBAN_WORKSPACE python3 -I ./$c" "python3 $c"; do
       r1 terminal "$(js --arg c "$x" '{command: $c}')" "owner command: $x"
     done
     r1 terminal '{"command": "bash ./'"$b"'"}' "owner command from inside its folder: $c" "/workspace/$dir"
@@ -239,6 +248,7 @@ matrix2() {   # matrix2 <tag> <owner data list> <owner commands list>: every pro
   wait
   for f in $(ls "$M2"/*.out | sort -V); do cat "$f"; fails=$((fails + $(grep -c '^FAIL' "$f"))); done; rm -f "${M2:?}"/*
 }
+IDX=$STACK/$(jq -r .data_index "$SRC"); BK=/workspace/$(jq -r .backup_dir "$IDX"); APS=/workspace/$(jq -r .applied_state "$IDX"); EVL=/workspace/$(jq -r .event_log "$IDX")
 MT=$SRC; export ROLES_FILE=$SRC
 say "$(jq -e '(.owner_data | length > 0) and (.owner_commands | length > 0) and (.worker_markers | length > 0)' "$SRC" >/dev/null; echo $?)" "3b the real table has owner_data, owner_commands and worker_markers"
 matrix2 "3b real table" "$(jq -r '.owner_data[]' "$SRC")" "$(jq -r '.owner_commands[]' "$SRC")"

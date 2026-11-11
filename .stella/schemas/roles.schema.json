@@ -1,7 +1,7 @@
 {
   "description": "The role table. A table is valid only when BOTH this schema and the validation in bin/roles.py pass; python3 bin/stella_data.py check and validate roles run both (roles.py also holds the rules this schema cannot say: a profile's role exists, fallback_role names a role and opens nothing, a hook has a file or a command and not both, a matcher compiles).",
   "type": "object",
-  "required": ["schema_version", "fallback_role", "protected", "owner_settings", "owner_data", "owner_commands", "worker_markers", "profiles", "roles"],
+  "required": ["schema_version", "fallback_role", "protected", "owner_settings", "owner_data", "owner_commands", "data_index", "worker_markers", "profiles", "roles"],
   "properties": {
     "schema_version": {"type": "integer", "enum": [1]},
     "fallback_role": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"},
@@ -9,6 +9,7 @@
     "owner_settings": {"$ref": "#/$defs/paths"},
     "owner_data": {"$ref": "#/$defs/paths"},
     "owner_commands": {"$ref": "#/$defs/paths"},
+    "data_index": {"type": "string", "pattern": "^[^/ ][^ ]*$"},
     "worker_markers": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}},
     "self_config_kinds": {"type": "array", "items": {"type": "string"}},
     "profiles": {"type": "object", "propertyNames": {"pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"}, "additionalProperties": {"$ref": "#/$defs/profile"}},

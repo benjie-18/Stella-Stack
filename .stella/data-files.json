@@ -110,7 +110,7 @@
       "path": ".supervisor/limits.env",
       "schema": null,
       "format": "env",
-      "owner_only": false,
+      "owner_only": true,
       "redact_keys": [],
       "list_key": null,
       "id_field": "key"
