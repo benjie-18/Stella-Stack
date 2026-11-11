@@ -459,8 +459,8 @@ mkr h8d; mkfifo "$R/.stella/extensions/stray.json"; timeout 60 $AP apply connect
 ok '[ $rc = 0 ] || grep -q stray "$T/o"' "H8 a FIFO in a folder row does not refuse an unrelated apply without naming it (exit $rc)"
 timeout 20 $AP check extensions >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "stray.json" "$T/o"' "H8 check names the stray entry in one problem line"
 for spec in 'CALL_TIMEOUT=900\r\nPLANTED_SETTING=1\r\n' '\xef\xbb\xbfCALL_TIMEOUT=900\nPLANTED_SETTING=1\n' 'CALL_TIMEOUT=0900\nPLANTED_SETTING=1\n'; do
-  mkr h8e$RANDOM; B=$(tree); printf "$spec" >"$C/h8.env"; ap apply limits --from "$C/h8.env" >"$T/o" 2>&1
-  ok '[ $? = 1 ] && grep -q "^STL-CFG-31" "$T/o" && [ "$(tree)" = "$B" ]' "H8 an env value the shell would read differently is refused: $(printf %q "$spec")"
+  mkr h8e$RANDOM; B=$(tree); printf "$spec" >"$C/h8.env"; ap apply limits --from "$C/h8.env" >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 1 ] && grep -q "^STL-CFG-31" "$T/o" && [ "$(tree)" = "$B" ]' "H8 an env value the shell would read differently is refused: $(printf %q "$spec")"
 done
 
 $AP bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "usage error exits 2"
