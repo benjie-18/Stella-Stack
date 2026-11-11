@@ -85,14 +85,14 @@ for spec in connections:conn.json:.stella/connections.json owner-settings:owner.
   printf '# hand edit\n' >>"$file"
   ap check "$id" >"$T/o" 2>&1; rc=$?
   ok '[ $rc = 1 ] && grep -q STL-CFG-314 "$T/o"' "A5d $id: a hand edit after the apply is drift"
-  head -c -"$(printf '# hand edit\n' | wc -c)" "$file" >"$T/x" && cat "$T/x" >"$file"
+  head -c -"$(printf '# hand edit\n' | wc -c)" "$file" >"$C/x" && cat "$C/x" >"$file"
   ap rollback "$id" >"$T/o" 2>&1; rc=$?
   ok '[ $rc = 0 ] && [ "$(tree)" = "$B" ] && [ "$(stat -c %a "$file")" = "$mode" ] && [ "$(nev)" = $((e0+2)) ]' "A5b $id: rollback leaves every file byte-identical (content, mode); A5e two event lines in all"
   ok '[ "$(ap history "$id" --json | jq ".events | map(.type) | join(\",\")" -r)" = "apply,rollback" ]' "A5e $id: history --json shows apply, rollback"
 done
 ap rollback connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-316 "$T/o"' "rollback with no backup: STL-CFG-316"
 ok '! grep -rq "sekrit-" "$T" --exclude-dir=cand --exclude-dir=.git --exclude-dir=backups --exclude=owner.env --exclude=limits.env' "A5e no planted secret value in a log, an event, a state file or an output (data files and their byte-copy backups excepted)"
-ok 'jq -e "select(.type == \"apply\") | .old != null and .new != null" "$LOG" >/dev/null' "event lines carry old and new"
+ok 'jq -es "map(select(.type == \"apply\")) | length > 0 and all(.old != null and .new != null)" "$LOG" >/dev/null' "event lines carry old and new"
 
 # refusals
 B=$(tree); a0=$(wc -l <"$ALERTS" 2>/dev/null || echo 0)

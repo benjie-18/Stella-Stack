@@ -133,14 +133,14 @@ def bdir(key):
     return el.path(os.path.join(sd.load(sd.INDEX)["backup_dir"], key))
 
 def backups(key):
-    """[(name, meta)] oldest first. A folder without meta.json is an unfinished backup and is dropped."""
+    """[(name, meta)] oldest first. A folder without meta.json is an unfinished backup (a kill before the file was touched)
+    and is ignored."""
     d, out = bdir(key), []
     for n in sorted(os.listdir(d)) if os.path.isdir(d) else []:
         try:
             out.append((n, json.load(open(os.path.join(d, n, "meta.json"), encoding="utf-8"))))
         except (OSError, ValueError):
-            if os.path.isfile(os.path.join(d, n, "file")) or os.path.isdir(os.path.join(d, n)):
-                shutil.rmtree(os.path.join(d, n), ignore_errors=True)
+            pass
     return out
 
 def lockfile(key):
@@ -229,7 +229,8 @@ def validate(row, rel, data):
         return doc
     try:
         after = problems(rel, data)
-        new = sorted(p for p in after if p[0] == row["id"] or p not in (problems(rel, None) if after else set()))
+        base = problems(rel, None) if after else set()
+        new = sorted(p for p in after if p[0] == row["id"] or p not in base)
     except EventError:
         raise
     except Exception as e:
@@ -414,12 +415,12 @@ def do_check(arg, as_json):
     return 1 if bad_ else 0
 
 def do_history(arg, as_json):
-    row, key, _, _ = target(arg) if "/" in arg or not sd.is_folder(sd.row_of(arg)) else (sd.row_of(arg), arg, None, None)
+    row = sd.row_of(arg.partition("/")[0])
     gate(row)
-    evs = [e for e in el.tail(sys.maxsize) if e.get("what") == key or str(e.get("what", "")).startswith(key + "/")]
-    bs = [{"name": n, "status": m.get("status")} for n, m in backups(key)] if not sd.is_folder(row) or "/" in arg else []
+    evs = [e for e in el.tail(sys.maxsize) if e.get("what") == arg or str(e.get("what", "")).startswith(arg + "/")]
+    bs = [{"name": n, "status": m.get("status")} for n, m in backups(arg)]
     if as_json:
-        print(json.dumps({"id": key, "events": evs, "backups": bs}, indent=2, ensure_ascii=False))
+        print(json.dumps({"id": arg, "events": evs, "backups": bs}, indent=2, ensure_ascii=False))
     else:
         print("\n".join(f"{e['time']} {e['type']} {e['what']} {e.get('detail', '')}" for e in evs))
     return 0
