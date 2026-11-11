@@ -204,13 +204,13 @@ setdef() { jq --arg k "$1" --argjson v "$2" '(.entries[] | select(.key == $k) | 
 setdef CALL_TIMEOUT 123; setlimit CALL_TIMEOUT abc; setlimit HAIKU_MAX_PER_DAY 40; : > "$T/timeout_args"
 ok '[ "$(STELLA_ROOT=$R PATH="$T/tbin:$PATH" sh -c "echo hi | $E t_12345678 haiku judge to 2>$T/err1" >/dev/null; echo $?)" = 0 ] && [ "$(cat "$T/timeout_args")" = 123 ] && grep -q "using 123" "$T/err1"' "W5: a bad CALL_TIMEOUT falls back to the registry default (123 in the scratch registry), not a literal"
 setlimit CALL_TIMEOUT 600; setdef QUEUE_MAX 0; sed -i '/^QUEUE_MAX=/d' "$T/sup/limits.env"; setlimit HAIKU_MAX_PER_DAY 0; nq=$(jq -s '[.[] | select(.state == "queued")] | length' "$Q")
-check 3 "W5: QUEUE_MAX unset uses the registry default (0 in the scratch registry): over limit, exit 3" env STELLA_ROOT=$R sh -c "echo hi | $E t_wwww0001 haiku judge why"
+check 3 "W5: QUEUE_MAX unset uses the registry default (0 in the scratch registry): over limit, exit 3" env STELLA_ROOT=$R sh -c "echo hi | $E t_aaaa0101 haiku judge why"
 ok '[ "$(jq -s "[.[] | select(.state == \"queued\")] | length" "$Q")" = "$nq" ]' "W5: ... and nothing was queued"
 n=$(runs); echo '{' >"$R/.stella/settings.json"
-check 2 "W5: unreadable registry, QUEUE_MAX unset: refused" env STELLA_ROOT=$R sh -c "echo hi | $E t_wwww0002 haiku judge why"
+check 2 "W5: unreadable registry, QUEUE_MAX unset: refused" env STELLA_ROOT=$R sh -c "echo hi | $E t_aaaa0102 haiku judge why"
 ok 'grep -q STL-CFG-310 "$T/err" && [ "$(runs)" = "$n" ]' "W5: ... with STL-CFG-310 and no claude run"
 cp "$T/limits.keep" "$T/sup/limits.env"; setlimit CALL_TIMEOUT abc
-check 2 "W5: unreadable registry, bad CALL_TIMEOUT: refused, no call without a timeout" env STELLA_ROOT=$R sh -c "echo hi | $E t_wwww0003 haiku judge why"
+check 2 "W5: unreadable registry, bad CALL_TIMEOUT: refused, no call without a timeout" env STELLA_ROOT=$R sh -c "echo hi | $E t_aaaa0103 haiku judge why"
 ok 'grep -q STL-CFG-310 "$T/err" && [ "$(runs)" = "$n" ]' "W5: ... with STL-CFG-310 and no claude run"
 cp "$T/limits.keep" "$T/sup/limits.env"; rm -rf "$R"
 
