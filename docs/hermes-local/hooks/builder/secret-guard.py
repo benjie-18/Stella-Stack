@@ -21,8 +21,9 @@ try:   # K6: the owner settings files (roles.json owner_settings) are read by no
     sys.path.insert(0, "/workspace/bin")
     import roles as _roles
     OWNER_FILES = {os.path.realpath(f).casefold() for f in _roles.owner_settings(_roles.load())}   # B2V-01: /workspace is case-insensitive
+    OWNER_TREES = [os.path.realpath(t).casefold() for t in _roles.state_trees(_roles.load())]   # F1 W4: the apply tool's backups hold owner values
 except Exception:
-    OWNER_FILES = None
+    OWNER_FILES, OWNER_TREES = None, []
 SECRET_DIRS = [f"{h}/{d}" for h in HOMES for d in (".hermes", ".claude", ".local/share/opencode", ".ssh", ".aws", ".config/gh")]
 SECRET_DIRS.append("/proc")   # a recursive search of /proc reads every process's environment
 SECRET_TEXT = re.compile(r"(?<![\w.-])\.env(?!\.(?:example|sample|template)\b)|\.claude/\.credentials|\.hermes/auth\.json|"
@@ -39,13 +40,13 @@ def _within(p, root):
 
 def _owner_dir(p):
     """True when p is a folder that holds an owner settings file, or inside one (RT7-01: never the terminal's folder)."""
-    return any(_within(os.path.realpath(p).casefold(), os.path.dirname(f)) for f in OWNER_FILES or ())
+    return any(_within(os.path.realpath(p).casefold(), os.path.dirname(f)) for f in OWNER_FILES or ()) or any(_within(os.path.realpath(p).casefold(), t) for t in OWNER_TREES)
 
 def secret_path(p):
     n = os.path.normpath(p)
     if re.match(r"/proc/(?:self|thread-self|\d+)(?:/|$)", n):   # another process's environment, memory, fds: a review token lives there while a review runs
         return True
-    if OWNER_FILES is None or os.path.realpath(p).casefold() in OWNER_FILES:
+    if OWNER_FILES is None or os.path.realpath(p).casefold() in OWNER_FILES or any(_within(os.path.realpath(p).casefold(), t) for t in OWNER_TREES):
         return True
     b = os.path.basename(p).casefold()   # B2V-01: .ENV is .env on a case-insensitive mount
     if b not in SECRET_OK and any(fnmatch.fnmatch(b, s) for s in SECRETS if "/" not in s):
@@ -89,7 +90,7 @@ def path_why(word, cwd, names=None, recursive=False):
                     return f"{word} is a secret path ({q})"
                 if recursive and os.path.isdir(q) and any(_within(q, d) or _within(d, q) for d in SECRET_DIRS):
                     return f"recursing into {q} reads secret files"
-                if recursive and os.path.isdir(q) and any(_within(f, os.path.realpath(q).casefold()) for f in OWNER_FILES or ()):
+                if recursive and os.path.isdir(q) and any(_within(f, os.path.realpath(q).casefold()) for f in list(OWNER_FILES or ()) + OWNER_TREES):
                     return f"recursing into {q} reads an owner settings file"   # K6: the folder that holds one
         b = os.path.basename(w)
         if b.startswith(".") and glob.has_magic(b) and any(fnmatch.fnmatch(n, b) for n in (".env", ".env.local", ".credentials.json")):

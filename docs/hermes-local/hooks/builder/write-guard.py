@@ -10,13 +10,15 @@ worktree; any other role writes only to its profile's own cache/scratch.
     realpath, inside the card's own worktree or outside /workspace. Anything else under /workspace (the main checkout,
     other cards' worktrees) is refused, and so is a file with more than one hard link (K1b).
  2. terminal / process_manage: the command text (and command lines nested in quotes, tokenized as git-guard.py does, with
-    backticks as separators) must not mention owner.env or HERMES_DELEGATED_CHILD_CONTEXT, must not run merge-card.sh or
+    backticks as separators) must not mention owner.env or HERMES_DELEGATED_CHILD_CONTEXT, must not run an owner command (roles.json owner_commands: merge-card.sh, the apply and settings tools) or
     `hermes ... kanban` (the board is changed through the kanban tools, never the CLI: K1b), and must not point a write
     command or a > / >> redirect at a protected path or at /workspace outside the card's worktree, resolved against
     `workdir` or the payload cwd and any earlier `cd` on the same line. A `cd`/`pushd` or `workdir` into /workspace outside
     the worktree or into the agent configuration, a relative write target with `..`, and a hard link (`ln`, `cp -l`,
     `link`) of a file outside the worktree are refused (K1b: the terminal's current folder then stays where a relative
     path means what this guard reads). Reads stay allowed. Merging a card into main is the owner's step (F31).
+    F1 W4: no write tool, redirect, copy/move/delete or git command (add, commit, checkout, restore, apply, mv, rm, ...) writes owner
+    data (roles.json owner_data, in the main checkout or in a card worktree); no role runs an owner command.
 The worktree (K1): the recorded workspace of the card whose own worker run this call belongs to, proven from the board
 and the kernel by roles.prove_card (the card is the profile's, its open run is bound to an ancestor of this hook), never
 from HERMES_KANBAN_TASK or /proc/<pid>/environ, which do not show the ids to a hook (D48). HERMES_KANBAN_WORKSPACE,
@@ -27,7 +29,7 @@ whatever kanban_create was given, /workspace itself or another card's worktree i
     refused (F-batch6): builders do not edit agent configuration. Only the profile's own cache/scratch and the card's own
     Hermes kanban workspace are allowed. Not closed (D42): a script written to /tmp and run, interpreters, variable-built commands.
 Exit 2 = block; any error blocks."""
-import json, os, pwd, re, shlex, sys
+import glob, json, os, pwd, re, shlex, sys
 
 sys.path.insert(0, "/workspace/bin")
 import roles   # noqa: E402  (the role table: one protected list, the caller's role)
@@ -37,8 +39,9 @@ try:
     RT = roles.load()
     PROTECTED, CONFIG = roles.protected(RT)
     OWNER_FILES = roles.owner_settings(RT)
+    OWNER_DATA, OWNER_CMDS = RT["owner_data"], roles.owner_commands(RT)   # F1 W4: from roles.json, never named here
 except roles.RolesError as e:   # every call is refused below until the table is fixed
-    RT, PROTECTED, CONFIG, OWNER_FILES, RT_ERROR = None, [], [], [], str(e)[:200]
+    RT, PROTECTED, CONFIG, OWNER_FILES, OWNER_DATA, OWNER_CMDS, RT_ERROR = None, [], [], [], [], [], str(e)[:200]
 HOMES = roles.homes()
 CALL = {}   # this call's payload, and its card worktree once a target needs it (proven at most once per call)
 CONFIG_MSG = "builders do not edit agent configuration (~/.hermes, ~/.claude, ~/.config/opencode, ~/.local/share/opencode)"
@@ -67,9 +70,18 @@ V4A_OPS = (re.compile(r"\*\*\*\s*Move\s+File:\s*(.+?)\s*->\s*(.+)"), re.compile(
            re.compile(r"\*\*\*\s*Move\s+to:\s*(.+)"))
 OWNER_ENV = ("commands may not mention owner.env: it holds the owner config. If it must change, call kanban_block with "
              "kind needs_input and say what should change")
-MERGE = "builders never run bin/merge-card.sh: merging a card into main is the owner's step (F31)"
 KANBAN_CLI = ("builders never run `hermes kanban` or touch HERMES_DELEGATED_CHILD_CONTEXT: change your card with the "
               "kanban tools (kanban_comment, kanban_block, kanban_complete, ...)")
+OWNER_DATA_MSG = ("owner data: only the owner's apply path writes it. If it must change, call kanban_block with kind needs_input "
+                  "and say what should change")
+GIT_WRITERS = {"add", "commit", "checkout", "restore", "apply", "mv", "rm", "reset", "clean", "update-index", "checkout-index"}
+INTERPRETERS = {"bash", "sh", "zsh", "dash", "ksh", "source", ".", "python", "python3", "perl", "node", "ruby", "php"}
+# F1 W4: one rule per owner command (roles.json owner_commands): its file name anywhere in the command text (not inside a longer name,
+# so test_settings.py or settings-selftest.sh are no mention), or its stem as the command word / the script an interpreter runs.
+CMDS = [(re.compile(r"(?<![\w-])" + re.escape(os.path.basename(c))), os.path.basename(c).rsplit(".", 1)[0],
+         f"{c[len(ROOT) + 1:]} is an owner command: no role runs it (the owner runs it from the owner's own path; merging a card into main is the owner's step, F31)")
+        for c in OWNER_CMDS]
+FINAL = {OWNER_ENV, KANBAN_CLI} | {m for _, _, m in CMDS}   # refusals that carry their own advice
 CD_MSG = ("the terminal stays inside your worktree: Hermes keeps its folder between calls, so a later relative path would "
           "write wherever it moved. Use absolute paths to read or write elsewhere (for example /tmp)")
 
@@ -80,6 +92,54 @@ def inside(path, root):
 
 def resolve(path, base):
     return os.path.realpath(os.path.join(base, os.path.expanduser(os.path.expandvars(path))))
+
+
+def owner_data_hit(rp):
+    """F1 W4: rp (resolved) is, or is inside, an owner data path of the stack (roles.json owner_data): in its main checkout or in a
+    card worktree of it. Case-insensitive, as /workspace is (B2V-01). Reading it stays allowed; this is asked of writes only."""
+    low = rp.casefold()
+    return any(re.fullmatch(re.escape(ROOT.casefold()) + r"(?:/\.worktrees/[^/]+)?/" + re.escape(d.casefold()) + r"(?:/.*)?", low, re.S)
+               for d in OWNER_DATA)
+
+
+def git_owner_hit(words, cwd, cmd):
+    """F1 W4: the owner data path a git command that writes paths (GIT_WRITERS) names, resolved as git would (-C, the folder, globs);
+    for apply, the files its patches name. None otherwise. Not caught: git add -A / . (git-guard.py refuses those; bin/commit-guard.sh
+    refuses a worker's commit of owner data), a pathspec magic like :(top), a patch built at run time."""
+    w, base = strip_prefixes(words)[0], cwd
+    if not w or w[0].rsplit("/", 1)[-1] != "git":
+        return None
+    i = 1
+    while i < len(w) and w[i].startswith("-"):
+        if w[i] == "-C" and i + 1 < len(w):
+            base = resolve(w[i + 1], base)
+        i += 2 if w[i] in ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path") else 1
+    sub, args = (w[i] if i < len(w) else ""), w[i + 1:]
+    if sub not in GIT_WRITERS:
+        return None
+    dirs = [base] + [resolve(a.split("=", 1)[1], base) for a in args if a.startswith("--directory=")]
+    for a in args:
+        if a.startswith("-"):
+            continue
+        for d in dirs:
+            ex = os.path.join(d, os.path.expanduser(os.path.expandvars(a)))
+            for rp in ([os.path.realpath(g) for g in glob.glob(ex)] if re.search(r"[*?\[]", a) else []) + [resolve(a, d)]:
+                if owner_data_hit(rp):
+                    return rp
+        if sub == "apply" and os.path.isfile(resolve(a, base)):   # the files a patch names, with and without the a/ b/ prefix
+            try:
+                with open(resolve(a, base), encoding="utf-8", errors="replace") as f:
+                    names = re.findall(r"^(?:\+\+\+ |--- |diff --git |rename (?:to|from) |copy (?:to|from) )(\S+)(?: (\S+))?", f.read(1 << 20), re.M)
+            except OSError:
+                return resolve(a, base)   # a patch that cannot be read cannot be checked
+            for n in (x for pair in names for x in pair if x and x != "/dev/null"):
+                for d in dirs:
+                    for cand in (n, n.split("/", 1)[-1]):
+                        if owner_data_hit(resolve(cand, d)):
+                            return resolve(cand, d)
+    if sub == "apply" and any(d.casefold() in cmd.casefold() for d in OWNER_DATA):   # a patch given on stdin: its text is in the command
+        return f"a patch naming {', '.join(OWNER_DATA)}"
+    return None
 
 
 def worktree(p):
@@ -174,7 +234,7 @@ def protected(arg, cwd):
     if not os.path.isabs(os.path.expanduser(os.path.expandvars(arg))) and ".." in arg.split("/"):
         return f"{arg} (a relative path with ..)"
     rp = resolve(arg, cwd)
-    if any(inside(rp, p) for p in PROTECTED) or config_hit(rp):
+    if any(inside(rp, p) for p in PROTECTED) or config_hit(rp) or owner_data_hit(rp):
         return rp
     if os.path.isfile(rp) and os.stat(rp).st_nlink > 1:   # K1c: a hard link reaches a file outside the worktree
         return f"{rp} (more than one hard link)"
@@ -274,8 +334,9 @@ def write_targets(words):
 def command_reason(cmd, base):
     if any(os.path.basename(f) in cmd for f in OWNER_FILES):   # K6: the owner settings files, from roles.json
         return OWNER_ENV
-    if "merge-card.sh" in cmd:
-        return MERGE
+    for rx, _, msg in CMDS:   # F1 W4: the owner commands, from roles.json (this was the literal merge-card.sh)
+        if rx.search(cmd):
+            return msg
     for toks in all_tokens(cmd):   # K1b/K1c: per simple command, on the command word (a quoted message or a read is not a run)
         simple, cur = [], []
         for t in toks + [";"]:
@@ -293,8 +354,9 @@ def command_reason(cmd, base):
                 return "builders never post with `hermes send`: report through your card (kanban_comment, kanban_block)"
             if name == "kanban" or words[1:2] == ["kanban"]:
                 return KANBAN_CLI
-            if "merge-card" in name or (name in ("bash", "sh", "zsh", "dash", "source", ".") and any("merge-card" in w for w in words[1:2])):
-                return MERGE
+            for _, stem, msg in CMDS:   # the command itself, or the script an interpreter runs, by its name with or without an extension
+                if any(b == stem or b.startswith(stem + ".") for b in [name] + ([w.rsplit("/", 1)[-1] for w in words[1:3]] if name in INTERPRETERS else [])):
+                    return msg
     for toks in all_tokens(cmd):
         cwd, words, skip = base, [], False
         for i, t in enumerate(toks + [";"]):
@@ -304,15 +366,15 @@ def command_reason(cmd, base):
             if t in REDIRECTS:
                 hit = protected(toks[i + 1] if i + 1 < len(toks) else "", cwd)
                 if hit:
-                    return f"a {t} redirect writes {hit}" + (f" ({CONFIG_MSG})" if config_hit(hit) else "")
+                    return f"a {t} redirect writes {hit}" + (f" ({CONFIG_MSG})" if config_hit(hit) else f" ({OWNER_DATA_MSG})" if owner_data_hit(hit) else "")
                 skip = True
                 continue
             if t not in SEP:
                 words.append(t)
                 continue
-            hit = next(filter(None, (protected(w, cwd) for w in write_targets(words))), None)
+            hit = next(filter(None, (protected(w, cwd) for w in write_targets(words))), None) or git_owner_hit(words, cwd, cmd)
             if hit:
-                return f"`{' '.join(words)[:120]}` changes {hit}" + (f" ({CONFIG_MSG})" if config_hit(hit) else "")
+                return f"`{' '.join(words)[:120]}` changes {hit}" + (f" ({CONFIG_MSG})" if config_hit(hit) else f" ({OWNER_DATA_MSG})" if owner_data_hit(hit) else "")
             src = next((rp for w in link_sources(words) if outside_worktree(rp := resolve(w, cwd))), None)
             if src:
                 return f"`{' '.join(words)[:120]}` hard-links {src}, a file outside your worktree"
@@ -347,6 +409,8 @@ def reason(p):
                 return (f"{raw} is a relative path with ..: Hermes resolves it against the terminal's current folder, "
                         "which this guard cannot see. Use the absolute path inside your worktree")
             rp = resolve(str(raw).strip(), base)
+            if owner_data_hit(rp):   # F1 W4: before the worktree rule: the owner's data is not writable even in a card's own worktree
+                return f"{raw} resolves to {rp}, {OWNER_DATA_MSG}"
             if config_hit(rp):
                 return f"{CONFIG_MSG}: {raw} resolves to {rp}. Write it inside your worktree, or under /tmp for scratch files"
             wt, why = own_worktree() if in_repo(rp) else (None, "")
@@ -369,7 +433,7 @@ def reason(p):
             return stack_fault(p, cmd[:120])
         if r and CONFIG_MSG in r:
             r += ". Reads stay allowed; to change a setting, call kanban_block with kind needs_input and say what"
-        elif r and r not in (OWNER_ENV, MERGE, KANBAN_CLI) and "moves the terminal" not in r and "hard-links" not in r and "hermes send" not in r:
+        elif r and r not in FINAL and "owner data" not in r and "moves the terminal" not in r and "hard-links" not in r and "hermes send" not in r:
             r += (f". Protected: {', '.join(PROTECTED)}. Builders write only inside their own worktree: make the "
                   "change there, on your card branch")
         return r

@@ -166,6 +166,15 @@ def validate(d):
     if not (isinstance(os_, list) and os_ and _set(os_) and all(x and not x.startswith("/") and ".." not in x.split("/")
                                                    for x in os_)):
         errs.append("owner_settings needs a non-empty list of paths relative to the stack repo, no path twice")
+    for k, what in (("owner_data", "paths no role writes (all may read them)"), ("owner_commands", "commands no role runs")):   # F1 W4 (E7)
+        v = d.get(k)
+        if not (isinstance(v, list) and v and _set(v) and all(_rel(x) for x in v)):
+            errs.append(f"{k} needs a non-empty list of {what}, relative to the stack repo, no . or .. segment, no path twice")
+    if not _rel(d.get("data_index")):   # the data index: names the backup folder, applied state and event log
+        errs.append("data_index needs a path relative to the stack repo, no . or .. segment")
+    wm = d.get("worker_markers")   # the environment variables that mark a worker's process (commit guard, apply tool, settings tool)
+    if not (isinstance(wm, list) and wm and _set(wm) and all(KEY.fullmatch(x) for x in wm)):
+        errs.append("worker_markers needs a non-empty list of environment variable names (A-Z, digits, _), no name twice")
     return errs + validate_sandbox(d)
 
 
@@ -304,6 +313,34 @@ def homes():
 def owner_settings(d):
     """K6: the owner settings files (absolute), from roles.json; every role's read and write guards refuse them."""
     return [f"{ROOT}/{p}" for p in d["owner_settings"]]
+
+
+def owner_data(d):
+    """F1 W4: the owner's data paths (absolute): no role writes them, every role may read them."""
+    return [f"{ROOT}/{p}" for p in d["owner_data"]]
+
+
+def owner_commands(d):
+    """F1 W4: the owner's commands (absolute): no role runs them."""
+    return [f"{ROOT}/{p}" for p in d["owner_commands"]]
+
+
+def worker_markers(d):
+    """F1 W4: the environment variable names that mark a worker's process."""
+    return list(d["worker_markers"])
+
+
+def state_trees(d):
+    """F1 W4: the folders the apply tool fills with owner values in clear (its backups), absolute, from the data index. Every role's read
+    and write guards refuse them. Raises RolesError when the index cannot be read: callers fail closed."""
+    try:
+        with open(f"{ROOT}/{d['data_index']}", encoding="utf-8") as f:
+            b = json.load(f)["backup_dir"]
+        if not _rel(b):
+            raise ValueError("backup_dir")
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise RolesError(f"{d['data_index']}: backup_dir cannot be read ({type(e).__name__})")
+    return [f"{ROOT}/{b}"]
 
 
 def protected(d):

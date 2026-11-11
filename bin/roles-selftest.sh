@@ -203,6 +203,26 @@ bad '.protected.repo += [.protected.repo[0]]' 'protected' "protected.repo with a
 bad '.protected.home += [.protected.home[0]]' 'protected' "protected.home with a repeated entry"
 bad '.owner_settings += [.owner_settings[0]]' 'owner_settings' "owner_settings with a repeated entry"
 bad ".roles[\"$R1\"].workers = [\"a\", \"a\"]" 'workers' "workers with a repeated entry"
+# F1 W4 (E7): owner_data, owner_commands and worker_markers are required lists the guards read; each is validated, none may be empty or hold an empty name.
+for L in owner_data owner_commands worker_markers; do
+  bad "del(.$L)" "$L" "W4: $L missing"
+  bad ".$L = \"x\"" "$L" "W4: $L not a list"
+  bad ".$L = []" "$L" "W4: $L empty"
+  bad ".$L += [\"\"]" "$L" "W4: $L with an empty name"
+  bad ".$L += [7]" "$L" "W4: $L with a non-text entry"
+  bad ".$L += [.$L[0]]" "$L" "W4: $L with a repeated entry"
+done
+bad '.owner_data += ["/etc"]' 'owner_data' "W4: owner_data with an absolute path"
+bad '.owner_data += ["a/../b"]' 'owner_data' "W4: owner_data with .."
+bad '.owner_commands += ["bin/"]' 'owner_commands' "W4: owner_commands with a folder"
+bad '.owner_commands += ["../x.sh"]' 'owner_commands' "W4: owner_commands with .."
+bad 'del(.data_index)' 'data_index' "W4: data_index missing"
+bad '.data_index = ""' 'data_index' "W4: data_index empty"
+bad '.data_index = "../x.json"' 'data_index' "W4: data_index with .."
+bad '.worker_markers += ["not a name"]' 'worker_markers' "W4: worker_markers with a name that is not an environment variable name"
+bad '.worker_markers += ["a[$(id)]"]' 'worker_markers' "W4: worker_markers with a name a shell would evaluate"
+ok '[ "$(python3 -I -c "import sys,os; os.environ[\"ROLES_FILE\"]=sys.argv[2]; sys.path.insert(0, sys.argv[1]); import roles; d=roles.load(); print(roles.owner_data(d)[0], roles.owner_commands(d)[0], roles.worker_markers(d)[0])" "$S" "$RF")" = "/workspace/$(jq -r .owner_data[0] "$RF") /workspace/$(jq -r .owner_commands[0] "$RF") $(jq -r .worker_markers[0] "$RF")" ]' "W4: roles.py exposes the three lists (paths made absolute)"
+ok 'jq -e "(.owner_commands | index(\"bin/merge-card.sh\") != null) and (.owner_commands | index(\"bin/stella-apply.py\") != null) and (.owner_commands | index(\"bin/settings.py\") != null) and (.owner_data | index(\".stella\") != null) and (.worker_markers | index(\"HERMES_KANBAN_WORKSPACE\") != null)" "$RF" >/dev/null' "W4: the real table lists the apply tool, the settings tool and merge-card as owner commands, .stella as owner data and the worker marker variables"
 # W2-RT-05 / W2-RT-06: failures of the read command carry a code, a plain message and one alert line
 mkdir -p "$T/fl" "$T/rs/logs"; printf '#!/usr/bin/env bash\nexit 1\n' >"$T/fl/hermes"; chmod +x "$T/fl/hermes"
 rq() { ESCALATE_SUP_DIR="$T/rs" PATH="$T/fl:$PATH" python3 $S/roles.py requirements "$@" >"$T/ro" 2>"$T/re"; echo $?; }

@@ -11,6 +11,7 @@
     "workers = only for profiles whose worker is listed). A profile with no row gets fallback_role, which opens nothing.",
     "may_answer_for_owner (every role, true on one): the coordinator the reply poller runs as: free to comment on any card, and its comments count as the owner's answers. Never derived from assignable.",
     "requirements (every role): what a model needs to hold the role: tool_calling, vision (true = needed), min_context_tokens, allowed_data_classes (class names from .stella/data-policy.json). Read with: bin/roles.py requirements <role>.",
+    "Owner-write path (F1 W4): owner_settings = files no role reads or writes or commits (they hold values); owner_data = paths no role writes or lets a worker commit, but every role may read (tracked data: .stella); owner_commands = commands no role runs (the apply tool, the settings tool, the merge); data_index = the data index, which names the apply tool's backup folder (owner values in clear: no role reads or writes it); worker_markers = the environment variables that mark a worker's process. Every guard reads these lists here; a table missing one is invalid and every guard refuses everything.",
     "Add a profile: one row under profiles, then bin/apply-hermes-local.sh. Add a role: one entry under roles, then the same."
   ],
   "fallback_role": "unlisted",
@@ -20,6 +21,10 @@
     "home": [".hermes", ".claude", ".config/opencode", ".local/share/opencode"]
   },
   "owner_settings": ["config/owner.env"],
+  "owner_data": [".stella"],
+  "owner_commands": ["bin/merge-card.sh", "bin/stella-apply.py", "bin/settings.py"],
+  "data_index": ".stella/data-files.json",
+  "worker_markers": ["HERMES_KANBAN_WORKSPACE", "HERMES_KANBAN_TASK", "HERMES_DELEGATED_CHILD_CONTEXT"],
   "self_config_kinds": ["soul", "souls", "hook", "hooks", "toolset", "toolsets", "roles", "role table", "guard", "guards", "skill", "skills"],
   "profiles": {
     "default": {"role": "dispatcher", "dir": "", "soul": "default.md", "display_name": "Stella"},
