@@ -14,8 +14,9 @@ mk() {  # <name>: a scratch root with a copy of the data and the role table
 }
 ed() { local f="$T/$1/.stella/$2"; jq "$3" "$f" >"$f.n" && mv "$f.n" "$f"; }   # <root name> <file> <jq filter>
 sd() { STELLA_ROOT=$T/$1 python3 -I "$SD" "${@:2}"; }                          # <root name> <args...>
-conn() {  # <id> <kind> <subkind> <locality>: a complete connections entry as jq text
-  echo "{id:\"$1\",kind:\"$2\",subkind:\"$3\",label:\"Fake $1\",enabled:true,locality:\"$4\",hosts:[{host:\"$1.example.invalid\",port:443,purpose:\"api\"}],auth_types:[\"api_key\"],secrets:[\"FAKE_KEY\"],actions:[{id:\"go\",approval_class:\"write\"}],models:[{id:\"$1-model\",capabilities:{tool_calling:null,json_mode:null,context_tokens:null,vision:null,streaming:null},probed_at:null,probe_source:null}],data_policy:{retention:null,training_use:null,region:null,zero_retention_available:null,data_classes_allowed:[\"public\",\"internal\",\"client\"]},tos:{status:\"unverified\",subscription_login_by_agent:\"unverified\"},allowed_roles:[],risk_class:\"read\"}"
+AR=$(jq -c '.fallback_role as $fb | [.roles | keys[] | select(. != $fb)]' "$ROOT/docs/hermes-local/roles.json")   # every assignable role
+conn() {  # <id> <kind> <subkind> <locality>: a complete connections entry as jq text; it allows every assignable role, so a case fails for its own cause
+  echo "{id:\"$1\",kind:\"$2\",subkind:\"$3\",label:\"Fake $1\",enabled:true,locality:\"$4\",hosts:[{host:\"$1.example.invalid\",port:443,purpose:\"api\"}],auth_types:[\"api_key\"],secrets:[\"FAKE_KEY\"],actions:[{id:\"go\",approval_class:\"write\"}],models:[{id:\"$1-model\",capabilities:{tool_calling:null,json_mode:null,context_tokens:null,vision:null,streaming:null},probed_at:null,probe_source:null}],data_policy:{retention:null,training_use:null,region:null,zero_retention_available:null,data_classes_allowed:[\"public\",\"internal\",\"client\"]},tos:{status:\"unverified\",subscription_login_by_agent:\"unverified\"},allowed_roles:$AR,risk_class:\"read\"}"
 }
 refuses() { local r=$1; shift; ! sd "$r" "$@" >"$T/o" 2>&1; }                 # <root name> <args...>: exits non-zero, output in $T/o
 alerts() { cat "$T/sup/logs/alerts.log" 2>/dev/null | wc -l; }
@@ -138,7 +139,8 @@ ok '[ "$(jq -r ".files[] | select(.id == \"data-files\") | .owner_only" "$ROOT/.
 # G3 cross-file rules
 mk g3a; ed g3a role-assignments.json '.assignments[0].role = "ghost"'
 ok 'refuses g3a check connections && grep -q "role-assignments" "$T/o" && grep -q "assignable role" "$T/o" && ! grep -q ghost "$T/o"' "51 check <id> also prints the cross-file problems"
-mk g3b; ed g3b data-policy.json '.projects["cx"] = {mode:"local_only",allowed_providers:[]}'
+OPEN="(.entries[] | select(.id == \"claude-subscription\")) |= (.allowed_roles = $AR | .data_policy.data_classes_allowed = [\"public\",\"internal\",\"client\"])"   # the subscription provider allowing every role and class
+mk g3b; ed g3b connections.json "$OPEN"; ed g3b data-policy.json '.projects["cx"] = {mode:"local_only",allowed_providers:[]}'
 ed g3b role-assignments.json '.assignments += [{id:"zz",scope:{level:"card",card:"c1"},role:"builder",effort_mode:"standard",chain:[{provider:"claude-subscription",model:"haiku",parameters:{}}]}]'
 ok 'refuses g3b check' "52 a card assignment with no project is refused, not judged by the open default"
 ed g3b role-assignments.json '.assignments[-1].scope = {level:"project",project:"CX"}'
@@ -147,7 +149,7 @@ mk g3c; ed g3c role-assignments.json '.assignments += [.assignments[0] | .id = "
 ok 'refuses g3c check' "54 two assignments for one scope, role and effort mode are refused"
 mk g3d; ed g3d role-assignments.json '.assignments += [.assignments[0] | .id = "zz" | .role = "unlisted"]'
 ok 'refuses g3d check' "55 the fallback role of the role table cannot be assigned"
-mk g3e; ed g3e connections.json '(.entries[] | select(.id == "claude-subscription")).enabled = false'
+mk g3e; ed g3e connections.json "$OPEN"; ed g3e connections.json '(.entries[] | select(.id == "claude-subscription")).enabled = false'
 ed g3e role-assignments.json '.assignments += [.assignments[0] | .id = "zz" | .role = "reviewer" | .chain = [{provider:"claude-subscription",model:"haiku",parameters:{}}]]'
 ok 'refuses g3e check' "56 a chain naming a disabled provider is refused"
 mk g3f; echo '{"schema_version":1,"id":"zz-ext","kind":"skill","summary":"s","hosts":[],"secrets":[],"tools":[],"allowed_roles":[],"risk_class":"read","enabled":true,"status":"proposed","source":"x"}' >"$T/g3f/.stella/extensions/zz-ext.json"
@@ -159,7 +161,7 @@ ok 'refuses g3h check' "59 a setting code that is not in the alert catalog is re
 mk g3i; ed g3i connections.json '.entries[0].data_policy.data_classes_allowed += ["no-such-class"]'
 ok 'refuses g3i check' "60 a data class that data-policy does not define is refused"
 # G4 schemas and entries
-mk g4a; ed g4a connections.json '.entries[0] += {scopes:["read"],redaction_patterns:["sk-[A-Za-z0-9]+"],allowed_roles:["builder"],risk_class:"read"} | .entries[1].tos.subscription_login_by_agent = "allowed"'
+mk g4a; ed g4a connections.json '.entries[0] += {scopes:["read"],redaction_patterns:["sk-[A-Za-z0-9]+"],allowed_roles:'"$AR"',risk_class:"read"} | .entries[1].tos.subscription_login_by_agent = "allowed"'
 ok 'sd g4a check' "61 connections accept scopes, redaction_patterns, allowed_roles, risk_class and the declared agent ToS flag"
 ed g4a connections.json '.entries[1].tos.subscription_login_by_agent = "maybe"'
 ok 'refuses g4a check' "62 the agent ToS flag takes only its declared values"
@@ -229,7 +231,7 @@ V=sk-ant-api03-qafake0123456789abcdef   # lower case on purpose: it fits the id 
 CM=$(jq -r '.entries[] | select(.id == "claude-subscription") | .models[0].id' "$ROOT/.stella/connections.json")
 CHAIN="[{provider:\"claude-subscription\",model:\"$CM\",parameters:{}}]"
 # P1 a chain entry's provider must allow every data class the role handles
-mk p1a; ed p1a role-assignments.json ".assignments[0].chain = $CHAIN"
+mk p1a; ed p1a connections.json "(.entries[] | select(.id == \"claude-subscription\")).allowed_roles = $AR"; ed p1a role-assignments.json ".assignments[0].chain = $CHAIN"
 ok 'refuses p1a check && grep -q "data class" "$T/o"' "84 a chain to a provider that allows none of the role's data classes is refused"
 ed p1a connections.json '(.entries[] | select(.id == "claude-subscription")).data_policy.data_classes_allowed = ["public"]'
 ok 'refuses p1a check' "85 a provider that allows only some of the role's data classes is refused"
@@ -342,4 +344,62 @@ echo "{\"schema_version\":1,\"hosts\":[$(row a.example.com 443 g o 2026-11-10T00
 ok 'refuses s2a check' "131 an expiry before the approval is refused"
 # S3 a known env row gets its own code and text
 ok 'refuses fake get owner-settings && ! grep -qi "not in Stella.s data files" "$T/o" && grep -q "^STL-CFG-319 " "$T/o"' "132 get on an env row answers with its own catalog code, not the unknown-name text"
+# ---- F1 W1 fix round 4 (QA round 3): A every required field is enforced, B every file a row names is judged, C a read never
+# serves what check refuses, D the small ones ----
+LMS='(.entries[] | select(.id == "local-model-server"))'
+# A a provider's allowed_roles against the assignments that name it
+mk a1; ed a1 connections.json "$LMS.allowed_roles = [\"dispatcher\"]"
+ok 'refuses a1 check && grep -q "^STL-CFG-310 .*global-builder: chain\[0\].*allowed_roles" "$T/o" && ! grep -q "global-dispatcher" "$T/o"' "133 a chain to a provider whose allowed_roles leaves the role out is refused; the role it lists passes"
+ed a1 connections.json "$LMS.allowed_roles = []"
+ok 'refuses a1 check && grep -q "global-dispatcher: chain\[0\].*allowed_roles" "$T/o"' "134 a provider with allowed_roles [] allows no role"
+# B every file of every row of a schema gets every rule of that schema
+mk b1; jq '.assignments |= map(.id += "-2")' "$T/b1/.stella/role-assignments.json" >"$T/b1/.stella/ra2.json"
+ed b1 data-files.json '.files += [{id:"ra2",path:".stella/ra2.json",schema:"role-assignments",format:"json",owner_only:true,redact_keys:[],list_key:"assignments",id_field:"id"}]'
+ok 'refuses b1 check && grep -q "ra2: .*one document" "$T/o" && refuses b1 get ra2' "135 a schema the data marks one document (x-one-document) refuses a second file in another row"
+mk b2; mkdir "$T/b2/.stella/dp"; mv "$T/b2/.stella/data-policy.json" "$T/b2/.stella/dp/a.json"; cp "$T/b2/.stella/dp/a.json" "$T/b2/.stella/dp/b.json"
+ed b2 data-files.json '(.files[] | select(.id == "data-policy")).path = ".stella/dp"'
+ok 'refuses b2 check && grep -q "dp/b.json: .*one document" "$T/o"' "136 the same for the second file of a folder row"
+mk b2c; jq '."x-one-document" = "yes"' "$T/b2c/.stella/schemas/features.schema.json" >"$T/b2c/s" && mv "$T/b2c/s" "$T/b2c/.stella/schemas/features.schema.json"
+ok 'refuses b2c check && grep -q "x-one-document" "$T/o"' "137 x-one-document takes only true or false"
+mk b3; jq -n "{schema_version:1,entries:[$(conn two-prov provider hosted cloud)]}" >"$T/b3/.stella/conn2.json"
+ed b3 data-files.json '.files += [{id:"conn2",path:".stella/conn2.json",schema:"connections",format:"json",owner_only:true,redact_keys:[],list_key:"entries",id_field:"id"}]'
+ed b3 role-assignments.json '.assignments[0].chain = [{provider:"two-prov",model:"two-prov-model",parameters:{}}]'
+ok 'sd b3 check >"$T/o" 2>&1 && [ "$(sd b3 get conn2 two-prov --json | jq -r .id)" = two-prov ]' "138 control: a second connections row is one catalog with the first; an assignment may name its provider"
+ed b3 conn2.json '.entries[0].data_policy.data_classes_allowed += ["no-such-class"]'
+ok 'refuses b3 check && grep -q "conn2: two-prov: data_classes_allowed" "$T/o" && refuses b3 get conn2 two-prov && grep -q "^STL-CFG-310 " "$T/o"' "139 the cross-file rules judge the entries of the second row, and get refuses them"
+ed b3 conn2.json '.entries[0].data_policy.data_classes_allowed -= ["no-such-class"] | .entries += [.entries[0] | .id = "local-model-server"]'
+ok 'refuses b3 check && grep -q "conn2: .*duplicate entry id .local-model-server., also in .stella/connections.json" "$T/o" && refuses b3 get conn2' "140 one entry id in two rows of one schema is refused, and the later row is not served"
+mk b4; ed b4 data-files.json '(.files[] | select(.id == "settings")).schema = "./settings"'
+ok 'refuses b4 check && grep -q "^STL-CFG-310 .*schema" "$T/o" && refuses b4 get settings' "141 the index schema field is a plain name: ./settings is refused"
+mk b5; ed b5 data-files.json '.files += [(.files[] | select(.id == "data-policy") | .id = "dp-alias" | .path = "./.stella/data-policy.json" | .owner_only = false)]'
+ok 'refuses b5 check && grep -q "more than one index row" "$T/o" && refuses b5 get dp-alias && refuses b5 get data-policy' "142 two rows that resolve to one file are refused, and neither is served"
+mk b6; mkdir -p "$T/b6/.supervisor"; printf 'QA_FAKE=qafake-env\n' >"$T/b6/.supervisor/limits.env"; chmod 000 "$T/b6/.supervisor/limits.env"
+ed b6 data-files.json '.files += [{id:"lim-json",path:"./.supervisor/limits.env",schema:"versions",format:"json",owner_only:true,redact_keys:[],list_key:"pins",id_field:"id"}]'
+ok 'refuses b6 check && grep -q "more than one index row" "$T/o" && ! grep -qi "expecting\|cannot be read\|qafake" "$T/o"' "143 a JSON row on an env row's file is refused and the file is never opened"
+OS=$(jq -r '.owner_settings[0]' "$ROOT/docs/hermes-local/roles.json")
+mk b7; mkdir -p "$T/b7/$(dirname "$OS")"; printf 'QA_FAKE=qafake-owner\n' >"$T/b7/$OS"; chmod 000 "$T/b7/$OS"
+ed b7 data-files.json "(.files[] | select(.path == \"$OS\")) |= (.format = \"json\" | .schema = \"versions\" | .list_key = \"pins\" | .id_field = \"id\")"
+ok 'refuses b7 check && grep -q "owner setting of the role table" "$T/o" && ! grep -qi "expecting\|cannot be read\|qafake" "$T/o"' "144 a row on an owner setting of the role table that is not an env row is refused, and the file is never opened"
+ed b7 data-files.json "(.files[] | select(.path == \"$OS\")) |= (.format = \"env\" | .schema = null | .list_key = null | .id_field = \"key\" | .owner_only = false)"
+ok 'refuses b7 check && grep -q "owner setting of the role table" "$T/o"' "145 the same for an env row that is not owner_only"
+# C a read runs the rules check runs on the files it serves
+mk c1; ed c1 role-assignments.json ".assignments[0].chain[0].model = \"$V\""
+ok '(for c in "get role-assignments" "get role-assignments global-dispatcher" "get --json role-assignments" "list role-assignments" "search qafake" "list"; do refuses c1 $c && grep -q "^STL-CFG-310 " "$T/o" && ! grep -q qafake "$T/o" || exit 1; done)' "146 get, list and search refuse a file check refuses on a cross-file rule, printing no data"
+ok 'sd c1 get versions >/dev/null 2>&1 && sd c1 list capabilities >/dev/null 2>&1' "147 control: a file with no problem of its own is still served while another file has one"
+# D value patterns (the catalog's redaction_patterns) mask every read and every key name a problem line would print
+VP='(.entries[] | select(.kind == "channel")).redaction_patterns += ["qafake0[a-z0-9]+"]'
+mk vp1; ed vp1 connections.json "$VP | $LMS.limits = {bearer:\"qafake0limit\"}"
+ed vp1 role-assignments.json '.assignments[0].chain[0].parameters = {auth:"qafake0auth", headers:["X-Auth qafake0header"], deep:[{a:["qafake0deep"]}]}'
+ok 'sd vp1 check >/dev/null 2>&1 && { for c in "get role-assignments" "get role-assignments global-dispatcher" "get --json connections" "get connections local-model-server" "list role-assignments" "search qafake0auth" "search --json qafake0"; do sd vp1 $c; done >"$T/o" 2>&1; ! grep -Eq "qafake0(limit|auth|header|deep)" "$T/o"; } && sd vp1 get role-assignments global-dispatcher | grep -q "\*\*\*" && [ "$(sd vp1 search qafake0auth)" = "" ]' "148 a value a catalog redaction pattern matches is masked by every read, inside lists too, and search does not answer for it"
+mk vp2; ed vp2 connections.json "$VP | $LMS.tos.qafake0key = true | $LMS.tos.zz_plain = true"; ed vp2 role-assignments.json '.effort_modes.qafake0mode = 1'
+ok 'refuses vp2 check && ! grep -q "qafake0" "$T/o" && grep -q "a masked key" "$T/o" && grep -q "zz_plain" "$T/o"' "149 a key name a value pattern matches is not printed (a masked key at its path); other key names are"
+mk vp3; ed vp3 connections.json "$VP"; printf '{"schema_version":1,"entries":[],"qafake0dup":1,"qafake0dup":2}' >"$T/vp3/.stella/capabilities.json"
+ok 'refuses vp3 check && grep -q "repeated key" "$T/o" && ! grep -q qafake0 "$T/o" && refuses vp3 get capabilities && ! grep -q qafake0 "$T/o"' "150 a repeated key a value pattern matches is not printed by check or get"
+mk vp4; sed -i '0,/"parameters": {}/s//"parameters": {"t": 1e-400}/' "$T/vp4/.stella/role-assignments.json"
+ok 'grep -q 1e-400 "$T/vp4/.stella/role-assignments.json" && refuses vp4 check && grep -q "^STL-CFG-310 " "$T/o" && refuses vp4 get role-assignments' "151 a non-zero number that reads as zero is refused"
+mk vp5; sed -i '0,/"parameters": {}/s//"parameters": {"t": 0.0, "u": 0e5, "v": -0.0, "w": 5e-324}/' "$T/vp5/.stella/role-assignments.json"
+ok 'grep -q 0e5 "$T/vp5/.stella/role-assignments.json" && sd vp5 check >/dev/null' "152 control: zero written as zero, and the smallest double, load"
+mk vp6; ed vp6 connections.json "$LMS |= (.cost = {token:\"qafake-c\"} | .limits = {secret:\"qafake-l\"} | .models[0].cost = {password:\"qafake-m\"})"
+ok 'sd vp6 check >/dev/null 2>&1 && sd vp6 get --json connections local-model-server >"$T/o" && ! grep -q qafake "$T/o" && [ "$(jq "[.cost.token, .limits.secret, .models[0].cost.password] | map(select(. == \"***\")) | length" "$T/o")" = 3 ]' "153 a connections entry that passes check shows *** for a secret-named key in cost, limits and a model's cost"
+ok 'refuses fake validate event <(jq "del(.time)" "$T/ev.json") && grep -q "^STL-CFG-310 " "$T/o" && ! grep -qv "^STL-CFG-310 " "$T/o"' "154 validate prints every problem as a STL-CFG-310 line, for any schema"
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
