@@ -163,4 +163,14 @@ jq 'del(.worker_markers)' "$R/docs/hermes-local/roles.json" >"$T/r" && cp "$R/do
 st set CALL_TIMEOUT 900 >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-312 "$T/o" && [ "$(snap)" = "$B" ]' "no worker_markers in the role table: set fails closed (STL-CFG-312)"
 cp "$T/roles.keep" "$R/docs/hermes-local/roles.json"
 
+# G5 (W4-VER-09): a store file that holds a key twice is refused with a coded message before anything is compared or written: "no change" is never
+# said for a file the apply tool would refuse
+cp "$R/config/owner.env" "$T/owner.keep"; printf "WORKER_GIT_NAME='Second One'\n" >>"$R/config/owner.env"; B2=$(snap); e0=$(nev)
+st set WORKER_GIT_NAME 'Second One' >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-CFG-313 "$T/o" && grep -q "twice" "$T/o" && ! grep -q "no change" "$T/o" && [ "$(snap)" = "$B2" ] && [ "$(nev)" = "$e0" ]' "G5: set on a store file that holds a key twice: STL-CFG-313, never 'no change', nothing written"
+st get WORKER_GIT_NAME >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-CFG-313 "$T/o" && ! grep -q "Second One\|Fake One" "$T/o"' "G5: get on it is refused the same way and shows no value"
+cp "$T/owner.keep" "$R/config/owner.env"; chmod 600 "$R/config/owner.env"
+ok '[ "$(snap)" = "$B" ]' "G5: the fixture is back as it was"
+
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

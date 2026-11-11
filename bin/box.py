@@ -1,7 +1,7 @@
 """OS box (option A), stdlib only: the bubblewrap mount list for one terminal call of a boxed profile.
 plan() turns the card proof and the `sandbox` block of roles.json into mounts; box_argv() makes the bwrap argv. No profile,
 role, path or project is named here: they come from the table, the card proof and the board's project roots. A path
-the box must not show (owner settings, the canary, secret classes, hidden folders) is never mounted: every parent of
+the box must not show (owner settings, the apply tool's backups, applied state and event log named by the data index, the canary, secret classes, hidden folders) is never mounted: every parent of
 one is a tmpfs and each safe child is bound on its own, because /workspace is case-insensitive (9p) and a bind over one
 spelling hides only that spelling. Any doubt raises BoxError and the terminal is refused (fail closed).
 The card's branch ref is not bound from the shared refs/heads/<project> folder (HH-05: on the case-insensitive 9p mount a bind
@@ -276,7 +276,11 @@ def plan(d, profile, proof, *, hermes_root, home, roots, stack_root=None, spec=N
     roots = list(dict.fromkeys(os.path.realpath(r) for r in [stack, *roots]))   # the stack repo is always walked: the hide rules never depend on the board's project list
     roots = [r for r in roots if not any(r != o and r.startswith(o + "/") for o in roots)]   # a nested root is reached through its parent
     cf = lambda p: p.casefold()
-    prot = [os.path.join(stack, p) for p in d["owner_settings"]] + [os.path.join(stack, sb["canary"])]
+    try:   # B1 (F1 W4): the apply tool's backups, applied state and event log hold owner values: they are mounted like the owner settings, never (no file, no listing)
+        state = roles.state_paths(d, stack)
+    except roles.RolesError as e:
+        raise BoxError(f"the data index cannot be read, so the box does not start: {e}")
+    prot = [os.path.join(stack, p) for p in d["owner_settings"]] + [os.path.join(stack, p) for p in state] + [os.path.join(stack, sb["canary"])]
     protcf = {cf(x) for x in prot} | {cf(os.path.realpath(x)) for x in prot}
     for x in prot:
         if os.path.isfile(x) and os.stat(x).st_nlink > 1:

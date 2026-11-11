@@ -337,6 +337,115 @@ for p in $BUILDERS; do
   # xargs regression (verifier F2 / RT4-14): a read-only xargs pipeline is allowed, an xargs-fed write verb is refused
   ok '[ "$(hookrun bind $C $p $OWN terminal "$(tjson "ls /tmp | xargs -n1 echo")" $OWN)" = 0 ] && [ "$(hookrun bind $C $p $OWN terminal "$(tjson "ls $OWN | xargs wc -l")" $OWN)" = 0 ] && [ "$(hookrun bind $C $p $OWN terminal "$(tjson "ls /tmp | xargs rm -f")" $OWN)" = 2 ] && grep -qF "feeds paths this guard cannot see" "$T/out"' "$p: ls | xargs echo and xargs wc allowed; xargs rm refused for the right reason"
 done
+# ---- F1 W4 round 2 (G2, G4): the guard reads a command the way the shell will. A card worktree OWN under /workspace is the proven one.
+NL=$'\n'; WGA=$T/sup/logs/alerts.log
+for p in $BUILDERS; do
+  OWN=/workspace/.worktrees/$C
+  wg() { hookrun bind $C $p $OWN terminal "$(tjson "$1")" "${2:-$OWN}"; }
+  # the false-positive controls: everyday commands in the worktree, with literal paths, stay allowed
+  while IFS= read -r c; do
+    c=${c//@O@/$OWN}; ok '[ "$(wg "$c")" = 0 ]' "G2 $p: allowed (an everyday command in the worktree): $c"
+  done <<'G2OK'
+git checkout -- .
+git restore .
+git reset --hard
+git stash
+git add app/settings.py
+git commit -m "touch settings"
+git status
+git diff --stat
+cat src/settings.py
+python3 settings.py --help
+grep -rn settings src
+for f in $(ls); do cat $f; done
+out=@O@/o.txt; echo x > "$out"
+echo hi > @O@/n.txt
+find . -name '*.py' -exec echo {} \;
+npm test
+cp a b
+echo $(date); ls
+for f in *.txt; do mv "$f" "$f.bak"; done
+G2OK
+  ok '[ "$(wg "cat > $OWN/n.md <<'"'"'EOF'"'"'${NL}rm /workspace/bin/x${NL}EOF")" = 0 ] && [ "$(wg "cat > $OWN/n.md <<EOF${NL}text${NL}EOF${NL}ls")" = 0 ]' "G2 $p: allowed: a here-document's body is text, not commands"
+  ok '[ "$(wg "cat <<EOF${NL}\$(rm /workspace/bin/x)${NL}EOF")" = 2 ] && [ "$(wg "cat > $OWN/n.md <<'"'"'EOF'"'"'${NL}text${NL}EOF${NL}rm /workspace/bin/x")" = 2 ] && [ "$(wg "echo \"<<X\"${NL}rm /workspace/bin/x${NL}X")" = 2 ]' "G2 $p: refused: a command substitution inside an unquoted here-document runs; a command after the body, and a << inside quotes, are commands"
+  ok '[ "$(wg "echo ok${NL}ls")" = 0 ] && [ "$(wg "ls${NL}git status")" = 0 ]' "G2 $p: allowed: two harmless lines"
+  ok '[ "$(wg "ls 2>&1")" = 0 ] && [ "$(wg "echo x >&2")" = 0 ] && [ "$(wg "echo x 2>/dev/null")" = 0 ]' "G2 $p: allowed: descriptor duplicates open no file"
+  # refused: every redirect form, a second line, expansions, case, unresolved words, git, owner commands by resolved file
+  while IFS= read -r c; do
+    ok '[ "$(wg "$c")" = 2 ]' "G2 $p: refused: $c"
+  done <<'G2NO'
+echo x >& /workspace/bin/y
+echo x >&/workspace/bin/y
+: <> /workspace/bin/y
+echo x &> /workspace/bin/y
+echo x >| /workspace/bin/y
+echo x 2> /workspace/bin/y
+echo x > /workspace/bi{n,}/y
+echo x > $'/workspace/b\151n/y'
+echo x > /workspace/BIN/y
+echo x > /workspace/bi?/roles.py
+echo x > "$ZZ_UNSET_VAR/y"
+cp a "$ZZ_UNSET_VAR"
+x=/workspace/bin/y; echo x > "$x"
+ls | xargs python3
+find . -name x -exec python3 {} ;
+python3 /workspace/bin/event_log.py append --type apply
+python3 /workspace/bin/Settings.py get X
+python3 /workspace/bin/set*.py get X
+python3 /workspace/bin/set{t,}ings.py get X
+python3 -I -B /workspace/bin/sett''ings.py get X
+python3 $'/workspace/bin/set\164ings.py' get X
+bash /tmp/x-merge-card.sh
+x=/workspace/bin/settings.py; python3 "$x" get X
+python3 "$ZZ_UNSET_VAR" get X
+git checkout HEAD -- .stella/settings.json
+git -C /workspace checkout -- .
+git update-index --add --cacheinfo 100644,0000000000000000000000000000000000000000,.stella/settings.json
+git add --pathspec-from-file=/tmp/l
+git --git-dir=/workspace/.git add x
+git -C /workspace/.worktrees/t_00000000 add x
+echo $(date); rm /workspace/bin/x
+cp a $(echo /workspace/bin/x)
+cp a `echo /workspace/bin/x`
+for f in /workspace/bin/*.py; do rm "$f"; done
+for f in $(ls); do rm "$f"; done
+(cd .); cp a /workspace/bin/b
+G2NO
+  for c in "echo ok${NL}cp /tmp/x /workspace/bin/y" "ls${NL}tee /workspace/bin/y" "ls${NL}dd of=/workspace/bin/y" "echo ok \\${NL}> /workspace/bin/y"; do
+    ok '[ "$(wg "$c")" = 2 ]' "G2 $p: refused (a second line is a command of its own): ${c//$NL/<NL>}"
+  done
+  # git in the main checkout: every form, whatever its paths
+  while IFS= read -r c; do
+    ok '[ "$(wg "$c" /workspace)" = 2 ]' "G2 $p: refused in the main checkout: $c"
+  done <<'G2GIT'
+git checkout -- .
+git checkout HEAD -- docs/hermes-local/roles.json
+git restore .
+git restore --source=HEAD --worktree -- .
+git reset --hard HEAD
+git stash
+git clean -fd
+git hash-object -w x
+git commit-tree HEAD^{tree} -m x
+git update-ref refs/heads/f1/card HEAD
+git am /tmp/p.patch
+git apply --cached /tmp/p.patch
+git commit -m x
+G2GIT
+  : >"$WGA"
+  ok '[ "$(wg "python3 /workspace/bin/settings.py get X")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out" && grep -q "an owner command" "$T/out" && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ] && ! grep -q "owner.env" "$WGA"' "G4 $p: an owner command run: the code, the catalog message, one alert line"
+  : >"$WGA"
+  ok '[ "$(run write_file "$(wjson /workspace/.stella/settings.json)")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out" && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ]' "G4 $p: a write of owner data: the code, one alert line"
+  : >"$WGA"
+  ok '[ "$(wg "echo x > /workspace/.stella/settings.json")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out" && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ]' "G4 $p: a redirect into owner data: the code, one alert line"
+  : >"$WGA"
+  ok '[ "$(wg "echo x > /workspace/.supervisor/logs/events.jsonl")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out" && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ]' "G4 $p: a redirect into an owner state path (the event log): the code, one alert line"
+  : >"$WGA"
+  ok '[ "$(wg "echo x > /workspace/bin/y")" = 2 ] && ! grep -qF "STL-CFG-312" "$T/out" && [ ! -s "$WGA" ]' "G4 $p: an older refusal keeps its text and writes no alert line"
+done
+ROLES_BAD=$T/roles-typeerr.json; jq '.roles[(.profiles | to_entries[0].value.role)].allowed_overrides = [{}]' /workspace/docs/hermes-local/roles.json >"$ROLES_BAD"
+ok '[ "$(jq -nc "{tool_name: \"terminal\", tool_input: {command: \"ls\"}, cwd: \"/tmp\", profile: \"x\"}" | ROLES_FILE=$ROLES_BAD python3 "$G" >"$T/out" 2>"$T/err"; echo $?)" = 2 ] && ! grep -q Traceback "$T/err" && grep -q "STL-" "$T/out"' "CV-12: a table that makes validation raise (not a RolesError) is a refusal with a coded line, never a traceback"
+ok '[ "$(echo "{" | python3 "$G" >"$T/out" 2>"$T/err"; echo $?)" = 2 ] && ! grep -q Traceback "$T/err" && grep -q "STL-CFG-312" "$T/out"' "an exception inside the guard (unreadable payload) is a coded refusal"
 ok '[ "$(ls -A /workspace/.worktrees 2>/dev/null | sort)" = "$REAL_BEFORE" ]' "the real /workspace/.worktrees gained no entries during the run"
 ok '[ "$(tail -c +$((LIVE_SIZE + 1)) "$LIVE_ALERTS" 2>/dev/null | grep -c "^STL-GRD-603 ")" = 0 ]' "no STL-GRD-603 line from this test reached the live alerts.log"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

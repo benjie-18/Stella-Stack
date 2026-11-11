@@ -174,8 +174,8 @@ fi
 # the real one and one with an extra entry in each list (no name is in the code).
 printf '%s\n' 'diff --git a/ZZD/zz-probe.json b/ZZD/zz-probe.json' 'new file mode 100644' '--- /dev/null' '+++ b/ZZD/zz-probe.json' '@@ -0,0 +1 @@' '+x' >"$T/w4.patch.in"
 M2=$T/m2; mkdir -p "$M2"
-m2role() {   # m2role <tag> <profile label> <role> <owner data list> <owner commands list> <n>: one role's cases; runs in a subshell, writes only under $M2
-  local tag=$1 lab=$2 role=$3 DS=$4 CS=$5 n=$6 OUT=$M2/$n.o ERR=$M2/$n.e LN=$M2/$n.lnk PT=$M2/$n.patch d f c x b q dir okc bad h
+m2role() {   # m2role <tag> <profile label> <role> <owner data list> <owner commands list> <n> [light list]: one role's cases; runs in a subshell, writes only under $M2
+  local tag=$1 lab=$2 role=$3 DS=$4 CS=$5 n=$6 DL=${7:-} OUT=$M2/$n.o ERR=$M2/$n.e LN=$M2/$n.lnk PT=$M2/$n.patch d f c x b q dir okc bad h
   hk() { printf '%s' "$2" | "$1" >"$OUT" 2>"$ERR"; echo $?; }
   blocked() { [ "$1" = 2 ] && jq -e '.action == "block"' "$OUT" >/dev/null 2>&1; }
   r1() {   # r1 <tool> <input> <description> [cwd]: refused as soon as one hook of the role covering <tool> blocks
@@ -203,6 +203,14 @@ m2role() {   # m2role <tag> <profile label> <role> <owner data list> <owner comm
              "env GIT_DIR=/workspace/.git git add -f $f" "bash -c 'git add -f $f'"; do
       r1 terminal "$(js --arg c "$c" '{command: $c}')" "$c"
     done
+    for c in "echo x >& $f" "echo x >&$f" ": <> $f" "echo x &> $f" "echo x >| $f" "echo x 2> $f" "echo ok
+cp /tmp/x $f" "echo ok
+tee $f" "echo ok
+dd of=$f" "echo x > /workspace/${d^^}/zz-probe.json" "echo x > /workspace/$d/zz-pr{o,}be.json" "echo x > \$'/workspace/$d/zz-\x70robe.json'" \
+             "cp /tmp/x /workspace/$d/zz-pro?e.json" "git update-index --add --cacheinfo 100644,0000000000000000000000000000000000000000,$d/zz-probe.json" \
+             "git checkout -- ." "git restore ." "git reset --hard" "git hash-object -w $f"; do
+      r1 terminal "$(js --arg c "$c" '{command: $c}')" "G2 form: ${c//$'\n'/<NL>}"
+    done
     r1 terminal '{"command": "echo x > zz-probe.json"}' "relative redirect from inside owner data $d" "/workspace/$d"
     r1 terminal '{"command": "git add -f zz-probe.json"}' "relative git add from inside owner data $d" "/workspace/$d"
     r1 terminal "$(js --arg c "git apply - <<'EOF'
@@ -217,6 +225,33 @@ EOF" '{command: $c}')" "git apply of a patch given on stdin naming $d"
       say $bad "$L terminal control: cat of owner data $d allowed"
     fi
   done
+  for d in $DL; do   # the other owner data paths the index names: the main cases, not the whole battery
+    f=/workspace/$d/zz-probe.json
+    r1 write_file "$(js --arg p "$f" '{path: $p, content: "x"}')" "owner data $d (index row)"
+    r1 patch "$(js --arg p "$f" '{mode: "replace", path: $p, old_string: "a", new_string: "b"}')" "owner data $d (index row)"
+    for c in "echo x > $f" "echo x >& $f" "cp /tmp/x $f" "rm $f" "git add -f $f"; do r1 terminal "$(js --arg c "$c" '{command: $c}')" "$c"; done
+  done
+  # B1: the apply tool's state (backups, applied state, event log) holds owner values: no role reads or writes any of the three; every spelling
+  for x in "$BK/zz-probe/file" "$APS" "$EVL"; do
+    r1 read_file "$(js --arg p "$x" '{path: $p}')" "state path ${x#/workspace/}"
+    r1 search_files "$(js --arg p "${x%/*}" '{pattern: "x", path: $p}')" "folder of state path ${x#/workspace/} (content search)"
+    for c in "cat $x" "head -c 5 ${x#/workspace/}" "grep -r x ${x%/*}" "python3 -c \"print(open('$x').read())\"" "python3 -c \"print(open('${x#/workspace/}').read())\"" "cat \$'${x%/*}/${x##*/}'"; do
+      r1 terminal "$(js --arg c "$c" '{command: $c}')" "$c"
+    done
+    r1 process_manage "$(js --arg d "cat $x" '{action: "write", session_id: "p1", data: $d}')" "stdin cat of state path ${x#/workspace/}"
+  done
+  # B2: a role outside the box (runs_unboxed) refuses every write form by its hooks, the text guard's blind spots included
+  if [ "$(jq -r --arg r "$role" '.roles[$r].runs_unboxed' "$MT")" = true ]; then
+    f=/workspace/$(jq -r '.owner_data[0]' "$MT")/zz-probe.json
+    for c in "echo ok
+cp /tmp/x $f" "echo x >& $f" ": <> $f" "x=$f; echo y > \"\$x\"" "echo y > \$(echo $f)" "python3 -c \"open('$f','w').write('x')\"" "python3 -I -c 'import os; os.system(\"cp /tmp/x $f\")'" \
+             "perl -e 'open(F, \">$f\")'" "sh -c 'echo y > $f'" "tee $f" "git -C /workspace checkout -- ."; do
+      r1 terminal "$(js --arg c "$c" '{command: $c}')" "unboxed role: ${c//$'\n'/<NL>}"
+    done
+    [ "$role" != "$(jq -r .fallback_role "$MT")" ] || r1 zz_unknown_tool '{}' "unboxed fallback role: a tool no matcher of the role names"
+    r1 execute_code '{"code": "open(\"/tmp/x\", \"w\")"}' "unboxed role: the code-execution tool"
+    r1 cronjob_manage '{}' "unboxed role: the scheduler tool"
+  fi
   # the apply tool's backup folder holds owner values in clear: no role reads or writes it; its applied state and event log (and the lock) are not written
   r1 read_file "$(js --arg p "$BK/zz-probe/file" '{path: $p}')" "backup folder file"
   r1 search_files "$(js --arg p "$BK" '{pattern: "x", path: $p}')" "backup folder (content search)"
@@ -238,11 +273,11 @@ EOF" '{command: $c}')" "git apply of a patch given on stdin naming $d"
 " '{action: "write", session_id: "p1", data: $d}')" "owner command on stdin: $c"
   done
 }
-matrix2() {   # matrix2 <tag> <owner data list> <owner commands list>: every profile and role without one, six at a time, output kept in order
+matrix2() {   # matrix2 <tag> <owner data list> <owner commands list> [light data list]: every profile and role without one, six at a time, output kept in order
   local tag=$1 lab role n=0 f t h
   while read -r lab role; do setw "$lab"; for t in write_file patch terminal process_manage read_file search_files; do for h in $(hooks_for "$MT" "$role" $t); do hf "$h" >/dev/null; done; done; done < <(pairs)
   while read -r lab role; do
-    n=$((n+1)); m2role "$tag" "$lab" "$role" "$2" "$3" "$n" >"$M2/$n.out" 2>&1 &
+    n=$((n+1)); m2role "$tag" "$lab" "$role" "$2" "$3" "$n" "${4:-}" >"$M2/$n.out" 2>&1 &
     [ $((n % 6)) = 0 ] && wait
   done < <(pairs)
   wait
@@ -251,9 +286,45 @@ matrix2() {   # matrix2 <tag> <owner data list> <owner commands list>: every pro
 IDX=$STACK/$(jq -r .data_index "$SRC"); BK=/workspace/$(jq -r .backup_dir "$IDX"); APS=/workspace/$(jq -r .applied_state "$IDX"); EVL=/workspace/$(jq -r .event_log "$IDX")
 MT=$SRC; export ROLES_FILE=$SRC
 say "$(jq -e '(.owner_data | length > 0) and (.owner_commands | length > 0) and (.worker_markers | length > 0)' "$SRC" >/dev/null; echo $?)" "3b the real table has owner_data, owner_commands and worker_markers"
-matrix2 "3b real table" "$(jq -r '.owner_data[]' "$SRC")" "$(jq -r '.owner_commands[]' "$SRC")"
+SETP=$(jq -r '.files[] | select(.id == "settings") | .path' "$IDX")   # an owner_only index row, found by its id
+OWNP=$(ROLES_FILE=$SRC python3 -I "$STACK/bin/roles.py" owner-data | jq -r '.[]')   # G1: the one function (index + owner_only rows + the table's list)
+say "$([ "$(wc -l <<<"$OWNP")" -gt 5 ] && grep -qx "$SETP" <<<"$OWNP" && grep -qx '.supervisor/limits.env' <<<"$OWNP" && ! grep -qx '.stella/capabilities.json' <<<"$OWNP"; echo $?)" "3b G1: the owner data set holds the index rows with owner_only (settings, limits) and not the capability registry"
+matrix2 "3b real table" "$(jq -r '.owner_data[]' "$SRC"; grep -x "$SETP" <<<"$OWNP")" "$(jq -r '.owner_commands[]' "$SRC")" "$(grep -vx -e "$SETP" -e "$(jq -r '.owner_data[0]' "$SRC")" <<<"$OWNP" | grep -v '^config/')"
 jq '.owner_data += ["zz-odata/sub"] | .owner_commands += ["tools/zz-owner-cmd.sh"]' "$SRC" >"$T/extra.json"; MT=$T/extra.json; export ROLES_FILE=$MT
 matrix2 "3b extra entries" "zz-odata/sub" "tools/zz-owner-cmd.sh"
+MT=$SRC; export ROLES_FILE=$SRC
+
+# 3c F1 W4 round 2 (the critical red team asserted decisions, not effects): the commands the hooks let through are run for real, in a scratch owner-data
+# folder under .scratch; the owner file there must be byte-identical afterwards, for every role. A control that is allowed must change its own file.
+NL=$'\n'; EFF=$FIX/eff; mkdir -p "$EFF"; printf 'orig\n' >"$EFF/owner.txt"; EFH=$(sha256sum <"$EFF/owner.txt"); printf 'new\n' >"$T/effsrc"
+jq --arg o "${EFF#/workspace/}" '.owner_data += [$o]' "$SRC" >"$T/eff.json"; MT=$T/eff.json; export ROLES_FILE=$MT
+effcmds=("echo ok${NL}echo y > $EFF/owner.txt" "echo y >& $EFF/owner.txt" "echo y 1<> $EFF/owner.txt" "echo y >| $EFF/owner.txt" "echo y | tee $EFF/owne{r,r}.txt"
+         "echo y | tee \$'$EFF/owner.\\x74xt'" "cp $T/effsrc $EFF/ow?er.txt" "x=$EFF/owner.txt; echo y > \"\$x\"" "echo ok${NL}cp $T/effsrc $EFF/owner.txt")
+EFR=$EFF/repo; git init -q "$EFR"; printf 'base\n' >"$EFR/f.txt"; git -C "$EFR" add f.txt; git -C "$EFR" -c user.name=t -c user.email=t@t commit -qm base; printf 'dirty\n' >"$EFR/f.txt"
+gitcmds=("git -C $EFR checkout -- ." "git -C $EFR reset --hard" "git -C $EFR stash" "git -C $EFR restore .")   # git working-tree writers: the dirty file must survive
+ctl="echo ctl | tee $T/effctl"; ran=0; ctlran=0
+while read -r lab role; do
+  setw "$lab"
+  for c in "${effcmds[@]}" "$ctl"; do
+    pay=$(pl terminal "$(js --arg c "$c" '{command: $c}')"); allowed=1
+    for h in $(hooks_for "$MT" "$role" terminal); do [ "$(hk "$(hf "$h")" "$pay")" = 0 ] || allowed=0; done
+    if [ $allowed = 1 ]; then (cd /workspace && bash -c "$c" >/dev/null 2>&1); [ "$c" = "$ctl" ] && ctlran=$((ctlran+1)) || ran=$((ran+1)); fi
+    if [ "$c" = "$ctl" ]; then continue; fi
+    say "$([ "$(sha256sum <"$EFF/owner.txt")" = "$EFH" ]; echo $?)" "3c $lab/$role: the owner data file is unchanged after: ${c//$NL/<NL>} (hooks $([ $allowed = 1 ] && echo allowed || echo refused))"
+    printf 'orig\n' >"$EFF/owner.txt"
+  done
+done < <(pairs)
+while read -r lab role; do
+  setw "$lab"
+  for c in "${gitcmds[@]}"; do
+    pay=$(pl terminal "$(js --arg c "$c" '{command: $c}')"); allowed=1
+    for h in $(hooks_for "$MT" "$role" terminal); do [ "$(hk "$(hf "$h")" "$pay")" = 0 ] || allowed=0; done
+    [ $allowed = 1 ] && (cd /workspace && bash -c "$c" >/dev/null 2>&1)
+    say "$([ "$(cat "$EFR/f.txt")" = dirty ]; echo $?)" "3c $lab/$role: the working tree of a repo in the main checkout is unchanged after: $c (hooks $([ $allowed = 1 ] && echo allowed || echo refused))"
+    printf 'dirty\n' >"$EFR/f.txt"
+  done
+done < <(pairs)
+say "$([ "$ctlran" -gt 0 ] && [ -s "$T/effctl" ]; echo $?)" "3c control: an allowed command really runs here and changes its own file ($ctlran roles let it through; $ran effect commands were let through and left the owner file alone)"
 MT=$SRC; export ROLES_FILE=$SRC
 
 # RT7-02: a MEDIA:/path tag in a gateway reply uploads a file with no tool call (no hook sees it); every role that talks on
@@ -267,9 +338,9 @@ jq 'del(.owner_settings)' "$SRC" >"$T/none.json"
 tbl "$T/empty.json" '[]'; tbl "$T/dotdot.json" '["../etc/zz"]'; tbl "$T/abs.json" '["/etc/zz"]'; tbl "$T/str.json" '"config/zz"'; tbl "$T/mixed.json" '["config/ok", 7]'
 # F1 W4: the three owner-write lists are part of the table: without one, with it empty, or with a bad entry, every role refuses everything
 jq 'del(.owner_data)' "$SRC" >"$T/nod.json"; jq 'del(.owner_commands)' "$SRC" >"$T/noc.json"; jq 'del(.worker_markers)' "$SRC" >"$T/nom.json"
-jq '.owner_data = []' "$SRC" >"$T/emd.json"; jq '.owner_commands = [""]' "$SRC" >"$T/emc.json"; jq '.worker_markers = ["a b"]' "$SRC" >"$T/bmk.json"
+jq '.data_index = ".stella/zz-missing-index.json"' "$SRC" >"$T/noidx.json"; jq '.owner_data = []' "$SRC" >"$T/emd.json"; jq '.owner_commands = [""]' "$SRC" >"$T/emc.json"; jq '.worker_markers = ["a b"]' "$SRC" >"$T/bmk.json"
 for bad in "$T/missing.json" "$T/garbage.json" "$T/none.json" "$T/empty.json" "$T/dotdot.json" "$T/abs.json" "$T/str.json" "$T/mixed.json" \
-           "$T/nod.json" "$T/noc.json" "$T/nom.json" "$T/emd.json" "$T/emc.json" "$T/bmk.json"; do
+           "$T/nod.json" "$T/noc.json" "$T/nom.json" "$T/emd.json" "$T/emc.json" "$T/bmk.json" "$T/noidx.json"; do
   export ROLES_FILE=$bad
   while read -r lab role; do
     setw "$lab"
@@ -393,7 +464,7 @@ done
 
 # 6 the pre-commit guard, in scratch repos; its list is read from the docs/hermes-local/roles.json beside its own bin/
 mktree() {  # mktree <name> <table or ->: a copy of the guard at <name>/bin with its table (none when -)
-  mkdir -p "$T/$1/bin" "$T/$1/docs/hermes-local"; cp "$STACK/bin/commit-guard.sh" "$STACK/bin/roles.py" "$T/$1/bin/"
+  mkdir -p "$T/$1/bin" "$T/$1/docs/hermes-local" "$T/$1/.stella"; cp "$STACK/bin/commit-guard.sh" "$STACK/bin/roles.py" "$T/$1/bin/"; cp "$STACK/.stella/data-files.json" "$T/$1/.stella/"   # the guard reads the data index of its own tree (G1)
   [ "$2" = - ] || cp "$2" "$T/$1/docs/hermes-local/roles.json"
 }
 mktree tree "$T/probe.json"; mktree treebad "$T/garbage.json"; mktree treenone "$T/none.json"; mktree treegone -
