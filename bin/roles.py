@@ -40,8 +40,8 @@ REQ_BOOLS = ("tool_calling", "vision")
 REQ_KEYS = set(REQ_BOOLS) | {"min_context_tokens", "allowed_data_classes"}
 MAX_TOKENS = 2**53 - 1   # the largest integer every JSON reader (a double) holds exactly
 SCHEMA_VERSION = 1
-# The keys each object of the table may carry: the one list validate() refuses everything else by, and the schema's property
-# lists must equal (roles-selftest checks it). A key a reader starts to use is added here and in the schema in the same change.
+# The keys each object of the table may carry: these lists (validate() refuses any other key) and the schema's property lists each
+# hold them, and roles-selftest checks they are equal. A key a reader starts to use is added in both in the same change.
 ROLE_KEYS = set(PERMS) | {"workspace", "allowed_overrides", "requirements", "background_review", "complete_metadata",
                           "complete_needs_review", "workers", "skills_disabled", "platform_toolsets", "config", "git_identity", "hooks",
                           "runs_unboxed"}
@@ -61,10 +61,22 @@ def path():
     return os.environ.get("ROLES_FILE") or f"{ROOT}/docs/hermes-local/roles.json"
 
 
+def scratch():
+    """The one rule: a table is scratch when ROLES_FILE is set and its real path is not the live table's. A scratch table never pages the owner."""
+    return bool(os.environ.get("ROLES_FILE")) and os.path.realpath(path()) != os.path.realpath(f"{ROOT}/docs/hermes-local/roles.json")
+
+
 # A scratch table alerts into a scratch folder beside it, never into the stack's own state (as the data tool does for STELLA_ROOT).
-if os.environ.get("ROLES_FILE") and not os.environ.get("ESCALATE_SUP_DIR") \
-        and os.path.realpath(path()) != os.path.realpath(f"{ROOT}/docs/hermes-local/roles.json"):
-    os.environ["ESCALATE_SUP_DIR"] = os.path.join(os.path.dirname(os.path.realpath(path())), ".supervisor")
+# NOFOLDER: why it cannot have one (the folder would be inside the stack tree, or cannot be made); then nothing is logged and load() refuses.
+NOFOLDER = ""
+if scratch() and not os.environ.get("ESCALATE_SUP_DIR"):
+    _f, _r = os.path.join(os.path.dirname(os.path.realpath(path())), ".supervisor"), os.path.realpath(ROOT)
+    if _f == _r or _f.startswith(_r + os.sep):
+        NOFOLDER = "the alert folder beside this table would be inside the stack tree"
+    elif not os.access(_f if os.path.isdir(_f) else os.path.dirname(_f), os.W_OK | os.X_OK):
+        NOFOLDER = "no alert folder can be made beside this table"
+    else:
+        os.environ["ESCALATE_SUP_DIR"] = _f
 
 
 def _pairs(pairs):
@@ -89,12 +101,47 @@ def _const(c):
     raise ValueError(f"{c} is not JSON")   # the data tool refuses it too: two judges of one table must agree
 
 
+def _float(s):
+    v = float(s)
+    if v in (float("inf"), float("-inf")) or (v == 0 and re.search(r"[1-9]", s.lower().split("e")[0])):   # overflow, underflow
+        raise ValueError("a number does not fit a float")
+    return v
+
+
+def _bigint(s):
+    v = int(s)
+    try:
+        float(v)
+    except OverflowError:
+        raise ValueError("a number does not fit a float") from None
+    return v
+
+
+def _sound(doc, limit=64):
+    """The data tool's other loader rules: no string that is not valid Unicode text, no nesting past 64; iterative."""
+    todo = [(doc, 1)]
+    while todo:
+        x, n = todo.pop()
+        if n > limit:
+            raise ValueError("nested too deeply")
+        if isinstance(x, dict):
+            todo += [(k, n + 1) for k in x] + [(v, n + 1) for v in x.values()]
+        elif isinstance(x, list):
+            todo += [(v, n + 1) for v in x]
+        elif isinstance(x, str):
+            try:
+                x.encode("utf-8")
+            except UnicodeEncodeError:
+                raise ValueError("a string is not valid Unicode text") from None
+
+
 def load():
     try:
-        d = json.load(open(path(), encoding="utf-8"), object_pairs_hook=_pairs, parse_constant=_const)
+        d = json.load(open(path(), encoding="utf-8"), object_pairs_hook=_pairs, parse_constant=_const, parse_float=_float, parse_int=_bigint)
+        _sound(d)
     except Exception as e:
         raise RolesError(f"{path()}: {type(e).__name__}: {e}")
-    errs = validate(d)
+    errs = validate(d) + ([NOFOLDER + ": a scratch table needs a folder of its own for its alerts (set ESCALATE_SUP_DIR)"] if NOFOLDER else [])
     if errs:
         raise RolesError(f"{path()}: " + "; ".join(errs))
     return d
@@ -107,6 +154,8 @@ def validate(d, root=ROOT):
         return ["profiles and roles must be objects, roles not empty"]
     errs = [f"unknown key {k!r} at the top level" for k in sorted(set(d) - TOP_KEYS)]
     errs += [] if _int(d.get("schema_version")) and d["schema_version"] == SCHEMA_VERSION else [f"schema_version must be {SCHEMA_VERSION}"]
+    if "self_config_kinds" in d and not (isinstance(d["self_config_kinds"], list) and all(isinstance(x, str) for x in d["self_config_kinds"])):
+        errs.append("self_config_kinds must be a list of text")
     for n, r in roles.items():
         if not NAME.fullmatch(n) or not isinstance(r, dict):
             errs.append(f"role {n!r}: bad name or not an object"); continue
@@ -138,9 +187,12 @@ def validate(d, root=ROOT):
         if gi is not None and not (isinstance(gi, dict) and set(gi) == {"name", "email"}
                                    and all(isinstance(v, str) and KEY.fullmatch(v) for v in gi.values())):
             errs.append(f"role {n}: git_identity must be {{name, email}}, each the name of an owner config key")
+        if not isinstance(r.get("hooks", []), list):
+            errs.append(f"role {n}: hooks must be a list"); continue
         for h in r.get("hooks", []):
-            if not isinstance(h, dict) or not isinstance(h.get("matcher"), str) or ("file" in h) == ("command" in h):
-                errs.append(f"role {n}: a hook needs a matcher and exactly one of file, command"); continue
+            if not isinstance(h, dict) or not isinstance(h.get("matcher"), str) or ("file" in h) == ("command" in h) \
+                    or not isinstance(h.get("file", h.get("command")), str):
+                errs.append(f"role {n}: a hook needs a matcher and exactly one of file, command (text)"); continue
             errs += [f"role {n}: hook has unknown key {k!r}" for k in sorted(set(h) - HOOK_KEYS)]
             if h.get("writes", WRITES[0]) not in WRITES:
                 errs.append(f"role {n}: a hook's writes must be one of {', '.join(WRITES)}")
@@ -148,10 +200,19 @@ def validate(d, root=ROOT):
                 re.compile(h["matcher"])
             except re.error:
                 errs.append(f"role {n}: matcher {h['matcher']} is not a regex")
+            if "timeout" in h and not (_int(h["timeout"]) and h["timeout"] > 0):
+                errs.append(f"role {n}: a hook's timeout must be a positive integer")
             src = h.get("file") or h["command"]
-            if ".." in src.split("/") or not os.path.isfile(src if "command" in h else f"{root}/{src}"):
+            if "command" in h:   # a command is an absolute path, a file a repo path inside the root once symlinks are followed
+                bad_path = not src.startswith("/") or ".." in src.split("/") or not os.path.isfile(src)
+            else:
+                rr = os.path.realpath(root)
+                bad_path = not _rel(src) or not os.path.isfile(f"{root}/{src}") or not os.path.realpath(f"{root}/{src}").startswith(rr.rstrip("/") + "/")
+            if bad_path:
                 errs.append(f"role {n}: hook {src} does not exist")
-            if not set(h.get("workers", [])) <= set(workers):
+            if "workers" in h and not (_set(h["workers"]) and h["workers"]):
+                errs.append(f"role {n}: hook {src}: workers must be a non-empty list of worker kinds, each once")
+            elif not set(h.get("workers", [])) <= set(workers):
                 errs.append(f"role {n}: hook {src} names a worker kind the role does not list")
     fb = roles.get(d.get("fallback_role"))
     if not isinstance(fb, dict):
@@ -168,6 +229,7 @@ def validate(d, root=ROOT):
             errs.append(f"profile {p}: role {row.get('role')!r} is not in roles"); continue
         if "worker" in row and row["worker"] not in roles[row["role"]].get("workers", []):
             errs.append(f"profile {p}: worker {row['worker']!r} is not one of its role's workers")
+        errs += [f"profile {p}: {k} must be text" for k in ("dir", "soul", "display_name", "worker") if k in row and not isinstance(row[k], str)]
         if ".." in str(row.get("dir", "")).split("/") or str(row.get("dir", "")).startswith("/"):
             errs.append(f"profile {p}: dir must be relative to ~/.hermes")
         ae = row.get("approval_evidence")   # D100: complete-gate refuses this profile's completion without this evidence in its session
@@ -199,7 +261,7 @@ def validate(d, root=ROOT):
         v = d.get(k)
         if not (isinstance(v, list) and v and _set(v) and all(_rel(x) for x in v)):
             errs.append(f"{k} needs a non-empty list of {what}, relative to the stack repo, no . or .. segment, no path twice")
-    if not _rel(d.get("data_index")):   # the data index: names the backup folder, applied state and event log
+    if not _rel(d.get("data_index")) or " " in d["data_index"]:   # the data index: names the backup folder, applied state and event log
         errs.append("data_index needs a path relative to the stack repo, no . or .. segment")
     wp = d.get("worker_pins")   # the variables the box sets to a worker's workspace and branch (the commit guard checks a marked commit against them)
     if not (isinstance(wp, dict) and set(wp) == {"workspace", "branch"} and all(isinstance(v, str) and KEY.fullmatch(v) for v in wp.values())):
@@ -254,8 +316,8 @@ def fallback_problems(d):
     errs = [f"fallback_role {fbn} allows data class {c!r}, which role {n} does not (the fallback is the narrowest)"
             for c in fb["requirements"]["allowed_data_classes"]
             for n in [next((n for n, r in roles.items() if c not in r["requirements"]["allowed_data_classes"]), None)] if n]
-    if not _hooks(fb):
-        errs.append(f"fallback_role {fbn} must have at least one hook")
+    if not any("workers" not in h for h in fb.get("hooks", [])):   # a profile with no row has no worker kind, so a hook with a workers filter is never its hook
+        errs.append(f"fallback_role {fbn} must have at least one hook that has no workers filter")
     errs += [f"role {n} is named by no profile and lacks a hook the fallback role {fbn} has" for n, r in roles.items()
              if n != fbn and n not in named and not _hooks(fb, False) <= _hooks(r)]   # a refusing hook is for roles outside the box only (unboxed_problems)
     return errs
@@ -710,12 +772,15 @@ def log_alert(code, streak="", **kv):
     as bin/alert.sh sends it (`hermes send` to $ALERT_TARGET, with the root profile's home, which owns the Discord bot:
     a worker's hook runs with its own profile's); later repeats are logged only."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    if NOFOLDER:   # a scratch table with no alert folder of its own: never the stack's log, and not silent
+        print(f"{code} not logged: {NOFOLDER}", file=sys.stderr)
+        return f"{code} (not logged)"
     try:
         import alert_catalog
         body, tag, kv2 = alert_catalog.render(code, kv)
         alert_catalog.log(tag, kv2)
         due, f = alert_catalog.page_due(tag, str(kv.get("card") or ""), streak)
-        if due:
+        if due and not scratch():   # a scratch table never pages the owner
             env = dict(os.environ, HERMES_HOME=f"{pwd.getpwuid(os.getuid()).pw_dir}/.hermes", HOME=pwd.getpwuid(os.getuid()).pw_dir)   # RT-RTA-01: as kanban()
             r = subprocess.run(["hermes", "send", "--to", os.environ.get("ALERT_TARGET") or "discord:#alerts", "--quiet", body],
                                env=env, capture_output=True, timeout=5)   # shorter than the hook's own timeout; an unsent page is retried
@@ -753,11 +818,10 @@ def main():
     try:
         d = load()
     except RolesError as e:
-        if cmd == "requirements":   # a JSON read: stdout stays empty; the code, its plain message and one alert line say why
+        if cmd != "check":   # a read: stdout stays empty; the code, its plain message and one alert line say why
             fail("STL-CFG-303", problem=str(e)[:300])
         print(f"roles: INVALID {e}")
-        if cmd == "check":
-            print(log_alert("STL-CFG-303", problem=str(e)[:300]))
+        print(log_alert("STL-CFG-303", problem=str(e)[:300]))
         sys.exit(1)
     if cmd == "check":
         gaps = coverage(d, H)
