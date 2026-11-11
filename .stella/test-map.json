@@ -1,0 +1,474 @@
+{
+  "schema_version": 1,
+  "about": "Test map (product rule 8), read by bin/test-map.py. map: a changed file that matches a row's globs (fnmatch on the repo-relative path; * also crosses /) selects that row's targets; a target <name> is bin/<name>-selftest.sh. always: the fast gates added to every selection. full: globs that always select the whole suite (shared contracts: the role table, the guards and hooks, the suite runner, this map, lockfiles, build config). A changed file that matches no row and no full glob also selects the whole suite, so the map is conservative: a row with empty targets says on purpose that only the always gates apply. Every bin/*-selftest.sh must be a target here and in the suite list of bin/selftests.sh; `bin/test-map.py check` fails otherwise.",
+  "always": [
+    "hardcode-lint",
+    "owner-leak",
+    "test-map"
+  ],
+  "full": [
+    "bin/selftests.sh",
+    ".stella/test-map.json",
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bunfig.toml",
+    "opencode.json",
+    ".pre-commit-config.yaml",
+    ".devcontainer/*",
+    "docs/hermes-local/roles.json",
+    "bin/roles.py",
+    "docs/hermes-local/hooks/*",
+    "docs/hermes-local/plugins/*",
+    "docs/hermes-local/alert-catalog.json",
+    "bin/alert_catalog.py"
+  ],
+  "map": [
+    {
+      "globs": [
+        "bin/test-map-selftest.sh"
+      ],
+      "targets": [
+        "test-map"
+      ]
+    },
+    {
+      "globs": [
+        "bin/alert-selftest.sh"
+      ],
+      "targets": [
+        "alert"
+      ]
+    },
+    {
+      "globs": [
+        "bin/alert-page-selftest.sh"
+      ],
+      "targets": [
+        "alert-page"
+      ]
+    },
+    {
+      "globs": [
+        "bin/approval-evidence-selftest.sh"
+      ],
+      "targets": [
+        "approval-evidence"
+      ]
+    },
+    {
+      "globs": [
+        "bin/approval-sim-selftest.sh"
+      ],
+      "targets": [
+        "approval-sim"
+      ]
+    },
+    {
+      "globs": [
+        "bin/bench-selftest.sh"
+      ],
+      "targets": [
+        "bench"
+      ]
+    },
+    {
+      "globs": [
+        "bin/box-selftest.sh"
+      ],
+      "targets": [
+        "box"
+      ]
+    },
+    {
+      "globs": [
+        "bin/broker-put-selftest.sh"
+      ],
+      "targets": [
+        "broker-put"
+      ]
+    },
+    {
+      "globs": [
+        "bin/check-guard-selftest.sh"
+      ],
+      "targets": [
+        "check-guard"
+      ]
+    },
+    {
+      "globs": [
+        "bin/commit-guard-selftest.sh"
+      ],
+      "targets": [
+        "commit-guard"
+      ]
+    },
+    {
+      "globs": [
+        "bin/complete-gate-selftest.sh"
+      ],
+      "targets": [
+        "complete-gate"
+      ]
+    },
+    {
+      "globs": [
+        "bin/container-start-selftest.sh"
+      ],
+      "targets": [
+        "container-start"
+      ]
+    },
+    {
+      "globs": [
+        "bin/delegation-selftest.sh"
+      ],
+      "targets": [
+        "delegation"
+      ]
+    },
+    {
+      "globs": [
+        "bin/escalate-selftest.sh"
+      ],
+      "targets": [
+        "escalate"
+      ]
+    },
+    {
+      "globs": [
+        "bin/escalation-complete-selftest.sh"
+      ],
+      "targets": [
+        "escalation-complete"
+      ]
+    },
+    {
+      "globs": [
+        "bin/escalation-reply-hook-selftest.sh"
+      ],
+      "targets": [
+        "escalation-reply-hook"
+      ]
+    },
+    {
+      "globs": [
+        "bin/escalation-reply-poll-selftest.sh"
+      ],
+      "targets": [
+        "escalation-reply-poll"
+      ]
+    },
+    {
+      "globs": [
+        "bin/escalation-thread-selftest.sh"
+      ],
+      "targets": [
+        "escalation-thread"
+      ]
+    },
+    {
+      "globs": [
+        "bin/false-close-guard-selftest.sh"
+      ],
+      "targets": [
+        "false-close-guard"
+      ]
+    },
+    {
+      "globs": [
+        "bin/firewall-probe-selftest.sh"
+      ],
+      "targets": [
+        "firewall-probe"
+      ]
+    },
+    {
+      "globs": [
+        "bin/hardcode-lint-selftest.sh"
+      ],
+      "targets": [
+        "hardcode-lint"
+      ]
+    },
+    {
+      "globs": [
+        "bin/init-firewall-selftest.sh"
+      ],
+      "targets": [
+        "init-firewall"
+      ]
+    },
+    {
+      "globs": [
+        "bin/kanban-board-selftest.sh"
+      ],
+      "targets": [
+        "kanban-board"
+      ]
+    },
+    {
+      "globs": [
+        "bin/kanban-guard-selftest.sh"
+      ],
+      "targets": [
+        "kanban-guard"
+      ]
+    },
+    {
+      "globs": [
+        "bin/matcher-audit-selftest.sh"
+      ],
+      "targets": [
+        "matcher-audit"
+      ]
+    },
+    {
+      "globs": [
+        "bin/merge-card-selftest.sh"
+      ],
+      "targets": [
+        "merge-card"
+      ]
+    },
+    {
+      "globs": [
+        "bin/model-watch-selftest.sh"
+      ],
+      "targets": [
+        "model-watch"
+      ]
+    },
+    {
+      "globs": [
+        "bin/omniroute-run-selftest.sh"
+      ],
+      "targets": [
+        "omniroute-run"
+      ]
+    },
+    {
+      "globs": [
+        "bin/owner-config-selftest.sh"
+      ],
+      "targets": [
+        "owner-config"
+      ]
+    },
+    {
+      "globs": [
+        "bin/owner-leak-selftest.sh"
+      ],
+      "targets": [
+        "owner-leak"
+      ]
+    },
+    {
+      "globs": [
+        "bin/owner-settings-selftest.sh"
+      ],
+      "targets": [
+        "owner-settings"
+      ]
+    },
+    {
+      "globs": [
+        "bin/post-edit-check-selftest.sh"
+      ],
+      "targets": [
+        "post-edit-check"
+      ]
+    },
+    {
+      "globs": [
+        "bin/profile-hooks-selftest.sh"
+      ],
+      "targets": [
+        "profile-hooks"
+      ]
+    },
+    {
+      "globs": [
+        "bin/reviewer-claude-selftest.sh"
+      ],
+      "targets": [
+        "reviewer-claude"
+      ]
+    },
+    {
+      "globs": [
+        "bin/role-guard-selftest.sh"
+      ],
+      "targets": [
+        "role-guard"
+      ]
+    },
+    {
+      "globs": [
+        "bin/roles-selftest.sh"
+      ],
+      "targets": [
+        "roles"
+      ]
+    },
+    {
+      "globs": [
+        "bin/roles-complete-selftest.sh"
+      ],
+      "targets": [
+        "roles-complete"
+      ]
+    },
+    {
+      "globs": [
+        "bin/routing-selftest.sh"
+      ],
+      "targets": [
+        "routing"
+      ]
+    },
+    {
+      "globs": [
+        "bin/secret-read-selftest.sh"
+      ],
+      "targets": [
+        "secret-read"
+      ]
+    },
+    {
+      "globs": [
+        "bin/watchdog-selftest.sh"
+      ],
+      "targets": [
+        "watchdog"
+      ]
+    },
+    {
+      "globs": [
+        "bin/write-guard-selftest.sh"
+      ],
+      "targets": [
+        "write-guard"
+      ]
+    },
+    {
+      "globs": [
+        "bin/bench.sh",
+        "bench/*"
+      ],
+      "targets": [
+        "bench"
+      ]
+    },
+    {
+      "globs": [
+        "bin/omniroute-run.sh",
+        "bin/omniroute-ctl.sh",
+        "docs/hermes-local/fallback-routing.json"
+      ],
+      "targets": [
+        "omniroute-run",
+        "escalate"
+      ]
+    },
+    {
+      "globs": [
+        "bin/approval-sim.py"
+      ],
+      "targets": [
+        "approval-sim"
+      ]
+    },
+    {
+      "globs": [
+        "bin/broker-put.sh"
+      ],
+      "targets": [
+        "broker-put"
+      ]
+    },
+    {
+      "globs": [
+        "bin/claude-review.sh",
+        "docs/hermes-local/review-prompt.txt"
+      ],
+      "targets": [
+        "reviewer-claude",
+        "approval-evidence",
+        "routing"
+      ]
+    },
+    {
+      "globs": [
+        "bin/watchdog.sh",
+        "bin/watchdog_settings.py",
+        "bin/model_watch.py",
+        "docs/hermes-local/watchdog-settings.json"
+      ],
+      "targets": [
+        "watchdog",
+        "model-watch"
+      ]
+    },
+    {
+      "globs": [
+        "bin/merge-card.sh"
+      ],
+      "targets": [
+        "merge-card"
+      ]
+    },
+    {
+      "globs": [
+        "bin/container-start.sh",
+        "bin/hermes-gateway-loop.sh",
+        "bin/crontab.txt"
+      ],
+      "targets": [
+        "container-start"
+      ]
+    },
+    {
+      "globs": [
+        "bin/firewall-check.sh",
+        "docs/stella-recover.ps1"
+      ],
+      "targets": [
+        "firewall-probe",
+        "container-start"
+      ]
+    },
+    {
+      "globs": [
+        "docs/alert-codes.md",
+        "bin/alert-explain.sh"
+      ],
+      "targets": [
+        "alert"
+      ]
+    },
+    {
+      "globs": [
+        "PLAN.md",
+        "SUPERVISOR.md",
+        "AGENTS.md",
+        "decisions.md",
+        "docs/recovery.md",
+        "docs/contract/*.md",
+        ".claude/agents/*.md",
+        ".gitignore"
+      ],
+      "targets": []
+    },
+    {
+      "globs": [
+        "bin/test-map.py"
+      ],
+      "targets": [
+        "test-map"
+      ]
+    }
+  ]
+}
