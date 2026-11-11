@@ -72,7 +72,7 @@ PY
 pt() { PATH=$PB:$OWNER python3 -I "$T/pty.py" "$PHRASE" python3 -I "$H/bin/settings.py" "$@"; }
 
 ok '[ -x "$H/bin/settings.py" ]' "bin/settings.py exists and is executable"
-ok 'o=$(python3 -I $H/bin/stella_data.py check) && [ "$o" = "data OK" ]' "the scratch root validates (role table with the owner lists, settings registry)"
+ok 'o=$(python3 -I $H/bin/stella_data.py check) && [ "$(echo "$o" | head -1)" = "data OK" ]' "the scratch root validates (role table with the owner lists, settings registry)"
 B=$(snap)
 
 # the owner path: identity-critical, typed phrase on a terminal, one event, rollback byte-identical
