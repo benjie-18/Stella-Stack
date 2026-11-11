@@ -237,7 +237,6 @@ nr() { ROLES_FILE=$T/nj.json ESCALATE_SUP_DIR="$T/rs" PATH="$T/fl:$PATH" python3
 for c in 'd["roles"][r]["config"] = {"x": float("nan")}' 'd["roles"][r]["config"] = {"x": float("inf")}' 'd["roles"][r]["config"] = {"x": float("-inf")}'; do
   nj "$c"; ok '[ "$(nr check "$H2")" = 1 ] && [ "$(nr requirements "$R1")" = 1 ] && [ ! -s "$T/ro" ] && grep -q "^STL-CFG-303 " "$T/re" && ! grep -q Traceback "$T/re"' "R1: a non-JSON constant ($c): check and requirements refuse the table, no traceback"
 done
-nj 'd["roles"][r]["hooks"][0]["timeout"] = "ten"'; ok '[ "$(nr spec "$H2")" = 1 ] && grep -q "^STL-CFG-303 " "$T/re" && grep -q ValueError "$T/re" && ! grep -q "ten" "$T/re" && ! grep -q Traceback "$T/re"' "R1: a command that fails on a bad value ends in exit 1 and one STL-CFG-303 line naming the exception type, never the value"
 # R2: a scratch table (ROLES_FILE) with no ESCALATE_SUP_DIR alerts into a folder beside the table
 mkdir -p "$T/scr"; jq 'del(.schema_version)' "$RF" >"$T/scr/t.json"
 env -u ESCALATE_SUP_DIR ROLES_FILE="$T/scr/t.json" PATH="$T/fl:$PATH" python3 $S/roles.py requirements "$R1" >/dev/null 2>&1
@@ -287,4 +286,62 @@ bad '.worker_pins.zz = "ZZ"' 'worker_pins' "W4 G3: an unknown worker pin"
 # G4: a script that refuses gets the code, the catalog's plain message and exactly one alert line from one command
 : >"$T/rs/logs/alerts.log"
 ok '[ "$(ESCALATE_SUP_DIR="$T/rs" PATH="$T/fl:$PATH" python3 -I $S/roles.py refusal STL-CFG-312 "a branch changes owner data" >"$T/o2" 2>&1; echo $?)" = 0 ] && grep -q "^\[STL-CFG-312\] " "$T/o2" && grep -q "owner" "$T/o2" && [ "$(grep -c "^STL-CFG-312 " "$T/rs/logs/alerts.log")" = 1 ]' "W4 G4: roles.py refusal prints [code] and the plain message and writes one alert line"
+# F1 W2 round 4 (clean-up of the round 3 Low findings)
+# C3 (W2-RT3-01/-02, W2-VAL3-02, W2-VER3-04): hook entry values are typed, by roles.py and by the schema alike.
+sch() { python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; print(len(s.validate_doc(json.load(open(sys.argv[2])), s.load(s.SCHEMAS + "/roles.schema.json"))))' "$S" "$T/b.json"; }
+both() { bad "$1" "$2" "$3"; ok '[ "$(sch)" != 0 ]' "W2 r4: $3: the schema refuses it too"; }
+HK=".roles[\"$R1\"].hooks[0]"
+both "$HK.workers = {}" 'workers' "C3: a hook entry with workers {}"
+both "$HK.workers = []" 'workers' "C3: a hook entry with workers []"
+both "$HK.workers = \"a\"" 'workers' "C3: a hook entry with workers a string"
+both "$HK.timeout = \"ten\"" 'timeout' "C3: a hook timeout a string"
+both "$HK.timeout = 1.5" 'timeout' "C3: a hook timeout a float"
+both "$HK.timeout = true" 'timeout' "C3: a hook timeout a boolean"
+both "$HK.timeout = 0" 'timeout' "C3: a hook timeout of 0"
+bad ".roles[\"$FB\"].workers = [\"qa-kind\"] | .roles[\"$FB\"].hooks |= map(. + {workers: [\"qa-kind\"]})" 'at least one hook' "C3: every hook of the fallback role filtered by a worker kind (a profile with no row gets none)"
+# C6 (W2-RT3-03): the two judges answer alike for the value types the schema types
+both '.self_config_kinds = {}' 'self_config_kinds' "C6: self_config_kinds an object"
+both '.self_config_kinds = "model"' 'self_config_kinds' "C6: self_config_kinds a string"
+both ".roles[\"$R1\"].hooks = {}" 'hooks' "C6: a role's hooks an object"
+both ".profiles[\"$P1\"].display_name = 5" 'display_name' "C6: a profile's display_name a number"
+both ".profiles[\"$P1\"].dir = null" 'dir' "C6: a profile's dir null"
+both ".profiles[\"$P1\"].soul = 5" 'soul' "C6: a profile's soul a number"
+both '.data_index = (.data_index | sub("/"; "/ "))' 'data_index' "C6: data_index with a space"
+# C6 (W2-RT3-07): a hook file is a repo path, a hook command an absolute path
+HF=$(jq -r '[.roles[].hooks[]? | .file // empty][0]' "$RF"); HC=$(jq -r '[.roles[].hooks[]? | .command // empty][0]' "$RF")
+bad "(.roles[].hooks[]? | select(.file == \"$HF\") | .file) |= (\"/\" + .)" 'hook' "C6: a hook file written as an absolute path"
+bad "(.roles[].hooks[]? | select(.command == \"$HC\") | .command) |= ltrimstr(\"/workspace/\")" 'hook' "C6: a hook command written relative"
+# C4 (W2-RT3-04, W2-VER3-03): the loader refuses what the data tool refuses: a number past the float range, a lone surrogate, deep nesting
+jl() { jq --arg r "$R1" '.roles[$r].config = {"x": "__X__"}' "$RF" | sed "s/\"__X__\"/$1/" >"$T/nj.json"; }
+for v in 1e400 -1e400 "1$(printf '0%.0s' $(seq 400))" "$(python3 -I -c 'print("[" * 70 + "]" * 70)')"; do
+  jl "$v"; ok '[ "$(nr check "$H2")" = 1 ] && [ "$(nr requirements "$R1")" = 1 ] && [ ! -s "$T/ro" ] && grep -q "^STL-CFG-303 " "$T/re" && ! grep -q Traceback "$T/re" && ! grep -q Infinity "$T/ro" "$T/re"' "C4: the number or nesting ${v:0:12}... is refused at load, code on stderr, no Infinity"
+done
+nj 'd["_comment"] = "qa \ud800"'; ok '[ "$(nr requirements "$R1")" = 1 ] && grep -q "^STL-CFG-303 " "$T/re"' "C4: a lone surrogate in a string is refused at load"
+# C5 (W2-VAL3-01, W2-VER3-05): every sub-command names the code on an invalid table: stderr, one alert line, nothing on stdout
+nj 'del(d["schema_version"])'
+for c in "spec $H2" "field $R1 workspace" "reviewers" "owner-data" "boundary"; do
+  n0=$(wc -l <"$T/rs/logs/alerts.log"); rc=$(nr $c); n1=$(wc -l <"$T/rs/logs/alerts.log")
+  ok '[ "$rc" = 1 ] && [ ! -s "$T/ro" ] && grep -q "^STL-CFG-303 " "$T/re" && ! grep -q Traceback "$T/re" && [ "$((n1 - n0))" = 1 ]' "C5: roles.py ${c%% *} on an invalid table: exit 1, nothing on stdout, STL-CFG-303 on stderr, one alert line"
+done
+# R1 (replaces the case of a hook timeout "ten", which is now refused at load): a command that fails unexpectedly ends in exit 1 and one STL-CFG-303 line naming the exception type
+mkdir -p "$T/h3/profiles"; chmod 000 "$T/h3/profiles"; ok '[ "$(ROLES_FILE=$RF ESCALATE_SUP_DIR="$T/rs" PATH="$T/fl:$PATH" python3 $S/roles.py spec "$T/h3" >"$T/ro" 2>"$T/re"; echo $?)" = 1 ] && [ ! -s "$T/ro" ] && grep -q "^STL-CFG-303 " "$T/re" && grep -q PermissionError "$T/re" && ! grep -q Traceback "$T/re"' "R1 (replaces the timeout case): a command that fails unexpectedly ends in exit 1 and one STL-CFG-303 line naming the exception type, never a value"; chmod 755 "$T/h3/profiles"
+# C2 (W2-RT3-05, W2-RT3-06): a scratch table (ROLES_FILE not the live table) never pages the owner and never writes the stack's alert log;
+# a table whose alert folder cannot be had is refused on stderr with the code. The one rule: scratch = ROLES_FILE set and its real path is not the live table's.
+mkdir -p "$T/pg" "$T/w"; printf '#!/usr/bin/env bash\necho "$*" >>"%s/pg/calls"\nexit 1\n' "$T" >"$T/pg/hermes"; chmod +x "$T/pg/hermes"
+jq 'del(.schema_version)' "$RF" >"$T/w/broken.json"; : >"$T/pg/calls"
+env -u ESCALATE_SUP_DIR ROLES_FILE="$T/w/broken.json" PATH="$T/pg:$PATH" python3 $S/roles.py check "$H2" >/dev/null 2>&1
+env ESCALATE_SUP_DIR="$T/fresh" ROLES_FILE="$T/w/broken.json" PATH="$T/pg:$PATH" python3 $S/roles.py check "$H2" >/dev/null 2>&1
+ok '[ -s "$T/w/.supervisor/logs/alerts.log" ] && [ -s "$T/fresh/logs/alerts.log" ] && ! grep -q "^send" "$T/pg/calls"' "C2: a broken scratch table alerts beside itself (or into ESCALATE_SUP_DIR) and asks hermes for no page"
+env ESCALATE_SUP_DIR="$T/fresh2" ROLES_FILE="$RF" PATH="$T/pg:$PATH" python3 $S/roles.py refusal STL-CFG-303 "qa live table" >/dev/null 2>&1
+ok 'grep -q "^send" "$T/pg/calls"' "C2 (control): the live table at its real path still pages as before"
+mkdir -p "$T/ro2"; cp "$RF" "$T/ro2/t.json"; chmod 555 "$T/ro2"
+out=$(env -u ESCALATE_SUP_DIR ROLES_FILE="$T/ro2/t.json" PATH="$T/pg:$PATH" python3 $S/roles.py check "$H2" 2>&1); rc=$?; chmod 755 "$T/ro2"
+ok '[ "$rc" = 1 ] && echo "$out" | grep -q "STL-CFG-303" && echo "$out" | grep -qi "alert folder" && [ ! -e "$T/ro2/.supervisor" ]' "C2: a valid table in a folder with no alert folder to be had is refused with the code, nothing made"
+out=$(env -u ESCALATE_SUP_DIR ROLES_FILE=/workspace/docs/hermes-local/qa-draft.json PATH="$T/pg:$PATH" python3 $S/roles.py check "$H2" 2>&1); rc=$?
+ok '[ "$rc" = 1 ] && echo "$out" | grep -qiE "not (be )?logged" && [ ! -e /workspace/docs/hermes-local/.supervisor ]' "C2: a table path inside the stack tree gets no alert folder in the tree: said on stderr, nothing made"
+out=$(env -u ESCALATE_SUP_DIR ROLES_FILE=/workspace python3 $S/roles.py check "$H2" 2>&1); rc=$?
+ok '[ "$rc" = 1 ] && echo "$out" | grep -qiE "not (be )?logged|alert folder"' "C2: ROLES_FILE the stack root itself: refused or said, never a silent loss"
+# C6 (W2-VER3-07): the "names the key, not its value" case asserts the value is absent from the check's output
+bad ".roles[\"$R1\"].qa_unknown_key = \"SECRETVALUE\"" 'qa_unknown_key' "C6: an unknown key with a value"
+ok '[ -s "$T/out" ] && ! grep -q SECRETVALUE "$T/out"' "C6: the output of that check is not empty and does not hold the value"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

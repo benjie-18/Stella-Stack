@@ -9,10 +9,11 @@ D=${HD:-/workspace/docs/hermes-local/hooks}   # RT22: HD=<hooks dir> points the 
 REG=${REG:-/workspace/bin/register-escalation-hook.sh}   # the registration script under test (a staged copy while it is being replaced)
 RT=${RTT:-$D/reviewer/test-only-terminal.sh}   # the reviewer's terminal hook under test (K9)
 fails=0
-# H1: the stack's alert log and page state are listed (size and hash, never content) here and compared at the end
-SUPT=$(dirname "$(dirname "$(readlink -f "$0")")")/.supervisor
-snap() { (cd "$SUPT" 2>/dev/null && find logs/alerts.log state/page -type f -printf '%p %s ' -exec sha256sum {} \; 2>/dev/null | sort); }
-SNAP0=$(snap)
+# H1: the lines the stack's alert log gains during this run are counted from here and checked at the end (never the whole file:
+# other jobs write there while this runs, and a card worktree has no such log)
+SLOG=$(dirname "$(dirname "$(readlink -f "$0")")")/.supervisor/logs/alerts.log
+N0=$({ wc -l <"$SLOG"; } 2>/dev/null || echo 0)
+h1() { [ "$(tail -n +$(($2 + 1)) "$1" 2>/dev/null | grep -cF "$T")" = 0 ]; }   # h1 <log> <lines it had at the start>: no line added since names a path under this run's temp folder
 export ESCALATE_SUP_DIR=$T/sup-h1; mkdir -p "$ESCALATE_SUP_DIR/logs"   # every script run below that can raise an alert writes into the temp folder
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 # run <hook> <tool> <tool_input json>: the hook's exit code (2 = blocked); its stdout goes to $T/out
@@ -525,5 +526,10 @@ for f in "$JQB"/*.sh "$RT"; do
 done
 # the regression the red-team found: sourcing owner-config.sh must leave `git config --global` working
 ok '[ "$(env HOME=$T/plant-g bash -c ". $JQB/owner-config.sh; git config --global --add safe.directory /x" >/dev/null 2>&1; echo $?)" = 0 ] && grep -q "directory = /x" $T/plant-g/.gitconfig' "RT-RTA-01: sourcing owner-config.sh does not stop git config --global (container-start.sh)"
-ok '[ "$(snap)" = "$SNAP0" ]' "H1: the stack's alert log and page state are byte-identical to what they were at the start (no alert line, no page marked as sent)"
+ok 'h1 "$SLOG" "$N0"' "H1: the stack's alert log gained no line that names a path under this run's temp folder (every call alerts into the temp folder instead)"
+ok '[ -s "$ESCALATE_SUP_DIR/logs/alerts.log" ] && grep -qF "$T" "$ESCALATE_SUP_DIR/logs/alerts.log"' "H1: the alert lines the calls raised are there, in the temp folder"
+# the check must fail when a call alerts into the stack's log: a planted call writes a line naming a temp path into a log that already has lines
+mkdir -p "$T/plant/logs"; echo "STL-X earlier line" >"$T/plant/logs/alerts.log"
+ESCALATE_SUP_DIR="$T/plant" python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import alert_catalog as a; _, tag, kv = a.render("STL-CFG-312", {"problem": sys.argv[2]}); a.log(tag, kv)' "$(dirname "$(readlink -f "$0")")" "$T/planted" 2>/dev/null
+ok '! h1 "$T/plant/logs/alerts.log" 1 && h1 "$T/plant/logs/alerts.log" 2' "H1: planted call: a line naming a temp path added to a log fails the check; the same log counted from after it passes"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
