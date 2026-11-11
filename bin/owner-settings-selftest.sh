@@ -299,6 +299,8 @@ NL=$'\n'; EFF=$FIX/eff; mkdir -p "$EFF"; printf 'orig\n' >"$EFF/owner.txt"; EFH=
 jq --arg o "${EFF#/workspace/}" '.owner_data += [$o]' "$SRC" >"$T/eff.json"; MT=$T/eff.json; export ROLES_FILE=$MT
 effcmds=("echo ok${NL}echo y > $EFF/owner.txt" "echo y >& $EFF/owner.txt" "echo y 1<> $EFF/owner.txt" "echo y >| $EFF/owner.txt" "echo y | tee $EFF/owne{r,r}.txt"
          "echo y | tee \$'$EFF/owner.\\x74xt'" "cp $T/effsrc $EFF/ow?er.txt" "x=$EFF/owner.txt; echo y > \"\$x\"" "echo ok${NL}cp $T/effsrc $EFF/owner.txt")
+EFR=$EFF/repo; git init -q "$EFR"; printf 'base\n' >"$EFR/f.txt"; git -C "$EFR" add f.txt; git -C "$EFR" -c user.name=t -c user.email=t@t commit -qm base; printf 'dirty\n' >"$EFR/f.txt"
+gitcmds=("git -C $EFR checkout -- ." "git -C $EFR reset --hard" "git -C $EFR stash" "git -C $EFR restore .")   # git working-tree writers: the dirty file must survive
 ctl="echo ctl | tee $T/effctl"; ran=0; ctlran=0
 while read -r lab role; do
   setw "$lab"
@@ -309,6 +311,16 @@ while read -r lab role; do
     if [ "$c" = "$ctl" ]; then continue; fi
     say "$([ "$(sha256sum <"$EFF/owner.txt")" = "$EFH" ]; echo $?)" "3c $lab/$role: the owner data file is unchanged after: ${c//$NL/<NL>} (hooks $([ $allowed = 1 ] && echo allowed || echo refused))"
     printf 'orig\n' >"$EFF/owner.txt"
+  done
+done < <(pairs)
+while read -r lab role; do
+  setw "$lab"
+  for c in "${gitcmds[@]}"; do
+    pay=$(pl terminal "$(js --arg c "$c" '{command: $c}')"); allowed=1
+    for h in $(hooks_for "$MT" "$role" terminal); do [ "$(hk "$(hf "$h")" "$pay")" = 0 ] || allowed=0; done
+    [ $allowed = 1 ] && (cd /workspace && bash -c "$c" >/dev/null 2>&1)
+    say "$([ "$(cat "$EFR/f.txt")" = dirty ]; echo $?)" "3c $lab/$role: the working tree of a repo in the main checkout is unchanged after: $c (hooks $([ $allowed = 1 ] && echo allowed || echo refused))"
+    printf 'dirty\n' >"$EFR/f.txt"
   done
 done < <(pairs)
 say "$([ "$ctlran" -gt 0 ] && [ -s "$T/effctl" ]; echo $?)" "3c control: an allowed command really runs here and changes its own file ($ctlran roles let it through; $ran effect commands were let through and left the owner file alone)"

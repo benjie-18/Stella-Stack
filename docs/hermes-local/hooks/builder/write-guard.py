@@ -199,11 +199,15 @@ def v4a_targets(text):
     return out
 
 
+HEREDOC = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|(\\?)([A-Za-z_][A-Za-z0-9_]*))")
+
+
 def clean(cmd):
     """The command as the shell reads its lines: $'..' decoded; a backslash-newline joined; an unquoted newline outside a comment is a
-    `;` (G2: a second line is a command of its own)."""
+    `;` (G2: a second line is a command of its own); a here-document's body is text, not commands (only the $(..) and backtick parts of an
+    unquoted one are kept, they run)."""
     cmd = roles.ansi(cmd)
-    out, q, i, n, comment = [], "", 0, len(cmd), False
+    out, q, i, n, comment, pending = [], "", 0, len(cmd), False, []
     while i < n:
         c = cmd[i]
         if comment:   # the newline that ends a comment stays a newline: all_tokens' second view reads a comment as ending there
@@ -222,14 +226,42 @@ def clean(cmd):
         elif c == "#" and (i == 0 or cmd[i - 1] in " \t\n;&|()<>"):
             comment = True
             out.append(c)
+        elif c == "<" and cmd.startswith("<<", i) and not cmd.startswith("<<<", i) and (m := HEREDOC.match(cmd, i)):
+            pending.append((m[2] if m[2] is not None else m[3] if m[3] is not None else m[5], m[2] is not None or m[3] is not None or bool(m[4]), m[1] == "-"))
+            out.append(m[0])
+            i = m.end() - 1
+        elif c == "\n":
+            out.append(" ; ")
+            for delim, quoted, tabs in pending:   # the body: lines up to the delimiter line (or the end of the text, as the shell reads it)
+                while i + 1 < n:
+                    j = cmd.find("\n", i + 1)
+                    line = cmd[i + 1:j if j >= 0 else n]
+                    i = j if j >= 0 else n
+                    if (line.lstrip("\t") if tabs else line) == delim:
+                        break
+                    if not quoted:
+                        out += [f" {x} ; " for x in re.findall(r"\$\([^)\n]*\)|`[^`\n]*`", line)]
+            pending = []
         else:
-            out.append(" ; " if c == "\n" else c)
+            out.append(c)
         i += 1
     return "".join(out)
 
 
+OPS = re.compile(r"&>>|<<<|>>&|&>|>>|>&|>\||<>|<<|<&|\|\||&&|;;|\|&|[;|&()<>]")
+
+
+def split_ops(out):
+    """shlex joins operator characters that touch (`);`, `))`, `;&`) into one token the SEP set does not know: cut them into single operators."""
+    res = []
+    for t in out:
+        res += OPS.findall(t) if t and re.fullmatch(r"[();|&<>]+", t) else [t]
+    return res
+
+
 def tokens(cmd, depth=0, commenters=""):
-    cmd = cmd.replace("`", " ; ")   # K1b: a backtick command is a command of its own
+    # K1b: a backtick or $(..) command is a command of its own; the word it stands in keeps an unresolvable variable, so a path built from it is never judged as a literal
+    cmd = re.sub(r"`([^`]*)`", r" $STELLA_CMDSUB ; \1 ; ", cmd).replace("`", " ; ").replace("$(", "$STELLA_CMDSUB(")
     try:
         lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
         lex.commenters = commenters   # RT22-01: "" = a # inside a word is text; "#" = the parse used before RT22-01 (see all_tokens)
@@ -239,6 +271,7 @@ def tokens(cmd, depth=0, commenters=""):
         if commenters:
             return   # the pre-RT22-01 view is only an extra view: skipped when it cannot parse
         out = [re.sub(r"[\"'\\]", "", w) for w in re.findall(r"[();<>|&]+|[^\s();<>|&]+", cmd.replace("\n", " ; "))]   # RT23-02: same words and operators shlex would give, quote marks dropped, not a bare whitespace split
+    out = split_ops(out)
     for t in list(out):
         if depth < 3 and re.search(r"\s", t):   # a quoted command line: bash -c '…', opencode run '…'
             yield from tokens(clean(t), depth + 1, commenters)
@@ -404,6 +437,8 @@ def git_why(words, cwd, names, cmd):
                 named += [f[-1]] if len(f) == 3 else args[k + 3:k + 4]
     dirs = [base] + [resolve(a.split("=", 1)[1], base) for a in args if a.startswith("--directory=")]
     for a in named:
+        if sub in GIT_WRITERS and not in_repo(base):   # a tree outside every repo: its paths are its own (option values and messages are not paths)
+            break
         if a.startswith(":") and sub in GIT_WRITERS:   # pathspec magic (:/ :(top)): the tree it runs in was judged above
             continue
         for d in dirs:
@@ -480,8 +515,16 @@ def target_why(t, cwd, names, kind):
     return ob(f"{msg} ({OWNER_DATA_MSG})") if owner_data_hit(hit) else msg + (f" ({CONFIG_MSG})" if config_hit(hit) else "")
 
 
-def note_names(words, names):
-    """Variables a line sets for later words: NAME=value alone, or after export/declare/local/readonly/typeset."""
+def note_names(words, names, cwd):
+    """Variables a line sets for later words: NAME=value alone, or after export/declare/local/readonly/typeset; and the variable of
+    `for NAME in words`, which stands for the word the guard likes least (a protected or owner path, else the first), so
+    `for f in *.txt; do mv "$f" "$f.bak"; done` is judged on its literal list while a list built at run time stays unresolved."""
+    if words[:1] == ["for"] and words[2:3] == ["in"] and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", words[1] if len(words) > 1 else ""):
+        items = words[3:]
+        if items and not any(words_of(it, cwd, names)[1] for it in items):
+            bad = [it for it in items if any(any(inside(p, x) for x in PROTECTED) or owner_data_hit(p) for p in words_of(it, cwd, names)[0])]
+            names[words[1]] = (bad or items)[0]
+        return
     k = 0
     while k < len(words) and ASSIGN.fullmatch(words[k]):
         k += 1
@@ -534,7 +577,7 @@ def command_reason(cmd, base):
             if t not in SEP:
                 words.append(t)
                 continue
-            note_names(words, names)
+            note_names(words, names, cwd)
             hit = next(filter(None, (target_why(w, cwd, names, f"`{' '.join(words)[:120]}` changes") for w in write_targets(words))), None) \
                 or git_hit(words, cwd, names, cmd) or owner_cmd_why(words, cwd, names)
             if hit:

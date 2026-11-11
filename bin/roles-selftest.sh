@@ -278,4 +278,11 @@ ok '[ "$(od 2>&1 | grep -c RolesError)" -ge 1 ]' "W4 G1: an index that cannot be
 ok '[ "$(python3 -I $S/roles.py owner-data | jq -r "map(select(. == \".stella/schemas\")) | length")" = 1 ] && [ "$(python3 -I $S/roles.py boundary | jq -r "map(select(. == \"docs/hermes-local/roles.json\" or . == \"bin/box.py\" or . == \"docs/hermes-local/hooks/builder/write-guard.py\" or . == \"bin/false-close-guard.py\")) | length")" = 4 ]' "W4 G1/B3: roles.py owner-data and boundary print the sets (the boundary holds the table, the box, the hook files and the commands the table names)"
 # B1: the apply tool's state paths come from the index
 ok '[ "$(python3 -I -c "import os, sys; sys.path.insert(0, sys.argv[1]); os.environ[\"ROLES_FILE\"] = sys.argv[2]; import roles; print(\" \".join(roles.state_paths(roles.load())))" "$S" "$RF")" = "$(jq -r "[.backup_dir, .applied_state, .event_log] | join(\" \")" /workspace/.stella/data-files.json)" ]' "W4 B1: state_paths = the backup folder, the applied state and the event log, from the index"
+# worker_pins (the commit guard's workspace and branch variables come from the table, not from its code)
+bad 'del(.worker_pins)' 'worker_pins' "W4 G3: worker_pins missing"
+bad '.worker_pins.branch = "lower"' 'worker_pins' "W4 G3: a worker pin that is not a variable name"
+bad '.worker_pins.zz = "ZZ"' 'worker_pins' "W4 G3: an unknown worker pin"
+# G4: a script that refuses gets the code, the catalog's plain message and exactly one alert line from one command
+: >"$T/rs/logs/alerts.log"
+ok '[ "$(ESCALATE_SUP_DIR="$T/rs" PATH="$T/fl:$PATH" python3 -I $S/roles.py refusal STL-CFG-312 "a branch changes owner data" >"$T/o2" 2>&1; echo $?)" = 0 ] && grep -q "^\[STL-CFG-312\] " "$T/o2" && grep -q "owner" "$T/o2" && [ "$(grep -c "^STL-CFG-312 " "$T/rs/logs/alerts.log")" = 1 ]' "W4 G4: roles.py refusal prints [code] and the plain message and writes one alert line"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

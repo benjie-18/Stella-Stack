@@ -363,7 +363,11 @@ echo hi > @O@/n.txt
 find . -name '*.py' -exec echo {} \;
 npm test
 cp a b
+echo $(date); ls
+for f in *.txt; do mv "$f" "$f.bak"; done
 G2OK
+  ok '[ "$(wg "cat > $OWN/n.md <<'"'"'EOF'"'"'${NL}rm /workspace/bin/x${NL}EOF")" = 0 ] && [ "$(wg "cat > $OWN/n.md <<EOF${NL}text${NL}EOF${NL}ls")" = 0 ]' "G2 $p: allowed: a here-document's body is text, not commands"
+  ok '[ "$(wg "cat <<EOF${NL}\$(rm /workspace/bin/x)${NL}EOF")" = 2 ] && [ "$(wg "cat > $OWN/n.md <<'"'"'EOF'"'"'${NL}text${NL}EOF${NL}rm /workspace/bin/x")" = 2 ] && [ "$(wg "echo \"<<X\"${NL}rm /workspace/bin/x${NL}X")" = 2 ]' "G2 $p: refused: a command substitution inside an unquoted here-document runs; a command after the body, and a << inside quotes, are commands"
   ok '[ "$(wg "echo ok${NL}ls")" = 0 ] && [ "$(wg "ls${NL}git status")" = 0 ]' "G2 $p: allowed: two harmless lines"
   ok '[ "$(wg "ls 2>&1")" = 0 ] && [ "$(wg "echo x >&2")" = 0 ] && [ "$(wg "echo x 2>/dev/null")" = 0 ]' "G2 $p: allowed: descriptor duplicates open no file"
   # refused: every redirect form, a second line, expansions, case, unresolved words, git, owner commands by resolved file
@@ -400,6 +404,12 @@ git update-index --add --cacheinfo 100644,00000000000000000000000000000000000000
 git add --pathspec-from-file=/tmp/l
 git --git-dir=/workspace/.git add x
 git -C /workspace/.worktrees/t_00000000 add x
+echo $(date); rm /workspace/bin/x
+cp a $(echo /workspace/bin/x)
+cp a `echo /workspace/bin/x`
+for f in /workspace/bin/*.py; do rm "$f"; done
+for f in $(ls); do rm "$f"; done
+(cd .); cp a /workspace/bin/b
 G2NO
   for c in "echo ok${NL}cp /tmp/x /workspace/bin/y" "ls${NL}tee /workspace/bin/y" "ls${NL}dd of=/workspace/bin/y" "echo ok \\${NL}> /workspace/bin/y"; do
     ok '[ "$(wg "$c")" = 2 ]' "G2 $p: refused (a second line is a command of its own): ${c//$NL/<NL>}"
