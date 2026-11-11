@@ -145,7 +145,7 @@ for r in tester validator verifier red-team router voice look proposer; do
   ok '[ "$(python3 $S/roles.py requirements $r | jq -c "keys")" = "[\"allowed_data_classes\",\"min_context_tokens\",\"tool_calling\",\"vision\"]" ]' "W2: roles.py requirements $r returns its requirements as JSON"
 done
 ok '[ "$(python3 $S/roles.py requirements look | jq .vision)" = true ] && [ "$(python3 $S/roles.py requirements router | jq .vision)" = false ]' "W2: look needs vision, router does not"
-ok '[ "$(python3 $S/roles.py requirements no-such-role >"$T/out" 2>&1; echo $?)" = 1 ]' "W2: roles.py requirements of an unknown role exits 1"
+ok '[ "$(python3 $S/roles.py requirements no-such-role >"$T/out" 2>&1; echo $?)" = 1 ] && grep -q "^STL-CFG-311 " "$T/out"' "W2: roles.py requirements of an unknown role exits 1, STL-CFG-311 on stderr"
 jq --argjson q "$RQ" '.roles["fake-role"] = (.roles.unlisted + {requirements: $q})' "$RF" >"$T/fr.json"
 H2="$T/h2"; mkdir -p "$H2"; echo x >"$H2/config.yaml"; for p in $(jq -r '.profiles | keys[] | select(. != "default")' "$RF"); do mkdir -p "$H2/profiles/$p"; echo x >"$H2/profiles/$p/config.yaml"; done
 ok '[ "$(ROLES_FILE=$RF python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?)" = 0 ] && [ "$(ROLES_FILE=$T/fr.json python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?)" = 0 ] && [ "$(ROLES_FILE=$T/fr.json python3 $S/roles.py requirements fake-role | jq -S -c .)" = "$(jq -Sc . <<<"$RQ")" ]' "W2: a fake role with requirements passes check and answers, no code change"
@@ -227,7 +227,26 @@ ok 'jq -e "(.owner_commands | index(\"bin/merge-card.sh\") != null) and (.owner_
 mkdir -p "$T/fl" "$T/rs/logs"; printf '#!/usr/bin/env bash\nexit 1\n' >"$T/fl/hermes"; chmod +x "$T/fl/hermes"
 rq() { ESCALATE_SUP_DIR="$T/rs" PATH="$T/fl:$PATH" python3 $S/roles.py requirements "$@" >"$T/ro" 2>"$T/re"; echo $?; }
 : >"$T/rs/logs/alerts.log"
-ok '[ "$(ROLES_FILE=$RF rq no-such-role)" = 1 ] && [ ! -s "$T/ro" ] && grep -q "no-such-role" "$T/re" && grep -q "not in Stella" "$T/re" && [ "$(grep -c "^STL-CFG-311 " "$T/rs/logs/alerts.log")" = 1 ] && grep -q " problem=.*no-such-role" "$T/rs/logs/alerts.log"' "W2-RT-05: unknown role: exit 1, plain catalog message with the name on stderr, exactly one alert line with problem="
+ok '[ "$(ROLES_FILE=$RF rq no-such-role)" = 1 ] && [ ! -s "$T/ro" ] && grep -q "no-such-role" "$T/re" && grep -q "not in Stella" "$T/re" && grep -q "^STL-CFG-311 " "$T/re" && [ "$(grep -c "^STL-CFG-311 " "$T/rs/logs/alerts.log")" = 1 ] && grep -q " problem=.*no-such-role" "$T/rs/logs/alerts.log"' "W2-RT-05: unknown role: exit 1, plain catalog message with the name on stderr, exactly one alert line with problem="
 jq 'del(.schema_version)' "$RF" >"$T/b.json"; : >"$T/rs/logs/alerts.log"
-ok '[ "$(ROLES_FILE=$T/b.json rq "$R1")" = 1 ] && [ ! -s "$T/ro" ] && grep -q "role table" "$T/re" && [ "$(grep -c "^STL-CFG-303 " "$T/rs/logs/alerts.log")" = 1 ]' "W2-RT-06: requirements on an invalid table: nothing on stdout, STL-CFG-303 message on stderr, exit 1, one alert line"
+ok '[ "$(ROLES_FILE=$T/b.json rq "$R1")" = 1 ] && [ ! -s "$T/ro" ] && grep -q "role table" "$T/re" && grep -q "^STL-CFG-303 " "$T/re" && [ "$(grep -c "^STL-CFG-303 " "$T/rs/logs/alerts.log")" = 1 ]' "W2-RT-06: requirements on an invalid table: nothing on stdout, STL-CFG-303 message on stderr, exit 1, one alert line"
+# F1 W2 round 3. R1: one loader rule. NaN, Infinity and -Infinity are refused at load like the data tool does, and no command ends in a traceback.
+nj() { python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1])); r = sys.argv[2]; exec(sys.argv[3]); json.dump(d, open(sys.argv[4], "w"))' "$RF" "$R1" "$1" "$T/nj.json"; }
+nr() { ROLES_FILE=$T/nj.json ESCALATE_SUP_DIR="$T/rs" PATH="$T/fl:$PATH" python3 $S/roles.py "$@" >"$T/ro" 2>"$T/re"; echo $?; }
+for c in 'd["roles"][r]["config"] = {"x": float("nan")}' 'd["roles"][r]["config"] = {"x": float("inf")}' 'd["roles"][r]["config"] = {"x": float("-inf")}'; do
+  nj "$c"; ok '[ "$(nr check "$H2")" = 1 ] && [ "$(nr requirements "$R1")" = 1 ] && [ ! -s "$T/ro" ] && grep -q "^STL-CFG-303 " "$T/re" && ! grep -q Traceback "$T/re"' "R1: a non-JSON constant ($c): check and requirements refuse the table, no traceback"
+done
+nj 'd["roles"][r]["hooks"][0]["timeout"] = "ten"'; ok '[ "$(nr spec "$H2")" = 1 ] && grep -q "^STL-CFG-303 " "$T/re" && grep -q ValueError "$T/re" && ! grep -q "ten" "$T/re" && ! grep -q Traceback "$T/re"' "R1: a command that fails on a bad value ends in exit 1 and one STL-CFG-303 line naming the exception type, never the value"
+# R2: a scratch table (ROLES_FILE) with no ESCALATE_SUP_DIR alerts into a folder beside the table
+mkdir -p "$T/scr"; jq 'del(.schema_version)' "$RF" >"$T/scr/t.json"
+env -u ESCALATE_SUP_DIR ROLES_FILE="$T/scr/t.json" PATH="$T/fl:$PATH" python3 $S/roles.py requirements "$R1" >/dev/null 2>&1
+ok '[ -s "$T/scr/.supervisor/logs/alerts.log" ] && grep -q "^STL-CFG-303 " "$T/scr/.supervisor/logs/alerts.log"' "R2: ROLES_FILE set, ESCALATE_SUP_DIR not: the alert line lands beside the scratch table"
+# R3: a key no reader uses is refused on a role, a profile row and at the top level, naming the key and the row
+P1=$(jq -r '.profiles | keys[0]' "$RF")
+bad ".roles[\"$R1\"].qa_unknown_key = \"SECRETVALUE\"" 'role '"$R1"'.*qa_unknown_key' "R3: an unknown key on a role"
+ok '! grep -q SECRETVALUE "$T/out"' "R3: the message names the key, not its value"
+bad "del(.roles[\"$R1\"].complete_needs_review) | .roles[\"$R1\"].complete_needs_reveiw = true" 'complete_needs_reveiw' "R3: a misspelt optional role key"
+bad ".profiles[\"$P1\"].qa_unknown_key = 1" 'profile '"$P1"'.*qa_unknown_key' "R3: an unknown key on a profile row"
+bad '.qa_unknown_key = 1' 'qa_unknown_key' "R3: an unknown key at the top level"
+ok '[ "$(python3 -I -c "import json, sys; sys.path.insert(0, sys.argv[1]); import roles; s = json.load(open(sys.argv[2])); o = lambda n: s[\"\$defs\"][n] if n else s; print(all(set(o(n)[\"properties\"]) == k and o(n)[\"additionalProperties\"] is False for n, k in ((None, roles.TOP_KEYS), (\"role\", roles.ROLE_KEYS), (\"profile\", roles.PROFILE_KEYS))))" "$S" "$(dirname "$S")/.stella/schemas/roles.schema.json")" = True ]' "R3: the schema closes the table, a role and a profile row with exactly roles.py's key lists"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
