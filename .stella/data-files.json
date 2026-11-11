@@ -20,7 +20,7 @@
       "path": ".stella/connections.json",
       "schema": "connections",
       "format": "json",
-      "owner_only": false,
+      "owner_only": true,
       "redact_keys": [
         "(?i)(key|token|secret|password|passwd|credential|authorization)$"
       ],
@@ -84,7 +84,7 @@
       "path": ".stella/extensions",
       "schema": "extension",
       "format": "json",
-      "owner_only": false,
+      "owner_only": true,
       "redact_keys": [],
       "list_key": null,
       "id_field": "id"
