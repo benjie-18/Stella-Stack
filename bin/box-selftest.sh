@@ -15,7 +15,11 @@ R=$(jq -r '. as $d | .profiles | to_entries[] | select($d.roles[.value.role].wor
 SB='{"schema_version":1,"backend":"os_box","unboxed_backend":"local","boxed_profiles":[$p],"plugin_dir":"docs/hermes-local/plugins/os-box",
  "tmp_dir":"{profile_dir}/box-tmp","snapshot_keep_hours":12,"home_ro":[".local/bin",".local/share/uv"],"home_protect":[".local/bin/",".local/lib/",".bash_profile",".bashrc",".gitconfig",".config/git/",".jq"],"hide":[".scratch"],"sibling_dirs":[".worktrees"],
  "canary":"boxcanary/canary.txt","env":{"LC_ALL":"C.UTF-8"},"profile_overrides":{($p):{"claude_config_dir":"{home}/.claude","ro_over":["settings.json","hooks"]}}}'
-mkrf() { jq --arg p "$P" --arg r "$R" "$1" "$RF" >"$T/roles.json"; }   # scratch table: the real one with a sandbox edit
+# F1 W4 round 2 (B2): the table requires every profile outside the box to have a role that refuses every write (runs_unboxed). This test boxes one profile
+# at a time and leaves the others "unboxed", so mkrf gives the role of each unboxed profile the fallback role's refusing hooks and toolsets (norm).
+NORM='def norm: . as $d | (($d.sandbox.boxed_profiles // []) as $b | [$d.profiles | to_entries[] | select(.key as $k | $b | index($k) | not) | .value.role]) as $rs
+  | reduce ($rs | unique)[] as $x (.; if $d.roles[$x].runs_unboxed == true then . else .roles[$x] |= (.runs_unboxed = true | .hooks = $d.roles[$d.fallback_role].hooks | .platform_toolsets = $d.roles[$d.fallback_role].platform_toolsets) end);'
+mkrf() { jq --arg p "$P" --arg r "$R" "$NORM $1 | norm" "$RF" >"$T/roles.json"; }   # scratch table: the real one with a sandbox edit
 val() { ROLES_FILE=$T/roles.json python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import roles
 try: d = roles.load(); print("VALID")
 except roles.RolesError as e: print("INVALID", e)' "$S"; }

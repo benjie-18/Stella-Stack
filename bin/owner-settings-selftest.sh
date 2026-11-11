@@ -451,7 +451,7 @@ done
 
 # 6 the pre-commit guard, in scratch repos; its list is read from the docs/hermes-local/roles.json beside its own bin/
 mktree() {  # mktree <name> <table or ->: a copy of the guard at <name>/bin with its table (none when -)
-  mkdir -p "$T/$1/bin" "$T/$1/docs/hermes-local"; cp "$STACK/bin/commit-guard.sh" "$STACK/bin/roles.py" "$T/$1/bin/"
+  mkdir -p "$T/$1/bin" "$T/$1/docs/hermes-local" "$T/$1/.stella"; cp "$STACK/bin/commit-guard.sh" "$STACK/bin/roles.py" "$T/$1/bin/"; cp "$STACK/.stella/data-files.json" "$T/$1/.stella/"   # the guard reads the data index of its own tree (G1)
   [ "$2" = - ] || cp "$2" "$T/$1/docs/hermes-local/roles.json"
 }
 mktree tree "$T/probe.json"; mktree treebad "$T/garbage.json"; mktree treenone "$T/none.json"; mktree treegone -

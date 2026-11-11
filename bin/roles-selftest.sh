@@ -258,7 +258,7 @@ bad ".roles[\"$R1\"].runs_unboxed = \"yes\"" 'runs_unboxed' "W4 B2: runs_unboxed
 bad ".roles[\"$FB\"].runs_unboxed = false" 'must have runs_unboxed true' "W4 B2: the fallback role with runs_unboxed false"
 bad ".sandbox.boxed_profiles -= [\"$RUB\"]" 'runs_unboxed true' "W4 B2: a profile that is not boxed, with a role that is not marked runs_unboxed"
 bad "del(.sandbox)" 'runs_unboxed true' "W4 B2 (replaces: no sandbox block is valid): no sandbox block means nothing is boxed, so every profile's role must refuse every write"
-bad ".roles[\"$FB\"].hooks += [{matcher: \"^terminal\$\", file: \"docs/hermes-local/hooks/builder/write-guard.py\", writes: \"judged\"}]" 'judges writes\|only judges' "W4 B2: a role outside the box that lists a write-guard-style hook (writes: judged)"
+bad ".roles[\"$FB\"].hooks += [{matcher: \"^(write_file|patch|terminal|process_manage)\$\", file: \"docs/hermes-local/hooks/builder/write-guard.py\", timeout: 20, writes: \"judged\"}]" 'judges writes\|only judges' "W4 B2: a role outside the box that lists a write-guard-style hook (writes: judged)"
 bad ".roles[\"$FB\"].hooks |= map(select(.file | test(\"read-only-terminal\") | not))" 'no hook that refuses' "W4 B2: a role outside the box with a write tool no refusing hook covers"
 bad ".roles[\"$FB\"].hooks |= map(select(.matcher | test(\"\\\\(\\\\?!\") | not))" 'any tool name' "W4 B2: the fallback role without a hook for a tool name no other matcher names"
 bad "del(.roles[\"$FB\"].platform_toolsets)" 'platform_toolsets' "W4 B2: a role outside the box without explicit toolsets"

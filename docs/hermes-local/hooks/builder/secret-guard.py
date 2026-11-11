@@ -17,13 +17,17 @@ SECRETS = (".env*", "*.pem", "*.key", "~/.hermes/.env", "~/.hermes/auth.json", "
            "~/.local/share/opencode/auth.json", "~/.hermes/broker", "~/.ssh", "~/.aws", "~/.config/gh")
 SECRET_OK = (".env.example", ".env.sample", ".env.template")
 HOMES = sorted({pwd.getpwuid(os.getuid()).pw_dir, os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir})
+UNREADABLE = ""   # set when the role table or the data index cannot be read: every read is refused, with this message
 try:   # K6: the owner settings files (roles.json owner_settings) are read by no agent role; an unreadable table refuses all
     sys.path.insert(0, "/workspace/bin")
     import roles as _roles
-    OWNER_FILES = {os.path.realpath(f).casefold() for f in _roles.owner_settings(_roles.load())}   # B2V-01: /workspace is case-insensitive
-    OWNER_TREES = [os.path.realpath(t).casefold() for t in _roles.state_trees(_roles.load())]   # F1 W4: the apply tool's backups hold owner values
-except Exception:
-    OWNER_FILES, OWNER_TREES = None, []
+    _t = _roles.load()
+    OWNER_FILES = {os.path.realpath(f).casefold() for f in _roles.owner_settings(_t)}   # B2V-01: /workspace is case-insensitive
+    OWNER_TREES = [os.path.realpath(t).casefold() for t in _roles.state_trees(_t)]   # B1 (F1 W4): the apply tool's backups, applied state and event log hold owner values: no role reads them
+    OWNER_TEXT = [p.casefold() for p in _roles.state_paths(_t)]   # ... however the path is spelled in a command (an interpreter's code included)
+except Exception as _e:
+    OWNER_FILES, OWNER_TREES, OWNER_TEXT = None, [], []
+    UNREADABLE = f"the role table or the data index cannot be read ({type(_e).__name__}), so every read is refused until it is fixed [STL-CFG-303]"
 SECRET_DIRS = [f"{h}/{d}" for h in HOMES for d in (".hermes", ".claude", ".local/share/opencode", ".ssh", ".aws", ".config/gh")]
 SECRET_DIRS.append("/proc")   # a recursive search of /proc reads every process's environment
 SECRET_TEXT = re.compile(r"(?<![\w.-])\.env(?!\.(?:example|sample|template)\b)|\.claude/\.credentials|\.hermes/auth\.json|"
@@ -61,19 +65,19 @@ def _where(word, cwd, names):
 
 
 def _braces(word):
-    """bash brace expansion of {a,b} (innermost first; not {1..3}); over 64 words is refused by path_why."""
-    m = re.search(r"(?<!\$)\{([^{}]*,[^{}]*)\}", word)
-    return [word] if not m else [w for alt in m[1].split(",") for w in _braces(word[:m.start()] + alt + word[m.end():])][:65]
+    """bash brace expansion of {a,b} (innermost first; not {1..3}); over 64 words is refused by path_why. One copy, shared with the write guard."""
+    return _roles.braces(word)
 
 
 def _ansi(cmd):
-    """bash $'…' strings decoded as bash does, and $"…" as plain "…", so escapes cannot hide a name."""
-    dec = lambda m: "'" + codecs.decode(m[1].encode("latin-1", "backslashreplace"), "unicode_escape").replace("'", "'\\''") + "'"
-    return re.sub(r"\$'((?:[^'\\]|\\.)*)'", dec, cmd).replace('$"', '"')
+    """bash $'…' strings decoded as bash does, and $"…" as plain "…", so escapes cannot hide a name. One copy, shared with the write guard."""
+    return _roles.ansi(cmd)
 
 
 def path_why(word, cwd, names=None, recursive=False):
     """Why reading `word` (a path as written, relative to `cwd`) reads a secret, or None."""
+    if OWNER_FILES is None:
+        return UNREADABLE
     words = _braces(word)
     if len(words) > 64:
         return f"{word[:60]}… expands to more than 64 words, too many to check"
@@ -86,12 +90,14 @@ def path_why(word, cwd, names=None, recursive=False):
             for q in {x, os.path.realpath(x)}:
                 if OWNER_FILES and os.path.realpath(q).casefold() in OWNER_FILES:
                     return f"{word} is an owner settings file ({q})"   # B2V-16
+                if any(_within(os.path.realpath(q).casefold(), t) for t in OWNER_TREES):
+                    return f"{word} is an owner state path of the apply tool ({q}) [STL-CFG-312]"
                 if secret_path(q):
                     return f"{word} is a secret path ({q})"
                 if recursive and os.path.isdir(q) and any(_within(q, d) or _within(d, q) for d in SECRET_DIRS):
                     return f"recursing into {q} reads secret files"
-                if recursive and os.path.isdir(q) and any(_within(f, os.path.realpath(q).casefold()) for f in list(OWNER_FILES or ()) + OWNER_TREES):
-                    return f"recursing into {q} reads an owner settings file"   # K6: the folder that holds one
+                if recursive and any(_within(f, os.path.realpath(q).casefold()) for f in list(OWNER_FILES or ()) + OWNER_TREES):   # also a folder that does not exist (yet)
+                    return f"recursing into {q} reads an owner settings file or an owner state path [STL-CFG-312]"   # K6: the folder that holds one
         b = os.path.basename(w)
         if b.startswith(".") and glob.has_magic(b) and any(fnmatch.fnmatch(n, b) for n in (".env", ".env.local", ".credentials.json")):
             return f"the glob {word} matches secret files"
@@ -151,9 +157,13 @@ def _search_paths(name, words, base, names):
 def secret_why(cmd, cwd):
     """Why the shell command line `cmd`, run in `cwd`, reads a secret path, or None."""
     cmd = _ansi(cmd)
-    if OWNER_FILES and any(os.path.basename(f) in cmd.casefold() for f in OWNER_FILES):
+    if OWNER_FILES is None:
+        return UNREADABLE
+    if any(os.path.basename(f) in cmd.casefold() for f in OWNER_FILES):
         return "the command names an owner settings file"   # B2V-16: the owner-settings tail, not "block for a secret"
-    if SECRET_TEXT.search(cmd) or OWNER_FILES is None:
+    if any(t in cmd.casefold() for t in OWNER_TEXT):
+        return "the command names an owner state path of the apply tool (its backups, applied state or event log) [STL-CFG-312]"
+    if SECRET_TEXT.search(cmd):
         return "the command names a secret path"
     if _owner_dir(cwd):
         return f"{cwd} is the folder that holds an owner settings file"
@@ -175,6 +185,10 @@ def secret_why(cmd, cwd):
                     break
                 seg.pop(0)
             if seg:
+                if "/" in seg[0]:   # a path as the command word (inside an interpreter's code it is the first word of its own line)
+                    why = path_why(seg[0], here, names)
+                    if why:
+                        return why
                 name = seg[0].rsplit("/", 1)[-1]
                 sub = next((w for i, w in enumerate(seg[1:], 1) if not w.startswith("-") and seg[i - 1] not in ("-C", "-c")),
                            "") if name == "git" else ""
@@ -231,6 +245,8 @@ except Exception as e:  # fail closed: a payload we cannot read is refused
     why = f"unreadable payload: {type(e).__name__}"
 if why is None:
     sys.exit(0)
+if "[STL-CFG-312]" in why:   # G4: the code, the catalog's plain message, one alert line; no value from any owner file
+    why = _roles.plain("STL-CFG-312", problem="a role tried to read an owner state path of the apply tool") + " " + why.replace(" [STL-CFG-312]", "")
 tail = ("No agent reads the owner settings file (the owner's rule): leave it out of the task. To search, name a narrower "
         "folder that does not hold it (for example bin or docs)." if "owner settings" in why else   # RT7-03, B2V-16
         "Agents here never read secrets (.env files, keys, Hermes, Claude, OpenCode, GitHub, SSH or AWS credentials). If the "

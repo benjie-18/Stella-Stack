@@ -276,7 +276,11 @@ def plan(d, profile, proof, *, hermes_root, home, roots, stack_root=None, spec=N
     roots = list(dict.fromkeys(os.path.realpath(r) for r in [stack, *roots]))   # the stack repo is always walked: the hide rules never depend on the board's project list
     roots = [r for r in roots if not any(r != o and r.startswith(o + "/") for o in roots)]   # a nested root is reached through its parent
     cf = lambda p: p.casefold()
-    prot = [os.path.join(stack, p) for p in d["owner_settings"]] + [os.path.join(stack, sb["canary"])]
+    try:   # B1 (F1 W4): the apply tool's backups, applied state and event log hold owner values: they are mounted like the owner settings, never (no file, no listing)
+        state = roles.state_paths(d, stack)
+    except roles.RolesError as e:
+        raise BoxError(f"the data index cannot be read, so the box does not start: {e}")
+    prot = [os.path.join(stack, p) for p in d["owner_settings"]] + [os.path.join(stack, p) for p in state] + [os.path.join(stack, sb["canary"])]
     protcf = {cf(x) for x in prot} | {cf(os.path.realpath(x)) for x in prot}
     for x in prot:
         if os.path.isfile(x) and os.stat(x).st_nlink > 1:

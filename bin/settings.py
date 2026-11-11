@@ -88,9 +88,15 @@ def read_store(row):
     except (OSError, ValueError) as e:
         raise Refuse("STL-CFG-313", f"{row['id']} cannot be read: {type(e).__name__}")
     try:
-        return raw, oc.parse_env(raw.decode("utf-8-sig"), row["id"])
+        text = raw.decode("utf-8-sig")
+        cfg = oc.parse_env(text, row["id"])
     except (oc.OwnerConfigError, UnicodeDecodeError) as e:
         raise Refuse("STL-CFG-313", f"{row['id']} is not a valid env file: {str(e)[:120]}")
+    keys = [m[1] for l in text.split("\n") if (m := oc.LINE.fullmatch(l))]
+    dup = sorted({k for k in keys if keys.count(k) > 1})   # G5: the apply tool refuses a key held twice, so no verdict ("no change") is given on such a file
+    if dup:
+        raise Refuse("STL-CFG-313", f"{row['id']} holds a key twice ({', '.join(dup)[:80]}): fix the file first; the apply tool refuses it too")
+    return raw, cfg
 
 
 def typed(e, text):
@@ -183,7 +189,7 @@ def do_set(key, text, dry):
     if not dry and e["sensitivity"] == CRITICAL:
         confirm(e)
     lines = (raw.decode("utf-8-sig") if raw is not None else "").split("\n")
-    hit = [i for i, l in enumerate(lines) if l.startswith(k + "=")]   # parse_env accepted the file: at most one such line
+    hit = [i for i, l in enumerate(lines) if l.startswith(k + "=")]   # read_store refused a file that holds a key twice: at most one such line
     if hit:
         lines[hit[0]] = newline
     else:

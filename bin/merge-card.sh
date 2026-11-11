@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # Merge a reviewed card branch into main (F31, Stage 6 T7): the owner's step, never a worker's.
-# usage: merge-card.sh <card-id> [--push] [--repo <dir>] [--owner-approved]
+# usage: merge-card.sh <card-id> [--push] [--repo <dir>] [--owner-approved] [--i-have-read-the-boundary-changes]
 # Refuses (exit 3) unless: no worker environment (HERMES_KANBAN_TASK, HERMES_KANBAN_WORKSPACE, a delegated child, or a
 # worker profile's HERMES_HOME); the repo's main checkout is clean and on main; exactly one card branch
 # <project>/<id>-* exists and is ahead of main; the card's worktree is clean; the reviewer approved (its latest kanban run
 # on the card is completed with metadata.review "approved", see docs/hermes-local/board.md) or --owner-approved is
 # given; the card worktree's tests pass (npm test, package.json scripts.test).
+# F1 W4 (B3, the merge is the single place every card change passes, however it was made: a Hermes terminal, plumbing, another agent
+# CLI's git, a patch): the paths the branch changes against its merge base (git diff --name-only -z --no-renames, both sides of a
+# rename) must hold no owner settings or owner data path (bin/roles.py owner-data): owner data changes only through the apply tool;
+# nothing is merged. A path that defines the boundary itself (bin/roles.py boundary: the role table, the hook files, the guard scripts the
+# table names, the box) is listed, and refused unless --i-have-read-the-boundary-changes is given.
 # Then: git merge --no-ff into main; on any failure git merge --abort (main is left as it was, exit 1). Never forces,
 # never rewrites history, never deletes the branch or the worktree. --push: npm test on the merged main first, then
 # git push of main to its upstream, no force.
@@ -14,14 +19,15 @@ set -uo pipefail
 export LC_ALL=C.UTF-8
 export PATH="$PATH:/home/node/.local/bin:/home/node/.hermes/hermes-agent/.hermes/bin:/usr/local/share/npm-global/bin:/usr/local/bin:/usr/bin:/bin"
 . "$(dirname "$(readlink -f "$0")")/kanban-board.sh"
-usage() { echo "usage: merge-card.sh <card-id> [--push] [--repo <dir>] [--owner-approved]" >&2; exit 2; }
+usage() { echo "usage: merge-card.sh <card-id> [--push] [--repo <dir>] [--owner-approved] [--i-have-read-the-boundary-changes]" >&2; exit 2; }
 refuse() { echo "merge-card.sh: refused: $1" >&2; exit 3; }
 card="${1:-}"; [[ "$card" =~ ^t_[0-9a-f]{8}$ ]] || usage; shift
-push="" repo=. owner=""
+push="" repo=. owner="" readb=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --push) push=1 ;;
     --owner-approved) owner=1 ;;
+    --i-have-read-the-boundary-changes) readb=1 ;;
     --repo) [ -n "${2:-}" ] || usage; repo=$2; shift ;;
     *) usage ;;
   esac
@@ -60,6 +66,29 @@ st=$(GIT_COMMON_DIR=$common git --git-dir="$wtg" --work-tree="$wt" -c core.fsmon
 tip=$(g rev-parse --verify "refs/heads/$branch^{commit}") || refuse "cannot read the tip of $branch"   # read first: the commit checked and tested below is the commit merged
 # VH-02: a box writes the shared objects folder, so a commit can keep its id while its content changes; fsck compares every object with its id
 g fsck --no-dangling --no-progress >/dev/null 2>&1 || refuse "git fsck reports a damaged or altered object in $top; nothing was merged"
+# B3 (F1 W4): what the branch changes against its merge base, read whole (-z, no rename detection)
+here=$(dirname "$(readlink -f "$0")")
+mbase=$(g merge-base main "$tip") || refuse "cannot find where $branch left main"
+zf=$(mktemp) || refuse "cannot list what $branch changes"; trap 'rm -f "$zf"' EXIT
+g diff --name-only -z --no-renames "$mbase" "$tip" >"$zf" || refuse "cannot list what $branch changes"
+mapfile -d '' -t changed <"$zf"
+odata=$(python3 -I "$here/roles.py" owner-data "$here/.." 2>/dev/null | jq -r '.[]?' 2>/dev/null)
+[ -n "$odata" ] || refuse "the owner data list cannot be read (role table or data index), so what $branch changes cannot be checked; nothing was merged"
+bnd=$(python3 -I "$here/roles.py" boundary 2>/dev/null | jq -r '.[]?' 2>/dev/null)
+[ -n "$bnd" ] || refuse "the boundary path list cannot be read from the role table; nothing was merged"
+under() { local f=${1,,} p; while IFS= read -r p; do [[ $f == "${p,,}" || $f == "${p,,}/"* ]] && return 0; done <<<"$2"; return 1; }   # lower-cased: /workspace is case-insensitive
+hits=; bhits=
+for f in "${changed[@]}"; do
+  if under "$f" "$odata"; then hits+="${hits:+, }$f"; elif under "$f" "$bnd"; then bhits+="${bhits:+, }$f"; fi
+done
+if [ -n "$hits" ]; then
+  msg=$(python3 -I "$here/roles.py" refusal STL-CFG-312 "$branch changes owner data or an owner settings file" 2>/dev/null)
+  refuse "${msg:-STL-CFG-312} Owner data changes only through the apply tool (bin/stella-apply.py), never through a card. $branch changes: $hits; nothing was merged"
+fi
+if [ -n "$bhits" ]; then
+  echo "merge-card.sh: $branch changes paths that define the boundary itself (the role table, hook files, guard scripts, the box): $bhits" >&2
+  [ -n "$readb" ] || refuse "read those changes, then rerun with --i-have-read-the-boundary-changes; nothing was merged"
+fi
 if [ -z "$owner" ]; then
   read -r verdict started < <(kanban show "$card" --json 2>/dev/null \
     | jq -r --argjson r "$(python3 -I "$(dirname "$(readlink -f "$0")")/roles.py" reviewers 2>/dev/null || echo '[]')" \

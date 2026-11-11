@@ -11,7 +11,8 @@
     "workers = only for profiles whose worker is listed). A profile with no row gets fallback_role, which opens nothing.",
     "may_answer_for_owner (every role, true on one): the coordinator the reply poller runs as: free to comment on any card, and its comments count as the owner's answers. Never derived from assignable.",
     "requirements (every role): what a model needs to hold the role: tool_calling, vision (true = needed), min_context_tokens, allowed_data_classes (class names from .stella/data-policy.json). Read with: bin/roles.py requirements <role>.",
-    "Owner-write path (F1 W4): owner_settings = files no role reads or writes or commits (they hold values); owner_data = paths no role writes or lets a worker commit, but every role may read (tracked data: .stella); owner_commands = commands no role runs (the apply tool, the settings tool, the merge); data_index = the data index, which names the apply tool's backup folder (owner values in clear: no role reads or writes it); worker_markers = the environment variables that mark a worker's process. Every guard reads these lists here; a table missing one is invalid and every guard refuses everything.",
+    "Owner-write path (F1 W4): owner_settings = files no role reads or writes or commits (they hold values); owner_data = paths no role writes or lets a worker commit, but every role may read (tracked data: .stella); owner_commands = commands no role runs (the apply tool, the settings tool, the merge); data_index = the data index, which names the apply tool's backup folder (owner values in clear: no role reads or writes it); worker_markers = the environment variables that mark a worker's process; worker_pins = the variables the box sets to the worker's workspace and branch. Every guard reads these lists here; a table missing one is invalid and every guard refuses everything.",
+    "Three layers (F1 W4 round 2; a text guard cannot decide what a shell will do): (1) a role that runs in the OS box (sandbox.boxed_profiles) has the box as its boundary; (2) a role that does not (runs_unboxed true: the coordinator and the fallback role) has hooks that refuse every write: a hook entry with writes \"refused\" on each tool of write_tools, none with writes \"judged\" (the write guard); (3) whatever reaches a card branch meets the merge check (bin/merge-card.sh), which refuses owner data and flags boundary_paths and the hook files. owner_data = the table's own list; the owner data the index names (the index, every row with owner_only true) is added by bin/roles.py owner_paths. owner_commands_by_name = owner commands refused wherever their name appears in a command text.",
     "Add a profile: one row under profiles, then bin/apply-hermes-local.sh. Add a role: one entry under roles, then the same."
   ],
   "fallback_role": "unlisted",
@@ -21,10 +22,15 @@
     "home": [".hermes", ".claude", ".config/opencode", ".local/share/opencode"]
   },
   "owner_settings": ["config/owner.env"],
-  "owner_data": [".stella"],
-  "owner_commands": ["bin/merge-card.sh", "bin/stella-apply.py", "bin/settings.py"],
+  "owner_data": [".stella/schemas"],
+  "owner_commands": ["bin/merge-card.sh", "bin/stella-apply.py", "bin/settings.py", "bin/event_log.py"],
+  "owner_commands_by_name": ["bin/merge-card.sh"],
+  "boundary_paths": ["docs/hermes-local/roles.json", "docs/hermes-local/hooks", "docs/hermes-local/plugins/os-box", "bin/roles.py", "bin/commit-guard.sh",
+                     "bin/merge-card.sh", "bin/box.py", ".pre-commit-config.yaml"],
+  "write_tools": ["write_file", "patch", "terminal", "process_manage", "execute_code", "cronjob_manage", "skill_manage"],
   "data_index": ".stella/data-files.json",
   "worker_markers": ["HERMES_KANBAN_WORKSPACE", "HERMES_KANBAN_TASK", "HERMES_DELEGATED_CHILD_CONTEXT"],
+  "worker_pins": {"workspace": "HERMES_KANBAN_WORKSPACE", "branch": "HERMES_KANBAN_BRANCH"},
   "self_config_kinds": ["soul", "souls", "hook", "hooks", "toolset", "toolsets", "roles", "role table", "guard", "guards", "skill", "skills"],
   "profiles": {
     "default": {"role": "dispatcher", "dir": "", "soul": "default.md", "display_name": "Stella"},
@@ -37,6 +43,7 @@
   },
   "roles": {
     "dispatcher": {
+      "runs_unboxed": true,
       "requirements": {"tool_calling": true, "min_context_tokens": 32000, "vision": false, "allowed_data_classes": ["public", "internal", "client"]},
       "may_answer_for_owner": true, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": true, "may_review": false, "allowed_overrides": [], "background_review": false,
@@ -50,12 +57,13 @@
                           "local-project-setup"],
       "hooks": [
         {"matcher": "^kanban_block$", "file": "docs/hermes-local/hooks/default/deny-kanban-block.sh"},
-        {"matcher": "^(write_file|patch|execute_code|skill_manage|cronjob_manage)$", "file": "docs/hermes-local/hooks/default/deny-write.sh"},
+        {"matcher": "^(write_file|patch|execute_code|skill_manage|cronjob_manage)$", "file": "docs/hermes-local/hooks/default/deny-write.sh", "writes": "refused"},
         {"matcher": "^(read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"},
-        {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/default/read-only-terminal.py"}
+        {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/default/read-only-terminal.py", "writes": "refused"}
       ]
     },
     "builder": {
+      "runs_unboxed": false,
       "requirements": {"tool_calling": true, "min_context_tokens": 64000, "vision": false, "allowed_data_classes": ["public", "internal", "client"]},
       "git_identity": {"name": "WORKER_GIT_NAME", "email": "WORKER_GIT_EMAIL"},
       "may_answer_for_owner": false, "assignable": true, "workspace": "git-worktree", "may_complete": true, "may_unblock": true, "may_claim": true,
@@ -71,13 +79,14 @@
         {"matcher": "^(kanban_request_review|kanban_complete)$", "command": "/workspace/bin/check-guard.py", "timeout": 30},
         {"matcher": "^kanban_complete$", "command": "/workspace/bin/complete-gate.py", "timeout": 30},
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/git-guard.py"},
-        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20},
+        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20, "writes": "judged"},
         {"matcher": "^(terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"},
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/model-guard.py"},
-        {"matcher": "^skill_manage$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
+        {"matcher": "^(skill_manage|execute_code|cronjob_manage)$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
       ]
     },
     "reviewer": {
+      "runs_unboxed": false,
       "requirements": {"tool_calling": true, "min_context_tokens": 32000, "vision": false, "allowed_data_classes": ["public", "internal", "client"]},
       "git_identity": {"name": "WORKER_GIT_NAME", "email": "WORKER_GIT_EMAIL"},
       "may_answer_for_owner": false, "assignable": true, "workspace": "read-parent-worktree", "may_complete": true, "may_unblock": true, "may_claim": true,
@@ -97,120 +106,151 @@
       ]
     },
     "tester": {
+      "runs_unboxed": false,
       "requirements": {"tool_calling": true, "min_context_tokens": 32000, "vision": false, "allowed_data_classes": ["public", "internal", "client"]},
       "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
       "hooks": [
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/git-guard.py"},
-        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20},
+        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20, "writes": "judged"},
         {"matcher": "^(terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"},
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/model-guard.py"},
-        {"matcher": "^skill_manage$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
+        {"matcher": "^(skill_manage|execute_code|cronjob_manage)$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
       ]
     },
     "validator": {
+      "runs_unboxed": false,
       "requirements": {"tool_calling": true, "min_context_tokens": 32000, "vision": false, "allowed_data_classes": ["public", "internal", "client"]},
       "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
       "hooks": [
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/git-guard.py"},
-        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20},
+        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20, "writes": "judged"},
         {"matcher": "^(terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"},
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/model-guard.py"},
-        {"matcher": "^skill_manage$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
+        {"matcher": "^(skill_manage|execute_code|cronjob_manage)$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
       ]
     },
     "verifier": {
+      "runs_unboxed": false,
       "requirements": {"tool_calling": true, "min_context_tokens": 32000, "vision": false, "allowed_data_classes": ["public", "internal", "client"]},
       "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
       "hooks": [
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/git-guard.py"},
-        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20},
+        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20, "writes": "judged"},
         {"matcher": "^(terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"},
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/model-guard.py"},
-        {"matcher": "^skill_manage$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
+        {"matcher": "^(skill_manage|execute_code|cronjob_manage)$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
       ]
     },
     "red-team": {
+      "runs_unboxed": false,
       "requirements": {"tool_calling": true, "min_context_tokens": 32000, "vision": false, "allowed_data_classes": ["public", "internal", "client"]},
       "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
       "hooks": [
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/git-guard.py"},
-        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20},
+        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20, "writes": "judged"},
         {"matcher": "^(terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"},
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/model-guard.py"},
-        {"matcher": "^skill_manage$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
+        {"matcher": "^(skill_manage|execute_code|cronjob_manage)$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
       ]
     },
     "router": {
+      "runs_unboxed": false,
       "requirements": {"tool_calling": false, "min_context_tokens": 4000, "vision": false, "allowed_data_classes": ["public", "internal"]},
       "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
       "hooks": [
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/git-guard.py"},
-        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20},
+        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20, "writes": "judged"},
         {"matcher": "^(terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"},
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/model-guard.py"},
-        {"matcher": "^skill_manage$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
+        {"matcher": "^(skill_manage|execute_code|cronjob_manage)$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
       ]
     },
     "voice": {
+      "runs_unboxed": false,
       "requirements": {"tool_calling": false, "min_context_tokens": 8000, "vision": false, "allowed_data_classes": ["public", "internal"]},
       "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
       "hooks": [
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/git-guard.py"},
-        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20},
+        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20, "writes": "judged"},
         {"matcher": "^(terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"},
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/model-guard.py"},
-        {"matcher": "^skill_manage$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
+        {"matcher": "^(skill_manage|execute_code|cronjob_manage)$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
       ]
     },
     "look": {
+      "runs_unboxed": false,
       "requirements": {"tool_calling": false, "min_context_tokens": 8000, "vision": true, "allowed_data_classes": ["public", "internal"]},
       "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
       "hooks": [
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/git-guard.py"},
-        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20},
+        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20, "writes": "judged"},
         {"matcher": "^(terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"},
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/model-guard.py"},
-        {"matcher": "^skill_manage$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
+        {"matcher": "^(skill_manage|execute_code|cronjob_manage)$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
       ]
     },
     "proposer": {
+      "runs_unboxed": false,
       "requirements": {"tool_calling": true, "min_context_tokens": 32000, "vision": false, "allowed_data_classes": ["public", "internal"]},
       "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
       "hooks": [
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/git-guard.py"},
-        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20},
+        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20, "writes": "judged"},
         {"matcher": "^(terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"},
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/model-guard.py"},
-        {"matcher": "^skill_manage$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
+        {"matcher": "^(skill_manage|execute_code|cronjob_manage)$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
       ]
     },
     "unlisted": {
+      "runs_unboxed": true,
       "requirements": {"tool_calling": false, "min_context_tokens": 0, "vision": false, "allowed_data_classes": ["public"]},
       "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
+      "platform_toolsets": {
+        "cli": ["file", "terminal"],
+        "telegram": ["file", "terminal"],
+        "discord": ["file", "terminal"],
+        "slack": ["file", "terminal"],
+        "whatsapp": ["file", "terminal"],
+        "whatsapp_cloud": ["file", "terminal"],
+        "signal": ["file", "terminal"],
+        "bluebubbles": ["file", "terminal"],
+        "email": ["file", "terminal"],
+        "mattermost": ["file", "terminal"],
+        "matrix": ["file", "terminal"],
+        "dingtalk": ["file", "terminal"],
+        "feishu": ["file", "terminal"],
+        "wecom": ["file", "terminal"],
+        "wecom_callback": ["file", "terminal"],
+        "weixin": ["file", "terminal"],
+        "qqbot": ["file", "terminal"],
+        "yuanbao": ["file", "terminal"],
+        "webhook": ["file", "terminal"],
+        "api_server": ["file", "terminal"],
+        "cron": ["file", "terminal"]
+      },
       "hooks": [
-        {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/git-guard.py"},
-        {"matcher": "^(write_file|patch|terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/write-guard.py", "timeout": 20},
+        {"matcher": "^(write_file|patch|execute_code|skill_manage|cronjob_manage)$", "file": "docs/hermes-local/hooks/default/deny-write.sh", "writes": "refused"},
         {"matcher": "^(terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"},
-        {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/builder/model-guard.py"},
-        {"matcher": "^skill_manage$", "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"}
+        {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/default/read-only-terminal.py", "writes": "refused"},
+        {"matcher": "^(?!(?:write_file|patch|execute_code|skill_manage|cronjob_manage|terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$).+$", "file": "docs/hermes-local/hooks/default/deny-write.sh", "writes": "refused"}
       ]
     }
   },

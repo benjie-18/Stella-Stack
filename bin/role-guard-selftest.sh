@@ -247,7 +247,7 @@ for tf in "$T/bad.json" "$T/garbage.json" "$T/nope.json" "$T/nomr.json" "$T/strm
 done
 # Not hard-coded to the stack's profiles: a second reviewing profile in the table is accepted and listed; with none, the
 # refusal says so; a profile of another role that gets may_review is accepted.
-jq --arg r "$(role "$RV1")" '.profiles["qa-x"] = {role: $r, soul: "reviewer.md"}' "$RF" >"$T/two.json"
+jq --arg r "$(role "$RV1")" '.profiles["qa-x"] = {role: $r, soul: "reviewer.md"} | .sandbox.boxed_profiles += ["qa-x"]' "$RF" >"$T/two.json"
 ok '[ "$(run "$WT" kanban_request_review "$(rr qa-x)" ROLES_FILE=$T/two.json)" = 0 ] && [ "$(run "$WT" kanban_request_review "$(rr "$RV1")" ROLES_FILE=$T/two.json)" = 0 ] && [ "$(run "$WT" kanban_request_review "$(rr "$WT")" ROLES_FILE=$T/two.json)" = 2 ] && grep -qF qa-x "$T/out" && grep -qF "$RV1" "$T/out"' "K8: a second reviewing profile in the table: accepted, and listed in a refusal"
 ok '[ "$(run "$RV1" kanban_request_review "$(rr qa-x)" ROLES_FILE=$T/two.json)" = 0 ] && [ "$(run qa-x kanban_request_review "$(rr qa-x)" ROLES_FILE=$T/two.json)" = 2 ] && grep -qF "$RV1" "$T/out" && ! grep -qF "ask the owner" "$T/out"' "K8: one reviewing profile may hand to the other, never to itself"
 jq '.roles[].may_review = false' "$RF" >"$T/nobody.json"
@@ -300,7 +300,7 @@ ok '[ "$(run no-such-profile kanban_comment "$(cm t_0000c001)")" = 2 ] && [ "$(r
 ok '[ -n "$DISP" ] && [ "$(jq "[.roles[] | select(.may_answer_for_owner == true)] | length" "$RF")" = 1 ]' "W2-RT-01: exactly one role has may_answer_for_owner, and a profile has it ($DISP)"
 # W2-RT-01: a role without the field is a worker for this rule, listed or not, whatever its `assignable`: foreign comment refused
 for r in $(jq -r '.roles | to_entries[] | select(.value.may_answer_for_owner != true) | .key' "$RF"); do
-  jq --arg r "$r" '.profiles["qa-p"] = {"role": $r}' "$RF" >"$T/qa-t.json"
+  jq --arg r "$r" '.profiles["qa-p"] = {"role": $r} | .sandbox.boxed_profiles += ["qa-p"]' "$RF" >"$T/qa-t.json"
   ok '[ "$(ROLES_FILE=$T/qa-t.json run qa-p kanban_comment "$(cm t_0000c001)")" = 2 ] && grep -qF "not your own running card" "$T/out"' "W2-RT-01: a profile with role $r (no may_answer_for_owner) is refused a foreign comment by the own-card proof"
 done
 unset TREE_TOOL
