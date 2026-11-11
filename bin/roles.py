@@ -179,7 +179,8 @@ def fallback_problems(d):
     roles, fbn = d["roles"], d["fallback_role"]
     fb, named = roles[fbn], {row.get("role") for row in d["profiles"].values() if isinstance(row, dict)}
     errs = [f"fallback_role {fbn} allows data class {c!r}, which role {n} does not (the fallback is the narrowest)"
-            for n, r in roles.items() for c in fb["requirements"]["allowed_data_classes"] if c not in r["requirements"]["allowed_data_classes"]]
+            for c in fb["requirements"]["allowed_data_classes"]
+            for n in [next((n for n, r in roles.items() if c not in r["requirements"]["allowed_data_classes"]), None)] if n]
     if not _hooks(fb):
         errs.append(f"fallback_role {fbn} must have at least one hook")
     errs += [f"role {n} is named by no profile and lacks a hook the fallback role {fbn} has" for n, r in roles.items()

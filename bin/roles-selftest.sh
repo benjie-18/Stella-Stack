@@ -20,7 +20,7 @@ echo '{}' >"$H/kanban/boards/$BOARD/board.json"
 printf '#!/usr/bin/env bash\necho "$*" >> "%s/calls"\ncase "$*" in *"config get"*) echo unset;; esac\nexit 0\n' "$A" >"$A/bin/hermes"; chmod +x "$A/bin/hermes"
 mk() { mkdir -p "$1"; printf 'model: x\n' >"$1/config.yaml"; echo '{"approvals": []}' >"$1/shell-hooks-allowlist.json"; }
 # The scratch table: the real one plus role "planner" (assignable, delegates, creates cards, one hook) and profile planner-x.
-jq '.roles.planner = {assignable: true, workspace: "git-worktree", may_complete: true, may_unblock: false, may_claim: true,
+jq '.roles.planner = {assignable: true, may_answer_for_owner: false, workspace: "git-worktree", may_complete: true, may_unblock: false, may_claim: true,
       may_delegate: true, may_create_cards: true, may_review: false, allowed_overrides: [], background_review: false,
       requirements: {tool_calling: true, min_context_tokens: 8000, vision: false, allowed_data_classes: ["public"]},
       platform_toolsets: {cli: ["file", "terminal"]},
