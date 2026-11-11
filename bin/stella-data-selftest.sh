@@ -107,4 +107,93 @@ ok '! cat "$ROOT"/.stella/*.json "$ROOT"/.stella/extensions/*.json "$ROOT"/.stel
 ok '[ "$(jq -r "[.entries[].secrets[]?] | map(select(test(\"^[A-Z][A-Z0-9_]*$\") | not)) | length" "$ROOT/.stella/connections.json")" = 0 ]' "39 every secret in the connections catalog is a variable name"
 ok '! grep -rnE "/workspace|/home/" "$SD"' "40 the tool names no stack path and no home folder"
 
+# ---- fix round 1 (G1 to G6) ----
+# G1 the validator
+mk g1a; ed g1a versions.json '.schema_version = true'
+ok 'refuses g1a check && grep -q STL-CFG-310 "$T/o"' "41 schema_version true is not the number 1 (const compares by type)"
+mk g1b; ed g1b connections.json '.entries += [.entries[0] | .id += "\n"]'
+ok 'refuses g1b check' "42 a pattern ending in a dollar sign does not accept a value with a final newline"
+mk g1c; echo '{"type":"object","required":"id"}' >"$T/g1c/.stella/schemas/zz1.schema.json"; echo '{"type":"string","enum":"approved"}' >"$T/g1c/.stella/schemas/zz2.schema.json"
+echo '{"$defs":{"s":{"type":"string"}},"type":"object","properties":{"a":{"$ref":"https://other.invalid/x#/$defs/s"}}}' >"$T/g1c/.stella/schemas/zz3.schema.json"
+echo '{"$defs":{"s":{"type":"string"}},"type":"object","properties":{"a":{"$ref":"#/$defs/s","maxLength":3}}}' >"$T/g1c/.stella/schemas/zz4.schema.json"
+echo '{"i":1,"d":2}' >"$T/d1"; echo '"prove"' >"$T/d2"; echo '{"a":"x"}' >"$T/d3"; echo '{"a":"toolong"}' >"$T/d4"
+ok '! sd g1c validate zz1 "$T/d1" 2>&1 | grep -qx valid && ! sd g1c validate zz2 "$T/d2" 2>&1 | grep -qx valid && ! sd g1c validate zz3 "$T/d3" 2>&1 | grep -qx valid && ! sd g1c validate zz4 "$T/d4" 2>&1 | grep -qx valid' "43 schema keyword values are linted: a string for a list, an external ref, a ref sibling are not ignored"
+mk g1d
+printf '{"schema_version":1,"data_classes":["public"],"default":{"mode":"open","allowed_providers":[]},"projects":{"cx":{"mode":"local_only","allowed_providers":[]},"cx":{"mode":"open","allowed_providers":[]}}}' >"$T/g1d/.stella/data-policy.json"
+ok 'refuses g1d check && grep -qi "repeated" "$T/o"' "44 a repeated JSON key is refused"
+mk g1e; sed -i '0,/"cost": null/s//"cost": NaN/' "$T/g1e/.stella/connections.json"
+ok 'grep -q NaN "$T/g1e/.stella/connections.json" && refuses g1e check' "45 NaN in a data file is refused"
+mk g1f; ed g1f connections.json '.entries[0].secrets = ["sk-live-abcdef0123456789xyz"]'
+ok 'refuses g1f check && ! grep -q abcdef0123 "$T/o"' "46 a problem message never prints the rejected value"
+# G2 paths
+mk g2a; ed g2a data-files.json '.files += [{id:"zz-out",path:"../outside.json",schema:"approved-hosts",format:"json",owner_only:false,redact_keys:[],list_key:"hosts",id_field:"host"}]'
+echo '{"schema_version":1,"hosts":[],"MARK":"OUTSIDE-MARKER"}' >"$T/outside.json";
+ok 'refuses g2a check && ! sd g2a get zz-out 2>&1 | grep -q OUTSIDE-MARKER && refuses g2a get zz-out' "47 an index path with .. is refused by check, and get prints nothing from it"
+mk g2b; ed g2b data-files.json '.backup_dir = "/var/backups"'
+ok 'refuses g2b check' "48 an absolute backup_dir is refused"
+mk g2c; ln -s "$T/outside.json" "$T/g2c/.stella/extensions/zz-ext.json"
+ok 'refuses g2c check && refuses g2c list extensions && ! sd g2c get extensions zz-ext 2>&1 | grep -q OUTSIDE-MARKER' "49 a manifest symlinked out of the root is refused"
+ok '[ "$(jq -r ".files[] | select(.id == \"data-files\") | .owner_only" "$ROOT/.stella/data-files.json")" = true ]' "50 the index row of the index is owner-only"
+# G3 cross-file rules
+mk g3a; ed g3a role-assignments.json '.assignments[0].role = "ghost"'
+ok 'refuses g3a check connections && grep -q ghost "$T/o"' "51 check <id> also prints the cross-file problems"
+mk g3b; ed g3b data-policy.json '.projects["cx"] = {mode:"local_only",allowed_providers:[]}'
+ed g3b role-assignments.json '.assignments += [{id:"zz",scope:{level:"card",card:"c1"},role:"builder",effort_mode:"standard",chain:[{provider:"claude-subscription",model:"haiku",parameters:{}}]}]'
+ok 'refuses g3b check' "52 a card assignment with no project is refused, not judged by the open default"
+ed g3b role-assignments.json '.assignments[-1].scope = {level:"project",project:"CX"}'
+ok 'refuses g3b check' "53 a project name in upper case is refused"
+mk g3c; ed g3c role-assignments.json '.assignments += [.assignments[0] | .id = "dup"]'
+ok 'refuses g3c check' "54 two assignments for one scope, role and effort mode are refused"
+mk g3d; ed g3d role-assignments.json '.assignments += [.assignments[0] | .id = "zz" | .role = "unlisted"]'
+ok 'refuses g3d check' "55 the fallback role of the role table cannot be assigned"
+mk g3e; ed g3e connections.json '(.entries[] | select(.id == "claude-subscription")).enabled = false'
+ed g3e role-assignments.json '.assignments += [.assignments[0] | .id = "zz" | .role = "reviewer" | .chain = [{provider:"claude-subscription",model:"haiku",parameters:{}}]]'
+ok 'refuses g3e check' "56 a chain naming a disabled provider is refused"
+mk g3f; echo '{"schema_version":1,"id":"zz-ext","kind":"skill","summary":"s","hosts":[],"secrets":[],"tools":[],"allowed_roles":[],"risk_class":"read","enabled":true,"status":"proposed","source":"x"}' >"$T/g3f/.stella/extensions/zz-ext.json"
+ok 'refuses g3f check && grep -q zz-ext "$T/o"' "57 an extension that is switched on without being approved is refused"
+mk g3g; ed g3g features.json '(.entries[] | select(.id == "generated-team-files")).status = "on"'
+ok 'refuses g3g check' "58 an on feature that depends on a planned feature is refused"
+mk g3h; ed g3h settings.json '.entries[0].code = "STL-ZZZ-999"'
+ok 'refuses g3h check' "59 a setting code that is not in the alert catalog is refused"
+mk g3i; ed g3i connections.json '.entries[0].data_policy.data_classes_allowed += ["no-such-class"]'
+ok 'refuses g3i check' "60 a data class that data-policy does not define is refused"
+# G4 schemas and entries
+mk g4a; ed g4a connections.json '.entries[0] += {scopes:["read"],redaction_patterns:["sk-[A-Za-z0-9]+"],allowed_roles:["builder"],risk_class:"read"} | .entries[1].tos.subscription_login_by_agent = "allowed"'
+ok 'sd g4a check' "61 connections accept scopes, redaction_patterns, allowed_roles, risk_class and the declared agent ToS flag"
+ed g4a connections.json '.entries[1].tos.subscription_login_by_agent = "maybe"'
+ok 'refuses g4a check' "62 the agent ToS flag takes only its declared values"
+mk g4b; ed g4b connections.json '.entries[0].secrets += ["AKIAIOSFODNN7EXAMPLE"]'
+ok 'refuses g4b check' "63 a pasted key without an underscore is not a secret name"
+mk g4c; ed g4c connections.json '.entries[0].secrets += ["A_" + ("X" * 70)]'
+ok 'refuses g4c check' "64 a secret name over 64 characters is refused"
+mk g4d; ed g4d settings.json '.entries += [{key:"QA_API_TOKEN",label:"x",type:"string",validation:{},scope:"global",sensitivity:"secret",default:"qa-fake-value-7f3a",store:{data:"owner-settings",key:"QA_API_TOKEN"},apply:{script:"bin/stella-apply.py",needs_restart:false},code:"STL-CFG-315"}]'
+ok 'refuses g4d check && ! sd g4d get settings QA_API_TOKEN 2>&1 | grep -q qa-fake-value && ! sd g4d search fake-value 2>&1 | grep -q QA_API_TOKEN' "65 a secret setting with a default is refused, and get and search never print it"
+mk g4e; ed g4e settings.json '(.entries[] | select(.key == "CALL_TIMEOUT")).default = 0'
+ok 'refuses g4e check' "66 a setting default outside its own validation is refused"
+mk g4g; ed g4g settings.json '(.entries[] | select(.key == "CALL_TIMEOUT")) |= (.default = 5 | .validation = {minimum:9,maximum:1})'
+ok 'refuses g4g check' "67 a validation with minimum above maximum is refused"
+mk g4h; ed g4h settings.json '(.entries[] | select(.key == "QUEUE_MAX")) |= (.type = "enum" | .default = null | .validation = {})'
+ok 'refuses g4h check' "68 an enum setting with no values is refused"
+mk g4f; H=$T/g4f/.stella/approved-hosts.json
+row() { echo "{\"host\":\"$1\",\"port\":$2,\"scope\":\"$3\",\"approved_by\":\"$4\",\"approved_at\":\"$5\",\"expires_at\":$6}"; }
+echo "{\"schema_version\":1,\"hosts\":[$(row a.example.com 443 g o 2026-11-10T00:00:00Z null),$(row a.example.com 8443 g o 2026-11-10T00:00:00Z null)]}" >"$H"
+ok 'sd g4f check' "69 the same host on two ports is two entries"
+echo "{\"schema_version\":1,\"hosts\":[$(row '*' 443 '' '' never '"never"')]}" >"$H"
+ok 'refuses g4f check' "70 a bare wildcard host, empty scope and approver and free-text dates are refused"
+# G5 read commands
+mk g5a; echo '[]' >"$T/g5a/.stella/extensions/zz-array.json"
+ok 'refuses g5a list && grep -q STL-CFG-310 "$T/o" && ! grep -q Traceback "$T/o" && refuses g5a search stella && grep -q STL-CFG-310 "$T/o" && ! grep -q Traceback "$T/o"' "71 a malformed manifest gives exit 1 and a STL-CFG-310 line from list and search, no traceback"
+mk g5b; echo '{' >"$T/g5b/.stella/connections.json"
+ok 'refuses g5b get connections discord && grep -q STL-CFG-310 "$T/o" && ! grep -q STL-CFG-311 "$T/o" && ! grep -q Traceback "$T/o"' "72 a known entry in a broken file is STL-CFG-310, not 311"
+n=$(alerts)
+ok 'refuses fake get owner-settings && grep -qi "not readable" "$T/o" && [ "$(alerts)" -eq $n ]' "73 get on an env row says it is known and not readable here, with no alert line"
+ok 'sd fake check | grep -qi "not opened" && sd fake check --json | jq -e ".not_opened | index(\"owner-settings\")" >/dev/null' "74 check says which env rows it did not open"
+mk g5c; ed g5c capabilities.json '.entries += [.entries[0] | .id = "zz-translate" | .summary = "Übersetzung von Texten"]'
+ok 'sd g5c search übersetzung --json | jq -e "map(.id) | index(\"zz-translate\")" >/dev/null && [ "$(sd g5c search locality)" = "" ]' "75 search matches values (not key names), also non-ASCII text"
+mk g5d; rm -rf "$T/g5d/.supervisor"
+ok '(unset ESCALATE_SUP_DIR; STELLA_ROOT=$T/g5d python3 -I "$SD" get nodata >/dev/null 2>&1; [ -s "$T/g5d/.supervisor/logs/alerts.log" ])' "76 with STELLA_ROOT set, the alert line goes under that root"
+# G6 data true to the stack
+ok '[ "$(jq "[.entries[] | select(.status == \"on\")] | length" "$ROOT/.stella/features.json")" -ge 10 ] && jq -e "[.entries[].id] | index(\"escalation\") and index(\"watchdog\")" "$ROOT/.stella/features.json" >/dev/null' "77 the feature registry lists the features the stack already runs"
+ok 'jq -e ".entries[] | select(.id == \"fallback-gateway\") | .enabled and (.models | length) > 0 and (.secrets | length) > 0" "$ROOT/.stella/connections.json" >/dev/null' "78 the fallback gateway entry is enabled, has its model and the name of its key variable"
+
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
