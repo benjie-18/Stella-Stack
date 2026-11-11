@@ -10,7 +10,7 @@
       "path": ".stella/data-files.json",
       "schema": "data-files",
       "format": "json",
-      "owner_only": false,
+      "owner_only": true,
       "redact_keys": [],
       "list_key": "files",
       "id_field": "id"
@@ -53,7 +53,7 @@
       "owner_only": true,
       "redact_keys": [],
       "list_key": "hosts",
-      "id_field": "host"
+      "id_field": "host,port"
     },
     {
       "id": "capabilities",

@@ -2,6 +2,139 @@
   "schema_version": 1,
   "entries": [
     {
+      "id": "escalation",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "escalation-thread",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "watchdog",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "model-watch",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "kanban-board",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "role-guards",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "complete-gate",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "check-guard",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "false-close-guard",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "commit-guard",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "review",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "fallback-routing",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "bench",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "box",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "alert-catalog",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "broker-stand-in",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "owner-config",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "firewall",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "test-map",
+      "owner_phase": "F0",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
       "id": "contract-data",
       "owner_phase": "F1",
       "status": "on",
@@ -20,7 +153,7 @@
     {
       "id": "event-log",
       "owner_phase": "F1",
-      "status": "on",
+      "status": "planned",
       "depends_on": [
         "contract-data"
       ],
@@ -29,7 +162,7 @@
     {
       "id": "apply-contract",
       "owner_phase": "F1",
-      "status": "on",
+      "status": "planned",
       "depends_on": [
         "contract-data",
         "event-log"
@@ -39,7 +172,7 @@
     {
       "id": "owner-write-path",
       "owner_phase": "F1",
-      "status": "on",
+      "status": "planned",
       "depends_on": [
         "apply-contract"
       ],

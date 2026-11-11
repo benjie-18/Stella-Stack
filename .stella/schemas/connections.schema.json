@@ -83,7 +83,8 @@
           "type": "array",
           "items": {
             "type": "string",
-            "pattern": "^[A-Z][A-Z0-9_]*$"
+            "pattern": "^[A-Z][A-Z0-9]*_[A-Z0-9_]*$",
+            "maxLength": 64
           }
         },
         "actions": {
@@ -264,6 +265,14 @@
           "properties": {
             "status": {
               "type": "string"
+            },
+            "subscription_login_by_agent": {
+              "enum": [
+                "unverified",
+                "allowed",
+                "forbidden",
+                "not_applicable"
+              ]
             }
           },
           "required": [
@@ -276,6 +285,35 @@
               "null"
             ]
           }
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "redaction_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowed_roles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "risk_class": {
+          "enum": [
+            "read",
+            "write",
+            "post",
+            "send",
+            "pay",
+            "delete",
+            "sign_in"
+          ]
         }
       },
       "required": [
