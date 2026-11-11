@@ -24,7 +24,7 @@ Owner-only rows (index owner_only) are refused (312) for a worker: a worker mark
 table's `worker_markers`; missing or empty = refuse), or `roles.py prove` says this process is a worker or cannot tell.
 That gate is a second line only: a caller can clear its markers, shadow the board tool on PATH or detach from its parent. The
 boundary is the hooks of every role refusing to run this tool at all (item W4); see the contract docs.
-Values under redact_keys / non-plain settings never appear in a diff, event, or message (***)."""
+Values under redact_keys / secret settings never appear in a diff, event, or message (***)."""
 import argparse, contextlib, datetime, difflib, hashlib, json, os, pwd, re, shutil, subprocess, sys, tempfile
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -165,9 +165,9 @@ def gate(row):
         raise bad(f"{row['id']} is owner-only: {why}", "STL-CFG-312")
 
 def private(row):
-    """True when no hash of the file may reach a log: owner-only, redact keys, or a non-plain registry setting is stored in it."""
-    return bool(row["owner_only"] or row["redact_keys"]
-                or any(e["sensitivity"] != "plain" and e["store"]["data"] == row["id"] for e in el.registry()["entries"]))
+    """True when no hash of the file may reach a log: it has redact keys or stores a secret registry setting (owner-only alone does not)."""
+    return bool(row["redact_keys"]
+                or any(e["sensitivity"] == "secret" and e["store"]["data"] == row["id"] for e in el.registry()["entries"]))
 
 # ---- the applied state, backups, locks ----
 def state_path():
