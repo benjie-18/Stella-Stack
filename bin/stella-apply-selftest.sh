@@ -69,7 +69,7 @@ B=$(tree)
 ap apply connections --from "$C/conn.json" --dry-run >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && grep -q "Changed label" "$T/o" && [ "$(tree)" = "$B" ] && [ ! -e "$LOG" ]' "A5a dry run (json): diff shown, exit 0, no file changed, no event"
 ap apply owner-settings --from "$C/owner.env" --dry-run >"$T/o" 2>&1; rc=$?
-ok '[ $rc = 0 ] && grep -q "API_TOKEN (masked)" "$T/o" && grep -q "WORKER_GIT_NAME (masked)" "$T/o" && ! grep -q "sekrit-\|Fake" "$T/o" && [ "$(tree)" = "$B" ]' "A5a dry run (env): every changed value is masked (secret and identity_critical), the changed keys are named, nothing changed"
+ok '[ $rc = 0 ] && grep -q "API_TOKEN=.\*\*\*" "$T/o" && ! grep -q sekrit- "$T/o" && grep -q "Fake Two" "$T/o" && [ "$(tree)" = "$B" ]' "A5a dry run (env): masked diff, nothing changed"
 ap apply limits --from "$C/limits.env" --dry-run >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && grep -q "PLANTED_SETTING=.\*\*\*" "$T/o" && ! grep -q sekrit- "$T/o" && [ "$(tree)" = "$B" ]' "A5a dry run (secret setting): masked, nothing changed"
 ap apply connections --from "$C/bad.json" --dry-run >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-313 "$T/o" && [ "$(tree)" = "$B" ]' "A5a a dry run of an invalid candidate is refused"
@@ -265,7 +265,7 @@ ok '[ $krc = 137 ] && [ $rc = 0 ] && [ "$(jq -r .type "$LOG" | tr "\n" " ")" = "
 mkr g6b; ap apply connections --from "$C/conn.json" >/dev/null 2>&1; cp "$T/conn.orig" "$R/.stella/connections.json"; n=$(nev)
 ap rollback connections >"$T/o" 2>&1; ok '[ $? = 0 ] && grep -q "nothing to restore" "$T/o" && [ "$(nev)" = $((n+1)) ] && [ "$(jq -r .type "$LOG" | tail -1)" = rollback ]' "G6 the nothing-to-restore branch writes an event line"
 mkr g6c; ap apply owner-settings --from "$C/owner.env" >/dev/null 2>&1; ap apply limits --from "$C/limits.env" >/dev/null 2>&1
-ok '! grep -q "Fake" "$LOG" && ! jq -r "select(.what == \"owner-settings\" or .what == \"limits\") | .detail" "$LOG" | grep -q "sha256"' "G6 identity_critical values are masked, no file hash is logged for an owner-only row or a row with redact keys"
+ok 'jq -es "(map(select(.what == \"owner-settings\")) | .[0] | .old.WORKER_GIT_NAME == \"Fake One\" and .new.WORKER_GIT_NAME == \"Fake Two\" and .new.API_TOKEN == \"***\") and (map(select(.what == \"limits\")) | .[0].new.PLANTED_SETTING == \"***\")" "$LOG" >/dev/null && ! jq -r "select(.what == \"owner-settings\" or .what == \"limits\") | .detail" "$LOG" | grep -q "sha256"' "G6 the rule from both sides: redact-key and secret values are ***, an identity_critical setting shows old and new; no file hash for a row with redact keys or a secret setting"
 ap apply extensions/fake-ext.json --from "$C/fake-ext.json" >/dev/null 2>&1
 ok 'jq -e "select(.what == \"extensions/fake-ext.json\") | .old == null and (.new | type) == \"object\"" "$LOG" >/dev/null' "G6 the event for a new file has old: null"
 ap history extensions --json >"$T/o" 2>&1; ok '[ "$(jq ".unreadable_lines" "$T/o")" = 0 ]' "G6 history --json carries a count of unreadable lines"

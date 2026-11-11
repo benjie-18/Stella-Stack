@@ -4,8 +4,8 @@
 (non-ASCII is escaped, so no value can hold a line separator), appended whole or not at all under a lock: a log that does
 not end in a newline gets one first, and after a failed or short write the file is cut back to the size it had. Existing
 lines are never rewritten. Values of keys that match a `redact_keys` pattern of the index, and of settings the registry
-marks anything but `plain`, become *** before the line is validated, written or printed (a scalar old / new of a row that
-is owner-only or has redact keys is masked whole). A key written as a JSON pointer ("/a/b") is masked when any of its
+marks `secret`, become *** before the line is validated, written or printed (a scalar old / new of a row that
+has redact keys or stores a secret setting is masked whole). A key written as a JSON pointer ("/a/b") is masked when any of its
 segments matches. The log path and its lock are refused (STL-CFG-318) when they are, or pass through, a symbolic link.
 Limits (not fixable here): `who` is what the caller says, the OS user name for the apply tool; any caller that can run
 this tool can append a line of any type; keeping roles from writing the file directly is the job of the hooks' path rules.
@@ -88,9 +88,9 @@ def registry():
 
 def redactor(row_id=None):
     """key -> True when its value must be masked: a redact_keys pattern of the index row (every row when row_id is None),
-    or the key / store key of a registry setting whose sensitivity is not plain."""
+    or the key / store key of a registry setting whose sensitivity is secret (identity_critical values are shown)."""
     pats = [re.compile(p) for r in sd.rows() if row_id in (None, r["id"]) for p in r["redact_keys"]]
-    secret = {k for e in registry()["entries"] if e["sensitivity"] != "plain" for k in (e["key"], e["store"]["key"])}
+    secret = {k for e in registry()["entries"] if e["sensitivity"] == "secret" for k in (e["key"], e["store"]["key"])}
     def red(k):
         segs = [s.replace("~1", "/").replace("~0", "~") for s in k.split("/")[1:]] if k.startswith("/") else [k]
         return any(s in secret or any(p.search(s) for p in pats) for s in segs)
@@ -131,9 +131,11 @@ def preflight():
         raise EventError("STL-CFG-318", why(e))
 
 def sensitive_row(line, row_id):
-    """The index row a line is about (row_id, else the first part of `what`) when it is owner-only or has redact keys."""
+    """The index row a line is about (row_id, else the first part of `what`) when masking could apply to it: it has redact keys
+    or stores a secret setting."""
     rid = row_id or str(line.get("what", "")).partition("/")[0]
-    return next((r for r in sd.rows() if r["id"] == rid and (r["owner_only"] or r["redact_keys"])), None)
+    secret_rows = {e["store"]["data"] for e in registry()["entries"] if e["sensitivity"] == "secret"}
+    return next((r for r in sd.rows() if r["id"] == rid and (r["redact_keys"] or rid in secret_rows)), None)
 
 def append(line, row_id=None):
     """Mask, validate, append one line under the lock; returns the line written. EventError 313 (invalid, nothing

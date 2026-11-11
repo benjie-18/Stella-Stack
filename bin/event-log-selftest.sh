@@ -57,7 +57,7 @@ ok '$EL append --type t --what x --code STL-CFG-313 >/dev/null 2>&1' "G6 a code 
 $EL append --type t --what x --old not-json >"$T/o" 2>&1
 ok '! grep -q "not-json" "$T/o"' "G7 a usage error does not echo the argument"
 $EL append --type change --what owner-settings --old '"plant-scalar-1"' --new '{"WORKER_GIT_NAME":"plant-id-2"}' >"$T/o" 2>&1
-ok '! grep -rq "plant-scalar-1\|plant-id-2" "$R" && ! grep -q "plant-" "$T/o" && tail -n 1 "$LOG" | jq -e ".old == \"***\" and .new.WORKER_GIT_NAME == \"***\"" >/dev/null' "G6 a scalar old of an owner-only row and an identity_critical setting are masked"
+ok '! grep -rq "plant-scalar-1" "$R" && ! grep -q "plant-scalar" "$T/o" && tail -n 1 "$LOG" | jq -e ".old == \"***\" and .new.WORKER_GIT_NAME == \"plant-id-2\"" >/dev/null' "G6 a scalar old of a row with redact keys is masked whole; an identity_critical setting shows its value"
 python3 -I -c "
 import sys; sys.path.insert(0, '$H/bin'); import event_log as e
 e.SECRETS.add('plant-detail-9'); e.append(e.build('note', 'x', detail='see plant-detail-9 here'))" >/dev/null 2>&1

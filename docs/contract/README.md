@@ -179,10 +179,12 @@ An unexpected exception is exit 1 and one coded line (the exception type, never 
 - **Event log.** One JSON line per state change, ASCII only (no value can hold a line separator), written whole or not at all
   under the log's lock: a log that does not end in a newline gets one first, and after a failed or short write the file is cut
   back to its earlier size (318). Readers split on `\n` only; a line that is not a JSON object is counted and reported
-  (`STL-CFG-318` on stderr, `unreadable_lines` in `history --json`), never dropped silently. Values of keys that match a row's
-  `redact_keys`, and of every registry setting whose `sensitivity` is not `plain`, are `***`; a scalar `old` / `new` of an
-  owner-only row or a row with redact keys is `***` whole; `--detail` goes through the same scrub as an error message; no file
-  hash is written for such a row. A new file's event has `old: null`. `append --code` must be in the alert catalog.
+  (`STL-CFG-318` on stderr, `unreadable_lines` in `history --json`), never dropped silently. Only values of keys that match a row's
+  `redact_keys` and of registry settings whose `sensitivity` is `secret` are `***` (in the line, the dry run, `history` and `tail`);
+  identity-critical and plain settings show their old and new values, so the event log holds old and new values of non-secret
+  owner settings and who may read the log is item W4's question. A scalar `old` / `new` of a row that has redact keys or stores a
+  secret setting is `***` whole; `--detail` goes through the same scrub as an error message; no file hash is written for such a
+  row (owner-only alone does not suppress it). A new file's event has `old: null`. `append --code` must be in the alert catalog.
 - **Limits that remain.** The owner-only gate (`worker_markers` in the role table, then `roles.py prove`) cannot prove an owner
   from inside the process: a caller can clear its marker variables, shadow the board tool on `PATH` or detach from its parent.
   **The boundary is the hooks of every role refusing to run `bin/stella-apply.py` (and writing the owner files) at all (item W4).**
