@@ -14,14 +14,16 @@ check fails when: the map is unreadable, repeats a key or breaks its schema; a s
 target or an always gate has no selftest file; a selftest is missing from the suite list of the runner (or the list
 cannot be read); a suite selftest is not executable, on disk or in the mode git records; a file that looks like a test
 (test_like) is neither a suite selftest nor listed in not_tests; a selftest can reach a file (see reach) whose
-selection leaves that selftest out; a row that is not a scan row has a glob that matches every path; or a row that adds
-no target beyond the always gates matches more than prose (see prose).
-select: a file on the full list (matched without regard to case), or matched by no row, selects the full suite; so does
-no file name at all. `scan` rows add targets (a selftest that reads a whole folder) but do not count as a match. Pass
+selection leaves that selftest out; a row that is not a scan row has a glob that matches every path; a row that adds
+no target beyond the always gates matches more than prose (see prose); or a tracked file is matched by no row (and is
+not on the full list, which the stack ships empty).
+select: full is the answer for an input or a map that cannot be trusted, never for a file of a checked tree. A file on
+the full list (matched without regard to case), or matched by no row, selects the full suite; so does no file name at
+all. The map, its schema and this tool select their rows' targets like any other file: safe, because this tool's
+selftest is an always gate and runs `check`, which refuses a map whose rows leave out a selftest that reaches a file. `scan` rows add targets (a selftest that reads a whole folder) but do not count as a match. Pass
 both sides of a rename (`git diff --name-only --no-renames`): the new path alone can narrow the selection. A name with
 white space (at either end too, on stdin as well), a control character, a leading dash or bytes that are not UTF-8
-selects the full suite. select also answers full when a changed file is the map, its schema or this tool, when the map
-breaks a rule that needs no file list (the schema, a glob over every path; the reason goes to stderr), and when the
+selects the full suite. select also answers full when the map breaks a rule that needs no file list (the schema, a glob over every path; the reason goes to stderr), and when the
 selection would be empty. shortcut: the rules that need the file list (prose, reach, selftests, suite list, modes) are
 left to `check` (about 1.7 s on the stack tree against 0.05 s for a select), which every selection runs through the
 always gate test-map; upgrade if a map may drop that gate."""
@@ -144,7 +146,8 @@ def prose(m, files):
     """A row that adds no target beyond the always gates selects what a row with no targets selects, so it may match only
     prose: refuse a row that matches code (follow, #!), an executable, a test-like file, or a file that a code or data
     file (the `data` globs; every file when the list is empty or missing) names, by the name search reach uses. The
-    selftest file of a gate the row names is the exception. One problem per row; a glob over every path is wide()'s."""
+    selftest file of a gate the row names, and its tool named like it (bin/test-map.py for bin/test-map-selftest.sh), are
+    the exception: only that gate can test them. One problem per row; a glob over every path is wide()'s."""
     rows = [(i, r) for i, r in enumerate(m["map"], 1)
             if not set(r["targets"]) - set(m["always"]) and not r.get("scan") and not every(r["globs"])]
     if not rows:
@@ -170,12 +173,15 @@ def prose(m, files):
             return "a test-like file"
         return f in named and f"named by {named[f]}"
 
+    head, tail = m["test_file"].split("{name}")
+    path = lambda t: head + t + tail
     probs = []
     for i, r in rows:
         row = f"map row {i} ({', '.join(r['globs'])}) " + (
             f"adds no target beyond the always gates ({', '.join(r['targets'])})" if r["targets"] else "has no targets")
-        own = {m["test_file"].replace("{name}", t) for t in r["targets"]}
-        bad = next(((f, w) for f in sorted(files) if matches(f, r["globs"]) and f not in own for w in [why(f)] if w), None)
+        # a gate's own files: its selftest, and its tool named like it (bin/{name}.<ext>), which only that gate can test
+        own = lambda f: any(f == path(t) or (f.startswith(head + t + ".") and "/" not in f[len(head):]) for t in r["targets"])
+        bad = next(((f, w) for f in sorted(files) if matches(f, r["globs"]) and not own(f) for w in [why(f)] if w), None)
         if bad:
             probs.append(f"{row}, so it may match only prose, but it matches {bad[0]}: {bad[1]}")
     return probs
@@ -185,7 +191,7 @@ def reach(m, files, tests):
     """{selftest: the files it can reach}: its own file, every file it names (by base name, or a Python module by its
     import), and on through each named file that is code (starts with #! or matches a follow glob). Whole-line #
     comments name nothing: without that, one remark in a shared script ties every selftest to the file it mentions.
-    shortcut: a name built at run time or a folder read by a glob is not seen, those need a `scan` row or the full list."""
+    shortcut: a name built at run time or a folder read by a glob is not seen, those need a `scan` row or targets found by reading (said in the row's why)."""
     by_base, mods, named = {}, {}, {}
     for f in files:
         by_base.setdefault(os.path.basename(f), set()).add(f)
@@ -214,9 +220,6 @@ def reach(m, files, tests):
     return out
 
 
-OWN = {p.lower() for p in (MAP, *(os.path.relpath(f, os.path.dirname(BIN)) for f in (SCHEMA, os.path.abspath(__file__))))}
-
-
 def select(files, m=None):
     m = m or load()
     targets, reason = set(m["always"]), []
@@ -225,9 +228,6 @@ def select(files, m=None):
             reason.append(f"{f!r}: not one plain file name (white space, a control character, a leading dash or not UTF-8)")
             continue
         f = os.path.normpath(f)
-        if f.lower() in OWN:   # a map edit could name its own narrow answer
-            reason.append(f"{f}: the test map, its schema or the tool that reads them")
-            continue
         if matches(f.lower(), [g.lower() for g in m["full"]]):   # a guard is a guard in any case (Guard.js)
             reason.append(f"{f}: a shared contract (full list)")
             continue
@@ -265,6 +265,10 @@ def check():
     # shortcut: a test is known by its name only (test_like globs), a test named otherwise is not seen; upgrade when a second test runner arrives
     probs += [f"{f} looks like a test but is neither a suite selftest nor listed in not_tests" for f in sorted(files)
               if f not in tests.values() and matches(f.lower(), m["test_like"]) and not matches(f, m["not_tests"])]
+    probs += [f"{f}: no map row matches this tracked file; add a row whose targets are the selftests that use it (when unsure, "
+              "its folder's tests: the targets of the other rows of its folder)" for f, mode in sorted(files.items())
+              if mode and not any(matches(f, r["globs"]) for r in m["map"] if not r.get("scan"))
+              and not matches(f.lower(), [g.lower() for g in m["full"]])]
     try:
         with open(os.path.join(ROOT, m["runner"]), encoding="utf-8") as fh:
             suite = set(re.search(r"^for t in (.+); do$", fh.read(), re.M)[1].split())

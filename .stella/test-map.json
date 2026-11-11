@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "about": "Which selftests a changed file can affect (product rule 8). bin/test-map.py reads this: `check` is the lint (in npm test through bin/test-map-selftest.sh), `select` picks the targets. A file on the full list or matched by no row selects the full suite. `check` refuses a map whose rows leave out a selftest that can reach the file (see reach in bin/test-map.py); the error names what to add. `scan` rows are for selftests that read a whole folder; no other row may have a glob that matches every path. A row that adds no target beyond the always gates may match only prose: no code, executable, test-like file (its gate's own selftest excepted), or file a code or data file (`data`; empty means every file) names. Removing a glob from `data` loosens that rule: like every edit of this map it selects the full suite and is reviewed. `select` answers full for a change to this map, its schema or bin/test-map.py, for a map that breaks a rule needing no file list, and for an empty selection.",
+  "about": "Which selftests a changed file can affect (product rule 8). bin/test-map.py reads this: `check` is the lint (in npm test through bin/test-map-selftest.sh), `select` picks the targets. The map is finished: every tracked file has a row whose targets are the selftests that use it (from reach, or from reading, said in the row's why; \"unsure: the folder's tests\" where no use was found), and `check` refuses a tracked file no row matches. The full list ships empty: it stays in the schema and the tool for a stack that wants one (a file on it selects the full suite). The full suite runs once, at the end, on the final hash. `check` refuses a map whose rows leave out a selftest that can reach the file (see reach in bin/test-map.py); the error names what to add. `scan` rows are for selftests that read a whole folder; no other row may have a glob that matches every path. A row that adds no target beyond the always gates may match only prose: no code, executable, test-like file (its gate's own selftest and tool excepted), or file a code or data file (`data`; empty means every file) names. Removing a glob from `data` loosens that rule: such an edit is reviewed. This map, its schema and bin/test-map.py select their users like any other file (the always gate test-map runs `check`). `select` answers full only for an input or a map it cannot trust: a name no row matches or that is not one plain file name, no name, a map that breaks a rule needing no file list, an empty selection.",
   "runner": "bin/selftests.sh",
   "test_file": "bin/{name}-selftest.sh",
   "test_like": [
@@ -42,44 +42,7 @@
     "stella-data",
     "test-map"
   ],
-  "full": [
-    "bin/selftests.sh",
-    "bin/test-map.py",
-    "bin/stella_data.py",
-    "bin/stella-apply.py",
-    "bin/event_log.py",
-    "bin/settings.py",
-    "bin/hardcode-lint-selftest.sh",
-    "bin/hardcode-lint.sh",
-    "*guard*",
-    ".stella/*",
-    "docs/hermes-local/*",
-    ".devcontainer/*",
-    "config/*",
-    ".supervisor/*",
-    "package.json",
-    "package-lock.json",
-    "pnpm-lock.yaml",
-    "yarn.lock",
-    "bunfig.toml",
-    "opencode.json",
-    ".pre-commit-config.yaml",
-    "bin/roles.py",
-    "bin/alert_catalog.py",
-    "bin/alert.sh",
-    "bin/alert-catalog.sh",
-    "docs/alert-codes.md",
-    "bin/kanban-board.sh",
-    "bin/owner-config.sh",
-    "bin/owner_config.py",
-    "bin/apply-hermes-local.sh",
-    "bin/register-*.sh",
-    "bin/escalation-discord.sh",
-    "bin/escalation-complete.sh",
-    "bin/escalation-on-*.sh",
-    "bin/escalation-thread.sh",
-    "SUPERVISOR.md"
-  ],
+  "full": [],
   "map": [
     {
       "globs": [
@@ -651,6 +614,1047 @@
         "init-firewall",
         "write-guard"
       ]
+    },
+    {
+      "globs": [
+        ".claude/agents/builder.md",
+        ".claude/agents/checker.md",
+        ".claude/agents/critical-red-team.md",
+        ".claude/agents/critical-verifier.md",
+        ".claude/agents/readiness-auditor.md",
+        ".claude/agents/readiness-security-auditor.md",
+        ".claude/agents/readiness-test-writer.md",
+        ".claude/agents/readiness-verifier.md",
+        ".claude/agents/red-team.md",
+        ".claude/agents/tester.md",
+        ".claude/agents/validator.md",
+        ".claude/agents/verifier.md",
+        ".claude/hooks/readiness-guard.sh"
+      ],
+      "targets": [
+        "role-guard"
+      ],
+      "why": "from reading: no selftest reads or runs these; role-guard tests the guard that keeps .claude/agents and .claude/hooks read-only (docs/hermes-local/roles.json:274, ro_over); docs/hermes-local/hardcode-allow.json names the agent files, so the prose rule refuses a row that adds no target"
+    },
+    {
+      "globs": [
+        ".devcontainer/Dockerfile",
+        ".devcontainer/managed-settings.json"
+      ],
+      "targets": [
+        "alert",
+        "container-start",
+        "firewall-probe",
+        "hardcode-lint",
+        "init-firewall"
+      ],
+      "why": "unsure: the folder's tests (the targets of the other .devcontainer rows); no selftest reads these"
+    },
+    {
+      "globs": [
+        ".devcontainer/devcontainer.json"
+      ],
+      "targets": [
+        "container-start"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        ".devcontainer/init-firewall.sh"
+      ],
+      "targets": [
+        "alert",
+        "container-start",
+        "firewall-probe",
+        "hardcode-lint",
+        "init-firewall"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        ".devcontainer/seccomp-userns.json"
+      ],
+      "targets": [
+        "alert",
+        "firewall-probe",
+        "hardcode-lint",
+        "init-firewall"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        ".pre-commit-config.yaml"
+      ],
+      "targets": [
+        "commit-guard"
+      ],
+      "why": "from reading: the pre-commit config that runs bin/commit-guard.sh (bin/commit-guard.sh:2); no selftest reads it"
+    },
+    {
+      "globs": [
+        ".stella/approved-hosts.json",
+        ".stella/data-policy.json",
+        ".stella/features.json",
+        ".stella/role-assignments.json",
+        ".stella/schemas/approved-hosts.schema.json",
+        ".stella/schemas/data-policy.schema.json",
+        ".stella/schemas/features.schema.json",
+        ".stella/schemas/role-assignments.schema.json"
+      ],
+      "targets": [
+        "stella-apply",
+        "stella-data"
+      ],
+      "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
+    },
+    {
+      "globs": [
+        ".stella/capabilities.json",
+        ".stella/schemas/capabilities.schema.json"
+      ],
+      "targets": [
+        "commit-guard",
+        "merge-card",
+        "owner-settings",
+        "roles",
+        "stella-apply",
+        "stella-data"
+      ],
+      "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
+    },
+    {
+      "globs": [
+        ".stella/connections.json",
+        ".stella/schemas/connections.schema.json"
+      ],
+      "targets": [
+        "hardcode-lint",
+        "stella-apply",
+        "stella-data"
+      ],
+      "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
+    },
+    {
+      "globs": [
+        ".stella/data-files.json",
+        ".stella/schemas/data-files.schema.json"
+      ],
+      "targets": [
+        "alert",
+        "alert-page",
+        "approval-evidence",
+        "box",
+        "commit-guard",
+        "complete-gate",
+        "delegation",
+        "escalate",
+        "event-log",
+        "hardcode-lint",
+        "kanban-board",
+        "merge-card",
+        "omniroute-run",
+        "owner-settings",
+        "profile-hooks",
+        "reviewer-claude",
+        "roles",
+        "routing",
+        "settings",
+        "stella-apply",
+        "stella-data",
+        "test-map",
+        "watchdog",
+        "write-guard"
+      ],
+      "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
+    },
+    {
+      "globs": [
+        ".stella/extensions/README.md",
+        ".mcp.json"
+      ],
+      "targets": [],
+      "why": "prose no selftest reads: .mcp.json (named only in the text of .stella/versions.json), the extensions README"
+    },
+    {
+      "globs": [
+        ".stella/schemas/approval-decision.schema.json",
+        ".stella/schemas/approval-request.schema.json",
+        ".stella/schemas/extension.schema.json"
+      ],
+      "targets": [
+        "stella-apply"
+      ],
+      "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
+    },
+    {
+      "globs": [
+        ".stella/schemas/event.schema.json"
+      ],
+      "targets": [
+        "alert",
+        "alert-page",
+        "approval-evidence",
+        "complete-gate",
+        "delegation",
+        "escalate",
+        "event-log",
+        "hardcode-lint",
+        "kanban-board",
+        "merge-card",
+        "omniroute-run",
+        "profile-hooks",
+        "reviewer-claude",
+        "roles",
+        "routing",
+        "settings",
+        "stella-apply",
+        "stella-data",
+        "watchdog",
+        "write-guard"
+      ],
+      "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
+    },
+    {
+      "globs": [
+        ".stella/schemas/roles.schema.json"
+      ],
+      "targets": [
+        "alert",
+        "alert-page",
+        "approval-evidence",
+        "complete-gate",
+        "delegation",
+        "escalate",
+        "event-log",
+        "hardcode-lint",
+        "kanban-board",
+        "merge-card",
+        "omniroute-run",
+        "profile-hooks",
+        "reviewer-claude",
+        "roles",
+        "routing",
+        "settings",
+        "stella-apply",
+        "stella-data",
+        "test-map",
+        "watchdog",
+        "write-guard"
+      ],
+      "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
+    },
+    {
+      "globs": [
+        ".stella/schemas/settings.schema.json",
+        ".stella/settings.json"
+      ],
+      "targets": [
+        "alert",
+        "box",
+        "escalate",
+        "event-log",
+        "hardcode-lint",
+        "kanban-board",
+        "omniroute-run",
+        "profile-hooks",
+        "reviewer-claude",
+        "role-guard",
+        "roles",
+        "settings",
+        "stella-apply",
+        "stella-data",
+        "watchdog",
+        "write-guard"
+      ],
+      "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
+    },
+    {
+      "globs": [
+        ".stella/schemas/test-map.schema.json"
+      ],
+      "targets": [
+        "stella-apply",
+        "test-map"
+      ],
+      "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
+    },
+    {
+      "globs": [
+        ".stella/schemas/versions.schema.json",
+        ".stella/versions.json"
+      ],
+      "targets": [
+        "roles",
+        "stella-apply",
+        "stella-data"
+      ],
+      "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
+    },
+    {
+      "globs": [
+        ".stella/test-map.json"
+      ],
+      "targets": [
+        "commit-guard",
+        "merge-card",
+        "roles",
+        "stella-apply",
+        "test-map"
+      ],
+      "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
+    },
+    {
+      "globs": [
+        ".supervisor/limits.env",
+        "bin/alert-catalog.sh",
+        "bin/alert.sh",
+        "bin/alert_catalog.py",
+        "bin/escalation-discord.sh",
+        "bin/owner-config.sh",
+        "bin/owner_config.py",
+        "docs/alert-codes.md",
+        "docs/hermes-local/alert-catalog.json",
+        "docs/hermes-local/roles.json"
+      ],
+      "targets": [
+        "alert",
+        "alert-page",
+        "approval-evidence",
+        "box",
+        "broker-put",
+        "check-guard",
+        "commit-guard",
+        "complete-gate",
+        "container-start",
+        "delegation",
+        "escalate",
+        "escalation-complete",
+        "escalation-reply-hook",
+        "escalation-reply-poll",
+        "escalation-thread",
+        "event-log",
+        "false-close-guard",
+        "firewall-probe",
+        "hardcode-lint",
+        "init-firewall",
+        "kanban-board",
+        "kanban-guard",
+        "matcher-audit",
+        "merge-card",
+        "model-watch",
+        "omniroute-run",
+        "owner-config",
+        "owner-leak",
+        "owner-settings",
+        "profile-hooks",
+        "reviewer-claude",
+        "role-guard",
+        "roles",
+        "roles-complete",
+        "routing",
+        "secret-read",
+        "settings",
+        "stella-apply",
+        "stella-data",
+        "test-map",
+        "watchdog",
+        "write-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "PLAN.md",
+        "tests/fixtures/mcp-smoke.html"
+      ],
+      "targets": [
+        "approval-evidence",
+        "delegation",
+        "owner-config",
+        "owner-leak",
+        "profile-hooks",
+        "write-guard"
+      ],
+      "why": "unsure: the folder's tests (the targets of the other top-level documents AGENTS.md and decisions.md); no selftest reads it, docs/hermes-local/fallback-routing.json:28 names it"
+    },
+    {
+      "globs": [
+        "SUPERVISOR.md",
+        "bin/apply-hermes-local.sh",
+        "bin/escalation-on-block.sh",
+        "bin/escalation-on-claim.sh",
+        "bin/escalation-on-complete.sh",
+        "bin/escalation-thread.sh",
+        "bin/kanban-guard.sh",
+        "bin/register-escalation-hook.sh",
+        "bin/register-toolsets.sh",
+        "bin/role-guard.py",
+        "bin/roles.py",
+        "docs/hermes-local/board.md"
+      ],
+      "targets": [
+        "alert",
+        "alert-page",
+        "approval-evidence",
+        "box",
+        "broker-put",
+        "check-guard",
+        "commit-guard",
+        "complete-gate",
+        "container-start",
+        "delegation",
+        "escalate",
+        "escalation-reply-poll",
+        "escalation-thread",
+        "event-log",
+        "firewall-probe",
+        "hardcode-lint",
+        "init-firewall",
+        "kanban-board",
+        "kanban-guard",
+        "matcher-audit",
+        "merge-card",
+        "model-watch",
+        "omniroute-run",
+        "owner-config",
+        "owner-settings",
+        "profile-hooks",
+        "reviewer-claude",
+        "role-guard",
+        "roles",
+        "roles-complete",
+        "routing",
+        "secret-read",
+        "settings",
+        "stella-apply",
+        "stella-data",
+        "test-map",
+        "watchdog",
+        "write-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bench/guard.js",
+        "bench/tasks/bugfix-nullguard/repo/lib/title.js",
+        "bench/tasks/bugfix-nullguard/repo/test.js",
+        "bench/tasks/bugfix-nullguard/solution/lib/title.js",
+        "bench/tasks/bugfix-nullguard/task.json"
+      ],
+      "targets": [
+        "bench"
+      ],
+      "why": "the bench folder's row (bench/*): was full only through *guard*"
+    },
+    {
+      "globs": [
+        "bin/box-live-probe.sh"
+      ],
+      "targets": [
+        "box"
+      ],
+      "why": "unsure: the folder's tests, narrowed to the box's (a live probe of the OS box, bin/box-live-probe.sh:2); no selftest runs it"
+    },
+    {
+      "globs": [
+        "bin/check-guard-selftest.sh"
+      ],
+      "targets": [
+        "check-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bin/check-guard.py"
+      ],
+      "targets": [
+        "check-guard",
+        "complete-gate"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bin/commit-guard-selftest.sh"
+      ],
+      "targets": [
+        "commit-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bin/commit-guard.sh"
+      ],
+      "targets": [
+        "alert-page",
+        "commit-guard",
+        "delegation",
+        "owner-settings",
+        "profile-hooks",
+        "roles",
+        "routing",
+        "write-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bin/escalation-complete.sh"
+      ],
+      "targets": [
+        "alert",
+        "alert-page",
+        "approval-evidence",
+        "box",
+        "broker-put",
+        "check-guard",
+        "commit-guard",
+        "complete-gate",
+        "container-start",
+        "delegation",
+        "escalate",
+        "escalation-complete",
+        "escalation-reply-poll",
+        "escalation-thread",
+        "event-log",
+        "firewall-probe",
+        "hardcode-lint",
+        "init-firewall",
+        "kanban-board",
+        "kanban-guard",
+        "matcher-audit",
+        "merge-card",
+        "model-watch",
+        "omniroute-run",
+        "owner-config",
+        "owner-settings",
+        "profile-hooks",
+        "reviewer-claude",
+        "role-guard",
+        "roles",
+        "roles-complete",
+        "routing",
+        "secret-read",
+        "settings",
+        "stella-apply",
+        "stella-data",
+        "test-map",
+        "watchdog",
+        "write-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bin/event_log.py"
+      ],
+      "targets": [
+        "alert",
+        "alert-page",
+        "approval-evidence",
+        "complete-gate",
+        "delegation",
+        "escalate",
+        "event-log",
+        "hardcode-lint",
+        "kanban-board",
+        "merge-card",
+        "omniroute-run",
+        "profile-hooks",
+        "reviewer-claude",
+        "roles",
+        "routing",
+        "settings",
+        "stella-apply",
+        "stella-data",
+        "watchdog",
+        "write-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bin/false-close-guard-selftest.sh"
+      ],
+      "targets": [
+        "false-close-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bin/false-close-guard.py"
+      ],
+      "targets": [
+        "false-close-guard",
+        "profile-hooks"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bin/hardcode-lint-selftest.sh",
+        "bin/hardcode-lint.sh"
+      ],
+      "targets": [
+        "hardcode-lint"
+      ],
+      "why": "from reach: the always gate's own selftest and tool"
+    },
+    {
+      "globs": [
+        "bin/kanban-board.sh"
+      ],
+      "targets": [
+        "alert",
+        "alert-page",
+        "approval-evidence",
+        "bench",
+        "box",
+        "broker-put",
+        "check-guard",
+        "commit-guard",
+        "complete-gate",
+        "container-start",
+        "delegation",
+        "escalate",
+        "escalation-complete",
+        "escalation-reply-hook",
+        "escalation-reply-poll",
+        "escalation-thread",
+        "event-log",
+        "false-close-guard",
+        "firewall-probe",
+        "hardcode-lint",
+        "init-firewall",
+        "kanban-board",
+        "kanban-guard",
+        "matcher-audit",
+        "merge-card",
+        "model-watch",
+        "omniroute-run",
+        "owner-config",
+        "owner-leak",
+        "owner-settings",
+        "profile-hooks",
+        "reviewer-claude",
+        "role-guard",
+        "roles",
+        "roles-complete",
+        "routing",
+        "secret-read",
+        "settings",
+        "stella-apply",
+        "stella-data",
+        "test-map",
+        "watchdog",
+        "write-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bin/kanban-guard-selftest.sh"
+      ],
+      "targets": [
+        "kanban-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bin/role-guard-selftest.sh"
+      ],
+      "targets": [
+        "role-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bin/selftests.sh"
+      ],
+      "targets": [
+        "alert-page",
+        "hardcode-lint",
+        "test-map"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bin/settings.py"
+      ],
+      "targets": [
+        "alert",
+        "escalate",
+        "hardcode-lint",
+        "kanban-board",
+        "omniroute-run",
+        "profile-hooks",
+        "reviewer-claude",
+        "roles",
+        "settings",
+        "watchdog",
+        "write-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bin/stella-apply.py"
+      ],
+      "targets": [
+        "alert",
+        "alert-page",
+        "approval-evidence",
+        "complete-gate",
+        "delegation",
+        "escalate",
+        "hardcode-lint",
+        "kanban-board",
+        "merge-card",
+        "omniroute-run",
+        "profile-hooks",
+        "reviewer-claude",
+        "roles",
+        "routing",
+        "settings",
+        "stella-apply",
+        "stella-data",
+        "watchdog",
+        "write-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bin/stella_data.py"
+      ],
+      "targets": [
+        "alert",
+        "alert-page",
+        "approval-evidence",
+        "complete-gate",
+        "delegation",
+        "escalate",
+        "event-log",
+        "hardcode-lint",
+        "kanban-board",
+        "merge-card",
+        "omniroute-run",
+        "profile-hooks",
+        "reviewer-claude",
+        "roles",
+        "routing",
+        "settings",
+        "stella-apply",
+        "stella-data",
+        "test-map",
+        "watchdog",
+        "write-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bin/test-map.py"
+      ],
+      "targets": [
+        "test-map"
+      ],
+      "why": "from reach: the always gate's own selftest and tool; safe because test-map runs check in every selection"
+    },
+    {
+      "globs": [
+        "bin/write-guard-selftest.sh"
+      ],
+      "targets": [
+        "write-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "config/owner.example.env"
+      ],
+      "targets": [
+        "approval-evidence",
+        "box",
+        "check-guard",
+        "complete-gate",
+        "escalation-complete",
+        "escalation-reply-hook",
+        "escalation-reply-poll",
+        "escalation-thread",
+        "false-close-guard",
+        "kanban-board",
+        "kanban-guard",
+        "owner-config",
+        "owner-leak",
+        "profile-hooks",
+        "roles",
+        "roles-complete",
+        "routing"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/fallback-routing.json"
+      ],
+      "targets": [
+        "alert",
+        "container-start",
+        "escalate",
+        "firewall-probe",
+        "hardcode-lint",
+        "init-firewall",
+        "kanban-board",
+        "omniroute-run",
+        "profile-hooks"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/hardcode-allow.json"
+      ],
+      "targets": [
+        "check-guard",
+        "complete-gate",
+        "hardcode-lint",
+        "role-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/hooks/builder/deny-skill-manage.sh",
+        "docs/hermes-local/hooks/builder/model-guard.py",
+        "docs/hermes-local/hooks/default/deny-kanban-block.sh"
+      ],
+      "targets": [
+        "profile-hooks"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/hooks/builder/git-guard.py",
+        "docs/hermes-local/hooks/builder/write-guard.py"
+      ],
+      "targets": [
+        "alert-page",
+        "delegation",
+        "profile-hooks",
+        "roles",
+        "routing",
+        "write-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/hooks/builder/secret-guard.py"
+      ],
+      "targets": [
+        "box",
+        "broker-put",
+        "check-guard",
+        "escalation-thread",
+        "owner-settings",
+        "profile-hooks",
+        "reviewer-claude",
+        "roles",
+        "secret-read",
+        "write-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/hooks/default/deny-write.sh",
+        "docs/hermes-local/hooks/reviewer/deny-write.sh"
+      ],
+      "targets": [
+        "profile-hooks",
+        "reviewer-claude",
+        "roles",
+        "stella-data"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/hooks/default/read-only-terminal.py"
+      ],
+      "targets": [
+        "profile-hooks",
+        "secret-read"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/hooks/reviewer/claude-review-terminal.sh"
+      ],
+      "targets": [
+        "approval-evidence",
+        "reviewer-claude"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/hooks/reviewer/test-only-terminal.sh"
+      ],
+      "targets": [
+        "approval-evidence",
+        "owner-config",
+        "profile-hooks",
+        "reviewer-claude"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/plugins/os-box/__init__.py"
+      ],
+      "targets": [
+        "box",
+        "check-guard",
+        "escalation-thread"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/plugins/os-box/plugin.yaml"
+      ],
+      "targets": [
+        "box"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/review-prompt.txt"
+      ],
+      "targets": [
+        "box",
+        "hardcode-lint",
+        "reviewer-claude"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/soul/builder-claude.md",
+        "docs/hermes-local/soul/builder-local.md"
+      ],
+      "targets": [
+        "owner-config"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/soul/default.md"
+      ],
+      "targets": [
+        "owner-config",
+        "role-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/soul/reviewer-claude.md"
+      ],
+      "targets": [
+        "reviewer-claude"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/soul/reviewer.md"
+      ],
+      "targets": [
+        "owner-config",
+        "role-guard",
+        "roles"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/watchdog-settings.json"
+      ],
+      "targets": [
+        "alert",
+        "escalation-reply-poll",
+        "hardcode-lint",
+        "kanban-board",
+        "kanban-guard",
+        "model-watch",
+        "profile-hooks",
+        "role-guard",
+        "watchdog"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "opencode.json"
+      ],
+      "targets": [
+        "alert",
+        "container-start",
+        "firewall-probe",
+        "hardcode-lint",
+        "init-firewall",
+        "profile-hooks",
+        "write-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "package.json"
+      ],
+      "targets": [
+        "alert",
+        "alert-page",
+        "approval-evidence",
+        "complete-gate",
+        "container-start",
+        "delegation",
+        "escalation-reply-poll",
+        "firewall-probe",
+        "hardcode-lint",
+        "init-firewall",
+        "kanban-board",
+        "kanban-guard",
+        "merge-card",
+        "model-watch",
+        "owner-settings",
+        "profile-hooks",
+        "role-guard",
+        "roles",
+        "routing",
+        "secret-read",
+        "watchdog",
+        "write-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
     {
       "globs": [

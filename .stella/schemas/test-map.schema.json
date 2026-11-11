@@ -41,7 +41,7 @@
       "$ref": "#/$defs/targets"
     },
     "full": {
-      "description": "Globs of shared contracts: a change selects the full suite.",
+      "description": "Globs of shared contracts: a change selects the full suite. The stack ships it empty (every tracked file has rows instead); a file on it needs no row.",
       "$ref": "#/$defs/globs"
     },
     "map": {
