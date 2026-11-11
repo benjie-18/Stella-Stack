@@ -9,6 +9,10 @@ D=${HD:-/workspace/docs/hermes-local/hooks}   # RT22: HD=<hooks dir> points the 
 REG=${REG:-/workspace/bin/register-escalation-hook.sh}   # the registration script under test (a staged copy while it is being replaced)
 RT=${RTT:-$D/reviewer/test-only-terminal.sh}   # the reviewer's terminal hook under test (K9)
 fails=0
+# H1: the stack's alert log and page state are listed (size and hash, never content) here and compared at the end
+SUPT=$(dirname "$(dirname "$(readlink -f "$0")")")/.supervisor
+snap() { (cd "$SUPT" 2>/dev/null && find logs/alerts.log state/page -type f -printf '%p %s ' -exec sha256sum {} \; 2>/dev/null | sort); }
+SNAP0=$(snap)
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 # run <hook> <tool> <tool_input json>: the hook's exit code (2 = blocked); its stdout goes to $T/out
 run() { jq -nc --arg t "$2" --argjson i "$3" '{hook_event_name: "pre_tool_call", tool_name: $t, tool_input: $i}' | "$1" >"$T/out" 2>/dev/null; echo $?; }
@@ -519,4 +523,5 @@ for f in "$JQB"/*.sh "$RT"; do
 done
 # the regression the red-team found: sourcing owner-config.sh must leave `git config --global` working
 ok '[ "$(env HOME=$T/plant-g bash -c ". $JQB/owner-config.sh; git config --global --add safe.directory /x" >/dev/null 2>&1; echo $?)" = 0 ] && grep -q "directory = /x" $T/plant-g/.gitconfig' "RT-RTA-01: sourcing owner-config.sh does not stop git config --global (container-start.sh)"
+ok '[ "$(snap)" = "$SNAP0" ]' "H1: the stack's alert log and page state are byte-identical to what they were at the start (no alert line, no page marked as sent)"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

@@ -10,6 +10,7 @@ fails=0
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 mk() {  # <name>: a scratch root with a copy of the data and the role table
   mkdir -p "$T/$1/docs/hermes-local"; cp -r "$ROOT/.stella" "$T/$1/.stella"; cp "$ROOT/docs/hermes-local/roles.json" "$T/$1/docs/hermes-local/"
+  cp -r "$ROOT/docs/hermes-local/hooks" "$T/$1/docs/hermes-local/hooks"   # R5: the table's hook files are looked up under the root it belongs to
 }
 ed() { local f="$T/$1/.stella/$2"; jq "$3" "$f" >"$f.n" && mv "$f.n" "$f"; }   # <root name> <file> <jq filter>
 sd() { STELLA_ROOT=$T/$1 python3 -I "$SD" "${@:2}"; }                          # <root name> <args...>
@@ -208,13 +209,20 @@ for f in '.profiles["qa-p"] = {"role": "qa-no-such-role"}' '.fallback_role = "qa
          ".roles[\"$R1\"].allowed_overrides = [\"model\", \"model\"]" '.protected.repo += [.protected.repo[0]]' \
          ".roles[\"$R1\"].requirements.allowed_data_classes = [\"bogus\"]" '.schema_version = true' '.schema_version = "1"' \
          ".roles[\"$R1\"].requirements.min_context_tokens = 9007199254740992" ".roles[\"$R1\"].may_answer_for_owner = 1" \
-         ".roles[\"$FB\"].requirements.allowed_data_classes += [\"zz-extra\"]" '.profiles["qa bad"] = {"role": .fallback_role}'; do
+         ".roles[\"$FB\"].requirements.allowed_data_classes += [\"zz-extra\"]" '.profiles["qa bad"] = {"role": .fallback_role}' \
+         ".roles[\"$R1\"].qa_unknown_key = 1" ".roles[\"$R1\"].complete_needs_reveiw = true" ".profiles[.profiles | keys[0]].qa_unknown_key = 1" '.qa_unknown_key = 1'; do
   n=$((n+1)); mk rt$n; jq "$f" "$RT" >"$T/rtc$n.json"; cp "$T/rtc$n.json" "$T/rt$n/docs/hermes-local/roles.json"
   ok 'refuses rt'$n' validate roles "$T/rtc'$n'.json" && grep -q "^STL-CFG-310 " "$T/o"' "80.$n validate roles refuses a broken table: $f"
   ok 'refuses rt'$n' check && grep -q "^STL-CFG-310 " "$T/o"' "81.$n check refuses the same table in the index's role_table, as STL-CFG-310 lines"
 done
 mk rtd; jq '.roles["qa-x"] = .roles.'"$FB"' | .roles["qa-x"].requirements.allowed_data_classes = ["public","bogus"]' "$RT" >"$T/rtd.json"
 ok 'refuses rtd validate roles "$T/rtd.json" && [ "$(grep -c "^STL-CFG-310 " "$T/o")" = 1 ] && grep -q "qa-x" "$T/o" && grep -q "allowed_data_classes\[1\]" "$T/o" && ! grep -q bogus "$T/o"' "82 a data class the data policy does not define: validate roles refuses it, one STL-CFG-310 line naming it"
+# R5: a role table under STELLA_ROOT is judged against that root's hook files, not the fixed stack root's
+mk r5a; mkdir -p "$T/r5a/docs/hermes-local/hooks/qa"; cp "$ROOT/docs/hermes-local/hooks/default/deny-write.sh" "$T/r5a/docs/hermes-local/hooks/qa/only-here.sh"
+ed r5a ../docs/hermes-local/roles.json ".roles[\"$R1\"].hooks += [{\"matcher\": \"^x\$\", \"file\": \"docs/hermes-local/hooks/qa/only-here.sh\", \"workers\": []}]"
+ok 'sd r5a validate roles "$T/r5a/docs/hermes-local/roles.json" >"$T/o" 2>&1 && sd r5a check >"$T/o" 2>&1' "83a a hook file that exists only under STELLA_ROOT is found there"
+mk r5b; rm "$T/r5b/docs/hermes-local/hooks/default/deny-write.sh"
+ok 'refuses r5b check && grep -q "deny-write.sh does not exist" "$T/o"' "83b a hook file missing under STELLA_ROOT is refused even when the stack root has it"
 ok '! grep -q "stella_data" "$BIN/roles.py"' "83 bin/roles.py does not import stella_data (it runs inside guards)"
 # ---- F1 W1 fix round 2 (QA round 2): P policy, M no leaks, L loader, I index, S schemas ----
 V=sk-ant-api03-qafake0123456789abcdef   # lower case on purpose: it fits the id pattern
