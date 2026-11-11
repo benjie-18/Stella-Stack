@@ -114,7 +114,7 @@ def context():
             raise bad(f"{what} and {seen[real(rel)]} are the same file; the index must name each file once")
         seen[real(rel)] = what
     bd = real(idx["backup_dir"])
-    for what, rel in named[:2] + named[3:]:
+    for what, rel in named:
         if real(rel).startswith(bd + os.sep):
             raise bad(f"{what} lies inside the backup folder")
     CTX.update(idx=idx, rows=rows)
