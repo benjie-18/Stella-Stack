@@ -3,6 +3,7 @@
 # watchdog (bin/watchdog.sh) also catches escalation-script regressions and alerts #alerts (D31).
 set -u
 unset STELLA_ROOT   # an inherited scratch root must not re-target the data tools and the gates that run them
+unset HARDCODE_ALLOW HARDCODE_HOME   # likewise the hard-code lint's own switches (another list or home would turn its gate green)
 fails=0
 # K11: no selftest posts to Discord. A `hermes` first on PATH refuses `send` and passes every other call to the real one;
 # a selftest's own stub, put before it, still wins.
