@@ -3,35 +3,68 @@
 # targets from changed files. Everything but case 1 runs in a scratch root (STELLA_ROOT), so no map row is named here.
 set -u
 BIN=$(dirname "$(readlink -f "$0")"); TM="$BIN/test-map.py"
-T=$(mktemp -d -t test-map-selftest.XXXXXX); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d -t tm-self.XXXXXX); trap 'rm -rf "$T"' EXIT
 fails=0
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
-root() {  # <dir> <map json>: a scratch root with selftests a and b in its suite list
-  mkdir -p "$1/bin" "$1/.stella"; printf '%s\n' "$2" >"$1/.stella/test-map.json"
-  printf '#!/usr/bin/env bash\nfor t in a b; do\n  :\ndone\n' >"$1/bin/selftests.sh"
-  for t in a b; do printf '#!/usr/bin/env bash\necho "selftest PASS"\n' >"$1/bin/$t-selftest.sh"; chmod 755 "$1/bin/$t-selftest.sh"; done
+MAP='{"schema_version": 1, "runner": "bin/selftests.sh", "test_file": "bin/{name}-selftest.sh", "test_like": ["*test*"], "not_tests": ["bin/selftests.sh", ".stella/*", "fixtures/*"], "follow": ["*.sh"], "always": ["a"], "full": ["lock.json"], "map": [{"globs": ["bin/a-selftest.sh", "src/a*"], "targets": ["a"]}, {"globs": ["bin/b-selftest.sh", "src/b/*"], "targets": ["b"]}, {"globs": ["notes/*"], "targets": []}]}'
+st() { printf '#!/usr/bin/env bash\n%s\necho "selftest PASS"\n' "${2:-}" >"$1"; chmod 755 "$1"; }   # <file> [a line of code]
+root() {  # <name> [jq filter over MAP] [suite names]: a scratch root with selftests a and b
+  local r=$T/$1; mkdir -p "$r/bin" "$r/.stella" "$r/src"; jq "${2:-.}" <<<"$MAP" >"$r/.stella/test-map.json"
+  printf '#!/usr/bin/env bash\nfor t in %s; do\n  :\ndone\n' "${3:-a b}" >"$r/bin/selftests.sh"
+  st "$r/bin/a-selftest.sh"; st "$r/bin/b-selftest.sh"
 }
-MAP='{"schema_version": 1, "always": ["a"], "full": ["lock.json"], "map": [{"globs": ["bin/a-selftest.sh", "src/a*"], "targets": ["a"]}, {"globs": ["bin/b-selftest.sh", "src/b/*"], "targets": ["b"]}, {"globs": ["notes/*"], "targets": []}]}'
-chk() { STELLA_ROOT=$1 python3 -I "$TM" check >"$T/out" 2>&1; }
+chk() { STELLA_ROOT=$T/$1 python3 -I "$TM" check >"$T/out" 2>&1; }
+bad() { ! chk "$1" && grep -q "^STL-CFG-310 .*$2" "$T/out" && ! grep -q Traceback "$T/out"; }   # refused, by code, with this text
 sel() { STELLA_ROOT=$T/good python3 -I "$TM" select --json "$@" 2>"$T/err"; }
 
-ok 'python3 -I "$TM" check >"$T/live" 2>&1' "1 the map of this tree passes the lint$(sed 's/^/\n     /' "$T/live" 2>/dev/null | head -5)"
-root "$T/good" "$MAP"
-ok 'chk "$T/good"' "2 a complete scratch map passes"
-cp -r "$T/good" "$T/missing"; printf '#!/usr/bin/env bash\necho "selftest PASS"\n' >"$T/missing/bin/c-selftest.sh"; chmod 755 "$T/missing/bin/c-selftest.sh"
-ok '! chk "$T/missing" && grep -q "c-selftest" "$T/out"' "3 a selftest missing from the map fails the lint, by name"
-cp -r "$T/good" "$T/nosuite"; sed -i 's/for t in a b;/for t in a;/' "$T/nosuite/bin/selftests.sh"
-ok '! chk "$T/nosuite" && grep -q "b" "$T/out"' "4 a mapped selftest missing from the suite list fails"
-cp -r "$T/good" "$T/ghost"; rm "$T/ghost/bin/b-selftest.sh"
-ok '! chk "$T/ghost"' "5 a target with no selftest file fails"
-cp -r "$T/good" "$T/noexec"; chmod 644 "$T/noexec/bin/b-selftest.sh"
-ok '! chk "$T/noexec" && grep -q "executable" "$T/out"' "6 a suite selftest that is not executable fails (the suite runs it directly)"
-cp -r "$T/good" "$T/broken"; echo '{' >"$T/broken/.stella/test-map.json"
-ok '! chk "$T/broken"' "7 an unreadable map fails"
-cp -r "$T/good" "$T/nolist"; echo '#!/usr/bin/env bash' >"$T/nolist/bin/selftests.sh"
-ok '! chk "$T/nolist"' "8 a suite runner with no readable list fails (never an empty pass)"
-cp -r "$T/good" "$T/v2"; sed -i 's/"schema_version": 1/"schema_version": 2/' "$T/v2/.stella/test-map.json"
-ok '! chk "$T/v2"' "9 an unknown schema_version fails"
+ok 'env -u STELLA_ROOT python3 -I "$TM" check >"$T/live" 2>&1' "1 the map of this tree passes the lint$(sed 's/^/\n     /' "$T/live" 2>/dev/null | head -5)"
+ok 'grep -q "^unset STELLA_ROOT" "$BIN/selftests.sh" && [ "$(STELLA_ROOT=/nonexistent env -u STELLA_ROOT python3 -I "$TM" check)" = "test map ok" ]' "1b the suite runner drops an inherited STELLA_ROOT, and case 1 does not read it"
+root good
+ok 'chk good && grep -q "root $T/good, from STELLA_ROOT" "$T/out"' "2 a complete scratch map passes, and the lint names the root it was pointed at"
+root missing . "a b c"; st "$T/missing/bin/c-selftest.sh"
+ok 'bad missing "bin/c-selftest.sh is not a target of any map row" && ! grep -q "suite list" "$T/out"' "3 a selftest missing from the map fails the lint, by name"
+root nosuite . a
+ok 'bad nosuite "bin/b-selftest.sh is not in the suite list of bin/selftests.sh"' "4 a mapped selftest missing from the suite list fails"
+root ghost; rm "$T/ghost/bin/b-selftest.sh"
+ok 'bad ghost "target b: bin/b-selftest.sh does not exist" && grep -q "suite entry b" "$T/out"' "5 a target or a suite entry with no selftest file fails"
+root noexec; chmod 644 "$T/noexec/bin/b-selftest.sh"
+ok 'bad noexec "bin/b-selftest.sh is not executable"' "6 a suite selftest that is not executable fails (the suite runs it directly)"
+root gitmode; git -C "$T/gitmode" init -q && git -C "$T/gitmode" add -A && git -C "$T/gitmode" update-index --chmod=-x bin/b-selftest.sh
+ok '[ -x "$T/gitmode/bin/b-selftest.sh" ] && bad gitmode "bin/b-selftest.sh is not executable in git (mode 100644)"' "6b executable on disk but not in the mode git records fails (a fresh checkout could not run it)"
+git -C "$T/gitmode" update-index --chmod=+x bin/b-selftest.sh
+ok 'chk gitmode' "6c the same git tree passes once git records the mode"
+root broken; echo '{' >"$T/broken/.stella/test-map.json"
+ok 'bad broken "test-map.json"' "7 an unreadable map fails with the catalog code, not a traceback"
+root nolist; echo '#!/usr/bin/env bash' >"$T/nolist/bin/selftests.sh"
+ok 'bad nolist "the suite list of bin/selftests.sh cannot be read"' "8 a suite runner with no readable list fails (never an empty pass)"
+root empty; rm "$T"/empty/bin/*-selftest.sh; jq '.always = [] | .map = []' <<<"$MAP" >"$T/empty/.stella/test-map.json"; printf 'for t in ; do\n' >"$T/empty/bin/selftests.sh"
+ok 'bad empty "no selftest"' "8b a root with no selftest at all fails"
+i=0; for f in '.schema_version = 2' '.schema_version = true' '.schema_version = 1.5' 'del(.schema_version)' 'del(.follow)' '.extra = 1' \
+              '.map[0].globs = [1]' '.full = [7]' '.map[0].targets = [["a"]]' '.map[0].globs = []' '.always = "a"' '.map[0].scan = "yes"' '.test_file = "bin/x.sh"'; do
+  i=$((i+1)); root "s$i" "$f"
+  ok 'bad "s$i" "test-map.json: ValueError" && [ "$(grep -c "" "$T/out")" = 1 ]' "9.$i a map that breaks the schema fails with one line: $f"
+done
+root dup; sed -i 's/^{/{"full": ["x"],/' "$T/dup/.stella/test-map.json"
+ok 'bad dup "a key is repeated"' "9b a repeated key fails (the last one would win silently)"
+
+root like; st "$T/like/bin/c-test.sh"; st "$T/like/bin/d-SELFTEST.sh"; st "$T/like/bin/.e-selftest.sh"; mkdir -p "$T/like/fixtures"; st "$T/like/fixtures/test.sh"
+ok 'bad like "bin/c-test.sh looks like a test" && grep -q "bin/d-SELFTEST.sh looks like a test" "$T/out" && grep -q "bin/.e-selftest.sh is not a target of any map row" "$T/out" && ! grep -q fixtures "$T/out"' \
+   "17 a test-like file outside the suite fails by name (another name, another case, a dot file); a not_tests fixture does not"
+
+helper='bash "$(dirname "$0")/../src/a-helper.sh"'   # selftest a is an always gate, so b is the one a row can leave out
+root dep; st "$T/dep/bin/b-selftest.sh" "$helper"; st "$T/dep/src/a-helper.sh" 'cat notes/data.txt'; mkdir -p "$T/dep/notes"; echo x >"$T/dep/notes/data.txt"
+ok 'bad dep "src/a-helper.sh: its map rows leave out b, which can reach it" && grep -q "notes/data.txt: its map rows leave out b" "$T/out"' \
+   "18 a row that leaves out a selftest which runs the file fails, also through a script that selftest runs"
+jq '.map[0].targets = ["a", "b"] | .map[2].targets = ["b"]' <<<"$MAP" >"$T/dep/.stella/test-map.json"
+ok 'chk dep' "18b the same root passes once the rows name that selftest"
+root all '.map[0].globs = ["bin/a-selftest.sh"] | .map += [{"globs": ["*"], "targets": []}]'; st "$T/all/bin/b-selftest.sh" "$helper"; st "$T/all/src/a-helper.sh"
+ok 'bad all "src/a-helper.sh: its map rows leave out b"' "18c a catch-all row with no targets does not hide a dependency"
+root cross; st "$T/cross/bin/b-selftest.sh" '. "$(dirname "$0")/a-selftest.sh"'
+ok 'bad cross "bin/a-selftest.sh: its map rows leave out b"' "19 a selftest that sources another selftest must be selected when that one changes"
+root remark; st "$T/remark/bin/b-selftest.sh" '# see a-selftest.sh for the other half'
+ok 'chk remark' "19b a file named only in a whole-line comment is not a dependency"
+root py '.follow = ["*.py"]'; st "$T/py/bin/b-selftest.sh" 'python3 -c "import sys; import a_mod"'; echo 'x = 1' >"$T/py/src/a_mod.py"
+ok 'bad py "src/a_mod.py: its map rows leave out b"' "19c a Python module is reached by its import"
 
 ok '[ "$(sel src/a1.py | jq -c "[.full, .targets]")" = "[false,[\"a\"]]" ]' "10 a mapped file selects its targets plus the always gates"
 ok '[ "$(sel src/b/x/y.py | jq -c "[.full, .targets]")" = "[false,[\"a\",\"b\"]]" ]' "11 a glob crosses folders; targets are merged and sorted"
@@ -40,4 +73,9 @@ ok '[ "$(sel src/a1.py other/z | jq -r .full)" = true ] && sel src/a1.py other/z
 ok '[ "$(sel lock.json | jq -r .full)" = true ]' "14 a full-suite glob selects the full suite"
 ok '[ "$(sel | jq -c "[.full, .targets]")" = "[false,[\"a\"]]" ]' "15 no changed file selects the always gates"
 ok '[ "$(printf "src/a1.py\nsrc/b/q\n" | STELLA_ROOT=$T/good python3 -I "$TM" select --json - | jq -c .targets)" = "[\"a\",\"b\"]" ]' "16 file names are also read from stdin (-), one per line"
+ok '[ "$(sel - </dev/null | jq -r .full)" = true ] && [ "$(STELLA_ROOT=$T/good python3 -I "$TM" select - </dev/null)" = full ]' "16b an empty list on stdin selects the full suite (a failed diff is not \"nothing changed\")"
+root scan '.map += [{"scan": true, "globs": ["src/*", "new/*"], "targets": ["b"]}]'
+ok '[ "$(STELLA_ROOT=$T/scan python3 -I "$TM" select --json src/a1.py | jq -c "[.full, .targets]")" = "[false,[\"a\",\"b\"]]" ] && [ "$(STELLA_ROOT=$T/scan python3 -I "$TM" select new/x)" = full ]' \
+   "20 a scan row adds its targets and does not count as a match (an unmapped file still selects the full suite)"
+ok '! STELLA_ROOT=$T/broken python3 -I "$TM" select x >"$T/o" 2>"$T/e" && [ ! -s "$T/o" ] && grep -q "^STL-CFG-310 " "$T/e" && ! grep -q Traceback "$T/e"' "21 select on an unreadable map exits 1 with the catalog code and prints no selection"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

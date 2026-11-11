@@ -1,6 +1,26 @@
 {
   "schema_version": 1,
-  "about": "Test map (product rule 8), read by bin/test-map.py. map: a changed file that matches a row's globs (fnmatch on the repo-relative path; * also crosses /) selects that row's targets; a target <name> is bin/<name>-selftest.sh. always: the fast gates added to every selection. full: globs that always select the whole suite (shared contracts: the role table, the guards and hooks, the suite runner, this map, lockfiles, build config). A changed file that matches no row and no full glob also selects the whole suite, so the map is conservative: a row with empty targets says on purpose that only the always gates apply. Every bin/*-selftest.sh must be a target here and in the suite list of bin/selftests.sh; `bin/test-map.py check` fails otherwise.",
+  "about": "Which selftests a changed file can affect (product rule 8). bin/test-map.py reads this: `check` is the lint (in npm test through bin/test-map-selftest.sh), `select` picks the targets. A file on the full list or matched by no row selects the full suite. `check` refuses a map whose rows leave out a selftest that can reach the file (see reach in bin/test-map.py); the error names what to add. `scan` rows are for selftests that read a whole folder.",
+  "runner": "bin/selftests.sh",
+  "test_file": "bin/{name}-selftest.sh",
+  "test_like": [
+    "*test*"
+  ],
+  "not_tests": [
+    "bin/selftests.sh",
+    "bin/test-map.py",
+    ".stella/test-map.json",
+    ".stella/schemas/test-map.schema.json",
+    "bench/tasks/*",
+    "tests/fixtures/*",
+    "docs/hermes-local/hooks/*",
+    ".claude/agents/*"
+  ],
+  "follow": [
+    "*.py",
+    "*.sh",
+    "*.ps1"
+  ],
   "always": [
     "hardcode-lint",
     "owner-leak",
@@ -9,7 +29,15 @@
   ],
   "full": [
     "bin/selftests.sh",
-    ".stella/test-map.json",
+    "bin/test-map.py",
+    "bin/stella_data.py",
+    "bin/hardcode-lint-selftest.sh",
+    "bin/*guard*",
+    ".stella/*",
+    "docs/hermes-local/*",
+    ".devcontainer/*",
+    "config/*",
+    ".supervisor/*",
     "package.json",
     "package-lock.json",
     "pnpm-lock.yaml",
@@ -17,29 +45,105 @@
     "bunfig.toml",
     "opencode.json",
     ".pre-commit-config.yaml",
-    ".devcontainer/*",
-    "docs/hermes-local/roles.json",
     "bin/roles.py",
-    "docs/hermes-local/hooks/*",
-    "docs/hermes-local/plugins/*",
-    "docs/hermes-local/alert-catalog.json",
-    "bin/alert_catalog.py"
+    "bin/alert_catalog.py",
+    "bin/alert.sh",
+    "bin/alert-catalog.sh",
+    "docs/alert-codes.md",
+    "bin/kanban-board.sh",
+    "bin/owner-config.sh",
+    "bin/owner_config.py",
+    "bin/apply-hermes-local.sh",
+    "bin/register-*.sh",
+    "bin/escalation-discord.sh",
+    "bin/escalation-complete.sh",
+    "bin/escalation-on-*.sh",
+    "bin/escalation-thread.sh",
+    "SUPERVISOR.md"
   ],
   "map": [
     {
       "globs": [
-        "bin/test-map-selftest.sh"
+        "bin/commit-guard-selftest.sh",
+        "bin/false-close-guard-selftest.sh"
       ],
       "targets": [
-        "test-map"
+        "commit-guard",
+        "false-close-guard"
+      ],
+      "why": "on the full list; listed so every selftest is a target"
+    },
+    {
+      "globs": [
+        ".claude/settings.json"
+      ],
+      "targets": [
+        "box",
+        "profile-hooks",
+        "role-guard",
+        "stella-data",
+        "watchdog",
+        "write-guard"
       ]
     },
     {
       "globs": [
-        "bin/alert-selftest.sh"
+        ".claude/skills/stack-rules/SKILL.md"
       ],
       "targets": [
-        "alert"
+        "container-start",
+        "role-guard"
+      ]
+    },
+    {
+      "globs": [
+        "AGENTS.md"
+      ],
+      "targets": [
+        "approval-evidence",
+        "write-guard"
+      ]
+    },
+    {
+      "globs": [
+        "bench/guard.js",
+        "bench/suite.json",
+        "bench/tasks/bugfix-nullguard/repo/test.js",
+        "bench/tasks/bugfix-nullguard/task.json",
+        "bench/tasks/bugfix-range/repo/test.js",
+        "bench/tasks/bugfix-range/task.json",
+        "bench/tasks/deploy-recovery/task.json",
+        "bench/tasks/feature-multifile/repo/test.js",
+        "bench/tasks/feature-multifile/task.json",
+        "bench/tasks/migration-rename/repo/test.js",
+        "bench/tasks/migration-rename/task.json",
+        "bin/bench-selftest.sh",
+        "bin/bench.sh"
+      ],
+      "targets": [
+        "bench"
+      ]
+    },
+    {
+      "globs": [
+        "bench/tasks/deploy-recovery/repo/deploy.conf",
+        "bench/tasks/deploy-recovery/repo/deploy.sh",
+        "bench/tasks/deploy-recovery/repo/test.sh",
+        "bench/tasks/deploy-recovery/solution/deploy.conf"
+      ],
+      "targets": [
+        "bench",
+        "merge-card"
+      ]
+    },
+    {
+      "globs": [
+        "bin/alert-explain.sh"
+      ],
+      "targets": [
+        "alert",
+        "profile-hooks",
+        "secret-read"
       ]
     },
     {
@@ -52,6 +156,14 @@
     },
     {
       "globs": [
+        "bin/alert-selftest.sh"
+      ],
+      "targets": [
+        "alert"
+      ]
+    },
+    {
+      "globs": [
         "bin/approval-evidence-selftest.sh"
       ],
       "targets": [
@@ -60,7 +172,8 @@
     },
     {
       "globs": [
-        "bin/approval-sim-selftest.sh"
+        "bin/approval-sim-selftest.sh",
+        "bin/approval-sim.py"
       ],
       "targets": [
         "approval-sim"
@@ -68,15 +181,8 @@
     },
     {
       "globs": [
-        "bin/bench-selftest.sh"
-      ],
-      "targets": [
-        "bench"
-      ]
-    },
-    {
-      "globs": [
-        "bin/box-selftest.sh"
+        "bin/box-selftest.sh",
+        "boxcanary/canary.txt"
       ],
       "targets": [
         "box"
@@ -84,7 +190,20 @@
     },
     {
       "globs": [
-        "bin/broker-put-selftest.sh"
+        "bin/box.py"
+      ],
+      "targets": [
+        "box",
+        "broker-put",
+        "check-guard",
+        "escalation-thread",
+        "reviewer-claude"
+      ]
+    },
+    {
+      "globs": [
+        "bin/broker-put-selftest.sh",
+        "bin/broker-put.sh"
       ],
       "targets": [
         "broker-put"
@@ -92,18 +211,12 @@
     },
     {
       "globs": [
-        "bin/check-guard-selftest.sh"
+        "bin/claude-review.sh"
       ],
       "targets": [
-        "check-guard"
-      ]
-    },
-    {
-      "globs": [
-        "bin/commit-guard-selftest.sh"
-      ],
-      "targets": [
-        "commit-guard"
+        "approval-evidence",
+        "box",
+        "reviewer-claude"
       ]
     },
     {
@@ -111,6 +224,15 @@
         "bin/complete-gate-selftest.sh"
       ],
       "targets": [
+        "complete-gate"
+      ]
+    },
+    {
+      "globs": [
+        "bin/complete-gate.py"
+      ],
+      "targets": [
+        "approval-evidence",
         "complete-gate"
       ]
     },
@@ -124,10 +246,51 @@
     },
     {
       "globs": [
+        "bin/container-start.sh",
+        "bin/omniroute-ctl.sh"
+      ],
+      "targets": [
+        "alert",
+        "container-start",
+        "firewall-probe",
+        "hardcode-lint",
+        "init-firewall",
+        "profile-hooks"
+      ]
+    },
+    {
+      "globs": [
+        "bin/crontab.txt"
+      ],
+      "targets": [
+        "alert",
+        "container-start",
+        "firewall-probe",
+        "hardcode-lint",
+        "init-firewall",
+        "profile-hooks",
+        "watchdog"
+      ]
+    },
+    {
+      "globs": [
         "bin/delegation-selftest.sh"
       ],
       "targets": [
         "delegation"
+      ]
+    },
+    {
+      "globs": [
+        "bin/escalate-drain.sh",
+        "bin/escalate.sh"
+      ],
+      "targets": [
+        "alert",
+        "escalate",
+        "kanban-board",
+        "omniroute-run",
+        "profile-hooks"
       ]
     },
     {
@@ -156,6 +319,15 @@
     },
     {
       "globs": [
+        "bin/escalation-reply-hook.sh"
+      ],
+      "targets": [
+        "escalation-reply-hook",
+        "profile-hooks"
+      ]
+    },
+    {
+      "globs": [
         "bin/escalation-reply-poll-selftest.sh"
       ],
       "targets": [
@@ -164,18 +336,43 @@
     },
     {
       "globs": [
+        "bin/escalation-reply-poll.sh"
+      ],
+      "targets": [
+        "escalation-reply-poll",
+        "kanban-board",
+        "kanban-guard",
+        "profile-hooks"
+      ]
+    },
+    {
+      "globs": [
         "bin/escalation-thread-selftest.sh"
       ],
       "targets": [
+        "check-guard",
         "escalation-thread"
       ]
     },
     {
       "globs": [
-        "bin/false-close-guard-selftest.sh"
+        "bin/escalations-status.sh"
       ],
       "targets": [
-        "false-close-guard"
+        "kanban-board",
+        "owner-config",
+        "profile-hooks",
+        "secret-read"
+      ]
+    },
+    {
+      "globs": [
+        "bin/firewall-check.sh",
+        "bin/init-firewall-selftest.sh"
+      ],
+      "targets": [
+        "firewall-probe",
+        "init-firewall"
       ]
     },
     {
@@ -188,17 +385,13 @@
     },
     {
       "globs": [
-        "bin/hardcode-lint-selftest.sh"
+        "bin/hermes-gateway-loop.sh",
+        "docs/stella-recover.ps1"
       ],
       "targets": [
-        "hardcode-lint"
-      ]
-    },
-    {
-      "globs": [
-        "bin/init-firewall-selftest.sh"
-      ],
-      "targets": [
+        "alert",
+        "firewall-probe",
+        "hardcode-lint",
         "init-firewall"
       ]
     },
@@ -208,14 +401,6 @@
       ],
       "targets": [
         "kanban-board"
-      ]
-    },
-    {
-      "globs": [
-        "bin/kanban-guard-selftest.sh"
-      ],
-      "targets": [
-        "kanban-guard"
       ]
     },
     {
@@ -236,6 +421,22 @@
     },
     {
       "globs": [
+        "bin/merge-card.sh"
+      ],
+      "targets": [
+        "alert-page",
+        "approval-evidence",
+        "complete-gate",
+        "delegation",
+        "merge-card",
+        "profile-hooks",
+        "roles",
+        "routing",
+        "write-guard"
+      ]
+    },
+    {
+      "globs": [
         "bin/model-watch-selftest.sh"
       ],
       "targets": [
@@ -244,7 +445,25 @@
     },
     {
       "globs": [
-        "bin/omniroute-run-selftest.sh"
+        "bin/model_watch.py",
+        "bin/watchdog.sh",
+        "bin/watchdog_settings.py"
+      ],
+      "targets": [
+        "alert",
+        "escalation-reply-poll",
+        "kanban-board",
+        "kanban-guard",
+        "model-watch",
+        "profile-hooks",
+        "role-guard",
+        "watchdog"
+      ]
+    },
+    {
+      "globs": [
+        "bin/omniroute-run-selftest.sh",
+        "bin/omniroute-run.sh"
       ],
       "targets": [
         "omniroute-run"
@@ -263,6 +482,7 @@
         "bin/owner-leak-selftest.sh"
       ],
       "targets": [
+        "owner-config",
         "owner-leak"
       ]
     },
@@ -276,7 +496,8 @@
     },
     {
       "globs": [
-        "bin/post-edit-check-selftest.sh"
+        "bin/post-edit-check-selftest.sh",
+        "scripts/post-edit-check.sh"
       ],
       "targets": [
         "post-edit-check"
@@ -300,10 +521,10 @@
     },
     {
       "globs": [
-        "bin/role-guard-selftest.sh"
+        "bin/roles-complete-selftest.sh"
       ],
       "targets": [
-        "role-guard"
+        "roles-complete"
       ]
     },
     {
@@ -312,14 +533,6 @@
       ],
       "targets": [
         "roles"
-      ]
-    },
-    {
-      "globs": [
-        "bin/roles-complete-selftest.sh"
-      ],
-      "targets": [
-        "roles-complete"
       ]
     },
     {
@@ -340,6 +553,22 @@
     },
     {
       "globs": [
+        "bin/stella-data-selftest.sh"
+      ],
+      "targets": [
+        "stella-data"
+      ]
+    },
+    {
+      "globs": [
+        "bin/test-map-selftest.sh"
+      ],
+      "targets": [
+        "test-map"
+      ]
+    },
+    {
+      "globs": [
         "bin/watchdog-selftest.sh"
       ],
       "targets": [
@@ -348,140 +577,98 @@
     },
     {
       "globs": [
-        "bin/write-guard-selftest.sh"
+        "decisions.md"
       ],
       "targets": [
+        "delegation",
+        "owner-config",
+        "owner-leak",
+        "profile-hooks",
         "write-guard"
       ]
     },
     {
       "globs": [
-        "bin/bench.sh",
+        "docs/recovery.md"
+      ],
+      "targets": [
+        "alert",
+        "firewall-probe",
+        "hardcode-lint",
+        "init-firewall",
+        "write-guard"
+      ]
+    },
+    {
+      "globs": [
         "bench/*"
       ],
       "targets": [
         "bench"
-      ]
-    },
-    {
-      "globs": [
-        "bin/omniroute-run.sh",
-        "bin/omniroute-ctl.sh",
-        "docs/hermes-local/fallback-routing.json"
       ],
-      "targets": [
-        "omniroute-run",
-        "escalate"
-      ]
-    },
-    {
-      "globs": [
-        "bin/approval-sim.py"
-      ],
-      "targets": [
-        "approval-sim"
-      ]
-    },
-    {
-      "globs": [
-        "bin/broker-put.sh"
-      ],
-      "targets": [
-        "broker-put"
-      ]
-    },
-    {
-      "globs": [
-        "bin/claude-review.sh",
-        "docs/hermes-local/review-prompt.txt"
-      ],
-      "targets": [
-        "reviewer-claude",
-        "approval-evidence",
-        "routing"
-      ]
-    },
-    {
-      "globs": [
-        "bin/watchdog.sh",
-        "bin/watchdog_settings.py",
-        "bin/model_watch.py",
-        "docs/hermes-local/watchdog-settings.json"
-      ],
-      "targets": [
-        "watchdog",
-        "model-watch"
-      ]
-    },
-    {
-      "globs": [
-        "bin/merge-card.sh"
-      ],
-      "targets": [
-        "merge-card"
-      ]
-    },
-    {
-      "globs": [
-        "bin/container-start.sh",
-        "bin/hermes-gateway-loop.sh",
-        "bin/crontab.txt"
-      ],
-      "targets": [
-        "container-start"
-      ]
-    },
-    {
-      "globs": [
-        "bin/firewall-check.sh",
-        "docs/stella-recover.ps1"
-      ],
-      "targets": [
-        "firewall-probe",
-        "container-start"
-      ]
-    },
-    {
-      "globs": [
-        "docs/alert-codes.md",
-        "bin/alert-explain.sh"
-      ],
-      "targets": [
-        "alert"
-      ]
+      "why": "bin/bench.sh reads every task folder"
     },
     {
       "globs": [
         "PLAN.md",
-        "SUPERVISOR.md",
-        "AGENTS.md",
-        "decisions.md",
-        "docs/recovery.md",
         "docs/contract/*.md",
         ".claude/agents/*.md",
         ".gitignore"
       ],
-      "targets": []
+      "targets": [],
+      "why": "prose no selftest names"
     },
     {
+      "scan": true,
       "globs": [
-        "bin/test-map.py"
+        "bin/*",
+        "docs/*"
       ],
       "targets": [
-        "test-map"
-      ]
+        "alert"
+      ],
+      "why": "alert-selftest.sh reads every script and doc for alert codes"
     },
     {
+      "scan": true,
       "globs": [
-        "bin/stella-data-selftest.sh",
-        "bin/stella_data.py",
-        ".stella/*.json",
-        ".stella/schemas/*",
-        ".stella/extensions/*"
+        "bin/*"
       ],
       "targets": [
-        "stella-data"
-      ]
+        "watchdog"
+      ],
+      "why": "watchdog-selftest.sh runs the watchdog over a folder of links to every bin file"
+    },
+    {
+      "scan": true,
+      "globs": [
+        "bin/*.sh"
+      ],
+      "targets": [
+        "kanban-board",
+        "profile-hooks"
+      ],
+      "why": "both read every script: board calls, jq use"
+    },
+    {
+      "scan": true,
+      "globs": [
+        "bin/*.py"
+      ],
+      "targets": [
+        "profile-hooks"
+      ],
+      "why": "profile-hooks-selftest.sh links every Python file into its hook folder"
+    },
+    {
+      "scan": true,
+      "globs": [
+        "bin/*-selftest.sh"
+      ],
+      "targets": [
+        "owner-config"
+      ],
+      "why": "owner-config-selftest.sh reads every selftest"
     }
   ]
 }

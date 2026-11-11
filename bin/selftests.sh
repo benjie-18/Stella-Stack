@@ -2,6 +2,7 @@
 # Run every hermetic self-test (stubs, scratch state, no network, no secrets). Part of `npm test`, so the 15-minute
 # watchdog (bin/watchdog.sh) also catches escalation-script regressions and alerts #alerts (D31).
 set -u
+unset STELLA_ROOT   # an inherited scratch root must not re-target the data tools and the gates that run them
 fails=0
 # K11: no selftest posts to Discord. A `hermes` first on PATH refuses `send` and passes every other call to the real one;
 # a selftest's own stub, put before it, still wins.
