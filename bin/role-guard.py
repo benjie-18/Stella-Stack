@@ -187,7 +187,7 @@ def main():
             refuse(f"this card's body says Review-by: {', '.join(sorted(want))}; name that profile in the review request")
         return
     if tool == "kanban_comment":   # A1-01: a card's worker comments on its own card only (Hermes leaves cross-card open), so a
-        # comment on a card is never a worker's forged "owner answer". A role that takes no cards (the coordinator) is free.
+        # comment on a card is never a worker's forged "owner answer". The one role with may_answer_for_owner (the coordinator) is free.
         try:
             d = roles.load()
         except roles.RolesError as e:
@@ -195,7 +195,7 @@ def main():
             refuse(f"[STL-CFG-303] the role table cannot be read, so {tool} is refused until it is fixed")
         rname, role, listed = roles.role_of(d, p.get("profile"))
         tid = a.get("task_id") if isinstance(a, dict) else None
-        if (role["assignable"] or not listed) and tid not in (None, ""):
+        if not role["may_answer_for_owner"] and tid not in (None, ""):   # W2-RT-01: the coordinator is its own field; every other role, listed or not, proves the card is its own
             j, why = roles.prove_card(p.get("profile"), str(tid), roles.board())
             if why:
                 refuse(f"kanban_comment refused: {tid!r} is not your own running card ({why}). A worker comments on its own "

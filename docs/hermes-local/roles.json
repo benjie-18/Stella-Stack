@@ -5,10 +5,11 @@
     "profiles: one row per Hermes profile (\"default\" is Hermes's own name for the root profile). dir: the profile's folder under",
     "~/.hermes (default \"profiles/<name>\"); soul: its rules file in docs/hermes-local/soul/; worker: the worker kind it runs (one of",
     "its role's workers); display_name: what the owner calls it, used only to spot cards that target its own configuration.",
-    "roles: the permissions the guards enforce (assignable, workspace, may_*, allowed_overrides), background_review and config",
+    "roles: the permissions the guards enforce (assignable, may_answer_for_owner, workspace, may_*, allowed_overrides), background_review and config",
     "(hermes config keys set at apply), and what apply installs: platform_toolsets, skills_disabled and hooks (pre_tool_call,",
     "fail-closed; file = a repo hook copied to <profile dir>/hooks/<file name>, command = a /workspace/bin hook run in place;",
     "workers = only for profiles whose worker is listed). A profile with no row gets fallback_role, which opens nothing.",
+    "may_answer_for_owner (every role, true on one): the coordinator the reply poller runs as: free to comment on any card, and its comments count as the owner's answers. Never derived from assignable.",
     "requirements (every role): what a model needs to hold the role: tool_calling, vision (true = needed), min_context_tokens, allowed_data_classes (class names from .stella/data-policy.json). Read with: bin/roles.py requirements <role>.",
     "Add a profile: one row under profiles, then bin/apply-hermes-local.sh. Add a role: one entry under roles, then the same."
   ],
@@ -32,7 +33,7 @@
   "roles": {
     "dispatcher": {
       "requirements": {"tool_calling": true, "min_context_tokens": 32000, "vision": false, "allowed_data_classes": ["public", "internal", "client"]},
-      "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
+      "may_answer_for_owner": true, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": true, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_subscribe_on_create": false, "kanban.auto_decompose": false, "gateway.strict": true, "gateway.trust_recent_files": false},
       "platform_toolsets": {
@@ -52,7 +53,7 @@
     "builder": {
       "requirements": {"tool_calling": true, "min_context_tokens": 64000, "vision": false, "allowed_data_classes": ["public", "internal", "client"]},
       "git_identity": {"name": "WORKER_GIT_NAME", "email": "WORKER_GIT_EMAIL"},
-      "assignable": true, "workspace": "git-worktree", "may_complete": true, "may_unblock": true, "may_claim": true,
+      "may_answer_for_owner": false, "assignable": true, "workspace": "git-worktree", "may_complete": true, "may_unblock": true, "may_claim": true,
       "may_delegate": true, "may_create_cards": false, "may_review": false, "allowed_overrides": [],
       "complete_needs_review": true,
       "config": {"kanban.auto_decompose": false},
@@ -74,7 +75,7 @@
     "reviewer": {
       "requirements": {"tool_calling": true, "min_context_tokens": 32000, "vision": false, "allowed_data_classes": ["public", "internal", "client"]},
       "git_identity": {"name": "WORKER_GIT_NAME", "email": "WORKER_GIT_EMAIL"},
-      "assignable": true, "workspace": "read-parent-worktree", "may_complete": true, "may_unblock": true, "may_claim": true,
+      "may_answer_for_owner": false, "assignable": true, "workspace": "read-parent-worktree", "may_complete": true, "may_unblock": true, "may_claim": true,
       "may_delegate": false, "may_create_cards": false, "may_review": true, "allowed_overrides": [],
       "workers": ["opencode", "claude-code"],
       "complete_metadata": {"review": "approved"},
@@ -92,7 +93,7 @@
     },
     "tester": {
       "requirements": {"tool_calling": true, "min_context_tokens": 32000, "vision": false, "allowed_data_classes": ["public", "internal", "client"]},
-      "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
+      "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
       "hooks": [
@@ -105,7 +106,7 @@
     },
     "validator": {
       "requirements": {"tool_calling": true, "min_context_tokens": 32000, "vision": false, "allowed_data_classes": ["public", "internal", "client"]},
-      "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
+      "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
       "hooks": [
@@ -118,7 +119,7 @@
     },
     "verifier": {
       "requirements": {"tool_calling": true, "min_context_tokens": 32000, "vision": false, "allowed_data_classes": ["public", "internal", "client"]},
-      "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
+      "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
       "hooks": [
@@ -131,7 +132,7 @@
     },
     "red-team": {
       "requirements": {"tool_calling": true, "min_context_tokens": 32000, "vision": false, "allowed_data_classes": ["public", "internal", "client"]},
-      "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
+      "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
       "hooks": [
@@ -144,7 +145,7 @@
     },
     "router": {
       "requirements": {"tool_calling": false, "min_context_tokens": 4000, "vision": false, "allowed_data_classes": ["public", "internal"]},
-      "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
+      "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
       "hooks": [
@@ -157,7 +158,7 @@
     },
     "voice": {
       "requirements": {"tool_calling": false, "min_context_tokens": 8000, "vision": false, "allowed_data_classes": ["public", "internal"]},
-      "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
+      "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
       "hooks": [
@@ -170,7 +171,7 @@
     },
     "look": {
       "requirements": {"tool_calling": false, "min_context_tokens": 8000, "vision": true, "allowed_data_classes": ["public", "internal"]},
-      "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
+      "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
       "hooks": [
@@ -183,7 +184,7 @@
     },
     "proposer": {
       "requirements": {"tool_calling": true, "min_context_tokens": 32000, "vision": false, "allowed_data_classes": ["public", "internal"]},
-      "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
+      "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
       "hooks": [
@@ -196,7 +197,7 @@
     },
     "unlisted": {
       "requirements": {"tool_calling": false, "min_context_tokens": 0, "vision": false, "allowed_data_classes": ["public"]},
-      "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
+      "may_answer_for_owner": false, "assignable": false, "workspace": "none", "may_complete": false, "may_unblock": false, "may_claim": false,
       "may_delegate": false, "may_create_cards": false, "may_review": false, "allowed_overrides": [], "background_review": false,
       "config": {"kanban.auto_decompose": false},
       "hooks": [

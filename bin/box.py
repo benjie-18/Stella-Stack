@@ -119,11 +119,11 @@ def _escaping_links(wt, allow=()):
 
 
 def trusted_answers(d, comments, prefix):
-    """The owner's answers recorded on a card: comment bodies that start with the escalation poller's prefix AND were written by a profile that takes
-    no cards (the dispatcher's, which the poller runs as). The kanban guard also refuses that text from agents, but it is fail-open; the author is the second check."""
+    """The owner's answers recorded on a card: comment bodies that start with the escalation poller's prefix AND were written by a profile whose role has may_answer_for_owner
+    (the coordinator's, which the poller runs as). The kanban guard also refuses that text from agents, but it is fail-open; the author is the second check."""
     if not prefix:
         return []
-    poller = {n for n, pr in d["profiles"].items() if d["roles"][pr["role"]].get("assignable") is False}
+    poller = {n for n, pr in d["profiles"].items() if d["roles"][pr["role"]].get("may_answer_for_owner") is True}
     return [c["body"] for c in comments or [] if isinstance(c, dict) and c.get("author") in poller and isinstance(c.get("body"), str)
             and c["body"].startswith(prefix)]
 
