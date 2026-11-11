@@ -51,7 +51,7 @@ assignment per scope, role and effort mode; no chain entry names a provider that
 `fallback_role` is not a role to assign or allow); `depends_on` in features (no missing target, no cycle, an `on` feature
 depends only on `on` features); `allowed_roles` against the role table; a setting's store, default and `code` (it must
 exist in the alert catalog) against the index and the registry itself; an extension is `enabled` only when `approved`; data
-class names against data-policy `data_classes`. `check <id>` prints that file's problems plus every cross-file problem and
+class names against data-policy `data_classes`. The role table (the index's `role_table`, `.stella/schemas/roles.schema.json`) is valid only when both its schema and the validation in `bin/roles.py` pass (the rules the schema subset cannot say live there); `check` and `validate roles <file>` run both, and `validate roles` also applies the data-class rule to a candidate file. `check <id>` prints that file's problems plus every cross-file problem and
 every "could not run" problem, so a candidate file can be judged on its own; it exits 1 when any exists. `check` also says
 which env-format rows it did not open (their keys are read by the apply tool, never here).
 
