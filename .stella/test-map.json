@@ -108,8 +108,12 @@
         ".claude/settings.json"
       ],
       "targets": [
+        "alert",
         "box",
+        "escalate",
         "event-log",
+        "kanban-board",
+        "omniroute-run",
         "profile-hooks",
         "reviewer-claude",
         "role-guard",
