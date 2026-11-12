@@ -715,7 +715,21 @@ def merge_exec(top, wt, branch, card, script):
     env = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "LC_ALL", "LC_CTYPE")}
     env.update({m: card for m in roles.worker_markers(d)})
     env.update(over)
-    return subprocess.run(argv + ["--chdir", wt, "bash", "-c", script], env=env, stdin=subprocess.DEVNULL).returncode
+    _, gd, _ = _worktree(wt)   # r5 (QA R11): the box's first act writes a marker in the worktree's git dir (bound read-write at the same path); no
+    marker = os.path.join(gd, "box-started")   # marker after the run = the box never started (bwrap failed at set-up), never "the tests failed"
+    try:
+        os.unlink(marker)
+    except FileNotFoundError:
+        pass
+    rc = subprocess.run(argv + ["--chdir", wt, "bash", "-c", ': >"$0" || exit 125; exec bash -c "$1"', marker, script], env=env, stdin=subprocess.DEVNULL).returncode
+    started = os.path.exists(marker)
+    if started:
+        os.unlink(marker)
+    if not started:
+        raise BoxError(f"the box did not start (exit {rc}): the tests never ran")
+    if rc < 0:
+        raise BoxError(f"the box was ended by signal {-rc} while the tests ran")
+    return rc
 
 
 if __name__ == "__main__" and sys.argv[1:2] == ["exec"]:   # exec <top> <worktree> <branch> <card> <script>: exit 126 and a coded line when the box cannot start
