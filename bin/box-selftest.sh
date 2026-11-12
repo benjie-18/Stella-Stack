@@ -18,7 +18,7 @@ SB='{"schema_version":1,"backend":"os_box","unboxed_backend":"local","boxed_prof
 # F1 W4 round 2 (B2): the table requires every profile outside the box to have a role that refuses every write (runs_unboxed). This test boxes one profile
 # at a time and leaves the others "unboxed", so mkrf gives the role of each unboxed profile the fallback role's refusing hooks and toolsets (norm).
 NORM='def norm: . as $d | (($d.sandbox.boxed_profiles // []) as $b | [$d.profiles | to_entries[] | select(.key as $k | $b | index($k) | not) | .value.role]) as $rs
-  | reduce ($rs | unique)[] as $x (.; if $d.roles[$x].runs_unboxed == true then . else .roles[$x] |= (.runs_unboxed = true | .hooks = $d.roles[$d.fallback_role].hooks | .platform_toolsets = $d.roles[$d.fallback_role].platform_toolsets) end);'
+  | reduce ($rs | unique)[] as $x (.; if $d.roles[$x].runs_unboxed == true then . else .roles[$x] |= (.runs_unboxed = true | .hooks = $d.roles[$d.fallback_role].hooks | .platform_toolsets = $d.roles[$d.fallback_role].platform_toolsets | .catch_all_tools = $d.roles[$d.fallback_role].catch_all_tools) end);'
 mkrf() { jq --arg p "$P" --arg r "$R" "$NORM $1 | norm" "$RF" >"$T/roles.json"; }   # scratch table: the real one with a sandbox edit
 # T1 (F1 W4 r5): the table verdict (roles.load on the scratch table) runs in ONE driver process that executes the same script a process would
 # (its argv, the table in ROLES_FILE, its output and exit code); stack modules are imported fresh each time. The first case of each verdict

@@ -393,7 +393,7 @@ for p in $BUILDERS; do
   : >"$AL"
   ok '[ "$(hookrun stranger $C $p $OWN write_file "$(wjson "$OWN/a.md")" $OWN)" = 2 ] && grep -qF "[STL-GRD-603]" "$T/out" && grep -qF "the stack could not identify this card" "$T/out" && grep -qF "fault in the stack, not a rule about" "$T/out" && ! grep -qF "(D40)" "$T/out" && [ "$(grep -c "^STL-GRD-603 " "$AL")" = 1 ] && grep -qF "$CQ" "$AL"' "$p: a card runs for this profile and its proof fails (bound to no ancestor): refused with STL-GRD-603 (a fault in the stack, no (D40) tail), one alerts.log line naming the card"
   : >"$AL"
-  ok '[ "$(hookrun none "" $p $OWN write_file "$(wjson "$OWN/a.md")" $OWN)" = 2 ] && grep -qF "builders write only inside their own worktree" "$T/out" && [ ! -s "$AL" ]' "$p: no running card for the profile: the old rule message and no STL-GRD-603"
+  ok '[ "$(hookrun none "" $p $OWN write_file "$(wjson "$OWN/a.md")" $OWN)" = 2 ] && grep -qF "builders write only inside their own worktree" "$T/out" && ! grep -q "^STL-GRD-603 " "$AL"' "$p: no running card for the profile: the old rule message and no STL-GRD-603 (B.1 r5: its STL-GRD-604 line is expected now)"
   : >"$AL"
   ok '[ "$(hookrun bind $C $p $OWN write_file "$(wjson "$OWN/a.md")" $OWN PATH=/usr/bin:/bin)" = 2 ] && grep -qF "[STL-GRD-603]" "$T/out" && [ "$(grep -c "^STL-GRD-603 " "$AL")" = 1 ]' "$p: the board cannot be read: refused with STL-GRD-603, one alerts.log line"
   : >"$AL"   # K2, terminal path (verifier round 4): a terminal write under the same stack fault names STL-GRD-603 too

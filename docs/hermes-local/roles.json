@@ -50,10 +50,10 @@
     "bin/merge-card.sh"
   ],
   "boundary_paths": [
+    "docs/hermes-local/alert-catalog.json",
     "package.json",
     "bin/selftests.sh",
     "bin/escalation-reply-poll.sh",
-    "docs/hermes-local/alert-catalog.json",
     "docs/alert-codes.md",
     "docs/hermes-local/board.md",
     "docs/hermes-local/soul",

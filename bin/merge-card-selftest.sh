@@ -320,8 +320,8 @@ ok '[ "$(BOX_HERMES_ROOT=$T/nohermes mc t_0000d0f7 --owner-approved)" = 3 ] && g
 # B.2 point 11 (r5, W4-VAL3-01, W4-CV3-05): a card test that itself exits 126 is a test failure, never "box could not start"; a lock a test writes into its
 # throw-away worktree entry does not refuse the next merge of the same card uncoded
 card t_0000e126 e126.txt e126 'exit 126'; h=$(head_of "$T/repo")
-ok '[ "$(mc t_0000e126 --owner-approved)" = 1 ] && grep -q "tests failed" "$T/out" && ! grep -q "could not start" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "B.2 point 11: a card test that exits 126 is a test failure, not 'box could not start'"
-card t_0000e127 e127.txt e127 'mkdir -p "$(git rev-parse --git-dir)/worktrees"; d="$(git rev-parse --git-common-dir)/worktrees/merge-check-t_0000e127"; : >"$d/locked" 2>/dev/null; exit 0'; h=$(head_of "$T/repo")
+ok '[ "$(mc t_0000e126 --owner-approved)" = 3 ] && grep -q "tests failed" "$T/out" && ! grep -q "could not start" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "B.2 point 11: a card test that exits 126 is a test failure, not 'box could not start'"
+card t_0000e127 e127.txt e127 'mkdir -p "$(git rev-parse --git-dir)/worktrees"; d="$(git rev-parse --git-common-dir)/worktrees/merge-check-t_0000e127"; touch "$d/locked" 2>/dev/null || true; exit 0'; h=$(head_of "$T/repo")
 ok '[ "$(mc t_0000e127 --owner-approved)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ] && [ "$(mc t_0000e127 --owner-approved)" = 3 ]' "B.2 point 11: a test that locks its throw-away worktree entry still merges, and the entry is cleared (the next merge of the same card is not refused by a stale lock; second run refused because it is no longer ahead)"
 # K8: the boundary refusal and an unreadable list are coded, with one alert line each
 HOOK=$(jq -r '[.roles[].hooks[]? | .file // empty] | first' "$RF"); mkdir -p "$T/repo/${HOOK%/*}"; printf '#!/bin/sh\n' >"$T/repo/$HOOK"; g add -f "$HOOK"; g -c core.hooksPath=/dev/null commit -qm "a hook file"

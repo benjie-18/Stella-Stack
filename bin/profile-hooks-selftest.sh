@@ -364,8 +364,9 @@ ok 'HOME="$T/home" "$REG" --check >/dev/null' "registration --check: in sync aft
 # T5 ruling (W4-VER3-04, r5): a tool Hermes resolves for an unboxed role that its catch_all_tools does not name is reported (default-deny); the catch-all keeps refusing it
 MKT=$(python3 -I -c "import sys,json; sys.path.insert(0,'/workspace/bin'); import roles; d=roles.load(); print(next(n for n,r in d['roles'].items() if r.get('catch_all_tools')))")
 RFD=$(HOME="$T/home" python3 -I -c "import os; print(os.path.expanduser('~/.hermes'))")
-jq --arg n "$MKT" 'del(.roles[$n].catch_all_tools[-1])' /workspace/docs/hermes-local/roles.json >"$T/drop.json"
-DROPPED=$(jq -r --arg n "$MKT" '.roles[$n].catch_all_tools[-1]' /workspace/docs/hermes-local/roles.json)
+DROPPED=$(python3 -I -c "import json,re,sys; d=json.load(open('/workspace/docs/hermes-local/roles.json')); r=d['roles'][sys.argv[1]]; ms=[h['matcher'] for h in r['hooks'] if not h.get('catch_all')]
+print(next(t for t in r['catch_all_tools'] if not any(re.fullmatch(m, t) for m in ms)))" "$MKT")   # a tool only the catch-all decides (no other matcher of the role names it)
+jq --arg n "$MKT" --arg t "$DROPPED" '.roles[$n].catch_all_tools -= [$t]' /workspace/docs/hermes-local/roles.json >"$T/drop.json"
 ok '[ -n "$DROPPED" ] && HOME="$T/home" ROLES_FILE=$T/drop.json "$REG" --check 2>&1 | grep -q "UNNAMED TOOL $DROPPED" && [ "$(HOME="$T/home" ROLES_FILE=$T/drop.json "$REG" --check >/dev/null 2>&1; echo $?)" = 1 ]' "T5: registration --check reports a tool ($DROPPED) Hermes resolves for role $MKT that catch_all_tools does not name, drift"
 HOOK=$(jq -r --arg n "$MKT" '[.roles[$n].hooks[] | select(.catch_all) | .file][0]' /workspace/docs/hermes-local/roles.json)
 RENDERED=$(HOME="$T/home" ROLES_FILE=$T/drop.json python3 -I -c "import sys,json; sys.path.insert(0,'/workspace/bin'); import roles; d=roles.load(); print(next(m for m,c,_,_ in roles.hooks_for(d,sys.argv[2],'p','',sys.argv[1]) if '(?!' in m))" "$MKT" "$RFD")
