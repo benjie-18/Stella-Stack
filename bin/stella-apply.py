@@ -1258,7 +1258,7 @@ def failed(e, read_cmd):
                        (f"{why[:100]}; " if code in UNDONE_OK else
                         f"run it again{'' if stop else ' once the cause is fixed'}: {key} stopped ({why[:60]}); ")
                        + "it was undone (the file is as before)",
-                       {"detail": "file: as before; backup: none; event line: none"})
+                       {"detail": "what this run wrote is put back; the file as before; no event line of it"})
     way, said = left[-1][3], [w for _, w, _, _ in left]
     said += [] if any("line: written" in w for w in said) else ["event line: not written"]
     return el.fail("STL-CFG-321", (f"run {way}: " if way else "nothing to run (the change is complete): ")
