@@ -33,6 +33,7 @@ KEYWORDS = {"$schema", "$id", "$ref", "$defs", "title", "description", "type", "
             "required", "additionalProperties", "items", "minItems", "maxItems", "uniqueItems", "minLength", "maxLength",
             "pattern", "minimum", "maximum", "x-one-document"}
 MAX_DEPTH = 64   # a data file nests far less; one limit makes `check` and the read commands agree on a deep object
+TABLE, FRAME, NOROW = "role-table", "data-files", "schema:"   # members that are no index row: the role table, the index, a schema with no JSON row
 MASK_LIMIT = 1024   # a value pattern never runs on a longer string (it is masked whole): a pattern's time grows with the length
 TYPES = {"object": dict, "array": list, "string": str, "integer": int, "number": (int, float), "boolean": bool, "null": type(None)}
 
@@ -44,9 +45,9 @@ class DataError(Exception):
 # ---- strict JSON loading, paths inside the root ----
 def _pairs(pairs):
     d = {}
-    for k, v in pairs:
-        if k in d:
-            raise ValueError(f"repeated key {kname(k)}")
+    for i, (k, v) in enumerate(pairs):
+        if k in d:   # the position is no value: it locates the key also when its name is masked
+            raise ValueError(f"repeated key {kname(k)} (key {i + 1} of its object)")
         d[k] = v
     return d
 
@@ -141,27 +142,89 @@ def jload(path, label=None):
         raise DataError(f"{label or path}: cannot be read ({type(e).__name__})")
 
 
-def safe(rel):
-    """The absolute path of a path from the data: relative, no .. part, inside the root once symlinks are followed."""
+def spelled(rel):
+    """A path from the data as it is written: relative, no .. part; else a DataError."""
     if not isinstance(rel, str) or not rel or rel.startswith("/") or ".." in rel.replace("\\", "/").split("/"):
         raise DataError(f"{rel}: a path in the data must be relative and have no .. part")
-    root, p = os.path.realpath(ROOT), os.path.realpath(os.path.join(ROOT, rel))
+    return rel
+
+
+def safe(rel):
+    """The absolute path of a path from the data: relative, no .. part, inside the root once symlinks are followed."""
+    root, p = os.path.realpath(ROOT), os.path.realpath(os.path.join(ROOT, spelled(rel)))
     if p != root and not p.startswith(root.rstrip(os.sep) + os.sep):
         raise DataError(f"{rel}: leaves the stack root")
     return p
+
+
+def linked(rel, at):
+    """The refusal of a JSON row's path `rel` whose part `at` (absolute) is a symbolic link. One reason per case: a link that
+    leaves the root is refused as leaving it (safe()); any other link is refused as a link, and the line also says so when it
+    leads to a file this tool never opens. The target is looked at by stat only, never opened."""
+    p, where = safe(rel), os.path.relpath(at, ROOT)
+    try:
+        st = os.stat(p)
+        shut = (st.st_dev, st.st_ino) in closed_ids()
+    except OSError:
+        shut = False
+    return DataError(f"{rel}: {'it' if where == os.path.normpath(rel) else where} is a symbolic link"   # short: a catalog line holds 200 characters
+                     + (" (to an owner setting or an env row's file, never opened here)" if shut else "")
+                     + "; a JSON row's path and entry files must not be a symbolic link")
+
+
+def plain(rel):
+    """The absolute path of a JSON row's path: as spelled, with no symbolic link in any part below the stack root (so it is
+    inside the root without following anything). A link is that row's own fault (linked()), whatever it points to."""
+    a = ROOT
+    for part in os.path.normpath(spelled(rel)).split(os.sep):
+        a = os.path.join(a, part)
+        if os.path.islink(a):
+            raise linked(rel, a)
+    return os.path.normpath(a)
 
 
 def load(rel):
     return jload(safe(rel), rel)
 
 
+def folder_row(row):
+    """What an index row IS, the one rule (this tool and the apply tool both call it): a row is a folder of entries when its
+    format is json and its path does not end in the format's own suffix (.json); every other row is one file. Nothing else
+    decides it: not the list key, not what is on the disk (kind_problem() reports a disk that disagrees)."""
+    return row["format"] == "json" and not row["path"].endswith("." + row["format"])
+
+
+def kind_problem(row, p):
+    """None, or how the disk at p (the row's path) disagrees with folder_row(row), and the repair. JSON rows only."""
+    if row["format"] != "json":
+        return None
+    sfx, isdir = "." + row["format"], os.path.isdir(p)
+    if folder_row(row) and not isdir:
+        if not os.path.lexists(p):
+            return f"{row['path']}: the folder does not exist (a json row whose path does not end in {sfx} is a folder of entries)"
+        return f"{row['path']} is one file, but a json row whose path does not end in {sfx} is a folder of entries: rename the path in the index so it ends in {sfx}"
+    if isdir and not folder_row(row):
+        return f"{row['path']} is a folder, but a json row whose path ends in {sfx} is one file: rename the path in the index so it does not end in {sfx}"
+    return None
+
+
 def files_of(row):
-    """[(relative path, absolute path)]: the file a row names, or every *.json of a JSON row's folder; each inside the root."""
-    p = safe(row["path"])
-    if row["format"] == "json" and os.path.isdir(p):
-        names = sorted(n for n in os.listdir(p) if n.endswith(".json") and not n.startswith("."))   # by name: never a glob
-        return [(rel, safe(rel)) for rel in (os.path.relpath(os.path.join(p, n), ROOT) for n in names)]
-    return [(row["path"], p)]
+    """[(relative path, absolute path)]: the file a row names, or every *.json of a folder row's folder (folder_row() says which;
+    a path whose disk disagrees is returned as itself, so it is still compared with the other rows, and layout() closes it).
+    A JSON row's path and each entry file must be free of symbolic links (plain()); a row this tool never opens (env) is found
+    by where it resolves, inside the root (safe())."""
+    if row["format"] != "json":
+        return [(row["path"], safe(row["path"]))]
+    p = plain(row["path"])
+    if not folder_row(row) or not os.path.isdir(p):
+        return [(row["path"], p)]
+    out = []
+    for n in sorted(n for n in os.listdir(p) if n.endswith(".json") and not n.startswith(".")):   # by name: never a glob
+        a = os.path.join(p, n)
+        if os.path.islink(a):
+            raise linked(os.path.relpath(a, ROOT), a)
+        out.append((os.path.relpath(a, ROOT), a))
+    return out
 
 
 def owner_files(table):
@@ -174,9 +237,14 @@ def owner_files(table):
 
 def layout(rs, owner):
     """Where every row's files are, and which rows may be opened: ([(row id, problem)], [(row, files)] of the JSON rows that
-    may be opened). A file named by two rows is opened by neither; a row on an owner setting must be an env row and owner_only,
-    and is never opened."""
-    probs, named, by_file = [], [], {}
+    may be opened). A row is charged for its own fault only. Which rule a case falls under (never two for one fault):
+    - a JSON row whose path, a folder in it below the root, or an entry file of its folder is a symbolic link: THAT row is
+      refused as a link (plain(), linked()); it is compared with no other row, so no other row gets a line or is closed;
+    - two rows that SPELL the same file (./x and x, a folder row and a row on one of its files; an env row is taken where it
+      resolves): each is refused as "named by more than one index row", and neither is opened;
+    - a JSON row whose disk disagrees with its kind (kind_problem()): that row, and it is not opened;
+    - a row on an owner setting must be an env row and owner_only, and is never opened."""
+    probs, named, by_file, shut = [], [], {}, set()
     for r in rs:
         try:
             fs = files_of(r)
@@ -186,10 +254,13 @@ def layout(rs, owner):
         named.append((r, fs))
         for _, a in fs:
             by_file.setdefault(a, []).append(r)
+        bad = kind_problem(r, fs[0][1]) if fs and fs[0][0] == r["path"] else None   # a listed folder agrees with its kind
+        if bad:
+            probs.append((r["id"], bad))
+            shut.add(id(r))
     if owner is None:   # shortcut: with no readable role table only the env rows' files are kept closed; check reports the table
-        probs.append(("role-table", "the role table's owner_settings cannot be read, so only the files of env rows are kept closed"))
+        probs.append((TABLE, "the role table's owner_settings cannot be read, so only the files of env rows are kept closed"))
         owner = {a for r, fs in named if r["format"] == "env" for _, a in fs}
-    shut = set()
     for a, rr in by_file.items():
         rel = os.path.relpath(a, ROOT)
         if len(rr) > 1:
@@ -234,7 +305,7 @@ def value_pats():
                     for rel, _ in fs:
                         n += 1
                         for _, e in file_entries(r, rel, load(rel)):
-                            ps = e.get("redaction_patterns") or []
+                            ps = e.get("redaction_patterns", [])   # null, false, 0, "" and {} are not "no patterns"
                             if not isinstance(ps, list) or not all(isinstance(x, str) for x in ps):
                                 raise DataError(rel)
                             out += [re.compile(x) for x in ps]
@@ -433,7 +504,7 @@ def rows():
 
 
 def is_folder(row):
-    return os.path.isdir(safe(row["path"]))
+    return folder_row(row)
 
 
 def file_entries(row, rel, d):
@@ -509,7 +580,7 @@ def store_problems(s, rs):
 
 # The cross-file rules. Each gets c = {"by": schema -> {entry id: entry} (the merged view), "whole": schema -> [(row id, parsed
 # file)], "src": schema -> {entry id: row id}, "P": P(row id, problem), "rs": the index rows, "ids": the index row ids, "table":
-# the role table} and reads only the schemas its row in RULES names ("role-table" is the role table). Only files that passed
+# the role table} and reads only the schemas its row in RULES names (TABLE is the role table). Only files that passed
 # their schema reach it. D(c, schema, entry id) is the row that holds an entry, so a problem is charged to that row.
 def D(c, sch, k=None):
     return c["src"].get(sch, {}).get(k) or next((rid for rid, _ in c["whole"].get(sch, [])), sch)
@@ -541,7 +612,7 @@ def rule_role_classes(c):
     pols = c["whole"].get("data-policy", [])
     classes = set.intersection(*(set(d["data_classes"]) for _, d in pols)) if pols else set()
     for m in class_problems(c["table"], classes):
-        c["P"]("role-table", m)
+        c["P"](TABLE, m)
 
 
 def rule_assignments(c):
@@ -641,8 +712,8 @@ def rule_catalog(c):
         for p in e.get("redaction_patterns", []):
             try:
                 re.compile(p)
-            except re.error:
-                c["P"](D(c, "connections", k), f"{idn(e['id'])}: a redaction pattern is not a regular expression")
+            except re.error:   # this fault makes the patterns unreadable, so the id is masked: the position (no value) locates the entry
+                c["P"](D(c, "connections", k), f"{idn(e['id'])} (entry {c['by']['_at']['connections'][k]} of its file): a redaction pattern is not a regular expression")
 
 
 def rule_hosts(c):
@@ -672,10 +743,10 @@ def rule_settings(c):
 # (name, the schemas whose rows it judges, the schemas it reads, the rule). A read of a row of schema S depends on DEPS[S]: S and
 # every schema a rule that judges S reads. The index is the frame of every rule (its row ids, its redact_keys), not one of them.
 RULES = [("data policy and catalog", ("data-policy", "connections"), ("data-policy", "connections"), rule_policy),
-         ("role data classes", ("role-table",), ("role-table", "data-policy"), rule_role_classes),
-         ("role assignments", ("role-assignments",), ("role-assignments", "connections", "data-policy", "role-table"), rule_assignments),
+         ("role data classes", (TABLE,), (TABLE, "data-policy"), rule_role_classes),
+         ("role assignments", ("role-assignments",), ("role-assignments", "connections", "data-policy", TABLE), rule_assignments),
          ("features", ("features",), ("features",), rule_features),
-         *((f"{s} allowed_roles", (s,), (s, "role-table"), rule_allowed_roles(s)) for s in ("capabilities", "extension", "connections")),
+         *((f"{s} allowed_roles", (s,), (s, TABLE), rule_allowed_roles(s)) for s in ("capabilities", "extension", "connections")),
          ("extensions switched on", ("extension",), ("extension",), rule_extensions_on),
          ("catalog shape", ("connections",), ("connections",), rule_catalog),
          ("approved hosts", ("approved-hosts",), ("approved-hosts",), rule_hosts),
@@ -684,7 +755,7 @@ DEPS = {}
 for _n, _judges, _reads, _f in RULES:
     for _s in _judges:
         DEPS.setdefault(_s, {_s}).update(_reads)
-NEEDED = {s for _, _, rd, _ in RULES for s in rd} - {"role-table"}   # schemas the cross-file rules read
+NEEDED = {s for _, _, rd, _ in RULES for s in rd} - {TABLE}   # schemas the cross-file rules read
 
 
 def setting_problems(s):
@@ -718,12 +789,12 @@ def same_path(a, b):
 
 def plan(rs, reads):
     """What a read of the rows `reads` needs: (the schemas to open, the rules to run, the members it depends on). Members are row
-    ids, "role-table", "data-files" (the index) and "schema:<name>" (a schema with no JSON row). A rule runs when it reads a
+    ids, TABLE (the role table), FRAME (the index) and NOROW + a schema name (a schema with no JSON row). A rule runs when it reads a
     member: a rule that raises is a problem of every row it read."""
     dep = set().union(*(DEPS.get(r["schema"], {r["schema"]}) for r in rs if r["id"] in reads and r["schema"]))
     run = [R for R in RULES if set(R[2]) & dep]
-    members = set(reads) | {"data-files"} | {r["id"] for r in rs if r["schema"] in dep} | {f"schema:{s}" for s in dep - {"role-table"}}
-    return dep | {s for R in run for s in R[2]}, run, members | ({"role-table"} if "role-table" in dep else set())
+    members = set(reads) | {FRAME} | {r["id"] for r in rs if r["schema"] in dep} | {NOROW + s for s in dep - {TABLE}}
+    return dep | {s for R in run for s in R[2]}, run, members | ({TABLE} if TABLE in dep else set())
 
 
 def judge(reads=None):
@@ -740,17 +811,20 @@ def judge(reads=None):
         idx = load(INDEX)
         errs = validate_doc(idx, schema_of("data-files"))
         if errs:
-            return [("data-files", e, frozenset({"data-files"})) for e in errs], None, {}
+            return [(FRAME, e, frozenset({FRAME})) for e in errs], None, {}
         rs = idx["files"]
     except Exception as e:
-        return [("data-files", why(e) if isinstance(e, DataError) else f"{INDEX}: {why(e)}", frozenset({"data-files"}))], None, {}
+        return [(FRAME, why(e) if isinstance(e, DataError) else f"{INDEX}: {why(e)}", frozenset({FRAME}))], None, {}
     ids = [r["id"] for r in rs]
-    by = {"_ids": ids, "_src": {}, "_rows": {}}
+    by = {"_ids": ids, "_src": {}, "_rows": {}, "_at": {}}
     if len(set(ids)) != len(rs):
-        P("data-files", "an id is listed twice in the index")
-    own = [r for r in rs if r["format"] == "json" and same_path(r["path"], INDEX)]
+        P(FRAME, "an id is listed twice in the index")
+    own = [r for r in rs if r["format"] == "json" and os.path.normpath(r["path"]) == INDEX]   # as spelled: a link to the index is the linking row's fault
     if not own or not all(r["owner_only"] for r in own):
-        P("data-files", "the index row that describes the index must exist and be owner_only")
+        P(FRAME, "the index row that describes the index must exist and be owner_only")
+    for r in rs:   # a row id that is one of this tool's own member names would take that member's problems, and give it its own
+        if r["id"] == TABLE or r["id"].startswith(NOROW) or (r["id"] == FRAME and r not in own):
+            P(FRAME, f"row id {r['id']} is a name this tool keeps for the role table, the index or a schema with no row: give the row another id")
     for r in rs:
         for i, p in enumerate(r["redact_keys"]):
             try:
@@ -761,7 +835,7 @@ def judge(reads=None):
         try:
             safe(rel)
         except DataError as e:
-            P("data-files", str(e))
+            P(FRAME, str(e))
     try:
         table = load(idx["role_table"])
     except Exception:
@@ -815,34 +889,35 @@ def judge(reads=None):
         name, (docs, ents) = r["schema"], by["_rows"][r["id"]]
         whole.setdefault(name, []).append((r["id"], d))
         docs.append((rel, d))
-        for k, e in pairs:
+        for n, (k, e) in enumerate(pairs):
             if k in where.setdefault(name, {}):
                 P(r["id"], f"{rel}: duplicate entry id {idn(k, True)}" + ("" if where[name][k] == rel else f", also in {where[name][k]}"))
                 continue
             where[name][k] = rel
             by.setdefault(name, {})[k] = ents[k] = e
             by["_src"].setdefault(name, {})[k] = r["id"]
+            by["_at"].setdefault(name, {})[k] = n + 1
     mid = len(probs)
     table_ok = table is not None
-    if reads is None or "role-table" in want:
+    if reads is None or TABLE in want:
         try:
             for m in role_problems(load(idx["role_table"])):
-                P("role-table", f"{idx['role_table']}: {m}")
+                P(TABLE, f"{idx['role_table']}: {m}")
                 table_ok = False
         except Exception as e:
-            P("role-table", why(e) if isinstance(e, DataError) else f"{idx['role_table']}: {why(e)}")
+            P(TABLE, why(e) if isinstance(e, DataError) else f"{idx['role_table']}: {why(e)}")
             table_ok = False
     have, rows_of = {r["schema"] for r in rs if r["format"] == "json"}, {}
     for r in rs:
         if r["format"] == "json":
             rows_of.setdefault(r["schema"], []).append(r["id"])
     for n in sorted(NEEDED - have):
-        P("data-files", f"cross-file rules could not run: no JSON data file has schema {n}", {f"schema:{n}"})
-    members_of = lambda s: ["role-table"] if s == "role-table" else rows_of.get(s, [])
+        P(FRAME, f"cross-file rules could not run: no JSON data file has schema {n}", {NOROW + n})
+    members_of = lambda s: [TABLE] if s == TABLE else rows_of.get(s, [])
     c = {"by": by, "whole": whole, "src": by["_src"], "P": P, "rs": rs, "ids": ids, "table": table}
     blocked = {}   # judged member -> the refused members that kept its rules from running
     for name, judges, rd, fn in run:
-        blk = [m for s in rd for m in ((["role-table"] if not table_ok else []) if s == "role-table" else [f"schema:{s}"] if s not in have
+        blk = [m for s in rd for m in (([TABLE] if not table_ok else []) if s == TABLE else [NOROW + s] if s not in have
                                         else [x for x in members_of(s) if x in refused])]
         if blk:
             for m in (m for s in judges for m in members_of(s) if m not in refused):
@@ -855,7 +930,7 @@ def judge(reads=None):
             P(read[0], f"the cross-file rule '{name}' could not run ({type(e).__name__}); it read {', '.join(read)}", read)
     for m, blk in blocked.items():
         blk = list(dict.fromkeys(blk))
-        first = blk[0].replace("schema:", "schema ") + (" (no JSON row)" if blk[0].startswith("schema:") else "")
+        first = blk[0].replace(NOROW, "schema ") + (" (no JSON row)" if blk[0].startswith(NOROW) else "")
         P(m, f"not judged by the cross-file rules: {first} is refused" + (f" (and {len(blk) - 1} more)" if len(blk) > 1 else ""), blk)
     return probs, by, {"head": head, "mid": mid, "own": [r["id"] for r in own], "members": members}
 
@@ -872,7 +947,7 @@ def served(ids):
     """The merged view, for a read of the rows `ids`, when no member it depends on (plan()) has a problem: else a DataError
     with the first problem (naming the member it belongs to) and how many more, and no data."""
     probs, by, cut = judge(reads=set(ids))
-    deps = (cut.get("members") or set()) | {"data-files", *cut.get("own", [])}
+    deps = (cut.get("members") or set()) | {FRAME, *cut.get("own", [])}
     bad = [(d, m) for d, m, ms in probs if ms & deps]
     if bad:
         d, m = bad[0]
@@ -1044,6 +1119,10 @@ def main(argv):
                 print(f"not opened (env format, read by the apply tool): {', '.join(skipped)}")
         return 1 if probs else 0
     if cmd == "validate" and len(args) == 2:
+        try:
+            rows()   # the index says which files are never opened (closed_ids): without it nothing is opened
+        except DataError:
+            raise DataError(f"{INDEX}: cannot be read or is not valid (run check), so validate opens no file") from None
         doc = jload(args[1])   # refused unread when it is an owner setting (closed_ids)
         errs = [] if args[0] == "roles" else validate_doc(doc, schema_of(args[0]))
         if args[0] == "roles":   # the role table has two judges, and a data class must be one the data policy defines
