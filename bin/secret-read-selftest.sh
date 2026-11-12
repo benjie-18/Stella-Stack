@@ -5,6 +5,9 @@ set -u
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 # STACK=<tree> runs the hooks of another tree (a staged one, K6); default /workspace.
 STACK=${STACK:-/workspace}; D=$STACK/docs/hermes-local/hooks
+# T7 (F1 W4 r4): every alert this run's guards write goes to this run's own folder, never the tree's alert log (on the live tree each line may page)
+TREE_ALERTS=$STACK/.supervisor/logs/alerts.log; TREE_SIZE=$(stat -c %s "$TREE_ALERTS" 2>/dev/null || echo 0)
+export ESCALATE_SUP_DIR=$T/sup; mkdir -p "$T/sup/logs"
 R=$D/default/read-only-terminal.py S=$D/builder/secret-guard.py
 fails=0
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
@@ -185,4 +188,5 @@ dgood=1; for c in "${DIFF[@]}"; do
 ok '[ "$dgood" = 1 ]' "RT24 differential: the secret guard refuses everything its pre-RT22-01 parse refuses (${#DIFF[@]} mixed commands)"
 ok '[ "$(term $T/pre-sg.py "echo a # n\\${NL}cat /workspace/$OB.e\"nv\"")" = 2 ]' "RT24 differential premise: the pre-RT22-01 copy refuses a tokenised read after a backslash comment"
 ok '[ "$(ROLES_FILE=$T/none run $S read_file "{\"path\": \"/workspace/SUPERVISOR.md\"}")" = 2 ] && [ "$(ROLES_FILE=$T/none term $R "ls")" = 2 ]' "K6: an unreadable role table refuses every read (fail closed)"
+ok '[ "$(tail -c +$((TREE_SIZE + 1)) "$TREE_ALERTS" 2>/dev/null | grep -c "^STL-CFG-31[0-9] \|^STL-CFG-303 ")" = 0 ]' "T7: the tree's alert log gained no line of the codes these guards write during this run"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

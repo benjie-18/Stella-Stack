@@ -3,6 +3,9 @@
 set -u
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 CG=${CG:-/workspace/bin/commit-guard.sh}
+# T7 (F1 W4 r4): every alert this run's guards write goes to this run's own folder, never the tree's alert log (on the live tree each line may page)
+TREE_ALERTS=/workspace/.supervisor/logs/alerts.log; TREE_SIZE=$(stat -c %s "$TREE_ALERTS" 2>/dev/null || echo 0)
+export ESCALATE_SUP_DIR=$T/sup; mkdir -p "$T/sup/logs"
 export GIT_AUTHOR_NAME=owner GIT_AUTHOR_EMAIL=owner@example.invalid GIT_COMMITTER_NAME=owner GIT_COMMITTER_EMAIL=owner@example.invalid
 unset HERMES_KANBAN_TASK HERMES_KANBAN_WORKSPACE HERMES_KANBAN_BRANCH
 # K1: the card is proven by its own worker process, never by HERMES_KANBAN_* (Hermes sets them after the worker starts and
@@ -170,4 +173,5 @@ for k in main_branch worker_pins; do
   git -C "$W" reset -q; rm -f "$W/zz-k9"
 done
 cp /workspace/docs/hermes-local/roles.json "$GT/docs/hermes-local/roles.json"
+ok '[ "$(tail -c +$((TREE_SIZE + 1)) "$TREE_ALERTS" 2>/dev/null | grep -c "^STL-CFG-31[0-9] \|^STL-CFG-303 ")" = 0 ]' "T7: the tree's alert log gained no line of the codes these guards write during this run"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

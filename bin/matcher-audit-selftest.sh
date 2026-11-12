@@ -11,6 +11,7 @@ HERMES_PY="${HERMES_PY:-/home/node/.hermes/tools/python-3.14.9+20261021-linux-x6
 # A missing runtime is a failure, not a skip (review M1): after a Hermes upgrade the audit must not go quiet.
 [ -x "$HERMES_PY" ] && [ -f /home/node/.hermes/hermes-agent/toolsets.py ] || { echo "FAIL Hermes runtime not found ($HERMES_PY): update HERMES_PY here and in the Discord helper library"; echo "selftest FAIL (1)"; exit 1; }
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+export ESCALATE_SUP_DIR=$T/sup; mkdir -p "$T/sup/logs"   # T7: a registration refusal logs here, never in the tree's log
 H="$T/home/.hermes"
 for d in $(python3 -c 'import sys; sys.path.insert(0, "/workspace/bin"); import roles; [print(f) for _, f, _, l in roles.profiles(roles.load(), sys.argv[1]) if l]' "$H"); do
   mkdir -p "$d"; printf 'model: x\n' > "$d/config.yaml"; done
