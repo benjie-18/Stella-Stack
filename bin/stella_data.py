@@ -167,9 +167,9 @@ def linked(rel, at):
         shut = (st.st_dev, st.st_ino) in closed_ids()
     except OSError:
         shut = False
-    return DataError(f"{rel}: {'it' if where == os.path.normpath(rel) else where} is a symbolic link; the path of a JSON row, each folder in it "
-                     "below the stack root and each entry file of its folder must not be a symbolic link"
-                     + (" (this one leads to an owner setting of the role table or the file of an env row, which this tool never opens)" if shut else ""))
+    return DataError(f"{rel}: {'it' if where == os.path.normpath(rel) else where} is a symbolic link"   # short: a catalog line holds 200 characters
+                     + (" (to an owner setting or an env row's file, never opened here)" if shut else "")
+                     + "; a JSON row's path and entry files must not be a symbolic link")
 
 
 def plain(rel):
@@ -201,12 +201,10 @@ def kind_problem(row, p):
     sfx, isdir = "." + row["format"], os.path.isdir(p)
     if folder_row(row) and not isdir:
         if not os.path.lexists(p):
-            return f"{row['path']}: the folder of this row does not exist (a json row whose path does not end in {sfx} is a folder of entries)"
-        return (f"{row['path']} is one file, but its row is a folder of entries (the path does not end in {sfx}): rename the path in the "
-                f"index (and the file) so it ends in {sfx}")
+            return f"{row['path']}: the folder does not exist (a json row whose path does not end in {sfx} is a folder of entries)"
+        return f"{row['path']} is one file, but a json row whose path does not end in {sfx} is a folder of entries: rename the path in the index so it ends in {sfx}"
     if isdir and not folder_row(row):
-        return (f"{row['path']} is a folder, but its row is one file (the path ends in {sfx}): rename the path in the index (and the "
-                f"folder) so it does not end in {sfx}")
+        return f"{row['path']} is a folder, but a json row whose path ends in {sfx} is one file: rename the path in the index so it does not end in {sfx}"
     return None
 
 

@@ -496,7 +496,7 @@ ok 'refuses b5 get data-policy && grep -q "data-policy: .*more than one index ro
 ok 'refuses g1d check && [ "$(grep "repeated" "$T/o" | grep -o "\.stella/data-policy\.json" | wc -l)" = 1 ]' "184 a load error prints the file path once"
 # ---- F1 W1 fix round 6 (QA round 5): K1 a linked row is charged alone, K2 one rule for what a row is, K3 the small ones ----
 OS=$(jq -r '.owner_settings[0]' "$ROOT/docs/hermes-local/roles.json")
-setting() { sd "$1" get --json settings CALL_TIMEOUT 2>/dev/null | jq -e '.default | type == "number"' >/dev/null; }   # the read bin/escalate.sh makes
+setting() { [ "$(sd "$1" get --json settings CALL_TIMEOUT 2>/dev/null | jq -r '.default | type')" = number ]; }   # the read bin/escalate.sh makes
 alone() { refuses "$1" check && grep -q "^STL-CFG-310 .*$2: .*$3" "$T/o" && [ "$(grep -c "^STL-CFG-310 " "$T/o")" = 1 ]; }   # <root> <row> <text>: check has that one line, charged to that row
 # K1 a JSON row that is, or goes through, a symbolic link is refused alone: no other row gets a line or is closed (W1-RT5-01)
 mk k1a; ln -sf settings.json "$T/k1a/.stella/capabilities.json"
@@ -514,13 +514,13 @@ ok 'alone k1f extensions "owner setting" && grep -q "must not be a symbolic link
 mk k1g; ed k1g data-files.json '.files += [(.files[] | select(.id == "versions") | .id = "v-alias" | .path = "./.stella/versions.json")]'
 ok 'refuses k1g check && [ "$(grep -c "more than one index row (versions, v-alias)" "$T/o")" = 2 ] && ! grep -q "symbolic link" "$T/o" && setting k1g' "191 control: two rows that spell one file are each refused as named twice, never as a link"
 # K2 what a row is: a JSON row whose path does not end in .json is a folder of entries, every other row is one file (W3-RT4-05)
-FR='(.files[] | select(.id == "versions"))'   # a schema no cross-file rule reads: the row's own line is the only one
+FR='(.files[] | select(.id == "versions"))'   # a schema no cross-file rule reads: the row's own line is the only one (a read of another row of the same schema depends on it, as for any refused row)
 mk k2a; cp "$T/k2a/.stella/versions.json" "$T/k2a/.stella/qa-single"; ed k2a data-files.json ".files += [$FR | .id = \"qa-single\" | .path = \".stella/qa-single\"]"
-ok 'alone k2a qa-single "\.stella/qa-single is one file.*folder of entries.*rename" && setting k2a && sd k2a get versions >/dev/null 2>&1 && refuses k2a get qa-single' "192 a single file whose path has no .json suffix is a named problem of its row (the rule calls it a folder)"
+ok 'alone k2a qa-single "\.stella/qa-single is one file.*folder of entries.*rename" && setting k2a && sd k2a get capabilities >/dev/null 2>&1 && refuses k2a get qa-single' "192 a single file whose path has no .json suffix is a named problem of its row (the rule calls it a folder)"
 mk k2b; mkdir "$T/k2b/.stella/qa-folder.json"; cp "$T/k2b/.stella/versions.json" "$T/k2b/.stella/qa-folder.json/a.json"; ed k2b data-files.json ".files += [$FR | .id = \"qa-folder\" | .path = \".stella/qa-folder.json\"]"
-ok 'alone k2b qa-folder "\.stella/qa-folder\.json is a folder.*one file.*rename" && setting k2b && sd k2b get versions >/dev/null 2>&1 && refuses k2b get qa-folder' "193 a folder whose path ends in .json is a named problem of its row (the rule calls it one file)"
+ok 'alone k2b qa-folder "\.stella/qa-folder\.json is a folder.*one file.*rename" && setting k2b && sd k2b get capabilities >/dev/null 2>&1 && refuses k2b get qa-folder' "193 a folder whose path ends in .json is a named problem of its row (the rule calls it one file)"
 mk k2c; ed k2c data-files.json ".files += [$FR | .id = \"qa-none\" | .path = \".stella/qa-none\"]"
-ok 'alone k2c qa-none "\.stella/qa-none.*folder.*does not exist" && setting k2c && sd k2c get versions >/dev/null 2>&1' "194 a folder row whose folder is missing is a named problem of that row"
+ok 'alone k2c qa-none "\.stella/qa-none.*folder.*does not exist" && setting k2c && sd k2c get capabilities >/dev/null 2>&1' "194 a folder row whose folder is missing is a named problem of that row"
 mk k2d; mkdir "$T/k2d/.stella/qa-caps"; jq '.entries = [.entries[0] | .id = "qa-cap-one"]' "$T/k2d/.stella/capabilities.json" >"$T/k2d/.stella/qa-caps/a.json"
 ed k2d data-files.json '.files += [(.files[] | select(.id == "capabilities") | .id = "qa-caps" | .path = ".stella/qa-caps")]'
 ok 'sd k2d check >"$T/o" 2>&1 && [ "$(sd k2d get qa-caps qa-cap-one | jq -r .id)" = qa-cap-one ] && sd k2d list qa-caps --json | jq -e "map(.id) == [\"qa-cap-one\"]" >/dev/null' "195 control: a folder row with a list key is a folder of entries (the list key decides nothing)"
