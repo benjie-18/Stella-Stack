@@ -10,11 +10,14 @@ refuse() {   # B.1 (r5) refuse <problem> <message>: the one way a hook refuses (
   local m t=$2; [[ $t == '{'* ]] && t=$(jq -r .message <<<"$t")   # this hook's messages are written as their JSON line
   m=$(printf '%s' "$payload" | python3 -I /workspace/bin/roles.py hook-refusal STL-GRD-604 "$1" 2>/dev/null) || m=
   jq -nc --arg m "${m:-[STL-GRD-604]} $t" '{action: "block", message: $m}'; exit 2; }
+allow() {   # r6: an allow needs a valid role table, as every guard (bin/roles.py hook-allow); a broken table or a role tool that cannot start refuses
+  local m; m=$(printf '%s' "$payload" | python3 -I /workspace/bin/roles.py hook-allow 2>/dev/null) && exit 0
+  jq -nc --arg m "${m:-[STL-CFG-303] the role table could not be checked by this hook}" '{action: "block", message: $m}'; exit 2; }
 cmd=$(jq -r 'if .tool_name == "terminal" then .tool_input.command // "" else "" end' <<<"$payload" 2>/dev/null) || cmd=""
 allowed="bash /workspace/bin/claude-review.sh"
 bg=$(jq -r 'if (.tool_input.background == true or .tool_input.pty == true) then "yes" else "" end' <<<"$payload" 2>/dev/null) || bg=""
 if [[ -n $cmd && $cmd == "$allowed" ]] && jq -e --arg a "$allowed" '.tool_input.command == $a' <<<"$payload" >/dev/null 2>&1; then
-  [[ -z $bg ]] && exit 0
+  [[ -z $bg ]] && allow
   refuse "a command the role's review terminal does not run" '{"action": "block", "message": "run the review command in the foreground (no background, no pty): its answer is read from the command output and a background run can never be read"}'
 fi
 # builder code never runs next to the Claude login: the 9B reviewer's npm test / lint / node --test are not offered here

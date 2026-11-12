@@ -804,7 +804,11 @@ def hook_refusal(code, problem, payload, card=None):
     """B.1 (r5), the one way a hook refuses: '[CODE] <the catalog's plain message>' with exactly one alert line per refused call (the first hook of the call
     to refuse with this code writes it), naming the role of the payload's profile and, where the caller knows it, the card."""
     try:
-        role = role_of(load(), json.loads(payload).get("profile"))[0]
+        d = load()
+    except Exception:   # r6 (W4-CV3-01, shell hooks too): a table that cannot be read refuses with the code every guard gives for it, whatever the hook's own rule
+        return plain("STL-CFG-303", once=call_key(payload), problem="the role table cannot be read by a guard hook")
+    try:
+        role = role_of(d, json.loads(payload).get("profile"))[0]
     except Exception:
         role = "unknown"
     return plain(code, once=call_key(payload), problem=f"{problem} (role {role}{', card ' + card if card else ''})")
@@ -1105,6 +1109,14 @@ def main():
     cmd, args = (sys.argv[1] if len(sys.argv) > 1 else ""), sys.argv[2:]
     if cmd == "hook-refusal" and len(args) == 2:   # <code> <problem>, the payload on stdin: a shell hook's refusal line (hook_refusal); never fails
         print(hook_refusal(args[0], args[1][:300], sys.stdin.read()))
+        sys.exit(0)
+    if cmd == "hook-allow" and not args:   # r6: a shell hook asks before it allows: exit 0 only with a valid table, else the coded line and exit 2 (guards are fail-closed)
+        pay = sys.stdin.read()
+        try:
+            load()
+        except Exception:
+            print(hook_refusal("STL-CFG-303", "", pay))
+            sys.exit(2)
         sys.exit(0)
     if cmd == "prove":   # needs no role table: the board and the kernel only
         o = dict(zip(args[::2], args[1::2]))
