@@ -13,28 +13,33 @@ plain message (310 unreadable data, 311 unknown id, 312 owner-only, 313 a change
 setting's own code, 316 no, damaged or unrecorded backup, 318 event log, 321 a change that stopped after it started (what is
 left and the one command that finishes or undoes it), 322 a read command refused, 323 an unfinished step seen by check); an
 unexpected exception or an interrupt (Ctrl-C, SIGTERM) is exit 1 and one coded line, never a traceback.
-After the first write of a command every step is entered in STEPS with how to undo it; a failure or an interrupt undoes them,
-newest first, up to the first that cannot be undone (an event line), and the one coded line says what is left (main/failed).
-One lock covers a whole apply or rollback (validation included); the index, the gate and the target path are read again once the
-lock is held. Order of an apply: event log checked writable and the line built and judged; the backup is entered in the applied
-state (name, token, and what the saved copy is: its hash, whether the file existed, its mode); backup folder (bytes, mode,
-previous applied record, the token, status pending) -> atomic replace -> applied state -> event line (it carries the token) ->
-backup status done. A kill in between leaves the backup pending: `check` reports it (323), apply refuses unless the file already
-holds the candidate (then it finishes the bookkeeping and writes the event line only if none carries the backup's token),
-`rollback` restores the file (writing the apply line first when the apply's replace happened and its line is missing). A
-rollback marks its backup rollback-pending with a fresh token first, so a kill at any step is finished by the next run, which
-writes the event line the killed one did not. The event log is read for a token only when a run resumes a step.
+Every write of a command is entered in STEPS, with how to undo it, BEFORE it starts (did); a failure or an interrupt undoes
+them, newest first, up to the first that stays (an event line in the log, a removed folder, a file someone wrote over), and
+the one coded line says what is left (failed/told). One lock is held from before the command's first read of the row until its
+line is printed (exclusive): the validation, every step, every undo, the disk read that makes the failure line and the line;
+the index, the gate and the target path are read again once it is held. Order of an apply: the candidate is validated; the
+file is read and the start state taken at one point (begin); event log checked writable and the line built and judged; the
+backup is entered in the applied state (name, token, and what the saved copy is: its hash, whether the file existed, its
+mode); backup folder (bytes, mode, previous applied record, the token) -> atomic replace (the file compared once more right
+before the rename) -> applied state -> event line (it carries the backup's name and token) -> `done` in the backup's record of
+the applied state. The state of a backup (pending, done, rollback-pending, set aside) is word() of that record alone; the
+meta file's status decides nothing. A kill in between leaves the backup pending: `check` reports it (323), apply refuses
+unless the file already holds the candidate (then it finishes the bookkeeping and writes the event line only if none has the
+backup's name and token), `rollback` restores the file (writing the apply line first when the apply's replace happened and
+its line is missing). A rollback marks its backup in the applied state with a fresh token first, so a kill at any step is
+finished by the next run, which writes the event line the killed one did not. When the event log is read: logged, state_of.
 Provenance: rollback restores or deletes only from a backup folder that the applied state (written by this tool only) records
 for that key, whose meta file holds the recorded token, hash, existence and mode; a folder the applied state does not know is
-never restored from and never makes the tool delete or overwrite a file (316, the folder is named). Beyond that, the saved copy
-must match its sha256, the file must hold the bytes the apply wrote or the bytes it replaced (anything else is a hand edit:
-314), and the restored content must pass the checks a file in use passes. A meta file that is missing is an unfinished folder
+never restored from and never makes the tool delete or overwrite a file (316, the folder's path is given). Beyond that, the
+saved copy must match its sha256, the file must hold the bytes the apply wrote or the bytes it replaced (anything else is a
+hand edit: 314), and restored content that parses must pass the checks a candidate passes (bytes the reader cannot parse
+were in use so and are restored as they are). A meta file that is missing is an unfinished folder
 while the file still holds the bytes it saved (removed by `rollback`, which then stops), else damage (316, nothing deleted).
 Every path (a row, the folders on the way, the backup folder, the applied state, the event log, their locks) must be the real
 file the index names: a symbolic link or a path that resolves elsewhere is refused (313), no two rows or index paths may be one
 file (same device and inode, or the same name up to case), a file with more than one hard link or a mount point is not used (for
 a row: that row only), and every file opened must be a regular file, opened without blocking, through folders checked at that
-moment. Whether a row is one file or a folder of entries comes from the applied record or the index row, never from the disk.
+moment. Whether a row is one file or a folder of entries is the data tool's one rule (folder_row): not the disk, not the record.
 Owner-only rows (index owner_only) are refused (312) for a worker: a worker marker variable is set (the names are the role
 table's `worker_markers`; missing or empty = refuse), or `roles.py prove` says this process is a worker or cannot tell.
 That gate is a second line only: a caller can clear its markers, shadow the board tool on PATH or detach from its parent. The
@@ -50,7 +55,9 @@ import stella_data as sd
 EventError = el.EventError
 SECRETS = el.SECRETS   # values seen under masked keys; scrubbed from any message
 TMP = ".stella-apply."   # the prefix of this tool's own temp files
+TMP_RE = re.compile(re.escape(TMP) + r"[0-9a-f]{16}")   # their whole name (tmp_name)
 GONE = ".gone-"   # a backup folder renamed so: removed, its content is being deleted
+BACKUP_RE = re.compile(r"\d{8}-\d{8}T\d{12}Z")   # a backup folder's whole name: the counter and the time (apply_locked)
 STAGE = "stella-apply-stage-"   # staging folders in the temp folder: <STAGE><pid>-<process start time>-<random>
 ENTRY = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*\.json")   # a folder entry's file name, for every command
 MAXSEQ = 99999999   # the counter in a backup folder's name has eight digits
@@ -92,11 +99,11 @@ def read(p, code=None):
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as e:
-        raise EventError(code or REFUSE[0], f"{qs(rel_of(p))[:80]}: {el.why(e)[:60]}")
+        raise EventError(code or REFUSE[0], f"{qs(rel_of(p))}: {el.why(e)[:60]}")
     with os.fdopen(fd, "rb") as f:
         b = f.read(el.MAX_FILE + 1)
     if len(b) > el.MAX_FILE:
-        raise EventError(code or REFUSE[0], f"{qs(rel_of(p))[:80]}: larger than {el.MAX_FILE} bytes")
+        raise EventError(code or REFUSE[0], f"{qs(rel_of(p))}: larger than {el.MAX_FILE} bytes")
     return b
 
 def try_read(p):
@@ -111,15 +118,20 @@ def mkdir_p(p):
     try:
         el.mkdirs(p)
     except ValueError as e:
-        raise bad(f"{qs(rel_of(p))[:80]}: {e}")
+        raise bad(f"{qs(rel_of(p))}: {e}")
 
-def atomic_write(p, data, mode):
+def tmp_name():
+    """The one shape of this tool's temp files: TMP and 16 hex digits (TMP_RE: what sweep() removes, nothing wider)."""
+    return TMP + os.urandom(8).hex()
+
+def atomic_write(p, data, mode, judge=None):
     """Temp file (0600) in the same folder, fsync, rename, fsync the folder. Everything is done relative to the folder as
-    opened (checked to be where its path says), so a folder swapped for a link afterwards changes nothing."""
+    opened (checked to be where its path says), so a folder swapped for a link afterwards changes nothing. judge: called when
+    the temp file is written, synced and closed, right before the rename; when it raises, nothing is replaced."""
     d, name = os.path.split(p)
     dfd = el.open_dir(d)
     try:
-        tmp = TMP + os.urandom(8).hex()
+        tmp = tmp_name()
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dfd)
         try:
             with os.fdopen(fd, "wb") as f:
@@ -127,6 +139,8 @@ def atomic_write(p, data, mode):
                 f.flush()
                 os.fsync(f.fileno())
                 os.fchmod(f.fileno(), mode)
+            if judge:
+                judge()
             os.replace(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)
         except BaseException:
             with contextlib.suppress(OSError):
@@ -149,11 +163,12 @@ def unlink(p):
     finally:
         os.close(dfd)
 
-def restore(p, data, mode):
-    if data is None:
-        unlink(p)
-    else:
-        atomic_write(p, data, mode)
+def restore(p, data, mode, judge=None):
+    if data is not None:
+        return atomic_write(p, data, mode, judge)
+    if judge:
+        judge()
+    unlink(p)
 
 def drop_backup(bd):
     """Remove a backup folder: one rename to a GONE name first (after it the backup no longer exists for any command, and a
@@ -261,8 +276,13 @@ def kind_drift(row, folder):
     try:
         st = os.lstat(p)
     except FileNotFoundError:
-        return fit(f"make the folder of {row['id']} (`mkdir -p {row['path']}`) or restore it from git: it does not exist",
-                   f"make the folder (`mkdir -p {row['path']}`): it does not exist") if folder else None
+        if folder:
+            return fit(f"make the folder of {row['id']} (`mkdir -p {row['path']}`) or restore it from git: it does not exist",
+                       f"make the folder (`mkdir -p {row['path']}`): it does not exist")
+        d = rel_of(os.path.dirname(p))   # a one-file row whose folder is missing: one line in check too, as in apply
+        return None if os.path.isdir(os.path.dirname(p)) else fit(
+            f"make its folder first (`mkdir -p {d}`), then run this command again: the folder of {row['id']} does not exist",
+            f"make its folder first (`mkdir -p {d}`): it does not exist")
     if folder and not stat.S_ISDIR(st.st_mode):
         return fit(f"rename the path of {row['id']} in the index so it ends in {sfx}, or put its folder back: {qs(row['path'])} is one file",
                    f"rename the path of {row['id']} in the index so it ends in {sfx}, or put its folder back")
@@ -287,25 +307,25 @@ def target(arg, read_only=False):
     if folder:
         if not slash and not read_only:
             raise bad(f"{did} is a folder: name a file as <id>/<file>")
-        if slash and len(entry) > 40:   # every message prints a key whole within the catalog's cut (names of at most 40 characters)
-            raise bad(f"give the entry a name of at most 40 characters: the one given has {len(entry)}")
         if slash and not ENTRY.fullmatch(entry):
-            raise bad(f"{json.dumps(arg)[:80]}: not a plain file name (letters, digits, dot, dash, underscore; ends in .json)")
+            raise bad(f"{json.dumps(arg)}: not a plain file name (letters, digits, dot, dash, underscore; ends in .json)")
     elif slash:
         raise bad(f"{did} is a single file: give just its id")
     rel = row["path"] + ("/" + entry if slash else "")
     p = path(rel)
+    key = arg if slash else did
+    fs_fits(p, os.path.join(os.path.dirname(p), tmp_name()), os.path.join(bdir(key), GONE + "0" * 31, tmp_name()), lock_of(key))
     if slash and os.path.isdir(os.path.dirname(p)):   # names that differ only by case are one name: one file never gets two keys
         for n in os.listdir(os.path.dirname(p)):
             if n != entry and n.casefold() == entry.casefold():
-                raise bad(f"{json.dumps(arg)[:60]} differs only by case from the existing {qs(n)[:60]}; they are one name, use that one")
+                raise bad(f"{json.dumps(arg)} differs only by case from the existing {qs(n)}; they are one name, use that one")
     try:
         st = os.lstat(p)
     except FileNotFoundError:
         st = None
     if st and stat.S_ISREG(st.st_mode) and (why := link_problem(qs(rel), rel, st, p)):
         raise bad(why)
-    return row, (arg if slash else did), p, rel
+    return row, key, p, rel
 
 def gate(row):
     """Owner-only rows: refuse for a worker, and when that cannot be told (STL-CFG-312).
@@ -347,8 +367,38 @@ def relock(arg, row):
     return row2, key, tgt, rel
 
 def fit(*texts):
-    """The first text that the catalog prints whole (its cut is 200 characters); a refusal never prints a cut command."""
-    return next((t for t in texts if len(t) <= 200), "the folder or entry name is too long for a whole message: run `check`")
+    """The first text that the catalog prints whole (its cut is 200 characters), else the last one (the shortest): no text
+    is cut here and no path is left out, and a text the catalog would cut is printed whole on a line of its own (whole())."""
+    return next((t for t in texts if len(t) <= 200), texts[-1])
+
+def whole(problem, to=None):
+    """The catalog cuts a value at 200 characters (alert_catalog.render, not this tool's): a longer problem text, which only a
+    long name or path makes, follows its coded line whole on a line of its own, so a printed path or command is never cut."""
+    if len(el.scrub(problem)) > 200:
+        print("whole text: " + el.scrub(problem), file=to or sys.stderr)
+
+def fail(code, problem, extra=None):
+    rc = el.fail(code, problem, extra)
+    whole(problem)
+    return rc
+
+def lock_of(key):
+    """The row's lock file: named by the key, or by its hash when that name is longer than a file name may be."""
+    n = key.replace("/", "__") + ".lock"
+    return path(os.path.join(context()["idx"]["backup_dir"], ".locks", n if len(os.fsencode(n)) <= 255 else hashlib.sha256(n.encode()).hexdigest() + ".lock"))
+
+def fs_fits(*paths):
+    """A name may be as long as the file system allows, and one it refuses is refused here, before anything is written: each
+    path this tool would make for the key is asked of the file system's own limits (no number of this tool's)."""
+    for p in paths:
+        d = os.path.dirname(p)
+        while not os.path.isdir(d):
+            d = os.path.dirname(d)
+        nmax, pmax = os.pathconf(d, "PC_NAME_MAX"), os.pathconf(d, "PC_PATH_MAX") - 1
+        n = max(len(os.fsencode(c)) for c in os.path.relpath(p, d).split(os.sep))
+        if n > nmax or len(os.fsencode(p)) > pmax:
+            raise bad(f"give the entry a shorter name: the file system allows {nmax} bytes for a name and {pmax} for a path, and this "
+                      f"one needs {n} and {len(os.fsencode(p))}")
 
 def writable(key, tgt):
     """Refused before any write when a folder this run must write in (the file's, the applied state's, the backups') cannot be
@@ -386,9 +436,17 @@ def state_path():
 def rec_ok(v):
     return isinstance(v, dict) and isinstance(v.get("sha256"), str) and (v.get("adopt") is None or isinstance(v["adopt"], str))
 
+BOUND = ("token", "sha256", "existed", "mode", "new_sha256", "prev_applied")   # what a backup's record binds of its meta file
+
 def saved_ok(v):
-    """A backup's record in the applied state: its token, and (since round 4) what the saved copy is."""
-    return isinstance(v, str) or (isinstance(v, dict) and isinstance(v.get("token"), str))
+    """A backup's record in the applied state: its token and what the saved copy is, all of BOUND. The older forms (a bare
+    token, a record with only a token) are refused (310): no applied state of that form exists (the phase was never merged)."""
+    return isinstance(v, dict) and isinstance(v.get("token"), str) and all(k in v for k in BOUND)
+
+def word(rec):
+    """The state of a backup, computed from its record in the applied state ALONE: set aside (an adopt), rollback-pending (a
+    rollback marked it), done (written as a step after the apply's event line), else pending. A missing word is pending."""
+    return "superseded" if rec.get("superseded") else "rollback-pending" if rec.get("rb") else "done" if rec.get("done") else "pending"
 
 def load_state():
     """({key: record}, counter, {key: {backup name: record}}). The counter orders the backups; a record is {sha256, mode, time}
@@ -420,22 +478,24 @@ def applied():
     return load_state()[0]
 
 def update_state(fn, seq=0):
-    """One change of the applied state under its lock. A change that would change nothing (an undo whose write never landed) is
-    not made and takes no lock, so an undo never waits for a lock another process holds."""
+    """One change of the applied state. Its lock is held by the command (exclusive(), from its first read to its printed line):
+    the state is read here, inside that lock, and nothing is decided from an earlier read; no lock is taken here, so an undo
+    never waits. A change that changes nothing is not written. A change that brings the records back to what they were at the
+    start of the command (an undo) puts the start's own bytes back: its counter, or no file at all."""
     p = state_path()
-    try:
-        a, c, b = load_state()
-        a2, b2 = json.loads(json.dumps(a)), json.loads(json.dumps(b))
-        fn(a2, b2)
-        if (a2, b2) == (a, b) and seq <= c and os.path.exists(p):
+    a, c, b = load_state()
+    old = json.dumps([a, b], sort_keys=True)
+    fn(a, b)
+    if "raw" in SNAP and not seq:
+        raw = SNAP["raw"]
+        d = json.loads(raw) if raw is not None else {}
+        if (a, b) == (d.get("applied", {}), d.get("backups", {})):
+            if read(p, "STL-CFG-310") != raw:
+                restore(p, raw, 0o600)
             return
-    except EventError:
-        pass   # an unreadable state is reported by the locked read below
-    mkdir_p(os.path.dirname(p))
-    with el.locked(p + ".lock"):
-        a, c, b = load_state()
-        fn(a, b)
-        atomic_write(p, json.dumps({"schema_version": 1, "applied": a, "backups": b, "counter": max(c, seq)}, indent=1).encode(), 0o600)
+    if json.dumps([a, b], sort_keys=True) == old and seq <= c:
+        return
+    atomic_write(p, json.dumps({"schema_version": 1, "applied": a, "backups": b, "counter": max(c, seq)}, indent=1).encode(), 0o600)
 
 def set_applied(key, rec, seq=None):
     def f(a, b):
@@ -467,8 +527,8 @@ UNKNOWN = object()
 
 def scan(key, now=UNKNOWN):
     """(good, junk, strange, stale) for the backup folders of a key. good: [(name, meta)] oldest first, recorded in the applied
-    state with the token in their meta (meta {} = damage: unreadable, or missing while the change it saved went through); its
-    status `superseded` is the applied state's word, not the meta's. junk: recorded names whose meta file is missing while the
+    state with the token in their meta (a meta of `status` alone = damage: unreadable, or missing while the change it saved went
+    through); `status` is always word() of the applied state's record, whatever the meta file says. junk: recorded names whose meta file is missing while the
     file (sha256 now) still holds the bytes recorded as saved (a kill before the meta was written: unfinished; with now unknown
     every such name). strange: names the applied state does not record (with a meta file or without), or whose token differs:
     never used, never deleted. stale: recorded names with no folder."""
@@ -488,16 +548,13 @@ def scan(key, now=UNKNOWN):
             strange.append((n, m if isinstance(m, dict) else {}))
             continue
         if m is None:
-            if isinstance(rec, dict) and now is not UNKNOWN and "sha256" in rec and rec["sha256"] != now:
-                good.append((n, {}))   # its change went through (or the file moved on): the missing meta is damage, nothing is deleted
+            if now is not UNKNOWN and rec["sha256"] != now:
+                good.append((n, {"status": word(rec)}))   # its change went through (or the file moved on): the missing meta is damage, nothing is deleted
             else:
                 junk.append(n)
             continue
-        m = m if isinstance(m, dict) else {}
-        tok = rec.get("token") if isinstance(rec, dict) else rec
-        if m and isinstance(rec, dict) and "superseded" in rec:   # set aside or not: what the applied state says
-            m = {**m, "status": "superseded"} if rec["superseded"] else ({**m, "status": "pending"} if m.get("status") == "superseded" else m)
-        (good if not m or tok == m.get("token") else strange).append((n, m))
+        m = {**(m if isinstance(m, dict) else {}), "status": word(rec)}   # the meta's own status word decides nothing
+        (good if len(m) == 1 or rec["token"] == m.get("token") else strange).append((n, m))
     order = lambda x: (seq_of(x[0] if isinstance(x, tuple) else x), x[0] if isinstance(x, tuple) else x)
     return sorted(good, key=order), sorted(junk, key=order), sorted(strange, key=order), sorted(n for n in known if n not in here)
 
@@ -508,14 +565,45 @@ def backed_ids():
     """Ids (first part of a key) that still have a backup the rollback can use (a superseded one is history only)."""
     return sorted({k.partition("/")[0] for k in load_state()[2] if live_of(scan(k)[0])})
 
+class Told(BaseException):
+    """A failure that was undone and told inside the lock; it carries the exit code out of exclusive()."""
+
 @contextlib.contextmanager
 def exclusive(key):
-    """One lock for the whole apply or rollback (every id: the cross-file rules see one change at a time), taken before the
-    validation. The row's own lock file is kept as well (a second name for the same wait)."""
-    lk = path(os.path.join(context()["idx"]["backup_dir"], ".locks"))
+    """The one lock of an apply or rollback, held from before its first read of the row until its one line is printed (every
+    id: the cross-file rules see one change at a time): the apply lock, the row's own lock file (a second name for the same
+    wait) and the applied state's lock. A failure is undone and told HERE, before the lock is released: every step, every undo,
+    the disk read that makes the failure line and the line itself happen inside it. The lock folders and files are made before
+    the first step and are not a change."""
+    lk, sp = path(os.path.join(context()["idx"]["backup_dir"], ".locks")), state_path()
     mkdir_p(lk)
-    with el.locked(os.path.join(lk, ".all.lock")), el.locked(os.path.join(lk, key.replace("/", "__") + ".lock")):
-        yield
+    mkdir_p(os.path.dirname(sp))
+    with el.locked(os.path.join(lk, ".all.lock")), el.locked(lock_of(key)), el.locked(sp + ".lock"):
+        try:
+            yield
+        except BaseException as e:
+            try:   # the one interrupt a run can get (interrupted()) may land before failed() is in its stopping state: told again
+                rc = failed(e, False)
+            except Interrupted:
+                rc = failed(e, False)
+            if rc is None:
+                raise
+            raise Told(rc)
+
+def out(text):
+    """The one line of a change that is complete, printed and flushed while the lock is held. From here an interrupt changes
+    nothing, and a reader that is gone (a closed pipe) does not turn the finished change into a failure."""
+    STOPPING.append(0)
+    with contextlib.suppress(OSError):
+        print(text)
+    flush()
+
+def flush():
+    try:
+        sys.stdout.flush()
+    except OSError:   # nothing can be printed: point stdout at the null device so the exit does not fail on the same line (exit 120)
+        with contextlib.suppress(OSError):
+            os.dup2(os.open(os.devnull, os.O_WRONLY), 1)
 
 def started(pid):
     """The start time of process pid (from /proc), None when there is no such process; the text 'unknown' when it cannot be told."""
@@ -555,18 +643,20 @@ def sweep(key, tgt):
         for n in os.listdir(d) if os.path.isdir(d) else []:
             f = os.path.join(d, n)
             with contextlib.suppress(OSError):
-                if n.startswith(TMP) and os.path.isfile(f) and not os.path.islink(f):
+                if TMP_RE.fullmatch(n) and os.path.isfile(f) and not os.path.islink(f):
                     did(key, "a leftover temp file: removed", lambda: None, None, lambda: os.unlink(f), clean=True)
-                elif n.startswith(GONE) and d == bdir(key) and os.path.isdir(f) and not os.path.islink(f):
+                elif n.startswith(GONE) and BACKUP_RE.fullmatch(n[len(GONE):]) and d == bdir(key) and os.path.isdir(f) and not os.path.islink(f):
                     did(key, "a removed backup's leftover: deleted", lambda: None, None, lambda: shutil.rmtree(f), clean=True)
 
-def logged(key, kind, token):
-    """True when a line of this kind for this key carries the token as a word. The apply token is in the backup's meta before
-    the apply line exists; a rollback's token is made when the rollback marks its backup and is in no line before its own.
-    Asked only when a run resumes an unfinished step."""
+def logged(key, kind, token, name=None):
+    """True when a line of this kind for this key has the tool's own shape: `backup <name> token <token>` (apply, rollback) or
+    `token <token>` (adopt), not the token as a loose word. That an apply's line is written is a fact of the applied state
+    (`done`); the log is read for it only where that fact is missing or being made: by the finish of a killed apply or adopt,
+    by a rollback of a backup not marked done or that resumes a marked one, and by the undo of an event-line step (did its
+    write land?)."""
     evs, _ = el.read_log()
-    word = re.compile(r"(^|\s)token " + re.escape(token) + r"(\s|$)")
-    return any(e.get("what") == key and e.get("type") == kind and word.search(str(e.get("detail", ""))) for e in evs)
+    shape = re.compile(r"(^|\s)" + re.escape((f"backup {name} " if name else "") + f"token {token}") + r"(\s|$)")
+    return any(e.get("what") == key and e.get("type") == kind and shape.search(str(e.get("detail", ""))) for e in evs)
 
 # ---- parse, validate, diff ----
 def shell_read(row):
@@ -718,7 +808,7 @@ def index_moves(doc):
         raise bad(f"the candidate index: {why[0][1][:160]}")
     gone = [i for i in backed_ids() if i not in {r.get("id") for r in files}]
     if gone:
-        raise bad(f"roll those back first, then drop the row: the candidate index drops a row that still has a backup ({', '.join(gone)[:60]})")
+        raise bad(f"roll those back first, then drop the row: the candidate index drops a row that still has a backup ({', '.join(gone)})")
 
 def validate(row, rel, data):
     try:
@@ -736,15 +826,31 @@ def validate(row, rel, data):
     try:
         after = problems(rel, data)
         base = problems(rel, None) if after else set()
-        had = {p[0] for p in base}   # by row, not by text: a row that had a problem before is not judged by how its line reads now
-        new = sorted(p for p in after if p[0] == row["id"] or p[0] not in had or "could not run" in p[1])   # a set that cannot be checked is no set to write into
     except EventError:
         raise
     except Exception as e:
         raise bad(f"the validity check failed: {type(e).__name__}")
-    if new:
-        raise bad(f"the candidate is invalid: {new[0][0]}: {new[0][1]}"[:135] + (f" (+{len(new) - 1} more)" if len(new) > 1 else ""))
+    why = added(row["id"], base, after)
+    if why:
+        raise bad(why)
     return doc
+
+def added(rid, base, after):
+    """The one rule of the whole-set check: a candidate (and a saved copy a rollback restores) may not add a problem to the set.
+    Each problem LINE is judged, never a whole row: a line (row, text) of the data tool that was not there before the change
+    refuses, in any row; a line of the candidate's own row refuses also when it was there; a set that cannot be checked is no
+    set to write into. A line of another row that only reworded itself is refused too (the price of comparing texts): the
+    message names that row, says it already had a problem and gives the way out. None when nothing refuses."""
+    new = sorted(p for p in after if p[0] == rid or p not in base or "could not run" in p[1])
+    if not new:
+        return None
+    row, text = new[0]
+    more = f" (+{len(new) - 1} more)" if len(new) > 1 else ""
+    if row != rid and "could not run" not in text and any(p[0] == row for p in base):
+        way = f"fix {row} first (`stella_data.py check` lists its problems), then run this again"
+        why = f"{way}: {row} already had a problem, and the candidate adds a line to its check"
+        return fit(f"{why} ({text}){more}", why + more, f"{way}: it already had a problem, the candidate adds a line{more}")
+    return fit(f"the candidate is invalid: {row}: {text}{more}", f"the candidate is invalid: {row}: {text}"[:190 - len(more)] + more)
 
 def flat(v, ptr=""):
     if isinstance(v, dict) and v:
@@ -776,15 +882,17 @@ def who():
     except KeyError:   # a container run with --user: no passwd entry
         return {"user": str(os.getuid())}
 
-def event(row, key, kind, old, new, detail):
+UNPARSED = {"unparsed": True}   # a side of an event line whose file exists and does not parse (null is: no file)
+
+def event(row, key, kind, old, new, detail, unparsed=()):
     """One event line, built and judged (size, shape, schema) now, before anything changes; written later by log(). The detail is
     the tool's own text (hashes, the backup name, the token): it is not scrubbed by substring, which could garble the name or
     the token when a masked value is a few characters long."""
     o, n = changes(row["format"], old, new)
     line = el.build(kind, key, o, n, detail=detail, who=who())
     for k, d in (("old", old), ("new", new)):
-        if d is None:
-            line[k] = None   # no file on that side: null, not an empty change
+        if d is None:   # no file on that side: null, not an empty change; a file that is there and does not parse says so
+            line[k] = UNPARSED if k in unparsed else None
     el.prepare(line, row["id"], scrub_detail=False)
     return line
 
@@ -810,93 +918,104 @@ def did(key, what, undo, way, act=None, clean=False):
     if act:
         act()
 
-def line_undo(key, kind, token):
+def line_undo(key, kind, token, name=None):
     """The undo of an event line: nothing when the line is not in the log (the write never landed), else it stays."""
     def u():
-        if logged(key, kind, token):
+        if logged(key, kind, token, name):
             raise Stay
     return u
 
-def mine(tgt, written, before, mode):
-    """The undo of a replace: put the bytes back only when the file holds what this run wrote (another edit is never overwritten)."""
-    def u():
-        now = read(tgt)
-        if now == written and written != before:
-            restore(tgt, before, mode)
-        elif now != before:
-            raise OSError(errno.EBUSY, "the file holds bytes this run did not write")
-    return u
+def mark_done(key, name, saved):
+    """The step that says an apply is complete: `done` in the backup's record of the applied state, written after the event
+    line (so done also means: the apply line is in the log). Its undo is nothing: the line before it stays."""
+    did(key, f"backup {name}: done in the applied state", lambda: None, None, lambda: register(key, name, {**saved, "done": True}, 0))
 
 def judged(tgt, before):
-    """The file must still hold the bytes the command judged; else 314 (a hand edit made while the command ran): nothing is
-    replaced and the edit is kept. Called after the validation and again at each replace."""
+    """The file must still hold the bytes the command read; else 314 (a hand edit made while the command ran): nothing is
+    replaced and the edit is kept. Called once before the first step and again at the replace. What it finds (the edit's hash
+    and the file's mode) is recorded as the file's state at the start: the edit is not this run's change."""
     now = read(tgt)
     if now != before:
+        key = SNAP.get("key", "<id>")
         if SNAP:
-            SNAP["state"]["file"] = sha(now) if now is not None else None   # the edit is not this run's change
-        raise bad(f"run the command again to judge the file as it is now: {qs(rel_of(tgt))} was changed while this command "
-                  "ran; nothing was replaced and the edit is kept", "STL-CFG-314")
+            SNAP["state"].update(file=sha(now) if now is not None else None, mode=mode_of(tgt))
+            SNAP["edited"] = True
+        raise bad(fit(f"record the edit (`apply {key} --from <file>` with a copy of the file as it is) or revert it by hand, then run "
+                      f"this command again: {qs(rel_of(tgt))} was changed while this command ran; nothing was replaced, the edit is kept",
+                      f"record the edit (`apply {key} --from <file>` with a copy of the file as it is) or revert it by hand: the file "
+                      "was changed while this command ran; the edit is kept"), "STL-CFG-314")
 
-def replace(tgt, before, data, mode):
-    """Every replace of a data file goes through here: judged, then replaced. The compare and the replace are two system calls:
-    an edit between them is the window left."""
-    judged(tgt, before)
-    restore(tgt, data, mode)
+def mode_of(tgt):
+    try:
+        return os.lstat(tgt).st_mode & 0o7777
+    except FileNotFoundError:
+        return None
 
-def state_of(key, tgt):
-    """What an owner can see of a key, read from the disk: the file (sha256, mode), its applied record, the backups recorded for
-    it, its backup folders with their status, the event lines about it."""
+def swap(key, what, tgt, before, data, mode, mode0, way):
+    """The step that replaces a data file (apply and rollback): the temp file is written and synced, THEN the file is compared
+    once more with what was read (judged), then the one rename. Its undo asks one question, at its own rename too: does the
+    file hold the bytes this run wrote? Yes: the bytes it replaced go back. No: nothing is written, and that is never a failure
+    of the undo: when this run never replaced the file (the compare refused, or the rename never landed) the undo goes on and
+    everything the run entered is undone; when it did and someone wrote over that, the undo stops here (Stay) and the saved copy
+    is kept."""
+    passed = []
+    def mine():
+        now = read(tgt)
+        if now != data and passed and now != before:
+            raise Stay
+        return now == data
+    def judge():
+        judged(tgt, before)
+        passed.append(1)
+    def stay():
+        if not mine():
+            raise Stay
+    did(key, what, lambda: mine() and restore(tgt, before, mode0, stay), way, lambda: restore(tgt, data, mode, judge))
+
+def state_of(key, tgt, cur=UNKNOWN):
+    """What an owner can see of a key, read from the disk: the file (sha256, mode; cur: its bytes when the caller just read
+    them), its applied record, the backups recorded for it, its backup folders with their state, the event lines about it (the
+    event log is read here: at the start of every writing command and once more when one fails)."""
     def safe(f):
         try:
             return f()
         except Exception as e:
             return f"unreadable ({type(e).__name__})"
     def folders():
-        d, out = bdir(key), {}
+        d, out, known = bdir(key), {}, load_state()[2].get(key, {})
         for n in sorted(os.listdir(d)) if os.path.isdir(d) else []:
-            if not n.startswith("."):
-                raw = try_read(os.path.join(d, n, "meta.json"))
-                out[n] = safe(lambda: json.loads(raw).get("status")) if raw is not None else "no meta"
+            if not n.startswith("."):   # the applied state's word for it, and whether its meta file is there
+                out[n] = (word(known[n]) if n in known else "not recorded") + ("" if os.path.lexists(os.path.join(d, n, "meta.json")) else ", no meta")
         return out
     def file():
-        b = read(tgt)
+        b = read(tgt) if cur is UNKNOWN else cur
         return sha(b) if b is not None else None
-    return {"file": safe(file), "mode": safe(lambda: os.lstat(tgt).st_mode & 0o7777), "record": safe(lambda: load_state()[0].get(key)),
+    return {"file": safe(file), "mode": safe(lambda: mode_of(tgt)), "record": safe(lambda: load_state()[0].get(key)),
             "saved": safe(lambda: load_state()[2].get(key)), "backups": safe(folders),
             "lines": safe(lambda: len([e for e in el.read_log()[0] if e.get("what") == key]))}
 
 def begin(key, tgt, want):
-    """The state at the start of a writing command, which a failure is compared with; want: the sha256 of what it writes. The
-    applied state's bytes are kept too: the undo of the first record puts them back (its counter and its very existence)."""
-    SNAP.update(key=key, tgt=tgt, want=want, state=state_of(key, tgt), raw=read(state_path(), "STL-CFG-310"))
-
-def unrecord(key, name):
-    """The undo of a backup's record: the record goes, and when the applied state then holds what it held at the start, its
-    bytes are put back as they were (a counter moved on, a file this run created)."""
-    unregister(key, name)
-    p, raw = state_path(), SNAP.get("raw")
-    now = read(p, "STL-CFG-310")
-    if now == raw:
-        return
-    rec = lambda b: None if b is None else (lambda d: (d.get("applied"), d.get("backups", {})))(json.loads(b))
-    if rec(now) == rec(raw) or (raw is None and rec(now) == ({}, {})):
-        with el.locked(p + ".lock"):
-            restore(p, raw, 0o600)
+    """The one point where a writing command reads the file and takes the state a failure is compared with: after the
+    validation, before the first step. Returns the file's bytes; want: the sha256 of what the command writes. The applied
+    state's bytes are kept too: an undo that brings its records back puts them back (update_state)."""
+    cur = read(tgt)
+    SNAP.update(key=key, tgt=tgt, want=want, state=state_of(key, tgt, cur), raw=read(state_path(), "STL-CFG-310"))
+    return cur
 
 def described(s0, s1, want):
     """What is on disk now against the start, in the owner's words (file, backups, applied state, event line)."""
     f = s1["file"]
     out = ["file: " + ("as before" if f == s0["file"] else "the bytes this command writes" if f == want else "gone" if f is None
                        else "other bytes")]
-    b0, b1 = (s0["backups"] if isinstance(s0["backups"], dict) else {}), (s1["backups"] if isinstance(s1["backups"], dict) else {})
-    out += [f"backup {n}: " + ("removed" if n not in b1 else str(b1[n])) for n in sorted(set(b0) | set(b1)) if b0.get(n) != b1.get(n)]
     r = s1["record"]
     out.append("applied state: " + ("as before" if (r, s1["saved"]) == (s0["record"], s0["saved"]) else "no record" if r is None
                                     else "records the bytes this command writes" if isinstance(r, dict) and r.get("sha256") == want
                                     else "changed"))
     n = s1["lines"] - s0["lines"] if isinstance(s1["lines"], int) and isinstance(s0["lines"], int) else None
     out.append("event line: " + ("not written" if n == 0 else "written" if n else "unknown"))
-    return "; ".join(out)
+    b0, b1 = (s0["backups"] if isinstance(s0["backups"], dict) else {}), (s1["backups"] if isinstance(s1["backups"], dict) else {})
+    bs = [f"backup {n}: " + ("removed" if n not in b1 else str(b1[n])) for n in sorted(set(b0) | set(b1)) if b0.get(n) != b1.get(n)]
+    return fit("; ".join(out + bs), "; ".join(out + [f"{len(bs)} backups changed (see `history`)"]))   # never a list cut in the middle
 
 # ---- commands ----
 def drift_of(key, rel, tgt, cur, rec):
@@ -924,7 +1043,7 @@ def meta_problem(m, name, saved=None):
           and isinstance(m.get("new_sha256"), str) and (pa is None or rec_ok(pa)) and isinstance(m.get("token"), str)
           and type(sq) is int and 0 < sq <= MAXSEQ and sq == seq_of(name))
     if ok and isinstance(saved, dict):
-        ok = all(saved.get(k, m.get(k)) == m.get(k) for k in ("sha256", "existed", "mode", "new_sha256", "token", "prev_applied"))
+        ok = all(saved[k] == m.get(k) for k in BOUND)
         rb = saved.get("rb")
         ok = ok and (rb is None or (isinstance(rb, dict) and isinstance(rb.get("token"), str) and isinstance(rb.get("same"), bool)
                                     and isinstance(rb.get("logged"), bool)))
@@ -941,8 +1060,13 @@ def pending_action(key, cur, cand, good, junk, strange, rec):
     (the EventError to raise) | finish (an apply killed after the replace, repeated) | adopt (the file was edited by hand since
     the interrupted change and cand holds those bytes) | finish_adopt (an adopt killed before its event line)."""
     if strange:
-        return "refuse", bad(f"look at backup folder {qs(strange[0][0])} of {key}, then remove it by hand: the applied state does "
-                             "not record it", "STL-CFG-316")
+        d, why = qs(rel_of(os.path.join(bdir(key), strange[0][0]))), "the applied state does not record it"
+        return "refuse", bad(fit(
+            f"look at the folder {d}, then remove it by hand: {why} (if the applied state was lost or put back from an older copy, "
+            "it may be this tool's own saved copy of the file)",
+            f"look at the folder {d}, then remove it by hand: {why}; it may be this tool's own saved copy of the file",
+            f"look at the folder {d}, then remove it by hand: {why} (it may be this tool's saved copy)",
+            f"look at the folder {d}, then remove it by hand: {why}"            ), "STL-CFG-316")
     if junk:
         return "refuse", bad(unfinished_text(key, junk[-1]))
     if rec and rec.get("adopt"):
@@ -951,7 +1075,7 @@ def pending_action(key, cur, cand, good, junk, strange, rec):
         return "refuse", bad(f"run `apply {key} --from <file>` with a copy of the file as it is: recording a hand edit stopped "
                              "before its line")
     live = live_of(good)
-    open_ = [x for x in live if x[1].get("status") != "done"]
+    open_ = [x for x in live if x[1]["status"] != "done" or meta_problem(x[1], x[0], saved_of(key, x[0]))]   # the applied state's word; a damaged meta is told too
     if not open_:
         return "none", None
     name, m = open_[-1]
@@ -961,8 +1085,7 @@ def pending_action(key, cur, cand, good, junk, strange, rec):
     if (name, m) == live[-1] and m["status"] == "pending" and cur is not None and cur == cand and m["new_sha256"] == sha(cand):
         return "finish", None
     now = sha(cur) if cur is not None else None
-    rb = (saved_of(key, name) or {}).get("rb") if isinstance(saved_of(key, name), dict) else None
-    if rb and now in (m["new_sha256"], m["sha256"]):
+    if m["status"] == "rollback-pending" and now in (m["new_sha256"], m["sha256"]):
         return "refuse", bad(f"run `rollback {key}` to finish it: a rollback of {key} was interrupted")
     if now == m["new_sha256"]:
         return "refuse", bad(finish_text(key) + f", or `rollback {key}` (interrupted)")
@@ -970,8 +1093,16 @@ def pending_action(key, cur, cand, good, junk, strange, rec):
         return "refuse", bad(f"run `rollback {key}` first, which removes its backup: an earlier apply stopped before the replace")
     if cur is not None and cur == cand:
         return "adopt", None
-    return "refuse", bad(f"record the file (`apply {key} --from <file>` with a copy of it) or put it back by hand: a change was "
-                         "interrupted, then the file was edited")
+    return "refuse", bad(f"run `apply {key} --from <file>` with a copy of the file as it is (that records the edit), or put the file "
+                         "back by hand: a change was interrupted, then the file was edited")
+
+def unfinished(key, cur):
+    """The one source of the way out of a change that is not finished: the refusal `check` prints for the key as the disk is
+    now (None: nothing is unfinished). The failure line of a change that stopped takes its way out from here too, so the
+    command a 321 line names is the command `check` names."""
+    good, junk, strange, _ = scan(key, sha(cur) if cur is not None else None)
+    act, err = pending_action(key, cur, None, good, junk, strange, applied().get(key))
+    return err if act != "none" else None
 
 def finish_text(key):
     """The one way out of a pending apply whose file holds the new bytes (apply and rollback both print it)."""
@@ -1018,10 +1149,13 @@ def dry_run(row, key, tgt, rel, cand):
                "adopt": f"would record the current file as applied (it was changed by hand since an interrupted change) and set the "
                         f"interrupted backup of {key} aside"}[act])
         return 0
+    st = drift_of(key, rel, tgt, cur, applied().get(key))[1]   # the refusals the apply makes, in its order: the baseline, the mode, the counter
     if cur == cand:
-        st = drift_of(key, rel, tgt, cur, applied().get(key))[1]
         print(f"would record the current file as applied (it was changed by hand): {key}" if st == "drift" else f"no change: {key}")
-    elif not parses:
+        return 0
+    mode_ok(rel, mode_of(tgt) or 0)
+    next_seq(key, good)
+    if not parses:
         print(f"the current file does not parse, so there is no diff; the candidate would replace it: {key}")
     else:
         d = list(difflib.unified_diff(text(row["format"], old_doc, red), text(row["format"], new_doc, red), "current", "candidate", lineterm=""))
@@ -1078,17 +1212,30 @@ def adopt(row, key, tgt, cand, new_doc, rec, good, resume):
         did(key, f"backup {n}: set aside", lambda mp=mp, m=m: atomic_write(mp, json.dumps(m).encode(), 0o600), again,
             lambda: atomic_write(mp, json.dumps({**m, "status": "superseded"}).encode(), 0o600))
     did(key, "applied state: the hand edit", lambda: set_applied(key, marked), again, lambda: set_applied(key, rec_of(cand, mode)))
-    print(f"recorded: {key} (the current file was changed by hand; no backup; the older backups are kept as history only)")
+    out(f"recorded: {key} (the current file was changed by hand; no backup; the older backups are kept as history only)")
     return 0
+
+def mode_ok(rel, mode):
+    """One mask for a data file's mode everywhere (never applied and then stuck in rollback); apply and its dry run refuse alike."""
+    if mode & ~0o777:
+        m = f"{mode & 0o777:o}"
+        raise bad(fit(f"run `chmod {m} {rel}` first: a data file may not have mode {mode:o} (setuid, setgid or sticky)",
+                      f"run `chmod {m} {rel}` first: a setuid, setgid or sticky bit"))
+
+def next_seq(key, good):
+    """The counter of the next backup; a full counter is refused (apply and its dry run alike)."""
+    seq = max([load_state()[1]] + [seq_of(n) for n, _ in good]) + 1
+    if seq > MAXSEQ:
+        raise bad(f"roll back or remove by hand the old backups of {key}, then set `counter` to 0 in the applied state: it is full")
+    return seq
 
 def apply_locked(row, key, tgt, rel, cand):
     red = el.redactor(row["id"])
     writable(key, tgt)
-    begin(key, tgt, sha(cand))
     sweep(key, tgt)
     new_doc = validate(row, rel, cand)
     tgt = path(rel)   # validation took time: the folders on the way are looked at again before the read
-    cur = read(tgt)
+    cur = begin(key, tgt, sha(cand))   # the one read of the file, and the snapshot, after the validation
     old_doc, parses = parse_or_none(row, cur)
     note_secrets(old_doc, red)
     rec = applied().get(key)
@@ -1100,35 +1247,30 @@ def apply_locked(row, key, tgt, rel, cand):
         return finish_apply(row, key, tgt, cand, new_doc, *live_of(good)[-1])
     if act in ("adopt", "finish_adopt"):
         return adopt(row, key, tgt, cand, new_doc, rec, good, act == "finish_adopt")
+    drift = drift_of(key, rel, tgt, cur, rec)[1]   # every apply asks for the baseline: one that cannot be read refuses here, before any step
     if cur == cand:
-        if drift_of(key, rel, tgt, cur, rec)[1] != "drift":
-            print(f"no change: {key}")
+        if drift != "drift":
+            out(f"no change: {key}")
             return 0
         return adopt(row, key, tgt, cand, new_doc, rec, good, False)   # the bytes are already there (a hand edit): record them, no backup
     el.preflight()
     mode = os.lstat(tgt).st_mode & 0o7777 if cur is not None else 0o600 if row["owner_only"] or row["redact_keys"] else 0o644
-    if mode & ~0o777:   # one mask for a data file's mode everywhere: never applied and then stuck in rollback
-        m = f"{mode & 0o777:o}"
-        raise bad(fit(f"run `chmod {m} {rel}` first: a data file may not have mode {mode:o} (setuid, setgid or sticky)",
-                      f"run `chmod {m} {rel}` first: a setuid, setgid or sticky bit"))
-    a, counter, _ = load_state()
-    prev, seq = a.get(key), max([counter] + [seq_of(n) for n, _ in good]) + 1
-    if seq > MAXSEQ:
-        raise bad(f"roll back or remove by hand the old backups of {key}, then set `counter` to 0 in the applied state: it is full")
-    name = f"{seq:08d}-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    mode_ok(rel, mode)
+    prev, seq = rec, next_seq(key, good)
+    name =f"{seq:08d}-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     token, bd = secrets.token_hex(16), os.path.join(bdir(key), name)
     meta = {"path": rel, "existed": cur is not None, "mode": mode, "sha256": sha(cur) if cur is not None else None,
             "new_sha256": sha(cand), "prev_applied": prev, "seq": seq, "token": token, "status": "pending"}
     line = event(row, key, "apply", old_doc, new_doc, hashes(row, meta["sha256"], sha(cand))
-                 + f"backup {name} token {token}" + ("" if parses else " (the current file did not parse)"))
+                 + f"backup {name} token {token}" + ("" if parses else " (the current file did not parse)"), () if parses else ("old",))
     back = f"`rollback {key}`"
-    def drop_if_old():   # the saved copy goes only while the file is proven to hold the bytes it saved
-        if read(tgt) != cur:
-            raise OSError(errno.EBUSY, "the file does not hold the saved bytes")
+    def drop_if_old():   # the same one question: the saved copy goes unless the file holds the bytes this run wrote
+        if read(tgt) == cand:
+            raise OSError(errno.EBUSY, "the file still holds the bytes this run wrote")
         drop_backup(bd)
-    saved = {k: meta[k] for k in ("token", "sha256", "existed", "mode", "new_sha256", "prev_applied")}
+    saved = {k: meta[k] for k in BOUND}
     judged(tgt, cur)
-    did(key, f"backup {name}: recorded", lambda: unrecord(key, name), back, lambda: register(key, name, saved, seq))   # known before the file is touched
+    did(key, f"backup {name}: recorded", lambda: unregister(key, name), back, lambda: register(key, name, saved, seq))   # known before the file is touched
     did(key, "its folder made", drop_if_old, back, lambda: mkdir_p(bd))
     if cur is not None:
         did(key, "its saved copy written", lambda: None, back, lambda: atomic_write(os.path.join(bd, "file"), cur, 0o600))
@@ -1136,12 +1278,13 @@ def apply_locked(row, key, tgt, rel, cand):
         lambda: atomic_write(os.path.join(bd, "file.applied"), cand, 0o600))
     did(key, "its meta written (pending)", lambda: None, back, lambda: atomic_write(os.path.join(bd, "meta.json"), json.dumps(meta).encode(), 0o600))
     tgt = path(rel)
-    did(key, "file: the new bytes", mine(tgt, cand, cur, mode), back, lambda: replace(tgt, cur, cand, mode))
+    swap(key, "file: the new bytes", tgt, cur, cand, mode, mode, back)
     did(key, "applied state: the new bytes", lambda: set_applied(key, prev), back, lambda: set_applied(key, rec_of(cand, mode), seq))
-    did(key, "event line: written", line_undo(key, "apply", token), f"`apply {key} --from <file>` with the same file", lambda: log(row, line))
+    did(key, "event line: written", line_undo(key, "apply", token, name), f"`apply {key} --from <file>` with the same file", lambda: log(row, line))
+    mark_done(key, name, saved)
     meta["status"] = "done"
     did(key, "backup: status done", lambda: None, None, lambda: atomic_write(os.path.join(bd, "meta.json"), json.dumps(meta).encode(), 0o600))
-    print(f"applied: {key} (backup {name})")
+    out(f"applied: {key} (backup {name})")
     return 0
 
 def finish_apply(row, key, tgt, cand, new_doc, name, meta):
@@ -1150,17 +1293,18 @@ def finish_apply(row, key, tgt, cand, new_doc, name, meta):
     old_doc, _ = parse_or_none(row, read(os.path.join(bd, "file"), "STL-CFG-316") if meta["existed"] else None)
     note_secrets(old_doc, el.redactor(row["id"]))
     el.preflight()
-    line = None if logged(key, "apply", meta["token"]) else event(
+    line = None if logged(key, "apply", meta["token"], name) else event(
         row, key, "apply", old_doc, new_doc, hashes(row, meta["sha256"], sha(cand)) + f"backup {name} token {meta['token']}")
     again = f"`apply {key} --from <file>` with the same file"
     before = applied().get(key)
     did(key, "applied state: the new bytes", lambda: set_applied(key, before), again,
         lambda: set_applied(key, rec_of(cand, os.lstat(tgt).st_mode & 0o7777), meta["seq"]))
     if line:
-        did(key, "event line: written", line_undo(key, "apply", meta["token"]), again, lambda: log(row, line))
+        did(key, "event line: written", line_undo(key, "apply", meta["token"], name), again, lambda: log(row, line))
+    mark_done(key, name, saved_of(key, name))
     meta["status"] = "done"
     did(key, "backup: status done", lambda: None, None, lambda: atomic_write(os.path.join(bd, "meta.json"), json.dumps(meta).encode(), 0o600))
-    print(f"applied: {key} (backup {name}; the bookkeeping of an interrupted apply was finished)")
+    out(f"applied: {key} (backup {name}; the bookkeeping of an interrupted apply was finished)")
     return 0
 
 def do_rollback(arg):
@@ -1172,111 +1316,133 @@ def do_rollback(arg):
         row, key, tgt, rel = relock(arg, row)
         writable(key, tgt)
         red = el.redactor(row["id"])
-        begin(key, tgt, None)
         sweep(key, tgt)
-        cur = read(tgt)
+        again, checked = f"`rollback {key}`", None
+        while True:   # the saved copy is validated first (it takes time); the file is read, and everything decided, after it
+            cur = begin(key, tgt, None)
+            v = rollback_view(row, key, rel, cur)
+            if v["check"] in (None, checked):
+                break
+            checked = v["check"]
+            v["validate"]()
+        good, junk, strange, stale = v["good"], v["junk"], v["strange"], v["stale"]
         now = sha(cur) if cur is not None else None
-        good, junk, strange, stale = scan(key, now)
-        again = f"`rollback {key}`"
         if strange:
             raise pending_action(key, None, None, good, junk, strange, None)[1]
-        known = load_state()[2].get(key, {})
-        done = [n for n in stale if isinstance(known.get(n), dict) and known[n].get("rb")]
-        if done:   # a rollback that removed its backup and stopped before its last bookkeeping was complete: say so, undo no more
-            did(key, "stale records: removed", lambda: None, None, lambda: unregister(key, *stale))
-            print(f"the rollback of {key} (backup {done[-1]}) was already complete; nothing more was done. Run rollback {key} again "
-                  "to undo the change before it")
-            return 0
-        if junk:   # an unfinished backup folder: nothing was replaced, so it only holds a stray copy. Removing it is a step of its own.
-            for n in junk:
-                p = os.path.join(bdir(key), n)
-                did(key, f"unfinished backup {n}: removed", gone_undo(p), again, lambda: drop_backup(p))
-            did(key, "their records: removed", lambda: None, None, lambda: unregister(key, *junk, *stale))
-            print(f"removed the unfinished backup folder {', '.join(qs(n) for n in junk)} of {key}; nothing was restored "
-                  f"(the file was not touched). Run rollback {key} again to undo the last change")
-            return 0
-        live = live_of(good)
-        if not live:
-            raise bad(f"restore it by hand or from git if needed: no apply of {key} can be undone" + (
-                " (older backups were set aside when a hand edit was recorded)" if good else ""), "STL-CFG-316")
-        name, meta = live[-1]
-        bd, saved = os.path.join(bdir(key), name), known.get(name)
-        if meta_problem(meta, name, saved):
-            raise bad(f"look at backup {qs(name)} of {key} by hand (its copy is kept): its meta is missing, wrong or not "
-                      "as recorded", "STL-CFG-316")
-        back = read(os.path.join(bd, "file"), "STL-CFG-316") if meta["existed"] else None
-        if meta["existed"] and (back is None or sha(back) != meta["sha256"]):
-            raise bad(f"restore {key} by hand or from git: the saved copy in backup {name} is " + ("missing" if back is None else "damaged (its sha256 differs)")
-                      , "STL-CFG-316")
-        if now not in (meta["new_sha256"], meta["sha256"]):
-            raise bad(f"revert the edit by hand, or record it (`apply {key} --from <file>` with a copy of it): it changed after the apply",
-                      "STL-CFG-314")
-        saved_d = saved if isinstance(saved, dict) else {"token": saved}
-        rb = saved_d.get("rb")   # what a rollback marked: the applied state's word only (a meta file can be rewritten)
-        resumed = rb is not None
-        same = now == meta["sha256"]   # the file holds the bytes the backup saved now
-        if not same and back is not None and parse_or_none(row, back)[1]:   # saved bytes the reader cannot parse were in use as they are
-            try:
-                validate(row, rel, back)
-            except EventError as e:
-                why = re.sub(r"^the candidate (is not valid|is invalid)[: ]*", "", e.problem)
-                way = finish_text(key) if meta["status"] == "pending" else f"apply the content you want (`apply {key} --from <file>`)"
-                raise bad(fit(f"{way}: the saved copy fails a check a candidate must pass ({why[:90]})",
-                              f"{way}: the saved copy fails a check ({why[:40]})", f"{way}: the saved copy fails a check"))
-        judged(tgt, cur)   # judged again after the validation (it took time): an edit made meanwhile is kept
-        same0, apply_logged = (rb["same"], rb["logged"]) if resumed else (same, logged(key, "apply", meta["token"]))
-        rbt = rb["token"] if resumed else secrets.token_hex(16)
-        # shortcut: a restore that deletes a file (the apply created it) is not checked against the whole set, upgrade if a deleted row file can break a cross-file rule
-        el.preflight()
-        old_status, cur_rec = meta["status"], applied().get(key)
-        was = try_read(os.path.join(bd, "file.applied"))   # the bytes the apply wrote: the old side of the line, also when the restore already happened
-        was = was if was is not None and sha(was) == meta["new_sha256"] else cur
-        old_doc, _ = parse_or_none(row, was)
-        new_doc, _ = parse_or_none(row, back)
-        for d in (old_doc, new_doc):
-            note_secrets(d, red)
-        cur_mode = os.lstat(tgt).st_mode & 0o7777 if cur is not None else 0o644
-        new_rec = saved_d.get("prev_applied", meta["prev_applied"])   # the applied state's own copy where it has one
-        if new_rec is None and back is not None and git_blob(rel) is None:   # a file git does not track keeps the restored hash as its baseline
-            new_rec = rec_of(back, meta["mode"])
-        # the lines this rollback owes, judged before anything changes: the apply line when the apply replaced the file but never
-        # logged it (L2), and its own line when there was a logged change or the file changes (a never-logged apply that never
-        # took effect needs none, L1)
-        aline = None if apply_logged or same0 or (resumed and logged(key, "apply", meta["token"])) else event(
-            row, key, "apply", new_doc, old_doc, hashes(row, meta["sha256"], meta["new_sha256"])
-            + f"backup {name} token {meta['token']} (written by the rollback that undoes it)")
-        owes = apply_logged or not same0
-        rline = None if not owes or (resumed and logged(key, "rollback", rbt)) else event(
-            row, key, "rollback", old_doc, new_doc,
-            (f"nothing to restore: the file already held the saved bytes of backup {name}" if same0 else f"restored backup {name}") + f" token {rbt}")
-        SNAP["want"] = meta["sha256"]
-        if stale:   # recorded, but the folder is gone by hand: bookkeeping after every refusal, undone like any step
-            gone = {n: known[n] for n in stale}
-            did(key, "records of missing backup folders: removed", lambda: update_state(lambda a, b: b.setdefault(key, {}).update(gone)),
-                again, lambda: unregister(key, *stale))
-        if not resumed:
-            marked = {**saved_d, "rb": {"token": rbt, "same": same0, "logged": apply_logged}}
-            did(key, f"backup {name}: marked for rollback in the applied state", lambda: register(key, name, saved_d, 0), again,
-                lambda: register(key, name, marked, 0))
-            mp = os.path.join(bd, "meta.json")
-            did(key, "its meta: rollback-pending", lambda: atomic_write(mp, json.dumps({**meta, "status": old_status}).encode(), 0o600), again,
-                lambda: atomic_write(mp, json.dumps({**meta, "status": "rollback-pending"}).encode(), 0o600))
-        tgt = path(rel)
-        if not same:
-            did(key, "file: the saved bytes", mine(tgt, back, cur, cur_mode), again, lambda: replace(tgt, cur, back, meta["mode"]))
-        did(key, "applied state: the saved bytes", lambda: set_applied(key, cur_rec), again, lambda: set_applied(key, new_rec))
-        if aline:
-            did(key, "apply line: written", line_undo(key, "apply", meta["token"]), again, lambda: log(row, aline))
-        if rline:
-            did(key, "rollback line: written", line_undo(key, "rollback", rbt), again, lambda: log(row, rline))
-        did(key, "backup: removed", gone_undo(bd), None, lambda: drop_backup(bd))
-        did(key, "its record: removed", lambda: None, None, lambda: unregister(key, name))
-    if not owes:
-        print(f"nothing to restore: the apply of {key} stopped before it took effect; its backup {name} was removed")
-    elif same0 and not resumed:
-        print(f"nothing to restore: {key} already matches its backup {name}")
-    else:
-        print(f"rolled back: {key} (backup {name}" + ("; an interrupted rollback was finished)" if resumed else ")"))
+        return rollback_locked(row, key, tgt, rel, cur, now, again, red, good, junk, stale)
+
+def rollback_view(row, key, rel, cur):
+    """What a rollback finds for the file as just read: the backups, and the saved copy that has to pass the validation before
+    the file is read for the last time (check: its identity, None when nothing has to be validated)."""
+    now = sha(cur) if cur is not None else None
+    good, junk, strange, stale = scan(key, now)
+    v = {"good": good, "junk": junk, "strange": strange, "stale": stale, "check": None}
+    live = live_of(good)
+    if strange or junk or not live or meta_problem(live[-1][1], live[-1][0], saved_of(key, live[-1][0])):
+        return v   # refused or settled without a restore: rollback_locked says which
+    name, meta = live[-1]
+    back = try_read(os.path.join(bdir(key), name, "file")) if meta["existed"] else None
+    if back is None or sha(back) != meta["sha256"] or now != meta["new_sha256"] or not parse_or_none(row, back)[1]:
+        return v   # no copy to restore, nothing to restore (or a hand edit: 314), or saved bytes the reader cannot parse (in use as they are)
+    def validate_saved():
+        try:
+            validate(row, rel, back)
+        except EventError as e:
+            why = re.sub(r"^the candidate (is not valid|is invalid)[: ]*", "", e.problem)
+            way = finish_text(key) if meta["status"] == "pending" else f"apply the content you want (`apply {key} --from <file>`)"
+            raise bad(fit(f"{way}: the saved copy fails a check a candidate must pass ({why})",
+                          f"{way}: the saved copy fails a check a candidate must pass"))
+    return {**v, "check": (name, meta["sha256"]), "validate": validate_saved}
+
+def rollback_locked(row, key, tgt, rel, cur, now, again, red, good, junk, stale):
+    known = load_state()[2].get(key, {})
+    done = [n for n in stale if isinstance(known.get(n), dict) and known[n].get("rb")]
+    if done:   # a rollback that removed its backup and stopped before its last bookkeeping was complete: say so, undo no more
+        did(key, "stale records: removed", lambda: None, None, lambda: unregister(key, *stale))
+        out(f"the rollback of {key} (backup {done[-1]}) was already complete; nothing more was done. Run rollback {key} again "
+            "to undo the change before it")
+        return 0
+    if junk:   # an unfinished backup folder: nothing was replaced, so it only holds a stray copy. Removing it is a step of its own.
+        for n in junk:
+            p = os.path.join(bdir(key), n)
+            did(key, f"unfinished backup {n}: removed", gone_undo(p), again, lambda: drop_backup(p))
+        did(key, "their records: removed", lambda: None, None, lambda: unregister(key, *junk, *stale))
+        out(f"removed the unfinished backup folder {', '.join(qs(n) for n in junk)} of {key}; nothing was restored "
+            f"(the file was not touched). Run rollback {key} again to undo the last change")
+        return 0
+    live = live_of(good)
+    if not live:
+        raise bad(f"restore it by hand or from git if needed: no apply of {key} can be undone" + (
+            " (older backups were set aside when a hand edit was recorded)" if good else ""), "STL-CFG-316")
+    name, meta = live[-1]
+    bd, saved = os.path.join(bdir(key), name), known.get(name)
+    if meta_problem(meta, name, saved):
+        raise bad(f"look at backup {qs(name)} of {key} by hand (its copy is kept): its meta is missing, wrong or not "
+                  "as recorded", "STL-CFG-316")
+    back = read(os.path.join(bd, "file"), "STL-CFG-316") if meta["existed"] else None
+    if meta["existed"] and (back is None or sha(back) != meta["sha256"]):
+        raise bad(f"restore {key} by hand or from git: the saved copy in backup {name} is " + ("missing" if back is None else "damaged (its sha256 differs)")
+                  , "STL-CFG-316")
+    if now not in (meta["new_sha256"], meta["sha256"]):
+        raise bad(f"revert the edit by hand, or record it (`apply {key} --from <file>` with a copy of it): it changed after the apply",
+                  "STL-CFG-314")
+    saved_d = saved
+    rb = saved_d.get("rb")   # what a rollback marked: the applied state's word only (a meta file can be rewritten)
+    resumed = rb is not None
+    same = now == meta["sha256"]   # the file holds the bytes the backup saved now
+    judged(tgt, cur)   # once before the first step (the reads above took time), again at the replace
+    # done in the applied state says the apply's line is written; the log is read only for a backup not marked done
+    same0, apply_logged = (rb["same"], rb["logged"]) if resumed else (same, bool(saved_d.get("done")) or logged(key, "apply", meta["token"], name))
+    rbt = rb["token"] if resumed else secrets.token_hex(16)
+    # shortcut: a restore that deletes a file (the apply created it) is not checked against the whole set, upgrade if a deleted row file can break a cross-file rule
+    el.preflight()
+    old_status, cur_rec = meta["status"], applied().get(key)
+    was = try_read(os.path.join(bd, "file.applied"))   # the bytes the apply wrote: the old side of the line, also when the restore already happened
+    was = was if was is not None and sha(was) == meta["new_sha256"] else cur
+    old_doc, _ = parse_or_none(row, was)
+    new_doc, _ = parse_or_none(row, back)
+    for d in (old_doc, new_doc):
+        note_secrets(d, red)
+    cur_mode = os.lstat(tgt).st_mode & 0o7777 if cur is not None else 0o644
+    new_rec = saved_d.get("prev_applied", meta["prev_applied"])   # the applied state's own copy where it has one
+    if new_rec is None and back is not None and git_blob(rel) is None:   # a file git does not track keeps the restored hash as its baseline
+        new_rec = rec_of(back, meta["mode"])
+    # the lines this rollback owes, judged before anything changes: the apply line when the apply replaced the file but never
+    # logged it (L2), and its own line when there was a logged change or the file changes (a never-logged apply that never
+    # took effect needs none, L1)
+    aline = None if apply_logged or same0 or (resumed and logged(key, "apply", meta["token"], name)) else event(
+        row, key, "apply", new_doc, old_doc, hashes(row, meta["sha256"], meta["new_sha256"])
+        + f"backup {name} token {meta['token']} (written by the rollback that undoes it)")
+    owes = apply_logged or not same0
+    rline = None if not owes or (resumed and logged(key, "rollback", rbt, name)) else event(
+        row, key, "rollback", old_doc, new_doc,
+        (f"nothing to restore: the file already held the saved bytes of backup {name}" if same0 else f"restored backup {name}") + f" token {rbt}"
+        + ("" if new_doc is not None or back is None else " (the restored file does not parse)"), () if new_doc is not None or back is None else ("new",))
+    SNAP["want"] = meta["sha256"]
+    if stale:   # recorded, but the folder is gone by hand: bookkeeping after every refusal, undone like any step
+        gone = {n: known[n] for n in stale}
+        did(key, "records of missing backup folders: removed", lambda: update_state(lambda a, b: b.setdefault(key, {}).update(gone)),
+            again, lambda: unregister(key, *stale))
+    if not resumed:
+        marked = {**saved_d, "rb": {"token": rbt, "same": same0, "logged": apply_logged}}
+        did(key, f"backup {name}: marked for rollback in the applied state", lambda: register(key, name, saved_d, 0), again,
+            lambda: register(key, name, marked, 0))
+        mp = os.path.join(bd, "meta.json")
+        did(key, "its meta: rollback-pending", lambda: atomic_write(mp, json.dumps({**meta, "status": old_status}).encode(), 0o600), again,
+            lambda: atomic_write(mp, json.dumps({**meta, "status": "rollback-pending"}).encode(), 0o600))
+    tgt = path(rel)
+    if not same:
+        swap(key, "file: the saved bytes", tgt, cur, back, meta["mode"], cur_mode, again)
+    did(key, "applied state: the saved bytes", lambda: set_applied(key, cur_rec), again, lambda: set_applied(key, new_rec))
+    if aline:
+        did(key, "apply line: written", line_undo(key, "apply", meta["token"], name), again, lambda: log(row, aline))
+    if rline:
+        did(key, "rollback line: written", line_undo(key, "rollback", rbt, name), again, lambda: log(row, rline))
+    did(key, "backup: removed", gone_undo(bd), None, lambda: drop_backup(bd))
+    did(key, "its record: removed", lambda: None, None, lambda: unregister(key, name))
+    out(f"nothing to restore: the apply of {key} stopped before it took effect; its backup {name} was removed" if not owes else
+        f"nothing to restore: {key} already matches its backup {name}" if same0 and not resumed else
+        f"rolled back: {key} (backup {name}" + ("; an interrupted rollback was finished)" if resumed else ")"))
     return 0
 
 def gone_undo(bd):
@@ -1286,33 +1452,62 @@ def gone_undo(bd):
             raise Stay
     return u
 
-def git(args, missing):
-    """(rc 0 output | None when git says the path is not committed). Any other answer (git not found, a timeout, a damaged object,
-    a repository git refuses) is a refusal that says the committed baseline cannot be read and why: never "no baseline". A root
-    that is not a git repository has nothing committed."""
+def git(*args):
+    """(exit status, stdout) of one git command in the stack root; (None, b"") when git could not be run (not found, a
+    timeout). Only the exit status and the data on stdout are used, never git's wording (the locale is pinned all the same)."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env["GIT_CEILING_DIRECTORIES"] = os.path.dirname(el.ROOT)   # a scratch root is never read through an outer repo
+    env.update(GIT_CEILING_DIRECTORIES=os.path.dirname(el.ROOT), LC_ALL="C", LANGUAGE="C")   # a scratch root is never read through an outer repo
     try:
         r = subprocess.run(["git", "-C", el.ROOT, *args], capture_output=True, env=env, timeout=30)
-        err = r.stderr.decode("utf-8", "replace").strip().splitlines()
-    except (OSError, subprocess.SubprocessError) as e:
-        r, err = None, [type(e).__name__]
-    if r is not None and r.returncode == 0:
-        return r.stdout
-    said = " ".join(err)
-    if r is not None and r.returncode == 128 and ("not a git repository" in said or any(m in said for m in missing)):
-        if "not a git repository" in said or subprocess.run(["git", "-C", el.ROOT, "rev-parse", "-q", "--verify", "HEAD^{commit}"],
-                                                             capture_output=True, env=env, timeout=30).returncode == 0:
-            return None
-    raise bad(f"run `git status` in the stack root to see why: the committed baseline cannot be read (git: {(err[-1] if err else 'exit ' + str(r and r.returncode))[:70]})")
+        return r.returncode, r.stdout
+    except (OSError, subprocess.SubprocessError):
+        return None, b""
+
+def no_baseline(rc):
+    return bad("run `git status` in the stack root to see why: the committed baseline cannot be read ("
+               + ("git could not be run" if rc is None else "its .git cannot be looked at" if rc == "lstat" else f"git exit status {rc}") + ")")
+
+def committed(rel):
+    """(type, object id) of the entry HEAD holds for a root-relative path, or None for the one answer "no committed baseline",
+    given only for a proven fact:
+    - the root has no `.git` entry at all (this tool's own lstat), or
+    - the repository has no commit yet: HEAD is a symbolic ref (exit 0) that resolves to nothing (exit 1 exactly; nothing can
+      have been committed, so nothing can have been edited away from a commit), or
+    - HEAD resolves to a commit object (exit 0 twice) and git lists the path with exit 0 and no entry.
+    Every other answer (git cannot be run, any other exit status, a `.git` git cannot use, a missing object) is a refusal that
+    gives the exit status, for every caller of the baseline: check, a dry run, apply, rollback."""
+    try:
+        os.lstat(os.path.join(el.ROOT, ".git"))
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise no_baseline("lstat")
+    rc, _ = git("rev-parse", "-q", "--verify", "HEAD")
+    if rc == 1 and git("symbolic-ref", "-q", "HEAD")[0] == 0:
+        return None
+    if rc == 0:
+        rc, _ = git("cat-file", "-e", "HEAD^{commit}")
+    if rc == 0:
+        rc, out = git("ls-tree", "-z", "HEAD", "--", os.path.normpath(rel))
+    if rc != 0:
+        raise no_baseline(rc)
+    return tuple(x.decode() for x in out.split(b"\t")[0].split()[1:3]) if out else None
+
+def git_out(*args):
+    rc, out = git(*args)
+    if rc != 0:
+        raise no_baseline(rc)
+    return out
 
 def git_blob(rel):
-    return git(["show", f"HEAD:./{rel}"], ("does not exist in 'HEAD'", "exists on disk, but not in 'HEAD'"))
+    """The committed bytes of a path, or None (a folder committed at a file's path gives its tree, which no file equals)."""
+    e = committed(rel)
+    return git_out("cat-file", *e) if e else None
 
 def git_names(rel):
     """The names the committed folder holds (none when it is not committed; a git that cannot answer is a refusal)."""
-    out = git(["ls-tree", "-z", "--name-only", f"HEAD:./{rel}"], ("Not a valid object name",))
-    return [n.decode("utf-8", "replace") for n in out.split(b"\0") if n] if out is not None else []
+    e = committed(rel)
+    return [n.decode("utf-8", "replace") for n in git_out("ls-tree", "-z", "--name-only", e[1]).split(b"\0") if n] if e and e[0] == "tree" else []
 
 def msg(code, problem):
     body, tag, kv = el.alert_catalog.render(code, {"problem": el.scrub(problem)})
@@ -1335,9 +1530,8 @@ def check_one(key, rel, tgt, A):
         return finding({**r, "baseline": "applied" if rec else "git", "state": "drift", "code": "STL-CFG-314",
                         "problem": f"move the folder away and restore the file: {key} is a folder, its baseline is a file"})
     r["baseline"], r["state"], why = drift_of(key, rel, tgt, cur, rec)
-    good, junk, strange, _ = scan(key, sha(cur) if cur is not None else None)
-    act, err = pending_action(key, cur, None, good, junk, strange, rec)
-    if act != "none":   # an unfinished step is not a hand edit: its own code; an untrusted backup keeps 316
+    err = unfinished(key, cur)
+    if err:   # an unfinished step is not a hand edit: its own code; an untrusted backup keeps 316
         r.update(state="refused" if err.code == "STL-CFG-316" else "pending", problem=err.problem,
                  code="STL-CFG-316" if err.code == "STL-CFG-316" else "STL-CFG-323")
     elif why:
@@ -1348,9 +1542,9 @@ def refused(label, e):
     """One problem line for something check cannot read; the other rows are still checked."""
     code = e.code if isinstance(e, EventError) else REFUSE[0]
     why = e.problem if isinstance(e, EventError) else f"cannot be read ({type(e).__name__})"
-    m, tag, kv = msg(code, f"{label[:60]}: {why}")
+    m, tag, kv = msg(code, f"{label}: {why}")
     el.alert_catalog.log(tag, kv)
-    return {"id": label, "path": None, "baseline": "none", "state": "refused", "code": code, "message": m}
+    return {"id": label, "path": None, "baseline": "none", "state": "refused", "code": code, "message": m, "problem": f"{label}: {why}"}
 
 def names_of(row, only, A):
     if only:
@@ -1396,6 +1590,7 @@ def do_check(arg, as_json):
     else:
         for r in out:
             print(f"{r['code']} {r['message']}" if "code" in r else f"{r['state']:<12} {qs(r['id'])} (baseline {r['baseline']})")
+            whole(r.get("problem", ""), sys.stdout)
     return 1 if bad_ else 0
 
 def do_history(arg, as_json):
@@ -1434,14 +1629,20 @@ def cause_of(e, read_cmd):
     return REFUSE[0], f"unexpected {type(e).__name__}"   # never a value: the type of the exception only
 
 def failed(e, read_cmd):
-    """The one place a command's failure is told; whatever goes wrong while telling it is still one coded line."""
+    """The one place a command's failure is told; whatever goes wrong while telling it is still one coded line. Its first
+    statement puts the run in the stopping state (interrupted() raises nothing from then on): one undo, one line."""
+    if isinstance(e, SystemExit):   # the data tool's own exit (an unknown id: its line is printed): nothing to tell unless steps were begun
+        if not STEPS:
+            return None
+        e = Interrupted()
+    STOPPING.append(0)
     for s in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(s, signal.SIG_IGN)   # stopping: one undo, one line
+        signal.signal(s, signal.SIG_IGN)
     try:
         return told(e, read_cmd)
     except BaseException as x:
         key = SNAP.get("key") or "the row"
-        return el.fail("STL-CFG-321" if STEPS else REFUSE[0], f"run `check {key}`: the command stopped and what is left could not be read ({type(x).__name__})")
+        return fail("STL-CFG-321" if STEPS else REFUSE[0], f"run `check {key}`: the command stopped and what is left could not be read ({type(x).__name__})")
 
 def told(e, read_cmd):
     """Undo the steps newest first, up to one that stays (an event line written, a folder removed) or an undo that fails. No step
@@ -1462,19 +1663,23 @@ def told(e, read_cmd):
             frame = (el.alert_catalog.catalog().get(code) or {}).get("message", "")
         except Exception:   # the catalog is unreadable: say it in the problem
             frame = ""
-        return el.fail(code, why if "nothing was changed" in frame.lower() else f"nothing was changed: {why[:170]}", getattr(e, "extra", None))
-    same = not SNAP or SNAP["state"] == state_of(SNAP["key"], SNAP["tgt"])
-    key, stop = SNAP["key"], isinstance(e, (Interrupted, KeyboardInterrupt))
-    if same:
-        return el.fail(code if code in UNDONE_OK else "STL-CFG-321",
-                       (f"{why[:100]}; " if code in UNDONE_OK else
-                        f"run it again{'' if stop else ' once the cause is fixed'}: {key} stopped ({why[:60]}); ")
-                       + "it was undone (the file is as before)",
-                       {"detail": "file, backups, applied state and event log as before"})
-    way = next((s[3] for s in reversed(left) if not s[4]), f"`check {key}`") if left else f"`check {key}`"
-    c, _, note = way.partition("`")[2].partition("`") if way else ("", "", "")
-    return el.fail("STL-CFG-321", (f"run `{c}`{note}: " if way else "nothing to run (the change is complete): ")
-                   + f"it stopped ({why[:60]})", {"detail": described(SNAP["state"], state_of(key, SNAP["tgt"]), SNAP["want"])})
+        return fail(code, why if "nothing was changed" in frame.lower() else fit(f"{why}; nothing was changed", why), getattr(e, "extra", None))
+    now = state_of(SNAP["key"], SNAP["tgt"]) if SNAP else None
+    key, stop = SNAP.get("key"), isinstance(e, (Interrupted, KeyboardInterrupt))
+    if not SNAP or SNAP["state"] == now:   # every text goes through fit(): the way out first, no cause cut by a fixed number
+        undone = "what this command began was undone (the file holds the edit)" if SNAP.get("edited") else "it was undone (the file is as before)"
+        again = f"run it again{'' if stop else ' once the cause is fixed'}: {key} stopped"
+        return fail(code if code in UNDONE_OK else "STL-CFG-321",
+                       fit(f"{why}; {undone}", why) if code in UNDONE_OK else fit(f"{again} ({why}); {undone}", f"{again}; {undone}"),
+                       {"detail": "backups, applied state and event log as before; the file holds the edit" if SNAP.get("edited")
+                        else "file, backups, applied state and event log as before"})
+    try:   # the way out is the one `check` names for the key as the disk is now (unfinished)
+        err = unfinished(key, read(SNAP["tgt"]))
+        way = err.problem if err else "nothing to run (the change is complete)" if any(not s[4] for s in left) else f"run `check {key}`"
+    except Exception:
+        way = f"run `check {key}`"
+    return fail("STL-CFG-321", fit(f"{way} (this command stopped: {why})", way),
+                   {"detail": described(SNAP["state"], now, SNAP["want"])})
 
 def interrupted(sig, frame):
     """The first SIGINT or SIGTERM puts the run in one state, stopping: both are ignored from then on (a second one, the same or
@@ -1518,15 +1723,21 @@ def main(argv):
         if o.cmd == "rollback":
             return do_rollback(o.id)
         return do_check(o.id, o.json) if o.cmd == "check" else do_history(o.id, o.json)
+    except Told as t:   # undone and told inside the lock
+        return t.args[0]
     except SystemExit:
-        if STEPS:
-            return failed(Interrupted(), read_cmd)
         raise
-    except BaseException as e:   # never a traceback
-        return failed(e, read_cmd)
+    except BaseException as e:   # never a traceback; no step is begun outside the lock
+        try:
+            return failed(e, read_cmd)
+        except Interrupted:
+            return failed(e, read_cmd)
     finally:   # an interrupt after the command's last line is too late to change anything
+        with contextlib.suppress(Interrupted):
+            STOPPING.append(0)
         for s in (signal.SIGINT, signal.SIGTERM):
             signal.signal(s, signal.SIG_IGN)
+        flush()
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
