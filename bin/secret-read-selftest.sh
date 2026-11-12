@@ -198,5 +198,5 @@ for g in "$S" "$R"; do
   ok '[ "$(term $g "jq -n '"'"'.'"'"'")" = 0 ] && [ "$(term $g "jq -L /tmp -n 1")" = 0 ]' "B.2 point 9 control: $(basename $g) allows jq with no library path and jq -L of /tmp"
 done
 ok '[ "$(ROLES_FILE=$T/none run $S read_file "{\"path\": \"/workspace/SUPERVISOR.md\"}")" = 2 ] && [ "$(ROLES_FILE=$T/none term $R "ls")" = 2 ]' "K6: an unreadable role table refuses every read (fail closed)"
-ok '[ "$(tail -c +$((TREE_SIZE + 1)) "$TREE_ALERTS" 2>/dev/null | grep -c "^STL-CFG-31[0-9] \|^STL-CFG-303 ")" = 0 ]' "T7: the tree's alert log gained no line of the codes these guards write during this run"
+ok '[ "$(tail -c +$((TREE_SIZE + 1)) "$TREE_ALERTS" 2>/dev/null | grep -c .)" = 0 ]' "T7 (r5, W4-VER3-07): the tree's alert log gained no line of any kind during this run"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

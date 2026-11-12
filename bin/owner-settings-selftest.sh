@@ -138,12 +138,13 @@ matrix() {
   # T1 (F1 W4 r4): the roles run six at a time, as in 3b (each in a subshell with its own output files; the hook copies and hook lists are made first)
   mkdir -p "$T/m1"; rm -f "$T"/m1/*
   while read -r lab role; do setw "$lab"; for t in read_file search_files vision_analyze skill_view terminal process_manage write_file patch; do for h in $(hooks_for "$MT" "$role" $t); do hf "$h" >/dev/null; done; done; done < <(pairs)
+  local pids=() bad=0
   while read -r lab role; do
-    n=$((n+1)); matrix_role "$n" >"$T/m1/$n.out" 2>&1 &
-    [ $((n % 6)) = 0 ] && wait
+    n=$((n+1)); { matrix_role "$n"; echo "ROWSDONE $n"; } >"$T/m1/$n.out" 2>&1 & pids+=($!)
   done < <(pairs)
-  wait
+  for pid in "${pids[@]}"; do wait "$pid" || bad=1; done   # W4-VER3-06: a subshell that aborts fails the selftest
   for f in $(ls "$T"/m1/*.out | sort -V); do cat "$f"; fails=$((fails + $(grep -c '^FAIL' "$f"))); done
+  say "$([ "$bad" = 0 ] && [ "$(grep -lc '^ROWSDONE ' "$T"/m1/*.out | grep -c .)" = "$n" ]; echo $?)" "$tag all $n role subshells finished (no silent abort)"
 }
 matrix_role() {   # matrix_role <n>: matrix's cases for one role ($lab, $role and the matrix's locals are the caller's); runs in a subshell, writes only $T/m1/<n>.*
     local n=$1
@@ -270,6 +271,8 @@ m2role() {   # m2role <tag> <profile label> <role> <owner data list> <owner comm
   done
   for d in $DS; do
     f=/workspace/$d/zz-probe.json; sed "s#ZZD#$d#g" "$T/w4.patch.in" >"$PT"; ln -sfn "/workspace/$d" "$LN"
+    [ -f "/workspace/$d" ] && r1 write_file "$(js --arg p "/workspace/$d" '{path: $p, content: "x"}')" "owner data $d (the path itself, equal)"   # W4-VAL3-09: the "equal" probe on an owner file, besides the "inside" one below
+    [ -f "/workspace/$d" ] && r1 patch "$(js --arg p "/workspace/$d" '{mode: "replace", path: $p, old_string: "a", new_string: "b"}')" "owner data $d (the path itself, equal)"
     r1 write_file "$(js --arg p "$f" '{path: $p, content: "x"}')" "owner data $d"
     r1 patch "$(js --arg p "$f" '{mode: "replace", path: $p, old_string: "a", new_string: "b"}')" "owner data $d"
     r1 patch "$(js --arg p "$f" '{mode: "patch", patch: "*** Begin Patch\n*** Add File: \($p)\n+x\n*** End Patch"}')" "owner data $d, V4A add"
@@ -356,12 +359,13 @@ cp /tmp/x $f" "echo x >& $f" ": <> $f" "x=$f; echo y > \"\$x\"" "echo y > \$(ech
 matrix2() {   # matrix2 <tag> <owner data list> <owner commands list> [light data list]: every profile and role without one, six at a time, output kept in order
   local tag=$1 lab role n=0 f t h
   while read -r lab role; do setw "$lab"; for t in write_file patch terminal process_manage read_file search_files; do for h in $(hooks_for "$MT" "$role" $t); do hf "$h" >/dev/null; done; done; done < <(pairs)
+  local pids=() bad=0
   while read -r lab role; do
-    n=$((n+1)); m2role "$tag" "$lab" "$role" "$2" "$3" "$n" "${4:-}" >"$M2/$n.out" 2>&1 &
-    [ $((n % 6)) = 0 ] && wait
+    n=$((n+1)); { m2role "$tag" "$lab" "$role" "$2" "$3" "$n" "${4:-}"; echo "ROWSDONE $n"; } >"$M2/$n.out" 2>&1 & pids+=($!)
   done < <(pairs)
-  wait
-  for f in $(ls "$M2"/*.out | sort -V); do cat "$f"; fails=$((fails + $(grep -c '^FAIL' "$f"))); done; rm -f "${M2:?}"/*
+  for pid in "${pids[@]}"; do wait "$pid" || bad=1; done   # W4-VER3-06: a subshell that aborts fails the selftest
+  for f in $(ls "$M2"/*.out | sort -V); do cat "$f"; fails=$((fails + $(grep -c '^FAIL' "$f"))); done
+  say "$([ "$bad" = 0 ] && [ "$(grep -lc '^ROWSDONE ' "$M2"/*.out | grep -c .)" = "$n" ]; echo $?)" "$tag all $n role subshells finished (no silent abort)"; rm -f "${M2:?}"/*
 }
 IDX=$STACK/$(jq -r .data_index "$SRC"); BK=/workspace/$(jq -r .backup_dir "$IDX"); APS=/workspace/$(jq -r .applied_state "$IDX"); EVL=/workspace/$(jq -r .event_log "$IDX")
 MT=$SRC; export ROLES_FILE=$SRC
@@ -435,7 +439,7 @@ tbl "$T/empty.json" '[]'; tbl "$T/dotdot.json" '["../etc/zz"]'; tbl "$T/abs.json
 # F1 W4: the three owner-write lists are part of the table: without one, with it empty, or with a bad entry, every role refuses everything
 jq 'del(.owner_data)' "$SRC" >"$T/nod.json"; jq 'del(.owner_commands)' "$SRC" >"$T/noc.json"; jq 'del(.worker_markers)' "$SRC" >"$T/nom.json"
 jq '.data_index = ".stella/zz-missing-index.json"' "$SRC" >"$T/noidx.json"; jq '.owner_data = []' "$SRC" >"$T/emd.json"; jq '.owner_commands = [""]' "$SRC" >"$T/emc.json"; jq '.worker_markers = ["a b"]' "$SRC" >"$T/bmk.json"
-mkdir -p "$T/m4"
+mkdir -p "$T/m4"; M4PIDS=()
 for bad in "$T/missing.json" "$T/garbage.json" "$T/none.json" "$T/empty.json" "$T/dotdot.json" "$T/abs.json" "$T/str.json" "$T/mixed.json" \
            "$T/nod.json" "$T/noc.json" "$T/nom.json" "$T/emd.json" "$T/emc.json" "$T/bmk.json" "$T/noidx.json"; do
   n4=$((${n4:-0}+1))
@@ -448,11 +452,12 @@ for bad in "$T/missing.json" "$T/garbage.json" "$T/none.json" "$T/empty.json" "$
       refuse "4 $(basename "$bad") $lab/$role" "$role" read_file '{"path": "/workspace/SUPERVISOR.md"}' "ordinary file (fail closed)"
       refuse "4 $(basename "$bad") $lab/$role" "$role" terminal '{"command": "ls"}' "ls (fail closed)"
     done < <(pairs)
-  ) >"$T/m4/$n4.out" 2>&1 &
-  [ $((n4 % 6)) = 0 ] && wait
+    echo "ROWSDONE $n4"
+  ) >"$T/m4/$n4.out" 2>&1 & M4PIDS+=($!)
 done
-wait
+M4BAD=0; for pid in "${M4PIDS[@]}"; do wait "$pid" || M4BAD=1; done   # W4-VER3-06
 for f in $(ls "$T"/m4/*.out | sort -V); do cat "$f"; fails=$((fails + $(grep -c '^FAIL' "$f"))); done
+say "$([ "$M4BAD" = 0 ] && [ "$(grep -lc '^ROWSDONE ' "$T"/m4/*.out | grep -c .)" = "$n4" ]; echo $?)" "4 fail-closed: all $n4 broken-table subshells finished (no silent abort)"
 export ROLES_FILE=$T/probe.json
 
 # 5 real path: a fake worker bound to a running card on a stub board; the hook runs below it, from its main thread and from a second thread

@@ -182,5 +182,5 @@ for k in main_branch worker_pins; do
   git -C "$W" reset -q; rm -f "$W/zz-k9"
 done
 cp /workspace/docs/hermes-local/roles.json "$GT/docs/hermes-local/roles.json"
-ok '[ "$(tail -c +$((TREE_SIZE + 1)) "$TREE_ALERTS" 2>/dev/null | grep -c "^STL-CFG-31[0-9] \|^STL-CFG-303 ")" = 0 ]' "T7: the tree's alert log gained no line of the codes these guards write during this run"
+ok '[ "$(tail -c +$((TREE_SIZE + 1)) "$TREE_ALERTS" 2>/dev/null | grep -c .)" = 0 ]' "T7 (r5, W4-VER3-07): the tree's alert log gained no line of any kind during this run"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
