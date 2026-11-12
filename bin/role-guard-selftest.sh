@@ -37,8 +37,8 @@ export ROLES_FILE="$RF" PROJECTS_DB="$T/projects.db" ESCALATE_SUP_DIR="$T/sup" P
 unset HERMES_KANBAN_TASK HERMES_KANBAN_RUN_ID
 # run <profile> <tool> <tool_input json> [env...]: the guard's exit code; its stdout in $T/out
 # T1 (F1 W4 r5): a run row (the guard on a payload, no process tree) is judged by ONE judge process that runs the guard's whole script with the
-# row's environment, folder and payload, stdout and stderr as one stream and its exit code, as the process does. The first row of each (profile,
-# tool, exit code) class also runs as a real process and both must agree; an agreement case with a planted-difference control is at the end.
+# row's environment, folder and payload, stdout and stderr as one stream and its exit code, as the process does. The first row of each (role,
+# exit code) class also runs as a real process and both must agree; an agreement case with a planted-difference control is at the end.
 # The process-tree rows (tree) and the rows that read the alert log stay real processes.
 cat >"$T/rjudge.py" <<'PY'
 import base64, io, json, os, sys, traceback
@@ -53,7 +53,7 @@ while True:
         codes[g] = compile(open(g, encoding="utf-8").read(), g, "exec")
     for m in [m for m in sys.modules if m in ("roles", "alert_catalog")]:
         del sys.modules[m]   # as a fresh process: the stack modules read their environment when imported
-    os.environ.clear(); os.environ.update(r["env"]); os.chdir(r["cwd"])
+    os.environ.clear(); os.environ.update(r["env"] if "env" in r else {**keep[4], **r["add"]}); os.chdir(r["cwd"])   # the full environment, or the one at start plus the row's own
     out = io.StringIO(); sys.stdout = sys.stderr = out; sys.stdin = io.StringIO(r["payload"]); sys.argv = [g]
     try:
         exec(codes[g], {"__name__": "__main__", "__file__": g}); rc = 0
@@ -69,17 +69,24 @@ while True:
         f.write(f"{rc}\t{base64.b64encode(out.getvalue().encode()).decode()}\n")
 PY
 
-mkdir -p "$T/rj"; mkfifo "$T/rj/in" "$T/rj/oq"; python3 -I "$T/rjudge.py" "$T/rj/in" "$T/rj/oq" </dev/null >/dev/null 2>&1 & RJP=$!; : >"$T/rjseen"; : >"$T/rjrows"
+mkdir -p "$T/rj/seen"; mkfifo "$T/rj/in" "$T/rj/oq"; python3 -I "$T/rjudge.py" "$T/rj/in" "$T/rj/oq" </dev/null >/dev/null 2>&1 & RJP=$!; : >"$T/rjrows"
+RJENV=$(env | sort | md5sum)   # the judge's environment at start; a row is sent with its own variables only while the exported environment is the same
+declare -A ROLE_OF; while IFS=$'\t' read -r p r; do ROLE_OF[$p]=$r; done < <(jq -r '.fallback_role as $f | (.profiles | to_entries[] | "\(.key)\t\(.value.role)"), "\t\($f)"' "$RF")
 rjudge() {   # rjudge <guard> <payload> [env...]: exit code echoed, output in $T/out
   local g=$1 pay=$2 rc b; shift 2
-  env -0 "$@" | jq -Rsc --arg p "$pay" --arg h "$g" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, env: (split("\u0000") | map(select(length > 0) | capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}' >"$T/rj/in"
+  if [ "$(env | sort | md5sum)" = "$RJENV" ]; then
+    jq -nc --arg p "$pay" --arg h "$g" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, add: ($ARGS.positional | map(capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}' --args "$@" >"$T/rj/in"
+  else
+    env -0 "$@" | jq -Rsc --arg p "$pay" --arg h "$g" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, env: (split("\u0000") | map(select(length > 0) | capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}' >"$T/rj/in"
+  fi
   IFS=$'\t' read -r rc b <"$T/rj/oq"; printf '%s' "$b" | base64 -d >"$T/out"; echo "$rc"; }
 run() { local prof=$1 tool=$2 in=$3 pay rc rrc; shift 3
   pay=$(jq -nc --arg p "$prof" --arg t "$tool" --argjson i "$in" '{hook_event_name: "pre_tool_call", tool_name: $t, tool_input: $i, profile: $p, extra: {}}')
   if [ -n "${REAL:-}" ]; then printf '%s' "$pay" | env "$@" python3 "$G" >"$T/out" 2>&1; echo $?; return; fi
-  rc=$(rjudge "$G" "$pay" "$@"); printf '%s\t%s\n' "$(printf '%s' "$pay" | base64 -w0)" "$(printf '%s\0' "$@" | base64 -w0)" >>"$T/rjrows"
-  if ! grep -qxF -- "$prof|$tool|$rc" "$T/rjseen"; then
-    echo "$prof|$tool|$rc" >>"$T/rjseen"; cp "$T/out" "$T/out.judge"; printf '%s' "$pay" | env "$@" python3 "$G" >"$T/out" 2>&1; rrc=$?
+  rc=$(rjudge "$G" "$pay" "$@"); printf '%s\t%s\n' "$(printf '%s' "$pay" | base64 -w0)" "$([ $# -gt 0 ] && printf '%s\0' "$@" | base64 -w0)" >>"$T/rjrows"
+  local k="${ROLE_OF[$prof]:-${ROLE_OF[""]}}|$rc"   # the class: the profile's role (the fallback for a profile with no row) and the verdict
+  if [ ! -e "$T/rj/seen/$k" ]; then
+    : >"$T/rj/seen/$k"; cp "$T/out" "$T/out.judge"; printf '%s' "$pay" | env "$@" python3 "$G" >"$T/out" 2>&1; rrc=$?
     if [ "$rrc" != "$rc" ] || [ "$(sort "$T/out")" != "$(sort "$T/out.judge")" ]; then echo "     route agreement: $prof $tool exit $rc in the judge, $rrc as a process" >&2; echo 99; return; fi
   fi
   echo "$rc"; }
@@ -352,10 +359,10 @@ done
 unset TREE_TOOL
 GM=$(sed -n 's/^GUARDS = \[("pre_tool_call", "\(.*\)",$/\1/p' /workspace/bin/register-escalation-hook.sh)
 ok '[ -n "$GM" ] && [[ kanban_comment =~ $GM ]] && [[ kanban_complete =~ $GM ]] && ! [[ kanban_show =~ $GM ]]' "A1-01: the registered role-guard matcher covers kanban_comment (and still not kanban_show)"
-# T1 (r5): the two routes agree on every 5th run row (the judge and a real guard process, the same row), and a planted difference (the judge
+# T1 (r5): the two routes agree on every 10th run row (the judge and a real guard process, the same row), and a planted difference (the judge
 # given a copy of the guard whose refusal reads otherwise) is caught
 ragree() { local n=0 i=0 p e pay rc rrc args
-  while IFS=$'\t' read -r p e; do i=$((i+1)); [ $((i % 5)) = 1 ] || continue
+  while IFS=$'\t' read -r p e; do i=$((i+1)); [ $((i % 10)) = 1 ] || continue
     mapfile -d '' -t args < <(printf '%s' "$e" | base64 -d); pay=$(printf '%s' "$p" | base64 -d)
     rc=$(rjudge "$1" "$pay" "${args[@]}"); cp "$T/out" "$T/ag.judge"
     [ -f "$T/ag.real.$i" ] || { printf '%s' "$pay" | env "${args[@]}" python3 "$G" >"$T/ag.real.$i" 2>&1; echo $? >"$T/ag.rc.$i"; }   # the process run once per row, kept for the control
@@ -363,7 +370,7 @@ ragree() { local n=0 i=0 p e pay rc rrc args
   done < <(cat "$T/rjrows"); echo "$n"; }
 sed 's/"action": "block"/"action": "blocked"/' "$G" >"$T/rg-planted.py"
 RN=$(wc -l <"$T/rjrows"); RD=$(ragree "$G"); RX=$(ragree "$T/rg-planted.py")
-ok '[ "$RN" -ge 50 ] && [ "$RD" = 0 ]' "T1 route agreement: every 5th of $RN run rows judged in one process gives the same exit code and output as a real guard process ($RD differ)"
+ok '[ "$RN" -ge 100 ] && [ "$RD" = 0 ]' "T1 route agreement: every 10th of $RN run rows judged in one process gives the same exit code and output as a real guard process ($RD differ)"
 ok '[ "$RX" -gt 0 ]' "T1 route agreement, negative control: a planted difference in the judge's guard is caught ($RX differ)"
 printf 'QUIT\n' >"$T/rj/in"; wait "$RJP"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

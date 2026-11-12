@@ -104,7 +104,7 @@ while True:
         codes[g] = compile(open(g, encoding="utf-8").read(), g, "exec")
     for m in [m for m in sys.modules if m in ("roles", "alert_catalog")]:
         del sys.modules[m]   # as a fresh process: the stack modules read their environment when imported
-    os.environ.clear(); os.environ.update(r["env"]); os.chdir(r["cwd"])
+    os.environ.clear(); os.environ.update(r["env"] if "env" in r else {**keep[4], **r["add"]}); os.chdir(r["cwd"])   # the full environment, or the one at start plus the row's own
     out = io.StringIO(); sys.stdout = sys.stderr = out; sys.stdin = io.StringIO(r["payload"]); sys.argv = [g]
     try:
         exec(codes[g], {"__name__": "__main__", "__file__": g}); rc = 0
@@ -127,12 +127,16 @@ bjrun() {   # bjrun <card> <assignee> <workspace> <branch> <payload> <class> [en
     mkdir -p "$d"; mkfifo "$d/in" "$d/oq"; : >"$d/payload"; rm -f "$FAKE_CARDS"/*.json
     bash "$T/worker.sh" "$d" "$T/runner.py" python3 -I "$T/bjudge.py" "$d/in" "$d/oq" </dev/null >/dev/null 2>&1 &
     for _ in $(seq 200); do [ -s "$d/pid" ] && break; sleep 0.02; done
-    mk bind "$c" "$a" "$ws" "$br" "$(cat "$d/pid")"; cp "$FAKE_CARDS"/*.json "$d/card.json"; echo "$d" >>"$T/bjdirs"; touch "$d/go"
+    mk bind "$c" "$a" "$ws" "$br" "$(cat "$d/pid")"; cp "$FAKE_CARDS"/*.json "$d/card.json"; echo "$d" >>"$T/bjdirs"; env | sort | md5sum >"$d/envh"; touch "$d/go"
   fi
   rm -f "$FAKE_CARDS"/*.json; cp "$d/card.json" "$FAKE_CARDS/$(printf '%s' "$c" | tr -c 'A-Za-z0-9_' '_').json"
-  req=$(env -0 "$@" | jq -Rsc --arg p "$pay" --arg h "$G" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, env: (split("\u0000") | map(select(length > 0) | capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}')
+  if [ "$(env | sort | md5sum)" = "$(<"$d/envh")" ]; then   # the exported environment is the judge's own: send the row's variables only
+    req=$(jq -nc --arg p "$pay" --arg h "$G" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, add: ($ARGS.positional | map(capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}' --args "$@")
+  else
+    req=$(env -0 "$@" | jq -Rsc --arg p "$pay" --arg h "$G" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, env: (split("\u0000") | map(select(length > 0) | capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}')
+  fi
   printf '%s\n' "$req" >"$d/in"; IFS=$'\t' read -r rc b <"$d/oq"; printf '%s' "$b" | base64 -d >"$T/out"
-  [ -n "${NOCLS:-}" ] || printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$c" "$a" "$ws" "$br" "$(printf '%s' "$pay" | base64 -w0)" "$(printf '%s\0' "$@" | base64 -w0)" >>"$T/bjrows"
+  [ -n "${NOCLS:-}" ] || printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$c" "$a" "$ws" "$br" "$(printf '%s' "$pay" | base64 -w0)" "$([ $# -gt 0 ] && printf '%s\0' "$@" | base64 -w0)" >>"$T/bjrows"
   if [ -z "${NOCLS:-}" ] && ! grep -qxF -- "$cls|$rc" "$T/bjseen"; then
     echo "$cls|$rc" >>"$T/bjseen"; cp "$T/out" "$T/out.judge"
     local rrc; rrc=$(bound bind "$c" "$a" "$ws" "$br" "$pay" -- env "$@" python3 "$G")

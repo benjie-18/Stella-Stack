@@ -33,7 +33,7 @@ while True:
         codes[g] = compile(open(g, encoding="utf-8").read(), g, "exec")
     for m in [m for m in sys.modules if m in ("roles", "alert_catalog")]:
         del sys.modules[m]   # as a fresh process: the stack modules read their environment when imported
-    os.environ.clear(); os.environ.update(r["env"]); os.chdir(r["cwd"])
+    os.environ.clear(); os.environ.update(r["env"] if "env" in r else {**keep[4], **r["add"]}); os.chdir(r["cwd"])   # the full environment, or the one at start plus the row's own
     out = io.StringIO(); sys.stdout, sys.stderr = out, io.StringIO(); sys.stdin = io.StringIO(r["payload"]); sys.argv = [g]
     try:
         exec(codes[g], {"__name__": "__main__", "__file__": g}); rc = 0
@@ -50,9 +50,11 @@ while True:
 PY
 
 mkdir -p "$T/pj"; mkfifo "$T/pj/in" "$T/pj/oq"; python3 -I "$T/pjudge.py" "$T/pj/in" "$T/pj/oq" </dev/null >/dev/null 2>&1 & PJP=$!; trap 'kill $PJP 2>/dev/null; rm -rf "$T"' EXIT
-: >"$T/pjseen"; : >"$T/pjrows"
+: >"$T/pjseen"; : >"$T/pjrows"; PJENV=$(env | sort | md5sum)   # a row is sent without the environment while the exported environment is the judge's own
 pjudge() {   # pjudge <hook> <payload>: exit code echoed, stdout in $T/out (its stderr is dropped, as the process rows drop it)
-  local rc b; env -0 | jq -Rsc --arg p "$2" --arg h "$1" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, env: (split("\u0000") | map(select(length > 0) | capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}' >"$T/pj/in"
+  local rc b
+  if [ "$(env | sort | md5sum)" = "$PJENV" ]; then jq -nc --arg h "$1" --arg p "$2" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, add: {}}' >"$T/pj/in"
+  else env -0 | jq -Rsc --arg p "$2" --arg h "$1" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, env: (split("\u0000") | map(select(length > 0) | capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}' >"$T/pj/in"; fi
   IFS=$'\t' read -r rc b <"$T/pj/oq"; printf '%s' "$b" | base64 -d >"$T/out"; echo "$rc"; }
 run() { local pay rc rrc; pay=$(jq -nc --arg t "$2" --argjson i "$3" '{hook_event_name: "pre_tool_call", tool_name: $t, tool_input: $i}')
   case $1 in *.py) ;; *) printf '%s' "$pay" | "$1" >"$T/out" 2>/dev/null; echo $?; return ;; esac
