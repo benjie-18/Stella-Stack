@@ -148,7 +148,7 @@ value pattern of the connections catalog (`redaction_patterns`, from every entry
 schema does not fix (a key of a free-form object such as `parameters`, a project name, an entry id used as a key) and an entry
 id in `list` and `search` are masked (`***`, then `***2`, ...) the same way. No pattern runs on a string longer than 1024
 characters: it is masked whole (`MASK_LIMIT`), so a read takes bounded time per string. The two entry lists a card branch may
-write are bounded by their schemas (`maxItems`: 128 capability entries, 24 version pins; data, the owner may change them), so a
+write are bounded by their schemas (`maxItems`: 128 capability entries, 16 version pins; data, the owner may change them), so a
 read of them is bounded too; the number of files in a folder row and the size of owner-only files are not bounded. The catalog is a dependency of every
 read through its patterns only: when they cannot be read (no JSON row of the connections schema, a row of it that is not
 opened, a file of it that does not load, a `redaction_patterns` that is not a list of strings (null, false, 0, "" and {} included: never "no patterns"), a pattern that does not
