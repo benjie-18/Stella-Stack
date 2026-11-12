@@ -120,5 +120,66 @@ e.SECRETS.update({'1', 'sekrit-q'})
 t = e.scrub('look at backup folder 00000051-20260101T101010000000Z: 1 and sekrit-q, (+1 more)')
 sys.exit(0 if t == 'look at backup folder 00000051-20260101T101010000000Z: *** and ***, (+*** more)' else 1)" "$H/bin"
 ok '[ $? = 0 ]' "R5 a short masked value is masked where it stands whole, never inside the tool's own text (a folder name) (W3-CRT4-09)"
+# ---- round 6 ----
+# R1: every system call locked() makes is found by a counting run; an interrupt before it or right after it leaves no held lock
+python3 -I -c "
+import fcntl, os, sys, tempfile
+sys.path.insert(0, sys.argv[1]); import event_log as el
+class Stop(BaseException): pass
+p = os.path.join(tempfile.mkdtemp(dir=sys.argv[2]), 'lk')
+names = [(os, 'open'), (os, 'fstat'), (os, 'lstat'), (os, 'readlink'), (os, 'close'), (fcntl, 'flock')]
+real = {x: getattr(*x) for x in names}
+bad = []
+def run(n, after):
+    cnt = [0]
+    def wrap(x):
+        def w(*a, **k):
+            cnt[0] += 1
+            if cnt[0] == n and not after: raise Stop
+            r = real[x](*a, **k)
+            if cnt[0] == n and after: raise Stop
+            return r
+        return w
+    for x in names: setattr(*x, wrap(x))
+    try:
+        with el.locked(p): pass
+    except Stop: pass
+    finally:
+        for x in names: setattr(*x, real[x])
+    fd = os.open(p, os.O_RDWR | os.O_CREAT)
+    try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError: print('a held lock is left after an interrupt at call', n, 'after' if after else 'before'); sys.exit(1)   # the next try would wait for it for ever
+    finally: os.close(fd)
+    return cnt[0]
+N = run(0, False)
+for n in range(1, N + 1):
+    for after in (False, True): run(n, after)
+print(N, bad); sys.exit(1 if bad or N < 6 else 0)" "$H/bin" "$T" >"$T/lk" 2>&1; rc=$?
+ok '[ $rc = 0 ]' "R6 an interrupt at each system call of locked() (before it and right after it; the calls are counted, not listed) leaves no held lock (W3-CV5-01): $(tail -n 1 "$T/lk")"
+# W3-CRT5-06: a log this append creates and then cannot finish (an interrupt or a failure at any call after the create) is removed again
+rm -f "$LOG"; python3 -I -c "
+import os, sys
+sys.path.insert(0, sys.argv[1]); import event_log as el
+class Stop(BaseException): pass
+names, bad = ['fstat', 'pread', 'write', 'fsync'], []
+real = {n: getattr(os, n) for n in names}
+p = el.log_path()
+for n in names:
+    for after in (False, True):
+        hit = []
+        def w(*a, **k):
+            if os.readlink(f'/proc/self/fd/{a[0]}') != p: return real[n](*a, **k)
+            hit.append(1)
+            if not after: raise Stop
+            real[n](*a, **k); raise Stop
+        setattr(os, n, w)
+        try: el.append(el.build('note', 'x'))
+        except Stop: pass
+        finally: setattr(os, n, real[n])
+        if hit and os.path.lexists(p): bad.append((n, after))
+        if os.path.lexists(p): os.unlink(p)
+print(bad); sys.exit(1 if bad else 0)" "$H/bin" >"$T/mk" 2>&1; rc=$?
+ok '[ $rc = 0 ] && [ ! -e "$LOG" ]' "R6 a log that an append creates and cannot write its line to is removed again, whatever call stops it: the event log is as before (W3-CRT5-06): $(tail -n 1 "$T/mk")"
+$EL append --type note --what x >/dev/null 2>&1; ok '[ $? = 0 ] && [ "$(wc -l <"$LOG")" = 1 ]' "R6 and the next append creates the log and writes its line"
 $EL bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "usage error exits 2"
 [ $fails = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

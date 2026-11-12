@@ -108,25 +108,29 @@ def mkdirs(p, base=None):
 @contextlib.contextmanager
 def locked(p):
     """flock on p. After the lock is taken the file at the path must still be the file that was locked (it can be replaced while
-    a run waits): else the run locks again, a few times, then refuses."""
+    a run waits): else the run locks again, a few times, then refuses. A lock that was taken is released on every path: the
+    descriptor belongs to a file object from before the flock, closed by the one `finally`, and by the object's own end when an
+    interrupt lands anywhere else (between the flock and the guarded block, or inside the `finally`)."""
     if not os.path.isdir(os.path.dirname(p)):
         mkdirs(os.path.dirname(p))
-    for _ in range(5):
-        fd = open_file(p, os.O_RDWR | os.O_CREAT)
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        try:
-            same = os.path.samestat(os.fstat(fd), os.lstat(p))
-        except FileNotFoundError:
-            same = False
-        if same:
-            break
-        os.close(fd)
-    else:
-        raise OSError("the lock file keeps being replaced")
+    f = None
     try:
+        for _ in range(5):
+            f = os.fdopen(open_file(p, os.O_RDWR | os.O_CREAT), "rb+", buffering=0)
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                same = os.path.samestat(os.fstat(f.fileno()), os.lstat(p))
+            except FileNotFoundError:
+                same = False
+            if same:
+                break
+            f.close()
+        else:
+            raise OSError("the lock file keeps being replaced")
         yield
     finally:
-        os.close(fd)
+        if f is not None:
+            f.close()
 
 SECRETS = set()   # values seen under masked keys; scrub() removes them from any text
 
@@ -293,25 +297,25 @@ def append(line, row_id=None, scrub_detail=True):
         p = log_path()
         with locked(p + ".lock"):
             made = not os.path.lexists(p)   # a log this append makes and then cannot write a line to is removed again
-            fd = open_file(p, os.O_RDWR | os.O_APPEND | os.O_CREAT)
+            fd = size = None
             try:
+                fd = open_file(p, os.O_RDWR | os.O_APPEND | os.O_CREAT)
                 size = os.fstat(fd).st_size
                 if size and os.pread(fd, 1, size - 1) != b"\n":
                     data = b"\n" + data   # a fragment from a killed writer: the new line starts on its own
-                try:
-                    if os.write(fd, data) != len(data):
-                        raise OSError("short write")
-                    os.fsync(fd)   # a line is as durable as the state it reports
-                except BaseException:
-                    try:
-                        os.ftruncate(fd, size)   # whole or not at all
-                        if made and size == 0:
-                            os.unlink(p)
-                    except OSError:
-                        pass
-                    raise
+                if os.write(fd, data) != len(data):
+                    raise OSError("short write")
+                os.fsync(fd)   # a line is as durable as the state it reports
+            except BaseException:   # whatever stops it after the create (a failure, an interrupt): whole or not at all
+                with contextlib.suppress(OSError):
+                    if made:   # the lock is held: no other line can be in a log this call made
+                        os.unlink(p)
+                    elif size is not None:
+                        os.ftruncate(fd, size)
+                raise
             finally:
-                os.close(fd)
+                if fd is not None:
+                    os.close(fd)
     except (OSError, ValueError) as e:
         raise EventError("STL-CFG-318", why(e))
     return line
