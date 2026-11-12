@@ -45,7 +45,14 @@ CURW=   # the worker kind of the profile being exercised (a role's hook may be f
 setw() { case $1 in role:*) CURW=;; *) CURW=$(jq -r --arg p "$1" '.profiles[$p].worker // ""' "$MT" 2>/dev/null) || CURW=;; esac; }
 hooks_for() {   # <matcher table> <role> <tool>: the hooks (command or repo file) the role's matchers cover for <tool> and the current profile's worker kind; memoized in files
   local f="$T/hc/$(basename "$1").$2.$3.${CURW:-none}"
-  [ -f "$f" ] || { mkdir -p "$T/hc"; jq -r --arg r "$2" --arg t "$3" --arg w "$CURW" '.roles[$r].hooks[]? | select(.matcher as $m | $t | test($m)) | select((has("workers") | not) or (.workers | index($w) != null)) | (.command // .file)' "$1" >"$f"; }
+  # a catch_all matcher is the table's template, rendered as registration renders it (roles.hooks_for with the role's tools: T5); the others as written
+  [ -f "$f" ] || { mkdir -p "$T/hc"; python3 -I -c '
+import json, re, sys
+sys.path.insert(0, sys.argv[5]); import roles
+d, r, t, w = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3], sys.argv[4]
+d["profiles"] = {"zz-p": {"role": r, **({"worker": w} if w else {})}}
+tools = roles.role_tools(d, r) if any(h.get("catch_all") for h in d["roles"][r].get("hooks", [])) else None
+[print(f or c.removeprefix("python3 -I ")) for m, c, _, f in roles.hooks_for(d, "", "zz-p", "", r, tools) if re.search(m, t)]' "$1" "$2" "$3" "$CURW" "$STACK/bin" >"$f"; }
   cat "$f"
 }
 MT=   # the table whose matchers pick each role's hooks

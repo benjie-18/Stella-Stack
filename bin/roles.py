@@ -49,7 +49,7 @@ ROLE_KEYS = set(PERMS) | {"workspace", "allowed_overrides", "requirements", "bac
                           "complete_needs_review", "workers", "skills_disabled", "platform_toolsets", "config", "git_identity", "hooks",
                           "runs_unboxed"}
 HOOK_KEYS = {"matcher", "file", "command", "timeout", "workers", "writes", "catch_all"}   # writes: "refused" = the hook refuses every write; "judged" = a text guard that lets some through
-CATCH_ALL = "^(?!(?:{tools})$).+$"   # T5: the matcher of a catch_all hook; {tools} is filled at render time with the tools of the role's own toolsets (role_tools)
+CATCH_ALL = "^(?!(?:{tools})$).+$"   # T5: the matcher of a catch_all hook; {tools} is filled at render time with the profile's other matchers and the tools of its role's toolsets
 WRITES = ("refused", "judged")
 PROFILE_KEYS = {"role", "worker", "dir", "soul", "display_name", "approval_evidence", "review_callers", "capability_fallback"}
 TOP_KEYS = {"_comment", "schema_version", "fallback_role", "protected", "owner_settings", "owner_data", "owner_commands", "data_index",
@@ -740,14 +740,15 @@ def hook_command(path):
 
 def hooks_for(d, H, name, folder, role, tools=None):
     """[(matcher, command, timeout, repo source or None)] the profile's role installs, filtered by its worker kind. tools: the role's tools
-    (role_tools), which a catch_all matcher is rendered with; without them that matcher stays the template (callers that only want the files)."""
+    (role_tools); a catch_all matcher is rendered to match only a name that none of the profile's other matchers names and that is no tool of the
+    role; without tools it stays the template (callers that only want the files)."""
     worker = (d["profiles"].get(name) or {}).get("worker")
+    mine = [h for h in d["roles"][role].get("hooks", []) if "workers" not in h or worker in h["workers"]]
+    names = "|".join([h["matcher"] for h in mine if not h.get("catch_all")] + list(tools or []))   # what a catch-all leaves alone: every other matcher, every tool of the role
     out = []
-    for h in d["roles"][role].get("hooks", []):
-        if "workers" in h and worker not in h["workers"]:
-            continue
+    for h in mine:
         cmd = hook_command(h.get("command") or f"{folder}/hooks/{os.path.basename(h['file'])}")
-        m = h["matcher"].replace("{tools}", "|".join(tools)) if h.get("catch_all") and tools is not None else h["matcher"]
+        m = h["matcher"].replace("{tools}", names) if h.get("catch_all") and tools is not None else h["matcher"]
         out.append((m, cmd, int(h.get("timeout", 10)), h.get("file")))
     return out
 
