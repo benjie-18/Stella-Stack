@@ -682,7 +682,7 @@ def hits(d, top, names, kind, root=None):
         r = overlap(os.path.join(top, n), prot)
         if r:
             out.append(n)
-        elif kind == "boundary":   # any path whose first component under such a folder, its suffix stripped (json.py, json/__init__.py, json.cpython-311.so), shadows an import
+        elif kind == "boundary":   # any path whose first component under such a folder, its suffix stripped, shadows a module the boundary imports from outside the repo (a plain module, a package folder, a compiled form)
             dirs, ext = shadow if shadow else (shadow := _outside_imports(d, top))
             for dd in dirs:
                 if n.startswith(dd + "/") and n[len(dd) + 1:].split("/")[0].split(".")[0] in ext:
