@@ -189,7 +189,7 @@ def owner_chains(rp):
 def owner_data_hit(rp):
     """F1 W4/K1b: rp (a path) is, or is inside, an owner data path of the stack (bin/roles.py owner_paths: owner data, the owner settings, the apply
     tool's state), in its main checkout or in a card worktree of it, decided by identity (roles.overlap): another spelling of it, a short name or a
-    case variant, is the same path, and a name that cannot be classified counts. Reading owner data stays allowed; this is asked of writes only."""
+    case variant, is the same path (a name that names nothing on disk is judged by its names below the deepest folder it shares with one). Reading owner data stays allowed; this is asked of writes only."""
     r = roles.overlap(rp, owner_chains(rp))
     return bool(r) and r[0] in ("equal", "inside")
 

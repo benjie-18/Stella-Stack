@@ -400,7 +400,7 @@ ok 'python3 -I "$T/graph.py" "$T/gt" 2>&1 | grep -q event_log.py' "K3: a file re
 ok '[ "$(printf "bin/json.py\0bin/zz-not-stdlib.py\0" | ROLES_FILE=$RF python3 -I $S/roles.py hits /workspace boundary | tr "\0" "\n")" = "bin/json.py" ]' "K3: a new file in bin/ that shadows a standard-library module is a boundary change; another new file is not"
 # K1b: identity, not spelling
 mkdir -p "$T/ov/.Own/sub" "$T/ov/other"; ln -s "$T/ov/.Own" "$T/ov/link"
-ok '[ "$(python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import roles; p = roles.chains([sys.argv[2] + \"/.Own/sub\", sys.argv[2] + \"/.Own/future.json\"]); print(*[ (roles.overlap(sys.argv[2] + x, p) or [None])[0] for x in (\"/.OWN/sub/x\", \"/link/sub/x\", \"/.Own\", \"/other/x\", \"/.Own/FUTURE.JSON\", \"/.Own/ZZZZZZ~1/y\")])" "$S" "$T/ov")" = "inside inside contains None equal unknown" ]' "K1b: a case variant and a link are the protected folder, a folder that holds it is \"contains\", a name that cannot be classified is \"unknown\""
+ok '[ "$(python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import roles; p = roles.chains([sys.argv[2] + \"/.Own/sub\", sys.argv[2] + \"/.Own/future.json\"]); print(*[ (roles.overlap(sys.argv[2] + x, p) or [None])[0] for x in (\"/.OWN/sub/x\", \"/link/sub/x\", \"/.Own\", \"/other/x\", \"/.Own/FUTURE.JSON\", \"/.Own/ZZZZZZ~1/y\")])" "$S" "$T/ov")" = "inside inside contains None equal None" ]' "K1b: a case variant and a link are the protected folder, a folder that holds it is \"contains\", a name that names nothing on disk is judged by its names, never by its look (T3: was \"unknown\")"
 # K5: the work of an expansion is bounded
 ok 'python3 -I -c "
 import sys, time; sys.path.insert(0, sys.argv[1]); import roles
