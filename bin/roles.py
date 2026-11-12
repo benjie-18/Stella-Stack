@@ -527,14 +527,28 @@ def boundary(d):
     return sorted(set(d["boundary_paths"]) | {h[len(ROOT) + 1:] if h.startswith(ROOT + "/") else h for h in hooks})
 
 
-def _chain(p):
-    """K1b: (the names of a path's components, the (device, inode) of the root and of each existing prefix): a path is known by what it is."""
+def _lstat(path, memo):
+    if memo is None:
+        return os.lstat(path)
+    if path not in memo:
+        try:
+            memo[path] = os.lstat(path)
+        except OSError as e:
+            memo[path] = e
+    if isinstance(memo[path], OSError):
+        raise memo[path]
+    return memo[path]
+
+
+def _chain(p, memo=None):
+    """K1b: (the names of a path's components, the (device, inode) of the root and of each existing prefix): a path is known by what it is.
+    memo: the lstat results of one chains() call (the protected paths share their folders: each folder is looked up once)."""
     a = os.path.abspath(p)
     if ".." not in str(p).split("/"):   # T1: one lstat per component when no prefix is a link (realpath, then an lstat of each prefix, is two)
         comps, ids, cur = [c for c in a.split("/") if c], [], "/"
         for i in range(len(comps) + 1):
             try:
-                st = os.lstat(cur)
+                st = _lstat(cur, memo)
             except OSError:
                 return comps, ids
             if stat.S_ISLNK(st.st_mode):
@@ -557,9 +571,11 @@ def _chain(p):
     return comps, ids
 
 
-def chains(paths):
-    """The protected paths (absolute), ready for overlap()."""
-    return [(p, _chain(p)) for p in paths]
+def chains(paths, memo=None):
+    """The protected paths (absolute), ready for overlap(). memo: a dict the caller keeps for the chains it builds at one time (T1, r5: the
+    protected paths share their folders, so each folder is looked up once; a guard passes one dict for the lists it builds when it starts)."""
+    memo = {} if memo is None else memo
+    return [(p, _chain(p, memo)) for p in paths]
 
 
 def overlap(p, prot):

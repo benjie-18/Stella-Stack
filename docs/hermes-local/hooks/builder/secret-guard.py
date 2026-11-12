@@ -25,9 +25,10 @@ try:   # K6: the owner settings files (roles.json owner_settings) are read by no
     OWNER_FILES = {os.path.realpath(f).casefold() for f in _roles.owner_settings(_t)}   # B2V-01: /workspace is case-insensitive
     OWNER_TREES = [os.path.realpath(t).casefold() for t in _roles.state_trees(_t)]   # B1 (F1 W4): the apply tool's backups, applied state and event log hold owner values: no role reads them
     OWNER_TEXT = [p.casefold() for p in _roles.state_paths(_t)]   # ... however the path is spelled in a command (an interpreter's code included)
-    FILE_CH = _roles.chains(_roles.owner_settings(_t))   # K1b: a path is one of these by what it IS (identity: a short name, a case variant, a link), never by its spelling
-    TREE_CH = _roles.chains(_roles.state_trees(_t))
-    DIR_CH = _roles.chains({os.path.dirname(f) for f in _roles.owner_settings(_t)} | set(_roles.state_trees(_t)))
+    _LM = {}   # one memo for the lists built here (T1, r5)
+    FILE_CH = _roles.chains(_roles.owner_settings(_t), _LM)   # K1b: a path is one of these by what it IS (identity: a short name, a case variant, a link), never by its spelling
+    TREE_CH = _roles.chains(_roles.state_trees(_t), _LM)
+    DIR_CH = _roles.chains({os.path.dirname(f) for f in _roles.owner_settings(_t)} | set(_roles.state_trees(_t)), _LM)
 except Exception as _e:
     OWNER_FILES, OWNER_TREES, OWNER_TEXT, FILE_CH, TREE_CH, DIR_CH = None, [], [], [], [], []
     UNREADABLE = f"the role table or the data index cannot be read ({type(_e).__name__}), so every read is refused until it is fixed [STL-CFG-303]"

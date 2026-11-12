@@ -71,8 +71,9 @@ try:
         OWNER_REL = [p for p in roles.owner_paths(RT) if p not in RT["owner_settings"]] + roles.state_paths(RT)   # G1/B1: owner data and the apply tool's state, from the index and the table, never named here (the owner settings keep their older refusals)
         OWNER_CMDS = roles.owner_commands(RT)
         BY_NAME = [os.path.splitext(os.path.basename(c))[0].casefold() for c in OWNER_CMDS if c[len(ROOT) + 1:] in RT["owner_commands_by_name"]]   # K9: the stem, so a copy without its extension is the same name
-        OWNER_CH = roles.chains([f"{ROOT}/{d}" for d in OWNER_REL])   # K1b: the main checkout's; a card worktree's own copies are added when a path lies in it (worktree_chains, T1)
-        HOLD_CH = roles.chains(sorted({f"{ROOT}/{os.path.dirname(d)}" for d in OWNER_REL if os.path.dirname(d)}))   # the folders of the main checkout that hold owner data or state: nothing new is made in them
+        LM = {}   # one memo for the lists built when the guard starts (T1, r5)
+        OWNER_CH = roles.chains([f"{ROOT}/{d}" for d in OWNER_REL], LM)   # K1b: the main checkout's; a card worktree's own copies are added when a path lies in it (worktree_chains, T1)
+        HOLD_CH = roles.chains(sorted({f"{ROOT}/{os.path.dirname(d)}" for d in OWNER_REL if os.path.dirname(d)}), LM)   # the folders of the main checkout that hold owner data or state: nothing new is made in them
         MARKERS, PINS = RT["worker_markers"], RT["worker_pins"]   # K9: the worker markers and pins are the table's, named nowhere else
         MARK_PFX = [m[:max(10, len(m) * 2 // 5)] for m in MARKERS]   # a marker's front part: ${!HERMES_DELEG*} and a quote-split name name it too
         READERS = {v for v in RT["read_verbs"] if " " not in v}   # K7: the verbs that may name an owner path (data: the role table)
@@ -129,7 +130,7 @@ CD_MSG = ("the terminal stays inside your worktree: Hermes keeps its folder betw
 # STELLA_ROOT names); a project's own file with the same base name is no mention.
 CMDS = {c[len(ROOT) + 1:]: f"{c[len(ROOT) + 1:]} is an owner command: no role runs it (the owner runs it from the owner's own path; merging a card into main is the owner's step, F31)"
         for c in OWNER_CMDS}
-CMD_CH = roles.chains([f"{ROOT}/{c}" for c in CMDS])
+CMD_CH = roles.chains([f"{ROOT}/{c}" for c in CMDS], LM if RT else None)
 NAME_RX = re.compile("|".join(re.escape(n) + r"(?![\w-])" for n in BY_NAME)) if BY_NAME else None   # T4: any prefix (a copy, /tmp/x-merge-card.sh), no suffix word (its -selftest)
 
 
