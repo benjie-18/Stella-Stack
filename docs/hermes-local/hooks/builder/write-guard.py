@@ -57,7 +57,7 @@ whatever kanban_create was given, /workspace itself or another card's worktree i
     Hermes kanban workspace are allowed.
 Refusals on the owner boundary print STL-CFG-312 with the catalog's plain message and write one alert line (no owner value).
 Exit 2 = block; any error blocks, with a coded line."""
-import glob, json, os, pwd, re, shlex, shutil, sys
+import glob, json, os, pwd, re, shlex, shutil, sys, time
 
 OB = "STL-CFG-312"   # the catalog code of a refusal on the owner boundary; the alert line is written once, where the refusal is printed
 try:
@@ -236,6 +236,7 @@ def v4a_targets(text):
 HEREDOC = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|(\\?)([A-Za-z_][A-Za-z0-9_]*))")
 
 
+MEMO = set()   # (string, folder) pairs named_path has looked up in this call and found clean
 BODIES = []   # the here-document bodies of this call's command (K7: judged by the text checks, and when they name an owner path by the verb that reads them)
 
 
@@ -578,7 +579,7 @@ def note_names(words, names, cwd):
 
 
 PATHLIKE = re.compile(r"[\w.~$@+%/*?\[\]-]+")   # runs of path characters; those with a slash in them are paths, or the path inside a quoted word or interpreter code (linear: K5)
-MAX_CANDS = 3000   # K5: no command costs more than this many path look-ups; past it the command is refused
+BUDGET_S = 3.0   # K5: the path look-ups of one command take at most this long (the hook timeout is 20 s); past it the command is refused
 
 
 def cands(w):
@@ -590,15 +591,18 @@ def cands(w):
 
 
 def named_path(texts, cwd, names, budget):
-    """K7: the first owner path the strings name, as (path, relation), or None; budget is a one-item list, counted down (K5). The tree-wide form (the card's
-    own worktree root, `.`) is not a naming: the merge check judges what comes out of it."""
+    """K7: the first owner path the strings name, as (path, relation), or None; budget is a one-item list holding the time (monotonic) by which the look-ups
+    must be done (K5). The tree-wide form (the card's own worktree root, `.`) is not a naming: the merge check judges what comes out of it."""
     for t in texts:
-        for c in cands(t):
-            budget[0] -= 1
-            if budget[0] < 0:
-                return "(too many paths in this command to check)", "unknown"
+        for c in dict.fromkeys(cands(t)):
+            if time.monotonic() > budget[0]:
+                return "(too many paths in this command to check in time)", "unknown"
             if not c or (c.startswith("-") and "/" not in c):
                 continue
+            if (c, cwd) in MEMO:   # the same string in the same folder was looked up already (not one with a variable: the variables change)
+                continue
+            if "$" not in c:
+                MEMO.add((c, cwd))
             for rp in words_of(c, cwd, names)[0]:
                 r = roles.overlap(rp, OWNER_CH)
                 if r and r[0] == "contains" and (wt := own_worktree()[0]) and os.path.realpath(rp) == os.path.realpath(wt):
@@ -668,6 +672,7 @@ def marker_reason(cmd):
 
 def command_reason(cmd, base):
     BODIES.clear()
+    MEMO.clear()
     whole = roles.ansi(cmd)   # K7: the text checks see the whole command, here-document bodies included
     cmd = clean(cmd)
     low = whole.casefold()
@@ -679,7 +684,7 @@ def command_reason(cmd, base):
         r = marker_reason(part)
         if r:
             return r
-    budget, users = [MAX_CANDS], []
+    budget, users = [time.monotonic() + BUDGET_S], []
     for toks in all_tokens(cmd):
         cwd, words, names, skip = base, [], {}, False
         for i, t in enumerate(toks + [";"]):
