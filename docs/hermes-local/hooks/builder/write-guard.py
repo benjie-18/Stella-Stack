@@ -65,20 +65,28 @@ try:
     import roles   # noqa: E402  (the role table: one protected list, the caller's role)
     ROOT = roles.ROOT
     try:
-        RT = roles.load(files=False)
+        RT = roles.load()
         PROTECTED, CONFIG = roles.protected(RT)
         OWNER_FILES = roles.owner_settings(RT)
         OWNER_REL = [p for p in roles.owner_paths(RT) if p not in RT["owner_settings"]] + roles.state_paths(RT)   # G1/B1: owner data and the apply tool's state, from the index and the table, never named here (the owner settings keep their older refusals)
         OWNER_CMDS = roles.owner_commands(RT)
+        import hashlib
+        CMD_BYTES = {}   # W4-CV3-07: a copy is known by what it IS: (size -> {sha256}) of the owner command files; a run word that resolves to a file with these bytes is one
+        for _c in OWNER_CMDS:
+            try:
+                _b = open(_c, "rb").read(); CMD_BYTES.setdefault(len(_b), set()).add(hashlib.sha256(_b).hexdigest())
+            except OSError:
+                pass
         BY_NAME = [os.path.splitext(os.path.basename(c))[0].casefold() for c in OWNER_CMDS if c[len(ROOT) + 1:] in RT["owner_commands_by_name"]]   # K9: the stem, so a copy without its extension is the same name
-        OWNER_CH = roles.chains([f"{ROOT}/{d}" for d in OWNER_REL])   # K1b: the main checkout's; a card worktree's own copies are added when a path lies in it (worktree_chains, T1)
-        HOLD_CH = roles.chains(sorted({f"{ROOT}/{os.path.dirname(d)}" for d in OWNER_REL if os.path.dirname(d)}))   # the folders of the main checkout that hold owner data or state: nothing new is made in them
+        LM = {}   # one memo for the lists built when the guard starts (T1, r5)
+        OWNER_CH = roles.chains([f"{ROOT}/{d}" for d in OWNER_REL], LM)   # K1b: the main checkout's; a card worktree's own copies are added when a path lies in it (worktree_chains, T1)
+        HOLD_CH = roles.chains(sorted({f"{ROOT}/{os.path.dirname(d)}" for d in OWNER_REL if os.path.dirname(d)}), LM)   # the folders of the main checkout that hold owner data or state: nothing new is made in them
         MARKERS, PINS = RT["worker_markers"], RT["worker_pins"]   # K9: the worker markers and pins are the table's, named nowhere else
         MARK_PFX = [m[:max(10, len(m) * 2 // 5)] for m in MARKERS]   # a marker's front part: ${!HERMES_DELEG*} and a quote-split name name it too
         READERS = {v for v in RT["read_verbs"] if " " not in v}   # K7: the verbs that may name an owner path (data: the role table)
         GIT_READS = {v.split(" ", 1)[1] for v in RT["read_verbs"] if v.startswith("git ")}
     except Exception as e:   # every call is refused below until the table (and the index it names) can be read
-        RT, PROTECTED, CONFIG, OWNER_FILES, OWNER_REL, OWNER_CMDS, BY_NAME, OWNER_CH, HOLD_CH, READERS, GIT_READS, MARKERS, PINS, MARK_PFX, RT_ERROR = None, [], [], [], [], [], [], [], [], set(), set(), [], {}, [], str(e)[:200]
+        RT, PROTECTED, CONFIG, OWNER_FILES, OWNER_REL, OWNER_CMDS, BY_NAME, OWNER_CH, HOLD_CH, READERS, GIT_READS, MARKERS, PINS, MARK_PFX, CMD_BYTES, RT_ERROR = None, [], [], [], [], [], [], [], [], set(), set(), [], {}, [], {}, str(e)[:200]
     HOMES = roles.homes()
 except Exception as e:   # not even the role module loads: refuse, with a coded line
     print(json.dumps({"action": "block", "message": f"write guard: [{OB}] the role module cannot be loaded ({type(e).__name__}); every write is refused until it is fixed"}))
@@ -129,7 +137,7 @@ CD_MSG = ("the terminal stays inside your worktree: Hermes keeps its folder betw
 # STELLA_ROOT names); a project's own file with the same base name is no mention.
 CMDS = {c[len(ROOT) + 1:]: f"{c[len(ROOT) + 1:]} is an owner command: no role runs it (the owner runs it from the owner's own path; merging a card into main is the owner's step, F31)"
         for c in OWNER_CMDS}
-CMD_CH = roles.chains([f"{ROOT}/{c}" for c in CMDS])
+CMD_CH = roles.chains([f"{ROOT}/{c}" for c in CMDS], LM if RT else None)
 NAME_RX = re.compile("|".join(re.escape(n) + r"(?![\w-])" for n in BY_NAME)) if BY_NAME else None   # T4: any prefix (a copy, /tmp/x-merge-card.sh), no suffix word (its -selftest)
 
 
@@ -578,6 +586,25 @@ def owner_cmd_why(words, cwd, names):
             if owner_cmd_of(p):
                 return ob(owner_cmd_of(p))
     script = next((w for w in cmdw[1:] if not w.startswith("-")), None) if cmdw and norm(cmdw[0]) in INTERPRETERS else None
+    if cmdw and norm(cmdw[0]) in ("cp", "install", "ln", "rsync"):   # r5: making a copy of an owner command (its source resolves to one) is refused: a copy is run outside the command's own gate
+        srcs, t0 = list(dict.fromkeys(w for w in cmdw[1:-1] if not w.startswith("-"))), time.monotonic()   # each source once; the guard's deadline (K5, W4-CV3-09)
+        for wd in srcs:
+            if time.monotonic() - t0 > BUDGET_S:
+                return ob(f"`{' '.join(words)[:120]}` names too many sources to check in time; owner commands are never copied by a role")
+            for p in words_of(wd, cwd, names)[0]:
+                if owner_cmd_of(p):
+                    return ob(f"`{' '.join(words)[:120]}` copies the owner command {p}: a copy would run outside the command's own gate")
+    for wd in cmdw[:1] + ([script] if script else []):   # B.1 point 3 / W4-CV3-07 (r5): what runs, by what it IS: a file with the bytes of an owner command of the table (a copy under any name); not by its name (no false refusal of a like-named file with other bytes)
+        for pth in words_of(wd, cwd, names)[0] if "/" in wd or (wd == cmdw[0] and shutil.which(wd)) else []:
+            rp = pth if os.path.isfile(pth) else (shutil.which(wd) or "") if wd == cmdw[0] and "/" not in wd else ""
+            try:
+                sz = os.path.getsize(rp) if rp else -1
+            except OSError:
+                sz = -1
+            if sz in CMD_BYTES:
+                import hashlib
+                if hashlib.sha256(open(rp, "rb").read()).hexdigest() in CMD_BYTES[sz]:
+                    return ob(f"`{' '.join(words)[:120]}` runs {rp}, a copy of an owner command (the same bytes): owner commands are the owner's to run, never a role's")
     for wd in cmdw[:1] + ([script] if script else []):
         if words_of(wd, cwd, names)[1]:
             return ob(f"`{' '.join(words)[:120]}` runs a command or script built at run time, which this guard cannot check; owner commands are never run by a role")
@@ -838,12 +865,7 @@ if why is None:
 
 
 def coded(code, problem):   # K8: the catalog code, its plain message, one alert line for the call (the role's other hook that refuses it writes none); the role and the card named
-    try:
-        role = roles.role_of(RT, P.get("profile"))[0]
-    except Exception:
-        role = "unknown"
-    card = CALL.get("card")
-    return roles.plain(code, once=PAY, problem=f"{problem} (role {role}{', card ' + card if card else ''})")
+    return roles.hook_refusal(code, problem, PAY, CALL.get("card"))   # B.1 (r5): the one way a hook refuses
 
 
 if why.endswith("[STL-CFG-303]"):
@@ -851,6 +873,8 @@ if why.endswith("[STL-CFG-303]"):
     sys.exit(2)
 if why.startswith(f"[{OB}] "):   # one alert line per refusal, the catalog's plain message, no value from any owner file
     why = coded(OB, "a role's attempt on owner data, an owner state path or an owner command") + " " + why[len(OB) + 3:]
+elif not why.startswith("[STL-GRD-603]"):   # B.1 (r5): every other refusal (outside the worktree, agent config, the board CLI ...) carries the code of a refusal by the role's rules
+    why = coded("STL-GRD-604", "the write guard refused a write outside the card's own worktree or a command its role may not run") + " " + why
 tail = "" if why.startswith("[STL-GRD-603]") else " (D40). This refusal is final for this attempt."
 print(json.dumps({"action": "block", "message": f"write guard: {why}{tail}"}))
 sys.exit(2)

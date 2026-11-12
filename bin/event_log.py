@@ -370,7 +370,14 @@ def main(argv):
     t.add_argument("-n", type=int, default=20)
     o = ap.parse_args(argv)
     try:
-        if o.cmd == "append":
+        if o.cmd == "append":   # B.1 (r5, W4-CRT3-01): the owner's command refuses itself in a worker's environment (a marker of the role table's worker_markers)
+            try:
+                marks = sd.load(sd.load(sd.INDEX)["role_table"])["worker_markers"]
+                assert isinstance(marks, list) and marks and all(isinstance(m, str) and m for m in marks)
+            except Exception:
+                return fail("STL-CFG-312", "the list of worker markers is not available, so it cannot be told that this is not a worker; nothing was appended")
+            if any(os.environ.get(m) for m in marks):
+                return fail("STL-CFG-312", "a worker marker is set: the event log is appended by the owner's tools only; nothing was appended")
             who = {w: getattr(o, w) for w in ("role", "channel", "user") if getattr(o, w)}
             print(json.dumps(append(build(o.type, o.what, o.old, o.new, o.code, o.detail, who)), ensure_ascii=False))
         else:

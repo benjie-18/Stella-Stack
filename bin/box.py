@@ -564,7 +564,7 @@ def _sanitise(spec, snap):
 
 def _last_resort(spec):
     gd = spec.get("gd")
-    if not gd:
+    if not gd or not os.path.isdir(gd):   # B.1 (r5): nothing to quarantine in a git dir that is gone
         return
     for p in (spec.get("wt"), gd):
         with contextlib.suppress(Exception):
@@ -581,6 +581,8 @@ def _sanitise_inner(spec, snap):
     cannot list, a gitlink path outside the worktree, an error on one entry) fails closed: the card's index is moved aside, so the host sees no gitlink at all.
     The host reads the index with --git-dir=<common> only. A launcher killed with SIGKILL is covered by a detached helper (run()); the full fix is in Hermes."""
     if not snap:
+        return
+    if not (os.path.isdir(spec["wt"]) and os.path.isdir(spec["gd"])):   # B.1 (r5): a worktree the caller removed meanwhile is never written again (no .git, no git dir re-made)
         return
     for p in (spec["wt"], spec["gd"]):   # a box can leave its folders unwritable (9p honours modes)
         with contextlib.suppress(OSError):
@@ -633,18 +635,18 @@ def run(spec, cmd):
     old = _git(spec, "rev-parse", "--verify", "-q", ref + "^{commit}").stdout.strip()
     if not old:
         print(f"box: cannot read the card branch {spec['branch']}; nothing was run", file=sys.stderr)
-        return 126
+        return 70   # W4-VAL3-01: a reserved "box could not start" code; a card test may legitimately exit 126
     os.makedirs(priv + "/refs"); os.makedirs(priv + "/logs")
     with open(f"{priv}/refs/{name}", "w") as f:
         f.write(old + "\n")
     child, early = [], []
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):   # a kill meant for the call ends the box; this process stays to apply the ref
         signal.signal(sig, lambda n, _f: child[0].send_signal(n) if child else early.append(n))
-    snap = _snapshot_git(spec)
+    snap, helper = _snapshot_git(spec), None
     if snap:   # a launcher that Hermes kills with SIGKILL after a timeout cannot sweep: a helper in its own session does it once the launcher is gone
         import base64
         enc = json.dumps({k: (base64.b64encode(v).decode() if v is not None else None) for k, v in snap.items()})
-        subprocess.Popen([sys.executable, "-I", os.path.abspath(__file__), "sweep", json.dumps(spec), enc, str(os.getpid())], start_new_session=True,
+        helper = subprocess.Popen([sys.executable, "-I", os.path.abspath(__file__), "sweep", json.dumps(spec), enc, str(os.getpid())], start_new_session=True,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
     child.append(subprocess.Popen(cmd))
     for n in early:   # a signal that came before the box existed
@@ -663,11 +665,17 @@ def run(spec, cmd):
                     child[0].kill()
                     rc = child[0].wait()
                 break
+    if rc < 0 and spec.get("gd"):   # B.1 (r5): the box itself was ended by a signal: stated for the caller (merge_exec) next to the start marker, never read as the tests' verdict
+        with contextlib.suppress(OSError):
+            open(os.path.join(spec["gd"], "box-signal"), "w").write(str(-rc))
     rc = rc if rc >= 0 else 128 - rc
     try:
         _sanitise(spec, snap)
     except (OSError, subprocess.SubprocessError) as e:
         print(f"box: the card's git files were not checked after the call ({type(e).__name__})", file=sys.stderr)
+    else:
+        if helper:   # B.1 (r5): swept here: the helper (for a launcher killed with SIGKILL) has nothing left to do and must not sweep a worktree removed meanwhile
+            helper.kill()
     new = _plain_id(f"{priv}/refs/{name}")
     if not new:
         print("box: the card branch in the box is not a plain commit id; not applied", file=sys.stderr)
@@ -703,27 +711,43 @@ def merge_exec(top, wt, branch, card, script):
     writable, the rest read-only, the owner settings files and the state paths not mounted, the worker markers set. The profile is the first
     of sandbox.boxed_profiles whose role has a writable card worktree (one without broker variables first): from the table, never named here.
     The box is the only way: there is no unboxed run. Raises BoxError when the box cannot start. Returns the script's exit code."""
-    d = roles.load(files=False)
+    d = roles.load()
     sb = roles.sandbox(d)
     ps = sorted((p for p in (sb or {}).get("boxed_profiles", []) if p in d["profiles"] and d["roles"][d["profiles"][p]["role"]]["workspace"] == "git-worktree"),
                 key=lambda p: (bool(sb["profile_overrides"].get(p, {}).get("broker_env")), p))
+    ps = [p for p in ps if not sb["profile_overrides"].get(p, {}).get("broker_env")]   # W4-VAL3-12: the card's tests never carry a broker token
     if not ps:
-        raise BoxError("no boxed profile gets a writable card worktree, so the card's tests have no box to run in")
+        raise BoxError("no boxed profile without broker variables has a writable card worktree, so the card's tests have no box to run in")
     home = pwd.getpwuid(os.getuid()).pw_dir
     root = os.environ.get("BOX_HERMES_ROOT") or f"{home}/.hermes"
     argv, over = box_argv(d, ps[0], {"card": card, "workspace": wt, "branch": branch}, hermes_root=root, home=home, roots=[top])
     env = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "LC_ALL", "LC_CTYPE")}
     env.update({m: card for m in roles.worker_markers(d)})
     env.update(over)
-    return subprocess.run(argv + ["--chdir", wt, "bash", "-c", script], env=env, stdin=subprocess.DEVNULL).returncode
+    _, gd, _ = _worktree(wt)   # r5 (QA R11): the box's first act writes a marker in the worktree's git dir (bound read-write at the same path); no
+    marker, sigf = os.path.join(gd, "box-started"), os.path.join(gd, "box-signal")   # no marker after the run = the box never started (bwrap failed at set-up)
+    for f in (marker, sigf):
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(f)
+    rc = subprocess.run(argv + ["--chdir", wt, "bash", "-c", ': >"$0" || exit 125; exec bash -c "$1"', marker, script], env=env, stdin=subprocess.DEVNULL).returncode
+    started, sig = os.path.exists(marker), (open(sigf).read().strip() if os.path.exists(sigf) else "" if rc >= 0 else str(-rc))
+    for f in (marker, sigf):
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(f)
+    if not started:
+        raise BoxError(f"the box did not start (exit {rc}): the tests never ran")
+    if sig:
+        raise BoxError(f"the box was ended by signal {sig}: the tests did not finish")
+    return rc
 
 
-if __name__ == "__main__" and sys.argv[1:2] == ["exec"]:   # exec <top> <worktree> <branch> <card> <script>: exit 126 and a coded line when the box cannot start
+if __name__ == "__main__" and sys.argv[1:2] == ["exec"]:   # exec <top> <worktree> <branch> <card> <script>: exit 70 and a coded line when the box could not start (a test's own exit code otherwise, 126 included)
     try:
-        sys.exit(merge_exec(*sys.argv[2:6], sys.argv[6]))
+        rc = merge_exec(*sys.argv[2:6], sys.argv[6])
+        sys.exit(70 if rc == 70 else rc)   # run() could not read the branch: the same could-not-start code
     except (BoxError, roles.RolesError, OSError) as e:
         print(roles.plain("STL-CFG-312", problem=f"the box for the card's tests could not start: {str(e)[:200]}"), file=sys.stderr)
-        sys.exit(126)
+        sys.exit(70)
 if __name__ == "__main__" and sys.argv[1:2] == ["run"]:
     sys.exit(run(json.loads(sys.argv[2]), sys.argv[4:]))
 if __name__ == "__main__" and sys.argv[1:2] == ["sweep"]:

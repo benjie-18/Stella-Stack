@@ -38,11 +38,16 @@ try:
 except roles.RolesError as e:   # a broken role table registers nothing: never guess at access (D46)
     print(f"roles: INVALID {e}; no hook registered or checked ({roles.log_alert('STL-CFG-303', problem=str(e)[:300])})")
     sys.exit(1)
-try:   # T5: a catch-all's matcher excludes the tools of its role's own toolsets (Hermes resolves them); none can be rendered from a guess
-    TOOLS = {n: roles.role_tools(R, n) for n, r in R["roles"].items() if any(h.get("catch_all") for h in r.get("hooks", []))}
-except roles.RolesError as e:
-    print(f"roles: {e}; no hook registered or checked ({roles.log_alert('STL-CFG-303', problem=str(e)[:300])})")
-    sys.exit(1)
+# T5 ruling (W4-VER3-04): the catch-all's allowed tools are the table's catch_all_tools (data). Default-deny: a tool Hermes resolves for the role
+# that the table does not name stays inside the catch-all (refused); registration and --check report it in one coded line, so the owner adds a row.
+for n, r in R["roles"].items():
+    if any(h.get("catch_all") for h in r.get("hooks", [])):
+        try:
+            extra = sorted(set(roles.role_tools(R, n)) - set(r.get("catch_all_tools", [])))
+        except roles.RolesError as e:
+            print(f"{n}: {e}"); drift += 1; continue
+        for t in extra:
+            print(f"{n}: UNNAMED TOOL {t}: {roles.plain('STL-CFG-303', problem=f'Hermes resolves the tool {t} for role {n}, which its catch_all_tools does not name; it stays refused until the owner adds it to docs/hermes-local/roles.json')}"); drift += 1
 for name, folder, role, listed in roles.profiles(R, H):
     cfg = f"{folder}/config.yaml"
     if not os.path.exists(cfg):
@@ -50,7 +55,7 @@ for name, folder, role, listed in roles.profiles(R, H):
     if not listed:   # no row: the fallback role's hooks, which open nothing, and one alert line; never left unguarded
         drift += 1
         print(f"{name}: no row in roles.json, registering role {role} (STL-CFG-303; roles.py check logs the alert)")
-    PROFILE = [("pre_tool_call", m, c, t) for m, c, t, _ in roles.hooks_for(R, H, name, folder, role, TOOLS.get(role))]
+    PROFILE = [("pre_tool_call", m, c, t) for m, c, t, _ in roles.hooks_for(R, H, name, folder, role)]
     s = s0 = open(cfg).read()
     al = f"{folder}/shell-hooks-allowlist.json"
     d = json.load(open(al)) if os.path.exists(al) else {"approvals": []}

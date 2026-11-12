@@ -47,7 +47,7 @@ SCHEMA_VERSION = 1
 # hold them, and roles-selftest checks they are equal. A key a reader starts to use is added in both in the same change.
 ROLE_KEYS = set(PERMS) | {"workspace", "allowed_overrides", "requirements", "background_review", "complete_metadata",
                           "complete_needs_review", "workers", "skills_disabled", "platform_toolsets", "config", "git_identity", "hooks",
-                          "runs_unboxed"}
+                          "runs_unboxed", "catch_all_tools"}
 HOOK_KEYS = {"matcher", "file", "command", "timeout", "workers", "writes", "catch_all"}   # writes: "refused" = the hook refuses every write; "judged" = a text guard that lets some through
 CATCH_ALL = "^(?!(?:{tools})$).+$"   # T5: the matcher of a catch_all hook; {tools} is filled at render time with the profile's other matchers and the tools of its role's toolsets
 WRITES = ("refused", "judged")
@@ -143,28 +143,29 @@ def _sound(doc, limit=64):
 _LOADED = {}   # T1: the validated table of this process, keyed by the file's identity and change time (a hook that asks twice reads it once)
 
 
-def load(files=True):
-    """The validated table. files=False (a guard judging one call): the hook files the table names are not looked up on disk (that a hook
-    file exists and lies inside the stack decides what gets installed, never the verdict on a call; `check`, `spec` and every CLI read keep it)."""
+def load():
+    """The validated table, the hook-file rule included (W4-CV3-01, r5: every reader of the table, the guards too, refuses a table that names a hook
+    file that is not there). The proof is cheap: one lstat per folder and file not seen yet in this process; a table read anew drops those."""
     try:
         with open(path(), encoding="utf-8") as f:
             st = os.fstat(f.fileno())
-            key = (files, path(), st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+            key = (path(), st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)   # W4-CV3-08: the change time too: putting an old mtime back changes it
             if key in _LOADED:
                 return copy.deepcopy(_LOADED[key])
+            _RF_MEMO.clear(); _bad_hook_path.cache_clear()   # W4-CV3-08: a table read anew looks its hook files up anew
             d = json.load(f, object_pairs_hook=_pairs, parse_constant=_const, parse_float=_float, parse_int=_bigint)
         _sound(d)
     except Exception as e:
         raise RolesError(f"{path()}: {type(e).__name__}: {e}")
-    errs = validate(d, files=files) + ([NOFOLDER + ": a scratch table needs a folder of its own for its alerts (set ESCALATE_SUP_DIR)"] if NOFOLDER else [])
+    errs = validate(d) + ([NOFOLDER + ": a scratch table needs a folder of its own for its alerts (set ESCALATE_SUP_DIR)"] if NOFOLDER else [])
     if errs:
         raise RolesError(f"{path()}: " + "; ".join(errs))
     _LOADED.clear(); _LOADED[key] = d
     return copy.deepcopy(d)
 
 
-def validate(d, root=ROOT, files=True):
-    """Problems with the table, as a list of strings (empty = valid). root: the stack tree the table belongs to (its hook files); files=False: see load()."""
+def validate(d, root=ROOT):
+    """Problems with the table, as a list of strings (empty = valid). root: the stack tree the table belongs to (its hook files)."""
     roles, profs = d.get("roles") if isinstance(d, dict) else None, d.get("profiles") if isinstance(d, dict) else None
     if not isinstance(roles, dict) or not isinstance(profs, dict) or not roles:
         return ["profiles and roles must be objects, roles not empty"]
@@ -203,6 +204,9 @@ def validate(d, root=ROOT, files=True):
         if gi is not None and not (isinstance(gi, dict) and set(gi) == {"name", "email"}
                                    and all(isinstance(v, str) and KEY.fullmatch(v) for v in gi.values())):
             errs.append(f"role {n}: git_identity must be {{name, email}}, each the name of an owner config key")
+        ct = r.get("catch_all_tools")
+        if ct is not None and not (_set(ct) and ct and all(re.fullmatch(r"[A-Za-z0-9_]+", t) for t in ct)):
+            errs.append(f"role {n}: catch_all_tools must be a non-empty list of plain tool names (A-Z, digits, _), each once")
         if not isinstance(r.get("hooks", []), list):
             errs.append(f"role {n}: hooks must be a list"); continue
         for h in r.get("hooks", []):
@@ -221,7 +225,7 @@ def validate(d, root=ROOT, files=True):
             if "timeout" in h and not (_int(h["timeout"]) and h["timeout"] > 0):
                 errs.append(f"role {n}: a hook's timeout must be a positive integer")
             src = h.get("file") or h["command"]
-            if files and _bad_hook_path(src, "command" in h, root):
+            if _bad_hook_path(src, "command" in h, root):
                 errs.append(f"role {n}: hook {src} does not exist")
             if "workers" in h and not (_set(h["workers"]) and h["workers"]):
                 errs.append(f"role {n}: hook {src}: workers must be a non-empty list of worker kinds, each once")
@@ -304,8 +308,36 @@ def _bad_hook_path(src, command, root):
     """A command is an absolute path, a file a repo path inside the root once symlinks are followed; True when it is not, or is no file."""
     if command:
         return not src.startswith("/") or ".." in src.split("/") or not os.path.isfile(src)
-    rr = os.path.realpath(root)
-    return not _rel(src) or not os.path.isfile(f"{root}/{src}") or not os.path.realpath(f"{root}/{src}").startswith(rr.rstrip("/") + "/")
+    if not _rel(src):
+        return True
+    rr, f = _realfile(root), _realfile(f"{root}/{src}")
+    return rr is None or f is None or not stat.S_ISREG(f[1].st_mode) or not f[0].startswith(rr[0].rstrip("/") + "/")
+
+
+_RF_MEMO = {}   # T1 (r5): the folders the hook files share are looked up once per process (as the lru_cache below keeps each answer)
+
+
+def _realfile(p):
+    """(the real path, its stat) of p, following links, or None when it does not exist: os.path.realpath plus a stat, with one lstat per folder
+    that no earlier path of this process shared. A link anywhere is resolved by os.path.realpath itself (the long way)."""
+    comps, cur, st = [c for c in os.path.abspath(p).split("/") if c], "/", None
+    for c in comps:
+        cur = os.path.join(cur, c)
+        if cur not in _RF_MEMO:
+            try:
+                _RF_MEMO[cur] = os.lstat(cur)
+            except OSError:
+                _RF_MEMO[cur] = None
+        st = _RF_MEMO[cur]
+        if st is None:
+            return None
+        if stat.S_ISLNK(st.st_mode):
+            r = os.path.realpath(p)
+            try:
+                return r, os.stat(r)
+            except OSError:
+                return None
+    return cur, st if st is not None else os.lstat("/")
 
 
 _bad_hook_path = functools.lru_cache(maxsize=None)(_bad_hook_path)   # T1: the table names ~16 hook files about 60 times; each is looked up once per process
@@ -340,8 +372,11 @@ def unboxed_problems(d):
             errs.append(f"role {n} runs outside the box: it lists a hook that only judges writes (writes: judged)")
         errs += [f"role {n} runs outside the box: write tool {t} has no hook that refuses every write (writes: refused)"
                  for t in tools if not any(h.get("writes") == "refused" for h in cover(r, t))]
-        if not any(h.get("writes") == "refused" and h.get("catch_all") and "workers" not in h for h in r.get("hooks", [])):
+        cah = [h for h in r.get("hooks", []) if h.get("writes") == "refused" and h.get("catch_all") and "workers" not in h]
+        if not cah:
             errs.append(f"role {n} runs outside the box: it needs a hook that refuses any tool name no other matcher names (writes: refused)")
+        elif not r.get("catch_all_tools"):   # T5 ruling (W4-VER3-04): the catch-all's allowed tools are named in the table (data), default-deny: a tool not named is refused
+            errs.append(f"role {n} runs outside the box: its catch-all needs catch_all_tools in the table (the tools it lets through; a tool not listed is refused)")
     return errs
 
 
@@ -524,17 +559,65 @@ def boundary(d):
     code loads, kept complete by a selftest that walks the import and source graph) and every hook file or command the table names. A card
     branch that changes one meets a flag at the merge."""
     hooks = {(h.get("file") or h["command"]) for r in d["roles"].values() for h in r.get("hooks", [])}
-    return sorted(set(d["boundary_paths"]) | {h[len(ROOT) + 1:] if h.startswith(ROOT + "/") else h for h in hooks})
+    return sorted(set(d["boundary_paths"]) | {h[len(ROOT) + 1:] if h.startswith(ROOT + "/") else h for h in hooks} | table_named(d))
 
 
-def _chain(p):
-    """K1b: (the names of a path's components, the (device, inode) of the root and of each existing prefix): a path is known by what it is."""
+def table_named(d, root=None):
+    """B.2 point 10 (W4-CV3-04): the repo files the table itself names as a command, a prompt or a hook (every value under a key "command",
+    "broker_when", "review_prompt" or "file", a regex unescaped): what the boundary code runs or reads on the table's word decides it too."""
+    out, todo = set(), [d]
+    while todo:
+        x = todo.pop()
+        if isinstance(x, dict):
+            for k, v in x.items():
+                if isinstance(v, str) and k in ("command", "broker_when", "review_prompt", "file"):
+                    for m in re.finditer(r"[\w.~-]+(?:/[\w.~-]+)+", re.sub(r"\\(.)", r"\1", v)):
+                        rel = m[0].removeprefix(ROOT.lstrip("/") + "/")   # an absolute path of the stack, or a repo path
+                        if _rel(rel) and os.path.isfile(os.path.join(root or ROOT, rel)):
+                            out.add(rel)
+                else:
+                    todo.append(v)
+        elif isinstance(x, list):
+            todo += x
+    return out
+
+
+def _outside_imports(d, top):
+    """B.3 point 18 (W4-VER3-02, W4-VAL3-10): the module names the boundary's python code imports that are not a module of its own folders (the standard
+    library's and any installed one), plus every standard-library name: a new path in a folder the hooks import from that starts with one shadows it."""
+    dirs = {os.path.dirname(x) for x in d["boundary_paths"] if x.endswith(".py")}
+    local = {os.path.splitext(f)[0] for dd in dirs if os.path.isdir(os.path.join(top, dd)) for f in os.listdir(os.path.join(top, dd))}
+    names = set(sys.stdlib_module_names)
+    for x in boundary(d):
+        if x.endswith(".py") and os.path.isfile(os.path.join(top, x)):
+            for m in re.finditer(r"^\s*(?:import|from)\s+([A-Za-z_]\w*)", open(os.path.join(top, x), encoding="utf-8", errors="replace").read(), re.M):
+                if m[1] not in local:
+                    names.add(m[1])
+    return dirs, names
+
+
+def _lstat(path, memo):
+    if memo is None:
+        return os.lstat(path)
+    if path not in memo:
+        try:
+            memo[path] = os.lstat(path)
+        except OSError as e:
+            memo[path] = e
+    if isinstance(memo[path], OSError):
+        raise memo[path]
+    return memo[path]
+
+
+def _chain(p, memo=None):
+    """K1b: (the names of a path's components, the (device, inode) of the root and of each existing prefix): a path is known by what it is.
+    memo: the lstat results of one chains() call (the protected paths share their folders: each folder is looked up once)."""
     a = os.path.abspath(p)
     if ".." not in str(p).split("/"):   # T1: one lstat per component when no prefix is a link (realpath, then an lstat of each prefix, is two)
         comps, ids, cur = [c for c in a.split("/") if c], [], "/"
         for i in range(len(comps) + 1):
             try:
-                st = os.lstat(cur)
+                st = _lstat(cur, memo)
             except OSError:
                 return comps, ids
             if stat.S_ISLNK(st.st_mode):
@@ -557,9 +640,11 @@ def _chain(p):
     return comps, ids
 
 
-def chains(paths):
-    """The protected paths (absolute), ready for overlap()."""
-    return [(p, _chain(p)) for p in paths]
+def chains(paths, memo=None):
+    """The protected paths (absolute), ready for overlap(). memo: a dict the caller keeps for the chains it builds at one time (T1, r5: the
+    protected paths share their folders, so each folder is looked up once; a guard passes one dict for the lists it builds when it starts)."""
+    memo = {} if memo is None else memo
+    return [(p, _chain(p, memo)) for p in paths]
 
 
 def overlap(p, prot):
@@ -590,18 +675,18 @@ def hits(d, top, names, kind, root=None):
     modules whose name shadows a standard-library module (the hooks import from that folder ahead of the standard library). Raises RolesError."""
     rel = owner_paths(d, root or top) if kind == "refused" else boundary(d)
     prot = chains(os.path.join(top, x) for x in rel)
-    out = []
+    out, shadow = [], None
     for n in names:
         if n.startswith("/") or ".." in n.split("/"):
             out.append(n); continue
         r = overlap(os.path.join(top, n), prot)
         if r:
             out.append(n)
-        elif kind == "boundary":
-            dirs = {os.path.dirname(x) for x in d["boundary_paths"] if x.endswith(".py")}
-            base, ext = os.path.splitext(os.path.basename(n))
-            if os.path.dirname(n) in dirs and ext == ".py" and base in sys.stdlib_module_names:
-                out.append(n)
+        elif kind == "boundary":   # any path whose first component under such a folder, its suffix stripped, shadows a module the boundary imports from outside the repo (a plain module, a package folder, a compiled form)
+            dirs, ext = shadow if shadow else (shadow := _outside_imports(d, top))
+            for dd in dirs:
+                if n.startswith(dd + "/") and n[len(dd) + 1:].split("/")[0].split(".")[0] in ext:
+                    out.append(n); break
     return out
 
 
@@ -684,23 +769,45 @@ def plain(code, once=None, **kv):
         return f"[{code}]"
 
 
+def call_key(payload):
+    """B.1 (r5): (key, window in seconds) of the tool call a hook payload belongs to. Hermes puts the call's id in extra.tool_call_id: the hooks of one call
+    share it and a retry has a new one, so the key is the id and needs no window. A payload without one is keyed on its bytes and the parent process,
+    and only hooks that start within 2 s of the first count as the same call (the limit: a retry of the same payload sooner than that writes no line)."""
+    try:
+        cid = (json.loads(payload).get("extra") or {}).get("tool_call_id")
+    except (ValueError, AttributeError, TypeError):
+        cid = None
+    return (f"id:{cid}", None) if isinstance(cid, str) and cid else (f"payload:{payload}|{os.getppid()}", 2)
+
+
 def _first(code, key):
-    """True for the first caller with this (code, key, parent process) in 30 s: a marker file made with O_EXCL in the alert folder (hooks run as separate
-    processes under one parent, so a marker is how they tell they refuse the same call)."""
+    """True for the first hook of a call to refuse it with this code: a marker file made with O_EXCL in the alert folder (hooks run as separate processes,
+    so a marker is how they tell they refuse the same call). key: a call key (call_key) or any text (then the old rule: the parent process, 30 s)."""
     d = os.path.join(os.environ.get("ESCALATE_SUP_DIR") or f"{ROOT}/.supervisor", "once")
     os.makedirs(d, exist_ok=True)
     for old in glob.glob(d + "/*"):   # markers older than an hour go
         if time.time() - os.stat(old).st_mtime > 3600:
             os.unlink(old)
-    f = os.path.join(d, hashlib.sha1(f"{code}|{key}|{os.getppid()}".encode()).hexdigest()[:24])
+    key, window = key if isinstance(key, tuple) else (f"{code}|{key}|{os.getppid()}", 30)   # a call key: one line per refused call, whatever code each hook gives
+    f = os.path.join(d, hashlib.sha1(key.encode()).hexdigest()[:24])
     try:
         os.close(os.open(f, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
         return True
     except FileExistsError:
-        if time.time() - os.stat(f).st_mtime > 30:
+        if window is not None and time.time() - os.stat(f).st_mtime > window:
             os.utime(f)
             return True
         return False
+
+
+def hook_refusal(code, problem, payload, card=None):
+    """B.1 (r5), the one way a hook refuses: '[CODE] <the catalog's plain message>' with exactly one alert line per refused call (the first hook of the call
+    to refuse with this code writes it), naming the role of the payload's profile and, where the caller knows it, the card."""
+    try:
+        role = role_of(load(), json.loads(payload).get("profile"))[0]
+    except Exception:
+        role = "unknown"
+    return plain(code, once=call_key(payload), problem=f"{problem} (role {role}{', card ' + card if card else ''})")
 
 
 def protected(d):
@@ -761,11 +868,11 @@ def hooks_for(d, H, name, folder, role, tools=None):
     role; without tools it stays the template (callers that only want the files)."""
     worker = (d["profiles"].get(name) or {}).get("worker")
     mine = [h for h in d["roles"][role].get("hooks", []) if "workers" not in h or worker in h["workers"]]
-    names = "|".join([h["matcher"] for h in mine if not h.get("catch_all")] + list(tools or []))   # what a catch-all leaves alone: every other matcher, every tool of the role
+    names = "|".join([h["matcher"] for h in mine if not h.get("catch_all")] + d["roles"][role].get("catch_all_tools", []))   # T5: what a catch-all leaves alone: every other matcher and the role's catch_all_tools (data, default-deny)
     out = []
     for h in mine:
         cmd = hook_command(h.get("command") or f"{folder}/hooks/{os.path.basename(h['file'])}")
-        m = h["matcher"].replace("{tools}", names) if h.get("catch_all") and tools is not None else h["matcher"]
+        m = h["matcher"].replace("{tools}", names) if h.get("catch_all") else h["matcher"]
         out.append((m, cmd, int(h.get("timeout", 10)), h.get("file")))
     return out
 
@@ -996,6 +1103,9 @@ def fail(code, **kv):
 
 def main():
     cmd, args = (sys.argv[1] if len(sys.argv) > 1 else ""), sys.argv[2:]
+    if cmd == "hook-refusal" and len(args) == 2:   # <code> <problem>, the payload on stdin: a shell hook's refusal line (hook_refusal); never fails
+        print(hook_refusal(args[0], args[1][:300], sys.stdin.read()))
+        sys.exit(0)
     if cmd == "prove":   # needs no role table: the board and the kernel only
         o = dict(zip(args[::2], args[1::2]))
         j, why = prove_card(o.get("--profile"), o.get("--task", ""))

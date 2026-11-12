@@ -17,7 +17,53 @@ h1() { [ "$(tail -n +$(($2 + 1)) "$1" 2>/dev/null | grep -cF "$T")" = 0 ]; }   #
 export ESCALATE_SUP_DIR=$T/sup-h1; mkdir -p "$ESCALATE_SUP_DIR/logs"   # every script run below that can raise an alert writes into the temp folder
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 # run <hook> <tool> <tool_input json>: the hook's exit code (2 = blocked); its stdout goes to $T/out
-run() { jq -nc --arg t "$2" --argjson i "$3" '{hook_event_name: "pre_tool_call", tool_name: $t, tool_input: $i}' | "$1" >"$T/out" 2>/dev/null; echo $?; }
+# T1 (F1 W4 r5): a python hook's row is judged by ONE judge process that runs the hook's whole script with the row's payload (its printed output
+# and exit code, as the process gives them; stderr is dropped here as before). The first row of each (hook, tool, exit code) class also runs as
+# a real process and both must agree; an agreement case with a planted-difference control is at the end. Shell hooks stay processes.
+cat >"$T/pjudge.py" <<'PY'
+import base64, io, json, os, sys, traceback
+inp, outp = sys.argv[1:3]; codes = {}; open(os.path.join(os.path.dirname(inp), "jpid"), "w").write(str(os.getpid())); keep = (sys.stdout, sys.stderr, sys.stdin, sys.argv, dict(os.environ), os.getcwd())
+while True:
+    with open(inp, encoding="utf-8") as f:
+        line = f.readline()
+    if not line.strip() or line.strip() == "QUIT":
+        break
+    r = json.loads(line); g = r["hook"]
+    if g not in codes:
+        codes[g] = compile(open(g, encoding="utf-8").read(), g, "exec")
+    for m in [m for m in sys.modules if m in ("roles", "alert_catalog")]:
+        del sys.modules[m]   # as a fresh process: the stack modules read their environment when imported
+    os.environ.clear(); os.environ.update(r["env"] if "env" in r else {**keep[4], **r["add"]}); os.chdir(r["cwd"])   # the full environment, or the one at start plus the row's own
+    out = io.StringIO(); sys.stdout, sys.stderr = out, io.StringIO(); sys.stdin = io.StringIO(r["payload"]); sys.argv = [g]
+    try:
+        exec(codes[g], {"__name__": "__main__", "__file__": g}); rc = 0
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else 0 if e.code is None else 1
+        if isinstance(e.code, str):
+            print(e.code, file=sys.stderr)
+    except BaseException:
+        traceback.print_exc(file=sys.stderr); rc = 1
+    finally:
+        sys.stdout, sys.stderr, sys.stdin, sys.argv = keep[:4]; os.environ.clear(); os.environ.update(keep[4]); os.chdir(keep[5])
+    with open(outp, "w", encoding="utf-8") as f:
+        f.write(f"{rc}\t{base64.b64encode(out.getvalue().encode()).decode()}\n")
+PY
+
+mkdir -p "$T/pj"; mkfifo "$T/pj/in" "$T/pj/oq"; python3 -I "$T/pjudge.py" "$T/pj/in" "$T/pj/oq" </dev/null >/dev/null 2>&1 & PJP=$!; trap 'kill $PJP 2>/dev/null; rm -rf "$T"' EXIT
+: >"$T/pjseen"; : >"$T/pjrows"; PJENV=$(env | sort | md5sum)   # a row is sent without the environment while the exported environment is the judge's own
+pjudge() {   # pjudge <hook> <payload>: exit code echoed, stdout in $T/out (its stderr is dropped, as the process rows drop it)
+  local rc b
+  if [ "$(env | sort | md5sum)" = "$PJENV" ]; then jq -nc --arg h "$1" --arg p "$2" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, add: {}}' >"$T/pj/in"
+  else env -0 | jq -Rsc --arg p "$2" --arg h "$1" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, env: (split("\u0000") | map(select(length > 0) | capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}' >"$T/pj/in"; fi
+  IFS=$'\t' read -r rc b <"$T/pj/oq"; printf '%s' "$b" | base64 -d >"$T/out"; echo "$rc"; }
+run() { local pay rc rrc; pay=$(jq -nc --arg t "$2" --argjson i "$3" '{hook_event_name: "pre_tool_call", tool_name: $t, tool_input: $i}')
+  case $1 in *.py) ;; *) printf '%s' "$pay" | "$1" >"$T/out" 2>/dev/null; echo $?; return ;; esac
+  rc=$(pjudge "$1" "$pay"); printf '%s\t%s\n' "$1" "$(printf '%s' "$pay" | base64 -w0)" >>"$T/pjrows"
+  if ! grep -qxF -- "$1|$2|$rc" "$T/pjseen"; then
+    echo "$1|$2|$rc" >>"$T/pjseen"; cp "$T/out" "$T/out.judge"; printf '%s' "$pay" | "$1" >"$T/out" 2>/dev/null; rrc=$?
+    if [ "$rrc" != "$rc" ] || ! cmp -s "$T/out" "$T/out.judge"; then echo "     route agreement: ${1##*/} $2 exit $rc in the judge, $rrc as a process" >&2; echo 99; return; fi
+  fi
+  echo "$rc"; }
 term() { run "$1" terminal "$(jq -nc --arg c "$2" '{command: $c}')"; }
 
 B=$D/default/deny-kanban-block.sh
@@ -315,6 +361,16 @@ ok 'has profiles/builder-local/ git-guard.py && has profiles/builder-claude/ git
 ok 'has profiles/builder-local/ write-guard.py && has profiles/builder-claude/ write-guard.py && ! grep -q write-guard "$H/config.yaml" "$H/profiles/reviewer/config.yaml"' "write guard registered fail-closed in both builders only (D40)"
 ok '( for g in secret-guard.py model-guard.py; do has profiles/builder-local/ $g && has profiles/builder-claude/ $g || exit 1; done ) && ! grep -q model-guard.py "$H/config.yaml" "$H/profiles/reviewer/config.yaml"' "secret guard (F12) and model guard (F14) registered fail-closed in both builders; the model guard in no other profile (the secret guard also guards Stella's and the reviewer's file reads, D42)"
 ok 'HOME="$T/home" "$REG" --check >/dev/null' "registration --check: in sync after apply"
+# T5 ruling (W4-VER3-04, r5): a tool Hermes resolves for an unboxed role that its catch_all_tools does not name is reported (default-deny); the catch-all keeps refusing it
+MKT=$(python3 -I -c "import sys,json; sys.path.insert(0,'/workspace/bin'); import roles; d=roles.load(); print(next(n for n,r in d['roles'].items() if r.get('catch_all_tools')))")
+RFD=$(HOME="$T/home" python3 -I -c "import os; print(os.path.expanduser('~/.hermes'))")
+DROPPED=$(python3 -I -c "import json,re,sys; d=json.load(open('/workspace/docs/hermes-local/roles.json')); r=d['roles'][sys.argv[1]]; ms=[h['matcher'] for h in r['hooks'] if not h.get('catch_all')]
+print(next(t for t in r['catch_all_tools'] if not any(re.fullmatch(m, t) for m in ms)))" "$MKT")   # a tool only the catch-all decides (no other matcher of the role names it)
+jq --arg n "$MKT" --arg t "$DROPPED" '.roles[$n].catch_all_tools -= [$t]' /workspace/docs/hermes-local/roles.json >"$T/drop.json"
+ok '[ -n "$DROPPED" ] && HOME="$T/home" ROLES_FILE=$T/drop.json "$REG" --check 2>&1 | grep -q "UNNAMED TOOL $DROPPED" && [ "$(HOME="$T/home" ROLES_FILE=$T/drop.json "$REG" --check >/dev/null 2>&1; echo $?)" = 1 ]' "T5: registration --check reports a tool ($DROPPED) Hermes resolves for role $MKT that catch_all_tools does not name, drift"
+HOOK=$(jq -r --arg n "$MKT" '[.roles[$n].hooks[] | select(.catch_all) | .file][0]' /workspace/docs/hermes-local/roles.json)
+RENDERED=$(HOME="$T/home" ROLES_FILE=$T/drop.json python3 -I -c "import sys,json; sys.path.insert(0,'/workspace/bin'); import roles; d=roles.load(); print(next(m for m,c,_,_ in roles.hooks_for(d,sys.argv[2],'p','',sys.argv[1]) if '(?!' in m))" "$MKT" "$RFD")
+ok 'python3 -I -c "import re,sys; sys.exit(0 if re.fullmatch(sys.argv[1], sys.argv[2]) else 1)" "$RENDERED" "$DROPPED"' "T5: the rendered catch-all of role $MKT matches the unnamed tool $DROPPED (it stays refused)"
 sed -i '/deny-kanban-block/,+2d' "$H/config.yaml"
 ok '! HOME="$T/home" "$REG" --check >/dev/null' "registration --check: a missing hook is drift"
 # Matchers, checked the way Hermes checks them (re.fullmatch, agent/shell_hooks.py) against the real tool names, so a
@@ -549,4 +605,17 @@ done
 ok '[ "$(cd "$PL" && term $R "git status")" = 2 ] && [ ! -e "$T/marker4" ]' "K4: git with no -C, the terminal's folder a planted repository: refused, nothing runs"
 ok '[ "$(cd "$T" && term $R "git status")" = 2 ]' "K4: git in a folder that is no repository at all: refused"
 ok '[ "$(term $R "git -C /workspace status --short")" = 0 ]' "K4 control: git in the stack folder is allowed"
+# T1 (r5): the two routes agree on every 3rd judged row (the judge and a real hook process, the same row), and a planted difference (the judge
+# given copies of the hooks whose refusal reads otherwise) is caught
+pagree() { local n=0 i=0 h p pay rc rrc jh
+  while IFS=$'\t' read -r h p; do i=$((i+1)); [ $((i % 3)) = 1 ] || continue; pay=$(printf '%s' "$p" | base64 -d); jh=$h
+    [ -n "$1" ] && { jh=$T/pplant/$(printf '%s' "$h" | md5sum | cut -c1-8).py; [ -f "$jh" ] || sed 's/"action": "block"/"action": "blocked"/' "$h" >"$jh"; }
+    rc=$(pjudge "$jh" "$pay"); cp "$T/out" "$T/ag.judge"
+    [ -f "$T/ag.real.$i" ] || { printf '%s' "$pay" | "$h" >"$T/ag.real.$i" 2>/dev/null; echo $? >"$T/ag.rc.$i"; }   # the process run once per row, kept for the control
+    { [ "$rc" = "$(<"$T/ag.rc.$i")" ] && cmp -s "$T/ag.real.$i" "$T/ag.judge"; } || n=$((n+1))
+  done < <(cat "$T/pjrows"); echo "$n"; }
+mkdir -p "$T/pplant"; PN=$(wc -l <"$T/pjrows"); PD=$(pagree ""); PX2=$(pagree plant)
+ok '[ "$PN" -ge 100 ] && [ "$PD" = 0 ]' "T1 route agreement: every 3rd of $PN rows judged in one process gives the same exit code and output as a real hook process ($PD differ)"
+ok '[ "$PX2" -gt 0 ]' "T1 route agreement, negative control: a planted difference in the judge's hooks is caught ($PX2 differ)"
+printf 'QUIT\n' >"$T/pj/in"; wait "$PJP"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

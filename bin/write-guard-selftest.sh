@@ -96,6 +96,73 @@ wf() { run write_file "$(jq -nc --arg p "$1" '{path: $p, content: "x"}')" "${2:-
 sh() { run terminal "$(jq -nc --arg c "$1" '{command: $c}')" "${2:-$W}"; }
 said() { grep -q -- "$1" "$T/out"; }
 
+# ---- T1 (F1 W4 r5): lines 1..98 above are the harness the qa tests take; the in-process route is defined here, after it
+ok() { local REAL=; case $1 in *'$WGA'*|*'$AL'*|*FAKE_LOG*) REAL=1 ;; esac   # T1 (r5): a case that reads the alert log or the board calls runs its hooks as real processes
+  if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
+hookrun() {  # hookrun <fixture> <card> <profile> <workspace> <tool> <tool_input json> <cwd> [env...]: the guard's exit code, as run
+  # by a worker bound per <fixture> to <card>, assigned to ${ASG:-<profile>}; the payload names <profile>
+  local fx=$1 c=$2 pr=$3 ws=$4 tool=$5 in=$6 cwd=$7 pay; shift 7
+  pay=$(jq -nc --arg t "$tool" --argjson a "$in" --arg c "$cwd" --arg p "$pr" '{tool_name: $t, tool_input: $a, session_id: "s1", cwd: $c, profile: $p, extra: {}}')
+  if [ "$fx" = bind ] && [ -z "${REAL:-}" ]; then bjrun "$c" "${ASG:-$pr}" "$ws" "stella/$c-x" "$pay" "$pr|$tool" "$@"; return; fi
+  bound "$fx" "$c" "${ASG:-$pr}" "$ws" "stella/$c-x" "$pay" -- env "$@" python3 "$G"; }
+# T1 (F1 W4 r5): a bound row (fixture bind, no alert or board-call assertion) is judged by a judge that runs AS the bound worker's child, one per
+# (card, assignee, workspace, branch): the card proof is the real one (the process tree, the stub board), and the hook's whole script runs in it with
+# the row's environment, folder and payload, its exit code and printed output as a process gives them. The first row of each (profile, tool,
+# exit code) class also runs through bound() as a real hook process, and both must agree. The other fixtures (the proof failing) stay processes.
+cat >"$T/bjudge.py" <<'PY'
+import base64, io, json, os, sys, traceback
+inp, outp = sys.argv[1:3]; codes = {}; open(os.path.join(os.path.dirname(inp), "jpid"), "w").write(str(os.getpid())); keep = (sys.stdout, sys.stderr, sys.stdin, sys.argv, dict(os.environ), os.getcwd())
+while True:
+    with open(inp, encoding="utf-8") as f:
+        line = f.readline()
+    if not line.strip() or line.strip() == "QUIT":
+        break
+    r = json.loads(line); g = r["hook"]
+    if g not in codes:
+        codes[g] = compile(open(g, encoding="utf-8").read(), g, "exec")
+    for m in [m for m in sys.modules if m in ("roles", "alert_catalog")]:
+        del sys.modules[m]   # as a fresh process: the stack modules read their environment when imported
+    os.environ.clear(); os.environ.update(r["env"] if "env" in r else {**keep[4], **r["add"]}); os.chdir(r["cwd"])   # the full environment, or the one at start plus the row's own
+    out = io.StringIO(); sys.stdout = sys.stderr = out; sys.stdin = io.StringIO(r["payload"]); sys.argv = [g]
+    try:
+        exec(codes[g], {"__name__": "__main__", "__file__": g}); rc = 0
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else 0 if e.code is None else 1
+        if isinstance(e.code, str):
+            print(e.code, file=out)
+    except BaseException:
+        traceback.print_exc(file=out); rc = 1
+    finally:
+        sys.stdout, sys.stderr, sys.stdin, sys.argv = keep[:4]; os.environ.clear(); os.environ.update(keep[4]); os.chdir(keep[5])
+    with open(outp, "w", encoding="utf-8") as f:
+        f.write(f"{rc}\t{base64.b64encode(out.getvalue().encode()).decode()}\n")
+PY
+: >"$T/bjseen"; : >"$T/bjrows"
+bjrun() {   # bjrun <card> <assignee> <workspace> <branch> <payload> <class> [env...]: exit code echoed, output in $T/out
+  local c=$1 a=$2 ws=$3 br=$4 pay=$5 cls=$6 d rc b req; shift 6
+  d=$T/bj/$(printf '%s' "$c|$a|$ws|$br" | md5sum | cut -c1-16)
+  if [ ! -s "$d/card.json" ]; then   # a judge for this binding: a fake worker that runs it, the card bound to that worker
+    mkdir -p "$d"; mkfifo "$d/in" "$d/oq"; : >"$d/payload"; rm -f "$FAKE_CARDS"/*.json
+    bash "$T/worker.sh" "$d" "$T/runner.py" python3 -I "$T/bjudge.py" "$d/in" "$d/oq" </dev/null >/dev/null 2>&1 &
+    for _ in $(seq 200); do [ -s "$d/pid" ] && break; sleep 0.02; done
+    mk bind "$c" "$a" "$ws" "$br" "$(cat "$d/pid")"; cp "$FAKE_CARDS"/*.json "$d/card.json"; echo "$d" >>"$T/bjdirs"; env | sort | md5sum >"$d/envh"; touch "$d/go"
+  fi
+  rm -f "$FAKE_CARDS"/*.json; cp "$d/card.json" "$FAKE_CARDS/$(printf '%s' "$c" | tr -c 'A-Za-z0-9_' '_').json"
+  if [ "$(env | sort | md5sum)" = "$(<"$d/envh")" ]; then   # the exported environment is the judge's own: send the row's variables only
+    req=$(jq -nc --arg p "$pay" --arg h "$G" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, add: ($ARGS.positional | map(capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}' --args "$@")
+  else
+    req=$(env -0 "$@" | jq -Rsc --arg p "$pay" --arg h "$G" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, env: (split("\u0000") | map(select(length > 0) | capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}')
+  fi
+  printf '%s\n' "$req" >"$d/in"; IFS=$'\t' read -r rc b <"$d/oq"; printf '%s' "$b" | base64 -d >"$T/out"
+  [ -n "${NOCLS:-}" ] || printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$c" "$a" "$ws" "$br" "$(printf '%s' "$pay" | base64 -w0)" "$([ $# -gt 0 ] && printf '%s\0' "$@" | base64 -w0)" >>"$T/bjrows"
+  if [ -z "${NOCLS:-}" ] && ! grep -qxF -- "$cls|$rc" "$T/bjseen"; then
+    echo "$cls|$rc" >>"$T/bjseen"; cp "$T/out" "$T/out.judge"
+    local rrc; rrc=$(bound bind "$c" "$a" "$ws" "$br" "$pay" -- env "$@" python3 "$G")
+    if [ "$rrc" != "$rc" ] || [ "$(sort "$T/out")" != "$(sort "$T/out.judge")" ]; then echo "     route agreement: $cls exit $rc in the judge, $rrc as a process" >&2; echo 99; return; fi
+    cp "$T/out.judge" "$T/out"
+  fi
+  echo "$rc"; }
+bjstop() { local d; [ -s "$T/bjdirs" ] || return 0; while read -r d; do printf 'QUIT\n' >"$d/in"; done <"$T/bjdirs"; : >"$T/bjdirs"; }
 ok '[ "$(wf "$W/a.md")" = 0 ] && [ "$(wf sub/b.md)" = 0 ]' "write_file inside the own worktree (absolute and relative): allowed"
 ok '[ "$(wf /workspace/config/owner.env)" = 2 ] && said "only inside their own worktree"' "write_file /workspace/config/owner.env: refused, says to write in the worktree"
 ok '[ "$(wf /workspace/bin/x)" = 2 ]' "write_file /workspace/bin/x: refused"
@@ -326,7 +393,7 @@ for p in $BUILDERS; do
   : >"$AL"
   ok '[ "$(hookrun stranger $C $p $OWN write_file "$(wjson "$OWN/a.md")" $OWN)" = 2 ] && grep -qF "[STL-GRD-603]" "$T/out" && grep -qF "the stack could not identify this card" "$T/out" && grep -qF "fault in the stack, not a rule about" "$T/out" && ! grep -qF "(D40)" "$T/out" && [ "$(grep -c "^STL-GRD-603 " "$AL")" = 1 ] && grep -qF "$CQ" "$AL"' "$p: a card runs for this profile and its proof fails (bound to no ancestor): refused with STL-GRD-603 (a fault in the stack, no (D40) tail), one alerts.log line naming the card"
   : >"$AL"
-  ok '[ "$(hookrun none "" $p $OWN write_file "$(wjson "$OWN/a.md")" $OWN)" = 2 ] && grep -qF "builders write only inside their own worktree" "$T/out" && [ ! -s "$AL" ]' "$p: no running card for the profile: the old rule message and no STL-GRD-603"
+  ok '[ "$(hookrun none "" $p $OWN write_file "$(wjson "$OWN/a.md")" $OWN)" = 2 ] && grep -qF "builders write only inside their own worktree" "$T/out" && ! grep -q "^STL-GRD-603 " "$AL"' "$p: no running card for the profile: the old rule message and no STL-GRD-603 (B.1 r5: its STL-GRD-604 line is expected now)"
   : >"$AL"
   ok '[ "$(hookrun bind $C $p $OWN write_file "$(wjson "$OWN/a.md")" $OWN PATH=/usr/bin:/bin)" = 2 ] && grep -qF "[STL-GRD-603]" "$T/out" && [ "$(grep -c "^STL-GRD-603 " "$AL")" = 1 ]' "$p: the board cannot be read: refused with STL-GRD-603, one alerts.log line"
   : >"$AL"   # K2, terminal path (verifier round 4): a terminal write under the same stack fault names STL-GRD-603 too
@@ -441,7 +508,7 @@ G2GIT
   : >"$WGA"
   ok '[ "$(wg "echo x > /workspace/.supervisor/logs/events.jsonl")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out" && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ]' "G4 $p: a redirect into an owner state path (the event log): the code, one alert line"
   : >"$WGA"
-  ok '[ "$(wg "echo x > /workspace/bin/y")" = 2 ] && ! grep -qF "STL-CFG-312" "$T/out" && [ ! -s "$WGA" ]' "G4 $p: an older refusal keeps its text and writes no alert line"
+  ok '[ "$(wg "echo x > /workspace/bin/y")" = 2 ] && ! grep -qF "STL-CFG-312" "$T/out" && grep -qF "[STL-GRD-604]" "$T/out" && [ "$(grep -c "^STL-GRD-604 " "$WGA")" = 1 ] && [ "$(wc -l <"$WGA")" = 1 ]' "G4 $p: an older refusal keeps its text, is not called owner data, and carries the role-rule code with one alert line (B.1, r5: was no code and no line)"
 done
 # ---- F1 W4 round 3 (K7, K1b, K8, K9): the rule turned around. A command that names a path no role may write (owner data, the owner settings, the apply tool's
 # state) runs only when its verb is a known reader (the table's read_verbs); an unknown writer needs no list entry to be refused.
@@ -469,6 +536,9 @@ for p in $BUILDERS; do
   : >"$WGA"; ok '[ "$(wg "touch /workspace/$ODF")" = 2 ] && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ] && grep -q "role " "$WGA"' "K8 $p: the alert line names the role"
   ok '[ "$(wg "echo owner.env")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out"' "K8 $p: an older rule that catches a mention of the owner settings file first still says so with the code"
   ok '[ "$(wg "cp bin/merge-card.sh /tmp/mc; bash /tmp/merge-card x")" = 2 ] && [ "$(wg "bash /tmp/merge-card x")" = 2 ] && [ "$(wg "bash bin/merge-card-selftest.sh")" = 0 ]' "K9 $p: a copy of the merge script under another name (no extension) is refused as at 900d9b3; its selftest is not the script"
+  # B.2 point 14 (r5, W4-CV3-07): a copy of any owner command is refused by its BYTES (a renamed copy); a like-named file with other bytes is not
+  cp /workspace/bin/settings.py "$T/x-settings.py"; cp /workspace/bin/event_log.py "$T/qa-copy.py"; printf 'print(1)\n' >"$T/mine-settings.py"
+  ok '[ "$(wg "python3 $T/x-settings.py get X")" = 2 ] && grep -qF "STL-CFG-312" "$T/out" && [ "$(wg "python3 $T/qa-copy.py append")" = 2 ] && [ "$(wg "python3 $T/mine-settings.py")" = 0 ] && [ "$(wg "cat $T/x-settings.py")" = 0 ]' "B.2 point 14 $p: a renamed copy of an owner command (settings.py, event_log.py) is refused by its bytes; a like-named file with other bytes, and a read of the copy, are allowed"
   B40=$(printf '{a,b}%.0s' $(seq 1 40))   # T4: built outside the quoted case (its quotes ended the case's own string)
   ok '[ "$(wg "tee /tmp/zz ${B40}x")" = 2 ]' "K5 $p: a brace-bomb word is refused (more than 64 words), not expanded"
 done
@@ -519,4 +589,18 @@ ok '[ "$(jq -nc "{tool_name: \"terminal\", tool_input: {command: \"ls\"}, cwd: \
 ok '[ "$(echo "{" | python3 "$G" >"$T/out" 2>"$T/err"; echo $?)" = 2 ] && ! grep -q Traceback "$T/err" && grep -q "STL-CFG-312" "$T/out"' "an exception inside the guard (unreadable payload) is a coded refusal"
 ok '[ "$(ls -A /workspace/.worktrees 2>/dev/null | sort)" = "$REAL_BEFORE" ]' "the real /workspace/.worktrees gained no entries during the run"
 ok '[ "$(tail -c +$((LIVE_SIZE + 1)) "$LIVE_ALERTS" 2>/dev/null | grep -c "^STL-GRD-603 ")" = 0 ]' "no STL-GRD-603 line from this test reached the live alerts.log"
+# T1 (r5): the two routes agree on every 10th bound row judged above (the judge and a real bound hook process, the same row), and a planted
+# difference (the judge given a copy of the guard whose refusal reads otherwise) is caught
+bjagree() { local n=0 i=0 c a ws br p e pay rc rrc args
+  while IFS=$'\t' read -r c a ws br p e; do i=$((i+1)); [ $((i % 10)) = 1 ] || continue
+    mapfile -d '' -t args < <(printf '%s' "$e" | base64 -d); pay=$(printf '%s' "$p" | base64 -d)
+    rc=$(G=$1 NOCLS=1 bjrun "$c" "$a" "$ws" "$br" "$pay" agree "${args[@]}"); cp "$T/out" "$T/ag.judge"
+    [ -f "$T/ag.real.$i" ] || { bound bind "$c" "$a" "$ws" "$br" "$pay" -- env "${args[@]}" python3 "$G" >"$T/ag.rc.$i"; cp "$T/out" "$T/ag.real.$i"; }   # the process run once per row, kept for the control
+    { [ "$rc" = "$(<"$T/ag.rc.$i")" ] && [ "$(sort "$T/ag.real.$i")" = "$(sort "$T/ag.judge")" ]; } || n=$((n+1))
+  done < <(cat "$T/bjrows"); echo "$n"; }
+sed 's/"action": "block"/"action": "blocked"/' "$G" >"$T/wg-planted.py"
+BN=$(wc -l <"$T/bjrows"); BD=$(bjagree "$G"); BX=$(bjagree "$T/wg-planted.py")
+ok '[ "$BN" -ge 100 ] && [ "$BD" = 0 ]' "T1 route agreement: every 10th of $BN bound rows judged in the worker's judge gives the same exit code and output as a real bound hook process ($BD differ)"
+ok '[ "$BX" -gt 0 ]' "T1 route agreement, negative control: a planted difference in the judge's guard is caught ($BX differ)"
+bjstop   # the judges end
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

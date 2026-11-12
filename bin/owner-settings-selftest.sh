@@ -37,10 +37,65 @@ say() { if [ "$1" = 0 ]; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fail
 hf() {
   case $1 in /*) echo "$1" ;; *) [ -x "$T/h/$1" ] || { mkdir -p "$T/h/$(dirname "$1")"; sed "s#/workspace/bin#$STACK/bin#g" "$STACK/$1" >"$T/h/$1"; chmod +x "$T/h/$1"; }; echo "$T/h/$1" ;; esac
 }
-hk() { printf '%s' "$2" | "$1" >"$T/out" 2>"$T/err"; echo $?; }   # <hook> <payload>: its exit code; stdout in $T/out
-blocked() { [ "$1" = 2 ] && jq -e '.action == "block"' "$T/out" >/dev/null 2>&1; }
-pl() { jq -nc --arg t "$1" --argjson i "$2" --arg c "${3:-/workspace}" '{tool_name: $t, tool_input: $i, session_id: "s1", cwd: $c, profile: "p", extra: {}}'; }
+hk() { if [ -n "${JW:-}" ]; then jhk "$1" "$2" "$T/out" "$T/err"; else rm -f "$T/out.blk"; printf '%s' "$2" | "$1" >"$T/out" 2>"$T/err"; echo $?; fi; }   # <hook> <payload>: its exit code; stdout in $T/out (judged in one process while a judge runs)
+blocked() { [ "$1" = 2 ] && if [ -f "$T/out.blk" ]; then [ "$(<"$T/out.blk")" = 1 ]; else jq -e '.action == "block"' "$T/out" >/dev/null 2>&1; fi; }   # the judge parsed the JSON already
+pl() { local c=${3:-/workspace}   # the payload; plain names and an input that is one line of JSON are written directly (the same JSON jq builds), anything else by jq
+  if [[ $1$c =~ ^[A-Za-z0-9_./~+-]*$ && $2 != *$'\n'* ]]; then printf '{"tool_name":"%s","tool_input":%s,"session_id":"s1","cwd":"%s","profile":"p","extra":{}}' "$1" "$2" "$c"
+  else jq -nc --arg t "$1" --argjson i "$2" --arg c "$c" '{tool_name: $t, tool_input: $i, session_id: "s1", cwd: $c, profile: "p", extra: {}}'; fi; }
 js() { jq -nc "$@"; }
+# T1 (F1 W4 r5): the payload-only rows of sections 1, 2, 3 and 3b are judged in ONE process per role (a judge started per subshell): it runs the
+# hook's own code exactly as the hook process does (the whole script, stdin = the payload, its printed line and exit code; a shell hook stays a
+# process). Real-process rows: the first row of each (case label, hook, verdict) class in the run order runs again as a real hook process (stdin,
+# exit code, output) and both routes must agree (a disagreement fails the row and prints why). Sections 3c (effects), 4 (broken tables), 5 to 7
+# (bound workers, the commit guard, a project repo) stay real processes.
+cat >"$T/judge.py" <<'PY'
+import io, json, subprocess, sys, traceback
+codes, real_out, real_in, real_argv = {}, sys.stdout, sys.stdin, sys.argv
+for line in real_in:   # <hook> TAB <output file> TAB <payload, one line of JSON>: the hook's printed output into the file; "<exit code> TAB <1 if it printed a block>" back
+    hook, outf, pay = line.rstrip("\n").split("\t", 2)
+    if hook.endswith(".py"):
+        if hook not in codes:
+            codes[hook] = compile(open(hook, encoding="utf-8").read(), hook, "exec")
+        out = io.StringIO(); sys.stdin, sys.stdout, sys.argv = io.StringIO(pay), out, [hook]
+        try:
+            exec(codes[hook], {"__name__": "__main__", "__file__": hook}); rc = 0
+        except SystemExit as e:
+            rc = e.code if isinstance(e.code, int) else 0 if e.code is None else 1
+            if isinstance(e.code, str):
+                print(e.code, file=sys.stderr)
+        except BaseException:
+            traceback.print_exc(); rc = 1
+        finally:
+            sys.stdin, sys.stdout, sys.argv = real_in, real_out, real_argv
+        text = out.getvalue()
+    else:
+        r = subprocess.run([hook], input=pay, capture_output=True, text=True); rc, text = r.returncode, r.stdout
+    with open(outf, "w", encoding="utf-8") as f:
+        f.write(text)
+    try:   # what blocked() asks of the printed output (jq -e '.action == "block"'), on the last JSON value printed
+        blk = int(json.loads(text.strip().splitlines()[-1]).get("action") == "block") if text.strip() else 0
+    except (ValueError, AttributeError):
+        blk = 0
+    real_out.write(f"{rc}\t{blk}\n"); real_out.flush()
+PY
+jstart() {   # jstart <tag>: this shell's judge (fifos under $T/j); jhk then judges through it
+  local d=$T/j/$1; mkdir -p "$d/seen"; rm -f "$d/in" "$d/out"; mkfifo "$d/in" "$d/out"
+  python3 -I "$T/judge.py" <"$d/in" >"$d/out" 2>"$d/err" & JPID=$!
+  exec {JW}>"$d/in" {JR}<"$d/out"; JSEEN=$d/seen; }
+jstop() { exec {JW}>&- {JR}<&-; wait "$JPID"; unset JW; }
+jhk() {   # jhk <hook> <payload> <out file> <err file>: the exit code, the hook's printed output in <out file> (<out file>.blk: 1 when it printed a block);
+  # one real process per class (see above)
+  local rc blk k rrc
+  printf '%s\t%s\t%s\n' "$1" "$3" "$2" >&"$JW"; IFS=$'\t' read -r rc blk <&"$JR"; printf '%s' "$blk" >"$3.blk"
+  printf '%s\t%s\n' "$1" "$2" >>"$T/j/rows"   # every judged row, for the agreement case
+  k="${L:-?}|${1##*/}|$rc"; k=${k//[^A-Za-z0-9_.-]/_}
+  if [ ! -e "$JSEEN/$k" ]; then
+    : >"$JSEEN/$k"; printf '%s' "$2" | "$1" >"$3.real" 2>"$4"; rrc=$?
+    if [ "$rrc" != "$rc" ] || ! cmp -s "$3" "$3.real"; then
+      echo "FAIL route agreement: ${1##*/} for $k: in one process exit $rc, as a process exit $rrc (output $(cmp -s "$3" "$3.real" && echo same || echo differs))" >&2; echo 99; return
+    fi
+  fi
+  echo "$rc"; }
 CURW=   # the worker kind of the profile being exercised (a role's hook may be for one worker kind only, as roles.py hooks_for reads it)
 setw() { case $1 in role:*) CURW=;; *) CURW=$(jq -r --arg p "$1" '.profiles[$p].worker // ""' "$MT" 2>/dev/null) || CURW=;; esac; }
 hooks_for() {   # <matcher table> <role> <tool>: the hooks (command or repo file) the role's matchers cover for <tool> and the current profile's worker kind; memoized in files
@@ -83,17 +138,19 @@ matrix() {
   # T1 (F1 W4 r4): the roles run six at a time, as in 3b (each in a subshell with its own output files; the hook copies and hook lists are made first)
   mkdir -p "$T/m1"; rm -f "$T"/m1/*
   while read -r lab role; do setw "$lab"; for t in read_file search_files vision_analyze skill_view terminal process_manage write_file patch; do for h in $(hooks_for "$MT" "$role" $t); do hf "$h" >/dev/null; done; done; done < <(pairs)
+  local pids=() bad=0
   while read -r lab role; do
-    n=$((n+1)); matrix_role "$n" >"$T/m1/$n.out" 2>&1 &
-    [ $((n % 6)) = 0 ] && wait
+    n=$((n+1)); { matrix_role "$n"; echo "ROWSDONE $n"; } >"$T/m1/$n.out" 2>&1 & pids+=($!)
   done < <(pairs)
-  wait
+  for pid in "${pids[@]}"; do wait "$pid" || bad=1; done   # W4-VER3-06: a subshell that aborts fails the selftest
   for f in $(ls "$T"/m1/*.out | sort -V); do cat "$f"; fails=$((fails + $(grep -c '^FAIL' "$f"))); done
+  say "$([ "$bad" = 0 ] && [ "$(grep -lc '^ROWSDONE ' "$T"/m1/*.out | grep -c .)" = "$n" ]; echo $?)" "$tag all $n role subshells finished (no silent abort)"
 }
 matrix_role() {   # matrix_role <n>: matrix's cases for one role ($lab, $role and the matrix's locals are the caller's); runs in a subshell, writes only $T/m1/<n>.*
     local n=$1
-    hk() { printf '%s' "$2" | "$1" >"$T/m1/$n.o" 2>"$T/m1/$n.e"; echo $?; }
-    blocked() { [ "$1" = 2 ] && jq -e '.action == "block"' "$T/m1/$n.o" >/dev/null 2>&1; }
+    hk() { jhk "$1" "$2" "$T/m1/$n.o" "$T/m1/$n.e"; }
+    jstart "m1-$n"
+    blocked() { [ "$1" = 2 ] && [ "$(<"$T/m1/$n.o.blk")" = 1 ]; }   # the judge parsed the printed JSON (as jq -e '.action == "block"')
     setw "$lab"
     L="$tag $lab/$role"
     refuse "$L" "$role" read_file "$(js --arg p "$own" '{path: $p}')" "owner file"
@@ -150,6 +207,7 @@ matrix_role() {   # matrix_role <n>: matrix's cases for one role ($lab, $role an
       [ "$(hk "$(hf "$h")" "$(pl terminal '{"command": "cat package.json"}')")" = 0 ] || continue
       say "$([ "$(hk "$(hf "$h")" "$(pl terminal "$(js --arg c "cat $ex" '{command: $c}')")")" = 0 ]; echo $?)" "$L terminal control: cat of the owner example file allowed by $(basename "$h")"
     done
+    jstop
 }
 
 jq -e . "$SRC" >/dev/null 2>&1 || { echo "FAIL the role table $SRC is not readable"; echo "selftest FAIL (1)"; exit 1; }
@@ -175,8 +233,9 @@ MT=$SRC; export ROLES_FILE=$SRC
 REAL=$(jq -r '.owner_settings[0] // empty' "$SRC")
 say "$([ -n "$REAL" ]; echo $?)" "3 the real table lists an owner settings file"
 if [ -n "$REAL" ]; then
+  jstart s3
   while read -r lab role; do
-    setw "$lab"
+    setw "$lab"; L="3 $lab/$role"
     refuse "3 $lab/$role" "$role" read_file "$(js --arg p "/workspace/$REAL" '{path: $p}')" "real owner file"
     refuse "3 $lab/$role" "$role" vision_analyze "$(js --arg p "/workspace/$REAL" '{image_url: $p, question: "x"}')" "real owner file"
     refuse "3 $lab/$role" "$role" skill_view "$(js --arg p "/workspace/$REAL" '{name: "x", file_path: $p}')" "real owner file"
@@ -185,6 +244,7 @@ if [ -n "$REAL" ]; then
     refuse "3 $lab/$role" "$role" terminal "$(js --arg c "echo x > /workspace/$REAL" '{command: $c}')" "redirect into the real owner file"
     refuse "3 $lab/$role" "$role" write_file "$(js --arg p "/workspace/$REAL" '{path: $p, content: "x"}')" "real owner file"
   done < <(pairs)
+  jstop
 fi
 
 # 3b F1 W4 (E7): the owner-only write path. For every role and every entry of owner_data (paths no role writes, but all may read) and of
@@ -195,8 +255,9 @@ printf '%s\n' 'diff --git a/ZZD/zz-probe.json b/ZZD/zz-probe.json' 'new file mod
 M2=$T/m2; mkdir -p "$M2"
 m2role() {   # m2role <tag> <profile label> <role> <owner data list> <owner commands list> <n> [light list]: one role's cases; runs in a subshell, writes only under $M2
   local tag=$1 lab=$2 role=$3 DS=$4 CS=$5 n=$6 DL=${7:-} OUT=$M2/$n.o ERR=$M2/$n.e LN=$M2/$n.lnk PT=$M2/$n.patch d f c x b q dir okc bad h
-  hk() { printf '%s' "$2" | "$1" >"$OUT" 2>"$ERR"; echo $?; }
-  blocked() { [ "$1" = 2 ] && jq -e '.action == "block"' "$OUT" >/dev/null 2>&1; }
+  hk() { jhk "$1" "$2" "$OUT" "$ERR"; }
+  blocked() { [ "$1" = 2 ] && [ "$(<"$OUT.blk")" = 1 ]; }   # the judge parsed the printed JSON (as jq -e '.action == "block"')
+  jstart "m2-$n"
   r1() {   # r1 <tool> <input> <description> [cwd]: refused as soon as one hook of the role covering <tool> blocks
     local hs h pay; hs=$(hooks_for "$MT" "$role" "$1"); pay=$(pl "$1" "$2" "${4:-/workspace}")
     [ -n "$hs" ] || { say 1 "$L $1 $3: no hook of the role covers $1"; return; }
@@ -210,6 +271,8 @@ m2role() {   # m2role <tag> <profile label> <role> <owner data list> <owner comm
   done
   for d in $DS; do
     f=/workspace/$d/zz-probe.json; sed "s#ZZD#$d#g" "$T/w4.patch.in" >"$PT"; ln -sfn "/workspace/$d" "$LN"
+    [ -f "/workspace/$d" ] && r1 write_file "$(js --arg p "/workspace/$d" '{path: $p, content: "x"}')" "owner data $d (the path itself, equal)"   # W4-VAL3-09: the "equal" probe on an owner file, besides the "inside" one below
+    [ -f "/workspace/$d" ] && r1 patch "$(js --arg p "/workspace/$d" '{mode: "replace", path: $p, old_string: "a", new_string: "b"}')" "owner data $d (the path itself, equal)"
     r1 write_file "$(js --arg p "$f" '{path: $p, content: "x"}')" "owner data $d"
     r1 patch "$(js --arg p "$f" '{mode: "replace", path: $p, old_string: "a", new_string: "b"}')" "owner data $d"
     r1 patch "$(js --arg p "$f" '{mode: "patch", patch: "*** Begin Patch\n*** Add File: \($p)\n+x\n*** End Patch"}')" "owner data $d, V4A add"
@@ -291,16 +354,18 @@ cp /tmp/x $f" "echo x >& $f" ": <> $f" "x=$f; echo y > \"\$x\"" "echo y > \$(ech
     r1 process_manage "$(js --arg d "/workspace/$c x
 " '{action: "write", session_id: "p1", data: $d}')" "owner command on stdin: $c"
   done
+  jstop
 }
 matrix2() {   # matrix2 <tag> <owner data list> <owner commands list> [light data list]: every profile and role without one, six at a time, output kept in order
   local tag=$1 lab role n=0 f t h
   while read -r lab role; do setw "$lab"; for t in write_file patch terminal process_manage read_file search_files; do for h in $(hooks_for "$MT" "$role" $t); do hf "$h" >/dev/null; done; done; done < <(pairs)
+  local pids=() bad=0
   while read -r lab role; do
-    n=$((n+1)); m2role "$tag" "$lab" "$role" "$2" "$3" "$n" "${4:-}" >"$M2/$n.out" 2>&1 &
-    [ $((n % 6)) = 0 ] && wait
+    n=$((n+1)); { m2role "$tag" "$lab" "$role" "$2" "$3" "$n" "${4:-}"; echo "ROWSDONE $n"; } >"$M2/$n.out" 2>&1 & pids+=($!)
   done < <(pairs)
-  wait
-  for f in $(ls "$M2"/*.out | sort -V); do cat "$f"; fails=$((fails + $(grep -c '^FAIL' "$f"))); done; rm -f "${M2:?}"/*
+  for pid in "${pids[@]}"; do wait "$pid" || bad=1; done   # W4-VER3-06: a subshell that aborts fails the selftest
+  for f in $(ls "$M2"/*.out | sort -V); do cat "$f"; fails=$((fails + $(grep -c '^FAIL' "$f"))); done
+  say "$([ "$bad" = 0 ] && [ "$(grep -lc '^ROWSDONE ' "$M2"/*.out | grep -c .)" = "$n" ]; echo $?)" "$tag all $n role subshells finished (no silent abort)"; rm -f "${M2:?}"/*
 }
 IDX=$STACK/$(jq -r .data_index "$SRC"); BK=/workspace/$(jq -r .backup_dir "$IDX"); APS=/workspace/$(jq -r .applied_state "$IDX"); EVL=/workspace/$(jq -r .event_log "$IDX")
 MT=$SRC; export ROLES_FILE=$SRC
@@ -312,6 +377,22 @@ matrix2 "3b real table" "$(jq -r '.owner_data[]' "$SRC"; grep -x "$SETP" <<<"$OW
 jq '.owner_data += ["zz-odata/sub"] | .owner_commands += ["tools/zz-owner-cmd.sh"]' "$SRC" >"$T/extra.json"; MT=$T/extra.json; export ROLES_FILE=$MT
 matrix2 "3b extra entries" "zz-odata/sub" "tools/zz-owner-cmd.sh"
 MT=$SRC; export ROLES_FILE=$SRC
+# T1 (F1 W4 r5): the two routes agree. A sample of the rows judged in one process above (every 25th, in order) is judged again both ways, in one
+# process and as a real hook process each (stdin, exit code, printed output), and any difference fails. Negative control: the same sample with
+# the in-process route given hook copies whose refusal text differs by one word must show differences.
+agree() {   # agree <rows> <hook dir for the in-process route, or "">: the number of rows whose two routes differ
+  local h b rc blk rrc n=0 jh i=0
+  jstart agree; while IFS=$'\t' read -r h b; do i=$((i+1))
+    jh=$h; [ -n "$2" ] && [ -f "$2/${h#$T/h/}" ] && jh=$2/${h#$T/h/}
+    printf '%s\t%s\t%s\n' "$jh" "$T/agree.judge" "$b" >&"$JW"; IFS=$'\t' read -r rc blk <&"$JR"
+    [ -f "$T/agree.out.$i" ] || { printf '%s' "$b" | "$h" >"$T/agree.out.$i" 2>/dev/null; echo $? >"$T/agree.rc.$i"; }   # the process run once per row, kept for the control
+    { [ "$rc" = "$(<"$T/agree.rc.$i")" ] && cmp -s "$T/agree.judge" "$T/agree.out.$i"; } || n=$((n+1))
+  done <"$1"; jstop; echo "$n"; }
+awk 'NR % 25 == 1' "$T/j/rows" >"$T/j/sample"
+mkdir -p "$T/hx"; (cd "$T/h" && find . -name '*.py' | while read -r f; do mkdir -p "$T/hx/${f%/*}"; sed 's/"block"/"blocked"/' "$f" >"$T/hx/$f"; done)
+NS=$(wc -l <"$T/j/sample"); ND=$(agree "$T/j/sample" ""); NX=$(agree "$T/j/sample" "$T/hx")
+say "$([ "$NS" -ge 100 ] && [ "$ND" = 0 ]; echo $?)" "T1 route agreement: $NS sampled rows of $(wc -l <"$T/j/rows") judged in one process give the same exit code and output as a real hook process ($ND differ)"
+say "$([ "$NX" -gt 0 ]; echo $?)" "T1 route agreement, negative control: a planted one-word difference in the in-process hooks is caught ($NX of $NS rows differ)"
 
 # 3c F1 W4 round 2 (the critical red team asserted decisions, not effects): the commands the hooks let through are run for real, in a scratch owner-data
 # folder under .scratch; the owner file there must be byte-identical afterwards, for every role. A control that is allowed must change its own file.
@@ -358,15 +439,25 @@ tbl "$T/empty.json" '[]'; tbl "$T/dotdot.json" '["../etc/zz"]'; tbl "$T/abs.json
 # F1 W4: the three owner-write lists are part of the table: without one, with it empty, or with a bad entry, every role refuses everything
 jq 'del(.owner_data)' "$SRC" >"$T/nod.json"; jq 'del(.owner_commands)' "$SRC" >"$T/noc.json"; jq 'del(.worker_markers)' "$SRC" >"$T/nom.json"
 jq '.data_index = ".stella/zz-missing-index.json"' "$SRC" >"$T/noidx.json"; jq '.owner_data = []' "$SRC" >"$T/emd.json"; jq '.owner_commands = [""]' "$SRC" >"$T/emc.json"; jq '.worker_markers = ["a b"]' "$SRC" >"$T/bmk.json"
+mkdir -p "$T/m4"; M4PIDS=()
 for bad in "$T/missing.json" "$T/garbage.json" "$T/none.json" "$T/empty.json" "$T/dotdot.json" "$T/abs.json" "$T/str.json" "$T/mixed.json" \
            "$T/nod.json" "$T/noc.json" "$T/nom.json" "$T/emd.json" "$T/emc.json" "$T/bmk.json" "$T/noidx.json"; do
-  export ROLES_FILE=$bad
-  while read -r lab role; do
-    setw "$lab"
-    refuse "4 $(basename "$bad") $lab/$role" "$role" read_file '{"path": "/workspace/SUPERVISOR.md"}' "ordinary file (fail closed)"
-    refuse "4 $(basename "$bad") $lab/$role" "$role" terminal '{"command": "ls"}' "ls (fail closed)"
-  done < <(pairs)
+  n4=$((${n4:-0}+1))
+  (   # T1 (F1 W4 r5): the tables run six at a time, each in a subshell with its own output files; every row stays a real hook process (a broken table is about the process)
+    export ROLES_FILE=$bad
+    hk() { rm -f "$T/m4/$n4.o.blk"; printf '%s' "$2" | "$1" >"$T/m4/$n4.o" 2>"$T/m4/$n4.e"; echo $?; }
+    blocked() { [ "$1" = 2 ] && jq -e '.action == "block"' "$T/m4/$n4.o" >/dev/null 2>&1; }
+    while read -r lab role; do
+      setw "$lab"
+      refuse "4 $(basename "$bad") $lab/$role" "$role" read_file '{"path": "/workspace/SUPERVISOR.md"}' "ordinary file (fail closed)"
+      refuse "4 $(basename "$bad") $lab/$role" "$role" terminal '{"command": "ls"}' "ls (fail closed)"
+    done < <(pairs)
+    echo "ROWSDONE $n4"
+  ) >"$T/m4/$n4.out" 2>&1 & M4PIDS+=($!)
 done
+M4BAD=0; for pid in "${M4PIDS[@]}"; do wait "$pid" || M4BAD=1; done   # W4-VER3-06
+for f in $(ls "$T"/m4/*.out | sort -V); do cat "$f"; fails=$((fails + $(grep -c '^FAIL' "$f"))); done
+say "$([ "$M4BAD" = 0 ] && [ "$(grep -lc '^ROWSDONE ' "$T"/m4/*.out | grep -c .)" = "$n4" ]; echo $?)" "4 fail-closed: all $n4 broken-table subshells finished (no silent abort)"
 export ROLES_FILE=$T/probe.json
 
 # 5 real path: a fake worker bound to a running card on a stub board; the hook runs below it, from its main thread and from a second thread

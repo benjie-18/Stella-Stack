@@ -82,15 +82,24 @@ def check(cmd):
     return None
 
 
+PAY = sys.stdin.read()
 try:
-    p = json.load(sys.stdin)
+    p = json.loads(PAY)
     a = p.get("tool_input") or {}
     reason = check(str((a.get("data") if p.get("tool_name") == "process_manage" else a.get("command")) or ""))
 except Exception as e:  # fail closed: a payload we cannot read is refused
     reason = f"unreadable payload: {type(e).__name__}"
 if reason is None:
     sys.exit(0)
-print(json.dumps({"action": "block", "message": f"model guard: {reason} (F14). Run Claude Code only as `claude -p --model "
+
+def coded(problem):   # B.1 (r5): the one way a hook refuses (bin/roles.py hook_refusal): the catalog code, one alert line per call naming the role
+    try:
+        sys.path.insert(0, "/workspace/bin")
+        import roles
+        return roles.hook_refusal("STL-GRD-604", problem, PAY)
+    except Exception:   # the role module itself is missing: the code and the problem still print
+        return f"[STL-GRD-604] {problem}"
+print(json.dumps({"action": "block", "message": f"model guard: {coded('the model guard refused a command its role may not run')} {reason} (F14). Run Claude Code only as `claude -p --model "
                   "sonnet ...`, never skipping permissions. Opus and Haiku go only through /workspace/bin/escalate.sh, "
                   "run by the supervisor."}))
 sys.exit(2)

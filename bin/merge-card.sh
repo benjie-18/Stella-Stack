@@ -96,6 +96,24 @@ elif [ "$mrc" != 1 ]; then   # 1 = a conflict: the merge below fails and is abor
   coded STL-CFG-303 "git cannot compute the tree merging $branch would produce" "so what the merge changes cannot be checked; nothing was merged"
 fi
 if [ -n "$mtree" ]; then
+  # B.3 point 17 (W4-VER3-01): git's merge overwrites an ignored file without a word. Every path the merged tree changes, and each folder above it, that
+  # exists in the main checkout but is not tracked in main is refused before anything is written (ignored or not, any name)
+  tz=$(mktemp) && g ls-tree -r -z --name-only "$before" >"$tz" || coded STL-CFG-303 "git cannot list what main tracks" "nothing was merged"
+  over=$(python3 -I -c '
+import os, sys
+top, zf, tz = sys.argv[1:4]
+tracked = {x for x in open(tz, "rb").read().decode("utf-8", "surrogateescape").split("\0") if x}
+dirs = {os.path.dirname(x) for x in tracked}; dirs = {d for x in list(dirs) for d in [x] + [x.rsplit("/", i)[0] for i in range(1, x.count("/") + 1)]}
+out = []
+for n in (x for x in open(zf, "rb").read().decode("utf-8", "surrogateescape").split("\0") if x):
+    parts = n.split("/")
+    for i in range(1, len(parts) + 1):
+        p = "/".join(parts[:i])
+        if p not in tracked and p not in dirs and os.path.lexists(os.path.join(top, p)):
+            out.append(p); break
+print(", ".join(sorted(set(out)))[:240])' "$top" "$zf" "$tz") || coded STL-CFG-303 "the main checkout's untracked files cannot be compared with the merge" "nothing was merged"
+  rm -f "$tz"
+  [ -z "$over" ] || coded STL-CFG-312 "$branch would replace files of the main checkout that git does not track there: $over" "Those files (ignored local files, owner files) are never replaced by a merge; nothing was merged"
   hits=$(python3 -I "$here/roles.py" hits "$top" refused "$here/.." <"$zf" 2>/dev/null | tr '\0' '\n'; exit "${PIPESTATUS[0]}") \
     || coded STL-CFG-303 "the owner data list (role table or data index) cannot be read" "so what $branch changes cannot be checked; nothing was merged"
   bhits=$(python3 -I "$here/roles.py" hits "$top" boundary "$here/.." <"$zf" 2>/dev/null | tr '\0' '\n'; exit "${PIPESTATUS[0]}") \
@@ -125,15 +143,17 @@ fi
 g show "$tip:package.json" 2>/dev/null | jq -e '.scripts.test' >/dev/null 2>&1 || refuse "no test command in $branch:package.json (scripts.test)"
 # K2: the card's test command is the card's code: it runs in the OS box (bin/box.py exec) with the plan a worker gets, never in this shell
 intree() {   # intree <commit> <name>: npm test of <commit> in the box, in a throw-away worktree made here (owner-made git files; T6) and removed
-  # after without running git in it; 126 when the worktree or the box cannot start (the box printed the coded line), else the tests' exit code
+  # after without running git in it; 125 the worktree cannot be made, 70 the box could not start (the box printed the coded line), else the tests' exit code (126 included)
   local pw="$top/.worktrees/$2-$card" pb="$2/$card" r
-  g -c core.hooksPath=/dev/null -c core.fsmonitor= worktree add -q -b "$pb" "$pw" "$1" >/dev/null 2>&1 || return 126
+  rm -f "$common/worktrees/$2-$card/locked"; g worktree prune   # W4-VAL3-01: a lock a previous test wrote into the entry would keep it; a folder left at $pw is not ours to remove: the add below fails, coded
+  g -c core.hooksPath=/dev/null -c core.fsmonitor= worktree add -q -b "$pb" "$pw" "$1" >/dev/null 2>&1 || return 125
   python3 -I "$here/box.py" exec "$top" "$pw" "$pb" "$card" 'timeout 1800 npm test' >&2; r=$?
-  rm -rf "$pw"; g worktree prune; g branch -D "$pb" >/dev/null 2>&1
+  rm -rf "$pw"; rm -f "$common/worktrees/$2-$card/locked"; g worktree prune; g branch -D "$pb" >/dev/null 2>&1
   return "$r"; }
 echo "merge-card.sh: running this branch's own test command in the OS box (the card worktree writable, the rest read-only); review the diff first" >&2
 intree "$tip" merge-check; trc=$?
-[ "$trc" != 126 ] || refuse "the box for the tests could not start (or its throw-away worktree $top/.worktrees/merge-check-$card could not be made), and the tests never run outside it; nothing was merged"
+[ "$trc" != 125 ] || coded STL-CFG-312 "the throw-away worktree $top/.worktrees/merge-check-$card for the card's tests could not be made" "The tests never run outside the box; remove a leftover of an earlier run (git -C $top worktree remove $top/.worktrees/merge-check-$card), then merge again; nothing was merged"
+[ "$trc" != 70 ] || refuse "the box for the tests could not start, and the tests never run outside it; nothing was merged"
 [ "$trc" = 0 ] || refuse "tests failed on $branch (npm test, in the box); nothing was merged"
 [ "$(g rev-parse --verify "refs/heads/$branch^{commit}")" = "$tip" ] || refuse "$branch moved while its tests ran; nothing was merged"
 # N1: the tests ran for up to 30 minutes with the shared objects folder writable by a box; check the objects again before the merge
@@ -158,7 +178,8 @@ echo "merged $branch into main: $(g rev-parse --short HEAD)"
 # AGENTS.md: never push to main with a failing check, so the merged tree is tested again first (review H4). History is
 # never rewritten here: on failure the merge stays local for the owner to inspect or undo.
 intree "$(g rev-parse HEAD)" merge-test; trc=$?   # K2: main's tests run in the box too, from a throw-away worktree of the merged commit
-[ "$trc" != 126 ] || refuse "the box for the tests of the merged main could not start; merged locally, NOT pushed (undo: git -C $top reset --hard $before)"
+[ "$trc" != 125 ] || coded STL-CFG-312 "the throw-away worktree $top/.worktrees/merge-test-$card for the merged main's tests could not be made" "Merged locally, NOT pushed (undo: git -C $top reset --hard $before)"
+[ "$trc" != 70 ] || refuse "the box for the tests of the merged main could not start; merged locally, NOT pushed (undo: git -C $top reset --hard $before)"
 [ "$trc" = 0 ] \
   || { echo "merge-card.sh: tests fail on the merged main: merged locally, NOT pushed (undo: git -C $top reset --hard $before)" >&2; exit 1; }
 g rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1 || { echo "merge-card.sh: main has no upstream; merged, not pushed" >&2; exit 1; }

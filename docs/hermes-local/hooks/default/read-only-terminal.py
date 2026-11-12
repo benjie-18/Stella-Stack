@@ -21,13 +21,14 @@ UNREADABLE = ""   # set when the role table or the data index cannot be read: ev
 try:   # K6: the owner settings files (roles.json owner_settings) are read by no agent role; an unreadable table refuses all
     sys.path.insert(0, "/workspace/bin")
     import roles as _roles
-    _t = _roles.load(files=False)
+    _t = _roles.load()
     OWNER_FILES = {os.path.realpath(f).casefold() for f in _roles.owner_settings(_t)}   # B2V-01: /workspace is case-insensitive
     OWNER_TREES = [os.path.realpath(t).casefold() for t in _roles.state_trees(_t)]   # B1 (F1 W4): the apply tool's backups, applied state and event log hold owner values: no role reads them
     OWNER_TEXT = [p.casefold() for p in _roles.state_paths(_t)]   # ... however the path is spelled in a command (an interpreter's code included)
-    FILE_CH = _roles.chains(_roles.owner_settings(_t))   # K1b: a path is one of these by what it IS (identity: a short name, a case variant, a link), never by its spelling
-    TREE_CH = _roles.chains(_roles.state_trees(_t))
-    DIR_CH = _roles.chains({os.path.dirname(f) for f in _roles.owner_settings(_t)} | set(_roles.state_trees(_t)))
+    _LM = {}   # one memo for the lists built here (T1, r5)
+    FILE_CH = _roles.chains(_roles.owner_settings(_t), _LM)   # K1b: a path is one of these by what it IS (identity: a short name, a case variant, a link), never by its spelling
+    TREE_CH = _roles.chains(_roles.state_trees(_t), _LM)
+    DIR_CH = _roles.chains({os.path.dirname(f) for f in _roles.owner_settings(_t)} | set(_roles.state_trees(_t)), _LM)
 except Exception as _e:
     OWNER_FILES, OWNER_TREES, OWNER_TEXT, FILE_CH, TREE_CH, DIR_CH = None, [], [], [], [], []
     UNREADABLE = f"the role table or the data index cannot be read ({type(_e).__name__}), so every read is refused until it is fixed [STL-CFG-303]"
@@ -37,6 +38,9 @@ SECRET_TEXT = re.compile(r"(?<![\w.-])\.env(?!\.(?:example|sample|template)\b)|\
                          r"opencode/auth\.json|\.hermes/broker\b|(?:(?<![\w.~-])|(?<=-[A-Za-z]))/proc/(?:self|thread-self|\d|[*?\[$])|(?<![\w.-])\.(?:ssh|aws)\b|\.config/gh\b")
 RECURSIVE = {"rg", "ag", "ack", "rgrep", "find", "tar", "zip", "cp", "rsync", "scp", "diff"}   # diff: two folders compare every file (B2V-14)
 GIT_READERS = {"diff", "grep", "difftool"}   # B2V-14: a path outside the repo turns them into plain file readers
+FOLDER_OPTS = {"jq": ("-L", "--library-path")}   # B.2 point 9 (W4-CV3-03): a reader that builds a file name from a NAMED folder and a word (jq -L <dir> with
+# import/include reads <dir>/<module>.jq): the folder is judged as searched. From the manuals: of the allow-list readers only jq has this (-L / --library-path);
+# every other reader names the file it opens as a whole word, or takes a pattern/program file by -e/-f (already judged), or searches a folder recursively (rec).
 WRAPPERS = {"sudo", "env", "nohup", "time", "command", "exec", "builtin", "timeout", "nice", "ionice", "stdbuf", "setsid",
             "chroot", "doas", "xargs", "{", "}", "!", "if", "elif", "then", "while", "until", "do", "else"}   # as write-guard PREFIXES
 SPLIT = {"&&", "||", ";", "|", "&", "(", ")"}
@@ -194,10 +198,10 @@ def secret_why(cmd, cwd):
         return "the command names a secret path"
     if _owner_dir(cwd):
         return f"{cwd} is the folder that holds an owner settings file"
-    for piece in sorted({x for x in re.findall(r"[\w.~$@+%/*?\[\]-]+", cmd) if "/" in x})[:2000]:   # K1b: any path-like piece of the command text, in code or in quotes, by identity (bounded: K5, linear)
+    for piece in sorted({x for x in re.findall(r"[\w.~$@+%/*?\[\]-]+", cmd) if "/" in x}):   # K1b: every path-like piece of the command text, in code or in quotes, by identity (bounded by the deadline, K5, linear)
         if len(piece) > 1:
             why = path_why(piece, cwd, {})
-            if why and ("owner settings" in why or "[STL-CFG-312]" in why):
+            if why and ("owner settings" in why or "[STL-CFG-312]" in why or "too many paths" in why):
                 return why
     for toks in all_lines(cmd):
         here, names, seg = cwd, {}, []
@@ -230,6 +234,13 @@ def secret_why(cmd, cwd):
                     re.fullmatch(r"-[a-zA-Z]*[rR][a-zA-Z]*|--(?:dereference-)?recursive|--directories=recurse|recurse", w)
                     for w in seg[1:]))
                 base = _where(seg[seg.index("-C") + 1], here, names) if name == "git" and "-C" in seg[:-1] else here
+                for opt in FOLDER_OPTS.get(name, ()):   # B.2 point 9: jq -L <dir> and -L<dir> (attached, as the write guard reads it) name a folder jq searches
+                    for i, w in enumerate(seg):
+                        d = seg[i + 1] if w == opt and i + 1 < len(seg) else w[len(opt):] if w.startswith(opt) and len(w) > len(opt) else None
+                        if d and not d.startswith("-"):
+                            why = path_why(d, base, names, True)
+                            if why:
+                                return why
                 for i, w in enumerate(seg[1:], 1):
                     r = rec and not (name == "git" and seg[i - 1] in ("-C", "-c"))   # git -C <dir> names where, not what it reads
                     for v in [w] + ([w.split("=", 1)[1]] if w.startswith("-") and "=" in w else []):
@@ -276,7 +287,7 @@ def _git_dir_why(here):
     .git (a short 8.3 or odd spelling of the path does not matter) is the stack's folder or the main checkout of a bound project, and its .git is a folder
     (a linked worktree has a file). Anything else, or a table that cannot be read, refuses."""
     try:
-        siblings = {x.casefold() for x in _roles.sandbox(_roles.load(files=False))["sibling_dirs"]}
+        siblings = {x.casefold() for x in _roles.sandbox(_roles.load())["sibling_dirs"]}
     except Exception:
         return "the sandbox table cannot be read, so git is not run in a card folder"
     rp = os.path.realpath(here)
@@ -378,11 +389,7 @@ if reason is None:
 
 def coded(code, problem):   # K8: the catalog code, its plain message, one alert line for the call (the role's other hook that refuses it writes none); the role named, no owner value
     try:
-        role = _roles.role_of(_roles.load(files=False), p.get("profile"))[0]
-    except Exception:
-        role = "unknown"
-    try:
-        return _roles.plain(code, once=PAY, problem=f"{problem} (role {role})")
+        return _roles.hook_refusal(code, problem, PAY)   # B.1 (r5): the one way a hook refuses
     except Exception:   # the role module itself is missing: the code and the problem still print
         return f"[{code}] {problem}"
 
@@ -394,6 +401,8 @@ if "[STL-CFG-312]" in reason:   # G4: the code, the catalog's plain message, one
     reason = coded("STL-CFG-312", "a role tried to read an owner state path of the apply tool") + " " + reason.replace(" [STL-CFG-312]", "")
 elif "owner settings" in reason:   # an older rule caught it first: it still says so with the code
     reason = coded("STL-CFG-312", "a role tried to read an owner settings file") + " " + reason
+else:   # B.1 (r5): every other refusal of the read-only terminal carries the code of a refusal by the role's rules
+    reason = coded("STL-GRD-604", "the read-only terminal refused a command its role may not run") + " " + reason
 print(json.dumps({"action": "block", "message": f"This profile's terminal is read-only ({reason}). Allowed: {ALLOWED}. "
                   "This profile does not change files: create a card for a worker instead."}))
 sys.exit(2)

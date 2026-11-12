@@ -600,6 +600,18 @@
       "page": "card_streak"
     },
     {
+      "code": "STL-GRD-604",
+      "area": "GRD",
+      "severity": "info",
+      "title": "a tool call was refused by the rules of its role",
+      "message": "A tool call was refused by the rules of the role that made it: {problem}. Nothing was run or changed.",
+      "action": "nothing when the role works as designed. If a role needs this tool or command, the owner changes its row in docs/hermes-local/roles.json. See STL-GRD-604 in docs/alert-codes.md.",
+      "cause": "A guard of a role refused a call the role does not allow: a coordinator write, a builder's write outside its card worktree or its git push to main, a reviewer's write, a tool the role names no matcher for, a read of a secret path.",
+      "check": ".supervisor/logs/alerts.log (`grep STL-GRD-604`: the role, the card where there is one, and what was refused).",
+      "related": "K8, B.1 (F1 W4 round 5); the hooks under docs/hermes-local/hooks/, bin/roles.py hook_refusal",
+      "resolvable": false
+    },
+    {
       "code": "STL-ESC-232",
       "area": "ESC",
       "severity": "warning",

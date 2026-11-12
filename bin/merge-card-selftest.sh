@@ -105,6 +105,8 @@ ok '[ "$(grep -c "merge-card.sh: running this branch'"'"'s own test command in t
 ok '[ "$(FAKE_APPROVED=t_00000001 mc t_00000001)" = 0 ] && [ "$(g rev-list --parents -n1 HEAD | wc -w)" = 3 ] && [ "$(head_of "$T/remote.git" main)" = "$h0" ]' "clean merge: --no-ff merge commit on main; without --push the remote is untouched"
 ok '[ "$(grep -c "running this branch" "$T/out")" = 1 ] && [ "$(grep -n "running this branch" "$T/out" | cut -d: -f1)" -lt "$(grep -n "^merged " "$T/out" | cut -d: -f1)" ]' "D42: a clean merge prints the warning once, before the merge"
 ok 'g rev-parse -q --verify stella/t_00000001-x >/dev/null && [ -d "$T/repo/.worktrees/t_00000001" ]' "the card branch and worktree are kept"
+sleep 1.5   # B.1 (r5): longer than the box's sweep helper waits after its launcher ends
+ok '[ ! -e "$T/repo/.worktrees/merge-check-t_00000001" ] && [ ! -e "$T/repo/.git/worktrees/merge-check-t_00000001" ] && ! g rev-parse -q --verify merge-check/t_00000001 >/dev/null' "B.1 (r5): the throw-away test worktree, its git dir entry and its branch are gone after the merge, and stay gone (no late sweep re-makes them)"
 ok '[ "$(FAKE_APPROVED=t_00000001 mc t_00000001)" = 3 ] && grep -q "ahead" "$T/out"' "a merged branch (not ahead of main) is refused"
 h1=$(head_of "$T/repo")
 ok '[ "$(FAKE_APPROVED=t_00000002 mc t_00000002 --push)" = 0 ] && [ "$(head_of "$T/remote.git" main)" = "$(head_of "$T/repo")" ] && [ "$(head_of "$T/repo")" != "$h1" ]' "--push pushes main to its upstream (the scratch bare remote)"
@@ -315,11 +317,35 @@ ok '[ "$(mc t_0000d0f6 --owner-approved)" = 0 ]' "K2: in the box the worker mark
 # K2: where the box cannot start the merge is refused, coded, and the tests do not run unboxed
 card t_0000d0f7 f7.txt f7 "touch $T/ran-unboxed"; h=$(head_of "$T/repo")
 ok '[ "$(BOX_HERMES_ROOT=$T/nohermes mc t_0000d0f7 --owner-approved)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -q "could not start" "$T/out" && [ ! -e "$T/ran-unboxed" ] && [ "$(head_of "$T/repo")" = "$h" ]' "K2: the box cannot start: refused with a coded line, nothing ran outside it, main untouched"
+# B.2 point 11 (r5, W4-VAL3-01, W4-CV3-05): a card test that itself exits 126 is a test failure, never "box could not start"; a lock a test writes into its
+# throw-away worktree entry does not refuse the next merge of the same card uncoded
+card t_0000e126 e126.txt e126 'exit 126'; h=$(head_of "$T/repo")
+ok '[ "$(mc t_0000e126 --owner-approved)" = 3 ] && grep -q "tests failed" "$T/out" && ! grep -q "could not start" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "B.2 point 11: a card test that exits 126 is a test failure, not 'box could not start'"
+card t_0000e127 e127.txt e127 'mkdir -p "$(git rev-parse --git-dir)/worktrees"; d="$(git rev-parse --git-common-dir)/worktrees/merge-check-t_0000e127"; touch "$d/locked" 2>/dev/null || true; exit 0'; h=$(head_of "$T/repo")
+ok '[ "$(mc t_0000e127 --owner-approved)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ] && [ "$(mc t_0000e127 --owner-approved)" = 3 ]' "B.2 point 11: a test that locks its throw-away worktree entry still merges, and the entry is cleared (the next merge of the same card is not refused by a stale lock; second run refused because it is no longer ahead)"
 # K8: the boundary refusal and an unreadable list are coded, with one alert line each
 HOOK=$(jq -r '[.roles[].hooks[]? | .file // empty] | first' "$RF"); mkdir -p "$T/repo/${HOOK%/*}"; printf '#!/bin/sh\n' >"$T/repo/$HOOK"; g add -f "$HOOK"; g -c core.hooksPath=/dev/null commit -qm "a hook file"
 wcard t_0000d0a8; printf '#!/bin/sh\nexit 0\n' >"$T/repo/.worktrees/t_0000d0a8/$HOOK"; git -C "$T/repo/.worktrees/t_0000d0a8" add -f -A; wcommit t_0000d0a8
 a0=$(nal); ok '[ "$(FAKE_APPROVED=t_0000d0a8 mc t_0000d0a8)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && [ "$(nal)" = $((a0+1)) ]' "K8: the boundary refusal carries a catalog code and writes one alert line"
 a0=$(nal); ok '[ "$(ROLES_FILE=$T/garbage.json FAKE_APPROVED=t_0000d0a8 mc t_0000d0a8)" = 3 ] && grep -q "STL-CFG-303" "$T/out" && [ "$(nal)" -le $((a0+2)) ]' "K8: the lists unreadable: a coded refusal"
+# B.3 point 17 (r5, W4-VER3-01): the merge never replaces or removes a file of the main checkout that git does not track there. A card that force-adds a
+# path main's ignore rules ignore, or turns an ignored folder into a file, is refused before anything is written; main (its ignored file too) unchanged
+printf 'zz-ign.txt\nzz-idir/\n' >>"$T/repo/.gitignore"; g add .gitignore; g -c core.hooksPath=/dev/null commit -qm "ignore two local paths"
+printf 'OWNER-LOCAL\n' >"$T/repo/zz-ign.txt"; mkdir -p "$T/repo/zz-idir"; printf 'OWNER-LOCAL\n' >"$T/repo/zz-idir/f"
+k7=0; for sp in zz-ign.txt zz-idir; do k7=$((k7+1)); c=t_0000f0$(printf '%02x' "$k7"); wcard $c
+  printf 'CARD\n' >"$T/repo/.worktrees/$c/$sp"; git -C "$T/repo/.worktrees/$c" add -f -- "$sp"; wcommit $c; h=$(head_of "$T/repo")
+  ok '[ "$(FAKE_APPROVED='$c' mc '$c' --owner-approved)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -qF "'$sp'" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ] && [ "$(cat "$T/repo/zz-ign.txt")" = OWNER-LOCAL ] && [ "$(cat "$T/repo/zz-idir/f")" = OWNER-LOCAL ]' "B.3 point 17: a card whose merge would replace the untracked $sp of the main checkout is refused, the main checkout byte-identical"
+done
+c=t_0000f0a0; wcard $c; printf 'new\n' >"$T/repo/.worktrees/$c/zz-new-tracked.txt"; git -C "$T/repo/.worktrees/$c" add zz-new-tracked.txt; wcommit $c; h=$(head_of "$T/repo")
+ok '[ "$(FAKE_APPROVED='$c' mc '$c' --owner-approved)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ]' "B.3 point 17 control: a card adding a new tracked path where nothing exists merges"
+# B.1 point 6 (r5, W1-RT6-01): a card branch that replaces a folder holding an owner path (the owner settings' folder, owner data's, the apply tool's
+# state's) by a symbolic link is refused, and the main checkout's folder stays a folder
+for hd in "$(jq -r '.owner_settings[0]' "$RF" | cut -d/ -f1)" "$(jq -r '.owner_data[0]' "$RF" | cut -d/ -f1)" "$(jq -r .applied_state "$IDX" | cut -d/ -f1)"; do
+  mkdir -p "$T/repo/$hd"; echo x >"$T/repo/$hd/zz-held-$k.txt"; g add -f "$hd/zz-held-$k.txt"; g -c core.hooksPath=/dev/null commit -qm "a file in $hd"; k=$((k+1))
+  c=t_0000e0$(printf '%02x' "$k"); wcard $c; W6=$T/repo/.worktrees/$c
+  git -C "$W6" rm -r -q --cached "$hd"; rm -rf "${W6:?}/$hd"; ln -s /tmp "$W6/$hd"; git -C "$W6" add -f "$hd"; wcommit $c; h=$(head_of "$T/repo")
+  ok '[ "$(FAKE_APPROVED='$c' mc '$c' --owner-approved)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ] && [ -d "$T/repo/'$hd'" ] && [ ! -L "$T/repo/'$hd'" ]' "B.1 (r5): a card branch replacing the folder $hd (it holds an owner path) by a symbolic link is refused, the main checkout's folder kept"
+done
 # T9 (F1 W4 r4): a data file the boundary code loads by a fixed path (the alert catalog, and the alert-code page made from it) is a boundary path: a card that
 # changes it is refused without the owner's flag, with the boundary code, and lands with it (the owner path)
 CAT=$(jq -r '[.boundary_paths[] | select(endswith(".json")) | select(. != "docs/hermes-local/roles.json")][0]' "$RF"); ACD=$(jq -r '[.boundary_paths[] | select(endswith(".md"))][0]' "$RF")

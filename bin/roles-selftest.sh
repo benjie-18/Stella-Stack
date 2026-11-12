@@ -151,7 +151,44 @@ ok '[ "$(python3 $S/roles.py requirements no-such-role >"$T/out" 2>&1; echo $?)"
 jq --argjson q "$RQ" '.roles["fake-role"] = (.roles.unlisted + {requirements: $q})' "$RF" >"$T/fr.json"
 H2="$T/h2"; mkdir -p "$H2"; echo x >"$H2/config.yaml"; for p in $(jq -r '.profiles | keys[] | select(. != "default")' "$RF"); do mkdir -p "$H2/profiles/$p"; echo x >"$H2/profiles/$p/config.yaml"; done
 ok '[ "$(ROLES_FILE=$RF python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?)" = 0 ] && [ "$(ROLES_FILE=$T/fr.json python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?)" = 0 ] && [ "$(ROLES_FILE=$T/fr.json python3 $S/roles.py requirements fake-role | jq -S -c .)" = "$(jq -Sc . <<<"$RQ")" ]' "W2: a fake role with requirements passes check and answers, no code change"
-chk() { ROLES_FILE=$T/b.json python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?; }
+# T1 (F1 W4 r5): `check` on a generated table goes through ONE driver process that runs roles.py's whole script (argv, the table in ROLES_FILE,
+# stdout and stderr as one stream, its exit code). The first case of each exit code also runs as a real roles.py process and must agree (lines
+# as sets); an agreement case with a planted-difference control follows the table cases. The cases about the CLI itself stay process runs.
+cat >"$T/cli.py" <<'PY'
+import base64, io, json, os, sys, traceback
+codes, keep = {}, (sys.stdout, sys.stderr, sys.stdin, sys.argv)
+for line in keep[2]:
+    r = json.loads(base64.b64decode(line))
+    if r["script"] not in codes:
+        codes[r["script"]] = compile(open(r["script"], encoding="utf-8").read(), r["script"], "exec")
+    old = {k: os.environ.get(k) for k in r["env"]}; os.environ.update(r["env"])
+    out = io.StringIO(); sys.stdout = sys.stderr = out; sys.stdin = io.StringIO(""); sys.argv = [r["script"], *r["argv"]]
+    try:
+        exec(codes[r["script"]], {"__name__": "__main__", "__file__": r["script"]}); rc = 0
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else 0 if e.code is None else 1
+        if isinstance(e.code, str):
+            print(e.code, file=out)
+    except BaseException:
+        traceback.print_exc(file=out); rc = 1
+    finally:
+        sys.stdout, sys.stderr, sys.stdin, sys.argv = keep
+        for k, v in old.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+    keep[0].write(f"{rc}\t{base64.b64encode(out.getvalue().encode()).decode()}\n"); keep[0].flush()
+PY
+
+mkfifo "$T/cin" "$T/cout"; python3 -I "$T/cli.py" <"$T/cin" >"$T/cout" 2>"$T/cerr" & CPID=$!; exec {CW}>"$T/cin" {CR}<"$T/cout"; : >"$T/cseen"; : >"$T/crows"
+dchk() {   # dchk <roles.py folder> <table>: check in the driver; exit code echoed, output in $T/out
+  local rc b; printf '%s\n' "$(jq -nc --arg s "$1/roles.py" --arg t "$2" --arg h "$H2" '{script: $s, argv: ["check", $h], env: {ROLES_FILE: $t}}' | base64 -w0)" >&"$CW"
+  IFS=$'\t' read -r rc b <&"$CR"; printf '%s' "$b" | base64 -d >"$T/out"; echo "$rc"; }
+chk() {
+  local rc rrc; rc=$(dchk "$S" "$T/b.json"); cp "$T/b.json" "$T/crow.$(wc -l <"$T/crows").json"; echo x >>"$T/crows"
+  if ! grep -qxF -- "$rc" "$T/cseen"; then
+    echo "$rc" >>"$T/cseen"; ROLES_FILE=$T/b.json python3 $S/roles.py check "$H2" >"$T/out.real" 2>&1; rrc=$?
+    if [ "$rrc" != "$rc" ] || [ "$(sort "$T/out")" != "$(sort "$T/out.real")" ]; then echo "     route agreement: exit $rc differs (driver $rc, process $rrc)" >&2; echo 99; return; fi
+  fi
+  echo "$rc"; }
 for r in $(jq -r '.roles | keys[]' "$RF"); do
   jq --arg r "$r" 'del(.roles[$r].requirements)' "$RF" >"$T/b.json"
   ok '[ "$(chk)" = 1 ] && grep -q "role $r: requirements" "$T/out"' "W2: role $r without requirements: check fails"
@@ -355,12 +392,24 @@ for r in $(jq -r --argjson named "$(jq -c '[.profiles[].role]' "$RF")" '.roles |
   done
 done
 bad ".roles[\"$COORD\"].hooks |= map(select(.matcher | test(\"\\\\(\\\\?!\") | not))" 'any tool name' "K6: the coordinator (runs_unboxed) without the catch-all"
+# T5 ruling (W4-VER3-04, r5): a role with a catch-all needs catch_all_tools; registration reports a tool Hermes resolves that it does not name (default-deny)
+bad "del(.roles[\"$COORD\"].catch_all_tools)" 'catch_all_tools' "T5: an unboxed role whose catch-all has no catch_all_tools"
+
 bad ".roles[\"$FB\"].hooks |= map(if (.matcher | test(\"\\\\(\\\\?!\")) then . + {workers: [\"w\"]} else . end) | .roles[\"$FB\"].workers = [\"w\"]" 'any tool name' "K6: a catch-all that has a workers filter does not count for the role as a whole"
 SERVED=$(jq -r '.profiles | to_entries[] | select(.value.role != "x") | .value.role' "$RF" | head -1)
 bad "del(.roles[\"$SERVED\"].platform_toolsets)" 'explicit platform_toolsets' "K6: a role a profile serves, without explicit toolsets"
 bad 'del(.judged_hooks)' 'judged_hooks' "K6: the judged set missing"
 bad 'del(.read_verbs)' 'read_verbs' "K7: the list of readers missing"
 bad 'del(.main_branch)' 'main_branch' "K9: the main branch missing"
+# T1: the two routes agree on every 5th generated table above, and a planted difference (a driver copy of roles.py whose INVALID line reads otherwise) is caught
+cagree() { local n=0 i rc rrc; for ((i = 0; i < $(wc -l <"$T/crows"); i += 5)); do
+    rc=$(dchk "$1" "$T/crow.$i.json")
+    [ -f "$T/ag.real.$i" ] || { ROLES_FILE=$T/crow.$i.json python3 $S/roles.py check "$H2" >"$T/ag.real.$i" 2>&1; echo $? >"$T/ag.rc.$i"; }   # the process run once per row, kept for the control
+    { [ "$rc" = "$(<"$T/ag.rc.$i")" ] && [ "$(sort "$T/out")" = "$(sort "$T/ag.real.$i")" ]; } || n=$((n+1)); done; echo "$n"; }
+mkdir -p "$T/px"; sed 's/roles: INVALID/roles: NOT VALID/' "$S/roles.py" >"$T/px/roles.py"; cp "$S"/alert_catalog.py "$T/px/"
+CN=$(wc -l <"$T/crows"); CD=$(cagree "$S"); CX=$(cagree "$T/px")
+ok '[ "$CN" -ge 50 ] && [ "$CD" = 0 ]' "T1 route agreement: every 5th of $CN generated tables gives the same exit code and output in the driver as a real roles.py check ($CD differ)"
+ok '[ "$CX" -gt 0 ]' "T1 route agreement, negative control: a planted difference in the driver's roles.py is caught ($CX differ)"
 # every hook entry that says writes: refused refuses a write of every tool its matcher names (the marker is tied to what the hook does)
 for h in $(jq -r '[.roles[].hooks[]? | select(.writes == "refused") | (.file // .command)] | unique[]' "$RF"); do
   for t in $(jq -r --arg h "$h" '[.roles[].hooks[]? | select((.file // .command) == $h and .writes == "refused") | .matcher] | unique[]' "$RF" | while read -r m; do jq -r '.write_tools[]' "$RF" | while read -r w; do python3 -I -c 'import re,sys; print(sys.argv[2]) if re.fullmatch(sys.argv[1], sys.argv[2]) else None' "$m" "$w"; done; done | grep -v '^None$' | sort -u); do
@@ -413,7 +462,7 @@ for p in code:
     for line in open(f"{top}/{p}", encoding="utf-8", errors="replace"):
         if line.lstrip().startswith("#"):
             continue
-        for m in re.finditer(r"[\w.~-]+(?:/[\w.~-]+)+", line):
+        for m in list(re.finditer(r"[\w.~-]+(?:/[\w.~-]+)+", line)) + [m for m in re.finditer(r"(?<![\w./-])[\w-]+\.(?:json|ya?ml|toml)\b", line) if "/" not in m[0]]:   # r5: a data file at the root of the tree (package.json) too
             x = re.sub(r"^(?:workspace/|\.\./)+", "", m[0].rstrip("/."))
             if (x in data or x in dirs) and not under(x) and not mine(x):
                 missing.append(f"{x} (named on a code line of {p})")
@@ -427,7 +476,15 @@ mkdir -p "$T/gt/bin" "$T/gt/docs/hermes-local"; cp /workspace/bin/*.py /workspac
 ok 'python3 -I "$T/graph.py" "$T/gt" 2>&1 | grep -q event_log.py' "K3: a file reached from an owner command and missing from the list is reported (negative control)"
 mkdir -p "$T/gt/docs/hermes-local"; cp /workspace/docs/hermes-local/alert-catalog.json "$T/gt/docs/hermes-local/"; jq '.boundary_paths -= ["docs/hermes-local/alert-catalog.json"]' "$RF" >"$T/gt/docs/hermes-local/roles.json"
 ok 'python3 -I "$T/graph.py" "$T/gt" 2>&1 | grep -q "docs/hermes-local/alert-catalog.json (named on a code line of bin/alert_catalog.py)"' "T9: a data file a boundary file opens by a fixed path and missing from the list is reported (negative control: the alert catalog)"
+PKG=$(grep -oE '[a-z]+\.json' /workspace/bin/merge-card.sh | grep -v data | sort -u | head -1)   # the manifest the merge reads its test command from, taken from merge-card.sh, not named here
+cp "/workspace/$PKG" "$T/gt/"; jq --arg p "$PKG" '.boundary_paths -= [$p]' "$RF" >"$T/gt/docs/hermes-local/roles.json"
+ok '[ -n "$PKG" ] && python3 -I "$T/graph.py" "$T/gt" 2>&1 | grep -q "^$PKG (named on a code line of bin/merge-card.sh)"' "B.2 point 10: the package manifest ($PKG) the merge reads its test command from is a boundary path, and missing from the list it is reported"
 ok '[ "$(printf "bin/json.py\0bin/zz-not-stdlib.py\0" | ROLES_FILE=$RF python3 -I $S/roles.py hits /workspace boundary | tr "\0" "\n")" = "bin/json.py" ]' "K3: a new file in bin/ that shadows a standard-library module is a boundary change; another new file is not"
+II=__init''__.py   # the package-init base name, split so the test-map reach scan does not tie this selftest
+ok '[ "$(printf "bin/json/$II\0bin/sqlite3/$II\0bin/re.cpython-311-x86_64-linux-gnu.so\0bin/zz-not-stdlib/$II\0bin/roles.py\0" | ROLES_FILE=$RF python3 -I $S/roles.py hits /workspace boundary | tr "\0" " ")" = "bin/json/$II bin/sqlite3/$II bin/re.cpython-311-x86_64-linux-gnu.so bin/roles.py " ]' "B.3 point 18: a package or a compiled module in bin/ named like a module the boundary imports from outside the repo (json, sqlite3, re) is a boundary change; another name is not"
+RNF=$(git -C /workspace ls-files bin | grep -v -e selftest -e "\.py$" | while read -r f; do printf '%s\0' "$f" | ROLES_FILE=$RF python3 -I $S/roles.py hits /workspace boundary | grep -q . || { echo "$f"; break; }; done)
+jq --arg f "/workspace/$RNF" '.sandbox.profile_overrides[(.sandbox.profile_overrides | keys[0])].review_prompt = ($f | ltrimstr("/workspace/"))' "$RF" >"$T/tn.json"
+ok '[ -n "$RNF" ] && [ "$(printf "%s\0" "$RNF" | ROLES_FILE=$T/tn.json python3 -I $S/roles.py hits /workspace boundary | tr -d "\0")" = "$RNF" ]' "B.2 point 10: a file the table names as a prompt (here $RNF, not on the list before) is a boundary path from the table alone (negative control: the same file with the intact table is not)"
 # K1b: identity, not spelling
 mkdir -p "$T/ov/.Own/sub" "$T/ov/other"; ln -s "$T/ov/.Own" "$T/ov/link"
 ok '[ "$(python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import roles; p = roles.chains([sys.argv[2] + \"/.Own/sub\", sys.argv[2] + \"/.Own/future.json\"]); print(*[ (roles.overlap(sys.argv[2] + x, p) or [None])[0] for x in (\"/.OWN/sub/x\", \"/link/sub/x\", \"/.Own\", \"/other/x\", \"/.Own/FUTURE.JSON\", \"/.Own/ZZZZZZ~1/y\")])" "$S" "$T/ov")" = "inside inside contains None equal None" ]' "K1b: a case variant and a link are the protected folder, a folder that holds it is \"contains\", a name that names nothing on disk is judged by its names, never by its look (T3: was \"unknown\")"
@@ -438,4 +495,16 @@ t = time.time(); a = roles.braces(\"{a,b}\" * 60 + \"x\"); b = roles.braces(\"{\
 assert len(a) > 64 and len(b) > 64 and len(c) > 64 and time.time() - t < 2, time.time() - t
 assert roles.braces(\"a{b,c}d\") == [\"abd\", \"acd\"]
 " "$S"' "K5: brace expansion past 64 words is cut off at once, in time, whatever the word's length; a small expansion is unchanged"
+# B.2 point 8 (r5, W4-CV3-01): every guard that reads the table refuses every call, STL-CFG-303, when the table names a hook file that is not there (as before
+# the phase); control: the intact table allows the same calls
+jq '.roles.builder.hooks += [{"matcher": "^zz-none$", "file": "docs/hermes-local/hooks/builder/zz-missing-hook.sh"}]' "$RF" >"$T/mh.json"
+# the guard file for each (role, tool) comes from the table, not named here (so the test-map reach scan ties this selftest to no guard by name)
+gcall() { jq -nc --arg t "$2" --argjson i "$3" --arg p "$4" '{tool_name: $t, tool_input: $i, session_id: "s1", cwd: "/tmp", profile: $p, extra: {}}' | ROLES_FILE=$1 python3 -I "/workspace/$5" >"$T/gc.out" 2>&1; echo $?; }
+guardfile() { jq -r --arg r "$1" --arg t "$2" '[.roles[$r].hooks[]? | select((.file // "") | test("guard|terminal")) | select(.matcher as $m | $t | test("^(?:" + $m + ")$")) | .file][0]' "$RF"; }
+for gc in "builder-local|builder|write_file|{\"path\":\"/tmp/zz-x\",\"content\":\"x\"}" "builder-local|builder|read_file|{\"path\":\"/tmp/zz-x\"}" \
+          "default|dispatcher|terminal|{\"command\":\"ls\"}" "default|dispatcher|read_file|{\"path\":\"/tmp/zz-x\"}"; do
+  IFS='|' read -r pr role t i <<<"$gc"; hk=$(guardfile "$role" "$t")
+  ok '[ -n "$hk" ] && [ "$hk" != null ] && [ "$(gcall "$RF" "$t" "$i" "$pr" "$hk")" = 0 ] && [ "$(gcall "$T/mh.json" "$t" "$i" "$pr" "$hk")" = 2 ] && grep -q "STL-CFG-303" "$T/gc.out"' "B.2 point 8: the $role guard for $t ($pr): allowed with the intact table, refused with STL-CFG-303 when the table names a missing hook file"
+done
+exec {CW}>&- {CR}<&-; wait "$CPID"   # the check driver ends
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
