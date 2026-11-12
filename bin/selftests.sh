@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run every hermetic self-test (stubs, scratch state, no network, no secrets). Part of `npm test`, so the 15-minute
 # watchdog (bin/watchdog.sh) also catches escalation-script regressions and alerts #alerts (D31).
-# usage: selftests.sh [name...]   no name = the whole list below; a name without a selftest file is FAIL.
+# usage: selftests.sh [name...|--quick]   no name = the whole list below (merge, final hash); --quick = the quick tier the
+# watchdog runs (decided by the owner 2026-11-12; list: "quick" in .stella/test-map.json); a name without a selftest file is FAIL.
 # Each selftest runs ISOLATED: the tree this script lies in is copied as it is on disk (tracked files plus untracked files
 # git does not ignore) into a one-commit repository, and the selftest runs in a bubblewrap mount namespace with that copy
 # bound at the stack's path and a private folder bound over the system temp folder. So it has its own tree, alert log and
@@ -16,10 +17,15 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 STACK=/workspace   # shortcut: the path the stack's scripts name literally; upgrade when they take their root from their own location
 TD=${TMPDIR:-/tmp}
 suite=()
-for t in alert alert-page delegation escalate escalation-thread escalation-reply-poll escalation-reply-hook escalation-complete kanban-guard false-close-guard check-guard complete-gate roles-complete profile-hooks commit-guard owner-config owner-leak write-guard roles role-guard secret-read matcher-audit kanban-board merge-card owner-settings watchdog model-watch hardcode-lint init-firewall firewall-probe container-start post-edit-check box bench approval-sim omniroute-run reviewer-claude approval-evidence routing broker-put test-map stella-data event-log stella-apply settings; do
+for t in alert alert-page delegation escalate escalation-thread escalation-reply-poll escalation-reply-hook escalation-complete kanban-guard false-close-guard check-guard complete-gate roles-complete profile-hooks commit-guard owner-config owner-leak write-guard roles role-guard secret-read matcher-audit kanban-board merge-card owner-settings watchdog model-watch hardcode-lint init-firewall firewall-probe container-start post-edit-check box bench approval-sim omniroute-run reviewer-claude approval-evidence routing broker-put test-map stella-data event-log stella-apply settings selftests; do
   suite+=("$t")
 done
+if [ "${1:-}" = --quick ]; then   # the quick tier (the "quick" list of the test map): the watchdog's; no argument stays the full suite
+  q=$(python3 -I "$ROOT/bin/test-map.py" quick 2>&1) && [ -n "$q" ] || { printf 'FAIL quick-tier\n     FAIL the quick list cannot be read: %s\nselftests FAIL (1)\n' "${q:-empty answer}"; exit 1; }
+  mapfile -t q <<<"$q"; set -- "${q[@]}"
+fi
 [ $# = 0 ] && set -- "${suite[@]}"
+set -- "${@%-selftest}"   # the watchdog reruns a failed check by the name it printed (<name>-selftest)
 R=$(mktemp -d) || { echo "selftests FAIL (1)"; echo "     FAIL cannot make a temp folder"; exit 1; }
 trap 'chmod -R u+rwX "$R" 2>/dev/null; rm -rf "$R"' EXIT
 

@@ -6,7 +6,7 @@ BIN=$(dirname "$(readlink -f "$0")"); TM="$BIN/test-map.py"
 T=$(mktemp -d -t tm-self.XXXXXX); trap 'rm -rf "$T"' EXIT
 fails=0
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
-MAP='{"schema_version": 1, "runner": "bin/selftests.sh", "test_file": "bin/{name}-selftest.sh", "test_like": ["*test*"], "not_tests": ["bin/selftests.sh", ".stella/*", "fixtures/*"], "follow": ["*.sh"], "always": ["a"], "full": ["lock.json"], "map": [{"globs": ["bin/a-selftest.sh", "src/a*"], "targets": ["a"]}, {"globs": ["bin/b-selftest.sh", "src/b/*"], "targets": ["b"]}, {"globs": ["notes/*"], "targets": []}]}'
+MAP='{"schema_version": 1, "runner": "bin/selftests.sh", "test_file": "bin/{name}-selftest.sh", "test_like": ["*test*"], "not_tests": ["bin/selftests.sh", ".stella/*", "fixtures/*"], "follow": ["*.sh"], "always": ["a"], "quick": ["a"], "full": ["lock.json"], "map": [{"globs": ["bin/a-selftest.sh", "src/a*"], "targets": ["a"]}, {"globs": ["bin/b-selftest.sh", "src/b/*"], "targets": ["b"]}, {"globs": ["notes/*"], "targets": []}]}'
 st() { printf '#!/usr/bin/env bash\n%s\necho "selftest PASS"\n' "${2:-}" >"$1"; chmod 755 "$1"; }   # <file> [a line of code]
 root() {  # <name> [jq filter over MAP] [suite names]: a scratch root with selftests a and b
   local r=$T/$1; mkdir -p "$r/bin" "$r/.stella" "$r/src"; jq "${2:-.}" <<<"$MAP" >"$r/.stella/test-map.json"
@@ -383,4 +383,7 @@ ok 'bad gl "bin/c-test.sh looks like a test" && [ ! -e "$T/gl-ran" ]' "24b info/
 # A problem in 100 or more parts keeps the whole root note on every part.
 root parts ".map += [{globs: ([range(100)] | map(\"docs/$(printf 'g%.0s' $(seq 240))\\(.).md\") + [\"*\"]), targets: []}]"   # globs longer than a line: every part is cut at full width
 ok '! chk parts && [ "$(grep -c "" "$T/out")" -ge 100 ] && allroot parts' "23f a problem split into 100 or more parts keeps the root note on every part"
+# The quick tier (owner decision 2026-11-12): the "quick" list, printed by `quick`; a name outside the suite list fails the lint; a list that cannot be read is never an empty answer.
+root quick '.quick = ["a", "zz"]'; root quickok; root quickgone 'del(.quick)'; root quickempty '.quick = []'
+ok 'bad quick "quick entry zz is not in the suite list of bin/selftests.sh" && [ "$(STELLA_ROOT=$T/quickok python3 -I "$TM" quick 2>&1)" = a ] && for r in quickgone quickempty; do out=$(STELLA_ROOT=$T/$r python3 -I "$TM" quick 2>"$T/err"); [ $? = 1 ] && [ -z "$out" ] && grep -q "the quick list cannot be read" "$T/err" || exit 1; done' "24 quick: a name outside the suite list fails the lint; quick prints the list; a missing or empty list is exit 1 and one plain line, no answer on stdout"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

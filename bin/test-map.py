@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Test map (product rule 8), stdlib only: the lint over .stella/test-map.json and the selection of test targets.
 CLI: test-map.py check                           lint: exit 1 and one STL-CFG-310 line per problem
+     test-map.py quick                           the quick tier (the "quick" list of the map), one suite name per line; any
+                                                 failure is exit 1 and one plain line on stderr, never an empty answer
      test-map.py select [--json] [--] <file>...  the selftests a change to these files can affect ("-" alone reads names
                                                  from stdin, one per line); prints "full" (exit 0) when the whole suite
                                                  must run, else one target per line. Only the first argument may be an
@@ -13,7 +15,7 @@ list of selftests into whole lines: nothing is cut. git runs with no global, sys
 the tree's .gitignore files, the work tree given and no fsmonitor program (only the caller's safe.directory is kept).
 shortcut: an untracked .gitignore, or an untracked folder that is a repository of its own, still hides untracked files
 from check (a tracked file is always listed); upgrade when check may not trust the working tree it runs in.
-check fails when: the map is unreadable, repeats a key or breaks its schema; a selftest is not a target of any row; a
+check fails when: a quick entry is not in the suite list; the map is unreadable, repeats a key or breaks its schema; a selftest is not a target of any row; a
 target or an always gate has no selftest file; a selftest is missing from the suite list of the runner (or the list
 cannot be read); a suite selftest is not executable, on disk or in the mode git records; a file that looks like a test
 (test_like) is neither a suite selftest nor listed in not_tests; a selftest can reach a file (see reach) whose
@@ -335,6 +337,7 @@ def check():
         return probs + [f"the suite list of {m['runner']} cannot be read (expected one line: for t in <names>; do)"]
     probs += [f"{tests[t]} is not in the suite list of {m['runner']}" for t in sorted(tests.keys() - suite)]
     probs += [f"suite entry {t}: {path(t)} does not exist" for t in sorted(suite - tests.keys())]
+    probs += [f"quick entry {t} is not in the suite list of {m['runner']}" for t in m["quick"] if t not in suite]
     for t in sorted(suite & tests.keys()):   # the suite runs each file directly
         if not os.access(os.path.join(ROOT, tests[t]), os.X_OK):
             probs.append(f"{tests[t]} is not executable")
@@ -388,6 +391,16 @@ def main(argv):
         if not probs:
             print("test map ok" + WHERE)
         return 1 if probs else 0
+    if argv == ["quick"]:
+        try:
+            q = load()["quick"]
+            if not q:
+                raise ValueError("the quick list is empty")
+        except Exception as e:
+            print(f"test-map.py quick: the quick list cannot be read: {e}", file=sys.stderr)
+            return 1
+        print("\n".join(q))
+        return 0
     if argv[:1] == ["select"]:
         files, as_json = argv[1:], argv[1:2] == ["--json"]   # only the first argument may be an option
         files = files[as_json:]

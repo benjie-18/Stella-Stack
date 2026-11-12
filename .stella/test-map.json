@@ -42,6 +42,38 @@
     "stella-data",
     "test-map"
   ],
+  "quick": [
+    "delegation",
+    "approval-sim",
+    "matcher-audit",
+    "routing",
+    "hardcode-lint",
+    "owner-config",
+    "owner-leak",
+    "settings",
+    "model-watch",
+    "container-start",
+    "init-firewall",
+    "firewall-probe",
+    "broker-put",
+    "omniroute-run",
+    "alert",
+    "alert-page",
+    "escalation-thread",
+    "escalation-reply-hook",
+    "escalation-complete",
+    "commit-guard",
+    "secret-read",
+    "kanban-guard",
+    "false-close-guard",
+    "kanban-board",
+    "test-map",
+    "event-log",
+    "approval-evidence",
+    "reviewer-claude",
+    "post-edit-check",
+    "selftests"
+  ],
   "full": [],
   "map": [
     {
@@ -1290,6 +1322,7 @@
         "bin/selftests.sh"
       ],
       "targets": [
+        "selftests",
         "alert-page",
         "hardcode-lint",
         "test-map"
@@ -1813,6 +1846,63 @@
         "write-guard"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py check after F1 W4 round 3)"
+    },
+    {
+      "globs": [
+        "*"
+      ],
+      "targets": [
+        "selftests"
+      ],
+      "scan": true,
+      "why": "bin/selftests.sh copies the whole tree for each selftest it runs, so its selftest reads every file (said by reading; the runner names files at run time, which reach does not see)"
+    },
+    {
+      "globs": [
+        ".stella/schemas/test-map.schema.json",
+        ".stella/test-map.json",
+        "bench/tasks/deploy-recovery/repo/deploy.conf",
+        "bench/tasks/deploy-recovery/repo/deploy.sh",
+        "bench/tasks/deploy-recovery/repo/test.sh",
+        "bench/tasks/deploy-recovery/solution/deploy.conf",
+        "bin/hardcode-lint.sh",
+        "bin/model_watch.py",
+        "bin/test-map-selftest.sh",
+        "bin/test-map.py",
+        "bin/watchdog.sh",
+        "bin/watchdog_settings.py",
+        "docs/hermes-local/hardcode-allow.json",
+        "docs/hermes-local/watchdog-settings.json"
+      ],
+      "targets": [
+        "alert-page"
+      ],
+      "scan": true,
+      "why": "from reach: alert-page-selftest names bin/selftests.sh, which now names bin/test-map.py, bin/watchdog_settings.py and the role table (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        ".stella/schemas/test-map.schema.json",
+        ".stella/test-map.json",
+        "bench/tasks/deploy-recovery/repo/deploy.conf",
+        "bench/tasks/deploy-recovery/repo/deploy.sh",
+        "bench/tasks/deploy-recovery/repo/test.sh",
+        "bench/tasks/deploy-recovery/solution/deploy.conf"
+      ],
+      "targets": [
+        "watchdog"
+      ],
+      "scan": true,
+      "why": "from reach: watchdog-selftest runs the watchdog, whose test step now runs bin/selftests.sh, which names bin/test-map.py (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bin/selftests-selftest.sh"
+      ],
+      "targets": [
+        "selftests"
+      ],
+      "why": "the runner's own selftest"
     }
   ]
 }

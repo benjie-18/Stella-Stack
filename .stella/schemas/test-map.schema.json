@@ -40,6 +40,16 @@
       "description": "Fast gates: targets of every selection.",
       "$ref": "#/$defs/targets"
     },
+    "quick": {
+      "description": "The quick tier the 15-minute watchdog runs (owner decision 2026-11-12): suite names, at least one. The full suite runs at merge and on the final hash.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._-]+$"
+      }
+    },
     "full": {
       "description": "Globs of shared contracts: a change selects the full suite. The stack ships it empty (every tracked file has rows instead); a file on it needs no row.",
       "$ref": "#/$defs/globs"
@@ -85,6 +95,7 @@
     "not_tests",
     "follow",
     "always",
+    "quick",
     "full",
     "map"
   ],

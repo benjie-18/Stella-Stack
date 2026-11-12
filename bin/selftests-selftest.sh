@@ -50,6 +50,22 @@ ok '! overlap a b && [ "$(grep -c "^ok " "$T/out")" = 2 ]' "S2 N=1: the same pat
 echo '{"test_rerun": {"parallel": 2}}' >"$T/set.json"; rm -f "$T/marks"/*; SELFTESTS_TIMES="$T/times" run f a b
 ok '[ "$(sed -n 1p "$T/out")" = "FAIL f-selftest" ] && [ "$(grep "^ok " "$T/out" | tr -d "\n")" = "ok   a-selftestok   b-selftest" ] && [ "$(cut -f2,3 "$T/times" | tr "\n" " ")" = "f	FAIL a	ok b	ok " ] && grep -Eq "^[0-9]+\.[0-9]{3}	f	FAIL$" "$T/times"' "S2 the output is in list order whatever finished first; SELFTESTS_TIMES gets one line per selftest"
 
+# S4 the quick tier: --quick runs the names `test-map.py quick` prints, same isolation and output; an unreadable or empty list is one FAIL, never the full list, never nothing
+cat >"$T/tree/bin/test-map.py" <<'S'
+import os, sys
+d = os.path.dirname(os.path.abspath(__file__))
+if os.path.exists(d + "/qfail"): sys.exit(print("list unreadable", file=sys.stderr) or 1)
+if not os.path.exists(d + "/qempty"): print("a\nf")
+S
+rm -f "$T/marks"/*; run --quick
+ok '[ "$(sed -n 1p "$T/out")" = "ok   a-selftest" ] && [ "$(sed -n 2p "$T/out")" = "FAIL f-selftest" ] && [ "$(tail -1 "$T/out")" = "selftests FAIL (1)" ] && [ -e "$T/marks/a" ] && [ ! -e "$T/marks/b" ]' "S4 --quick runs the quick list of the test map and only that"
+touch "$T/tree/bin/qfail"; rm -f "$T/marks"/*; run --quick
+ok 'grep -q "FAIL the quick list cannot be read: list unreadable" "$T/out" && [ "$(tail -1 "$T/out")" = "selftests FAIL (1)" ] && [ "$(cat "$T/rc")" = 1 ] && [ -z "$(ls -A "$T/marks")" ]' "S4 --quick with a list that cannot be read: one FAIL, exit 1, nothing ran"
+rm "$T/tree/bin/qfail"; touch "$T/tree/bin/qempty"; run --quick
+ok 'grep -q "FAIL the quick list cannot be read" "$T/out" && [ "$(cat "$T/rc")" = 1 ] && [ -z "$(ls -A "$T/marks")" ]' "S4 --quick with an empty list: one FAIL, exit 1, nothing ran"
+run a-selftest
+ok '[ "$(cat "$T/out")" = "$(printf "ok   a-selftest\nselftests PASS")" ]' "S2 a failed check named as the watchdog sees it (a-selftest) reruns that selftest, isolated"
+
 # fail closed: no bubblewrap on PATH, and a bubblewrap that refuses: every selftest FAIL with a plain line, nothing ran
 mkdir -p "$T/nobwrap" "$T/badbwrap"
 for f in /usr/bin/* /bin/*; do [ "${f##*/}" = bwrap ] || ln -sf "$f" "$T/nobwrap/" 2>/dev/null; done
