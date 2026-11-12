@@ -229,8 +229,6 @@ def validate(d, root=ROOT, files=True):
         errs.append("fallback_role must name a role")
     elif any(fb.get(k) for k in PERMS) or fb.get("workspace") != "none" or fb.get("allowed_overrides"):
         errs.append("fallback_role must open nothing: every may_* and assignable false, workspace none, no overrides")
-    elif not errs:
-        errs += fallback_problems(d)
     for p, row in profs.items():
         if not NAME.fullmatch(p) or not isinstance(row, dict):
             errs.append(f"profile {p!r}: bad name or not an object"); continue
@@ -296,7 +294,7 @@ def validate(d, root=ROOT, files=True):
             and not set(d["owner_commands_by_name"]) <= set(d["owner_commands"]):
         errs.append("owner_commands_by_name must be a subset of owner_commands")
     errs += validate_sandbox(d)
-    return errs + ([] if errs else unboxed_problems(d))
+    return errs or fallback_problems(d) + unboxed_problems(d)   # both on a well-formed table, each names its own gap (one never hides the other)
 
 
 @functools.lru_cache(maxsize=None)   # T1: the table names ~16 hook files about 60 times; each is looked up once per process
@@ -539,9 +537,6 @@ def _chain(p):
     return comps, ids
 
 
-ALIAS = re.compile(r"~\d")   # an 8.3 short name (NTFS): STELLA~1 is .stella on this mount
-
-
 def chains(paths):
     """The protected paths (absolute), ready for overlap()."""
     return [(p, _chain(p)) for p in paths]
@@ -550,9 +545,9 @@ def chains(paths):
 def overlap(p, prot):
     """K1b, the one way every guard asks "is this path one of those": (relation, protected path) or None. The relation is "equal", "inside" (p lies
     in a protected path) or "contains" (p is a folder that holds one). It is decided by IDENTITY where p or a parent of it exists (the device and
-    inode of each existing component, so STELLA~1, .STELLA and a symlink name the same folder), and by the casefolded names below the deepest
-    folder both paths share. A name that does not exist yet and looks like a short alias, in a folder that holds a protected path, cannot be
-    classified: relation "unknown" (the caller refuses it)."""
+    inode of each existing component, so an 8.3 short name, a case variant and a symlink of a folder name that folder), and by the casefolded
+    names below the deepest folder both paths share. A name is judged by what it resolves to, never by what it looks like (T3): a word that names
+    nothing on disk, below a folder that is not and does not lie in a protected path, is not a protected path (a git revision such as HEAD~1)."""
     pc, pi = _chain(p)
     fold = [c.casefold() for c in pc]
     for q, (qc, qi) in prot:
@@ -566,9 +561,6 @@ def overlap(p, prot):
             n = min(len(pr), len(qr))
             if pr[:n] == qr[:n]:
                 return ("equal" if len(pr) == len(qr) else "inside" if len(pr) > len(qr) else "contains"), q
-        e = len(pi) - 1   # the existing components of p; the next one, if any, does not exist
-        if e < len(pc) and ALIAS.search(pc[e]) and pi[-1] in pos:
-            return "unknown", q
     return None
 
 
@@ -976,7 +968,8 @@ def main():
     try:
         d = load()
     except RolesError as e:
-        if cmd != "check":   # a read: stdout stays empty; the code, its plain message and one alert line say why
+        if cmd != "check":   # a read: stdout stays empty; the problem, the code, its plain message and one alert line say why
+            print(f"roles: INVALID {e}", file=sys.stderr)
             fail("STL-CFG-303", problem=str(e)[:300])
         print(f"roles: INVALID {e}")
         print(log_alert("STL-CFG-303", problem=str(e)[:300]))

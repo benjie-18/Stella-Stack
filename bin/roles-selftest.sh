@@ -57,12 +57,13 @@ ok '[ "$(g planner-x kanban_create "{\"title\":\"x\",\"assignee\":\"planner-x\",
 ok '[ "$(g planner-x kanban_complete "{\"task_id\":\"t_0000c001\"}")" = 2 ] && grep -q STL-GRD-601 "$T/out"' "new role: completion still needs the card's own run"
 
 ROTF=$(jq -r '[.roles[].hooks[]? | select(.writes == "refused") | .file | select(test("terminal"))][0] | split("/")[-1]' "$RF")   # the refusing terminal hook of the roles outside the box, from the table
+FWF=$(jq -r '[.roles[.fallback_role].hooks[]? | select(.writes == "refused") | select(.matcher as $m | "write_file" | test($m)) | .file | split("/")[-1]][0] // empty' "$RF")   # the fallback's hook that refuses write_file, from the table (its own message file since W4 r3)
 # 3. A profile with no row: the fallback role, nothing opens, one STL-CFG-303 line.
 mk "$H/profiles/x-new"; : >"$SUP/logs/alerts.log"
 rc=$(ap)
 X="$H/profiles/x-new"
 ok '[ "$rc" = 1 ] && grep -q "x-new: no row in roles.json, registering role unlisted" "$T/out" && [ "$(grep -c "^STL-CFG-303" "$SUP/logs/alerts.log")" = 1 ]' "unlisted profile: apply exits 1, says so, one STL-CFG-303 alerts.log line"
-ok 'grep -qF "/workspace/bin/role-guard.py" "$X/config.yaml" && grep -qF "$X/hooks/$ROTF" "$X/config.yaml" && grep -qF "$X/hooks/deny-write.sh" "$X/config.yaml" && grep -qF "$X/hooks/secret-guard.py" "$X/config.yaml" && [ -s "$X/hooks/$ROTF" ] && ! grep -qF "write-guard.py" "$X/config.yaml"' "F1 W4 B2 (replaces: write and secret guards): unlisted profile: role guard, the read-only terminal, deny-write and secret guard registered, no write guard (a role outside the box refuses every write; never left unguarded)"
+ok 'grep -qF "/workspace/bin/role-guard.py" "$X/config.yaml" && grep -qF "$X/hooks/$ROTF" "$X/config.yaml" && [ -n "$FWF" ] && grep -qF "$X/hooks/$FWF" "$X/config.yaml" && grep -qF "$X/hooks/secret-guard.py" "$X/config.yaml" && [ -s "$X/hooks/$ROTF" ] && ! grep -qF "write-guard.py" "$X/config.yaml"' "F1 W4 B2 (replaces: write and secret guards): unlisted profile: role guard, the read-only terminal, deny-write and secret guard registered, no write guard (a role outside the box refuses every write; never left unguarded)"
 ok '[ "$(g x-new kanban_create "{}")" = 2 ] && [ "$(g x-new delegate_task "{}")" = 2 ] && [ "$(g x-new kanban_complete "{}")" = 2 ]' "unlisted profile: create, delegate and complete refused"
 rm -rf "$X"
 
