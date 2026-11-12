@@ -1444,9 +1444,9 @@ def failed(e, read_cmd):
         return el.fail("STL-CFG-321" if STEPS else REFUSE[0], f"run `check {key}`: the command stopped and what is left could not be read ({type(x).__name__})")
 
 def told(e, read_cmd):
-    """Undo the steps newest first, up to one that stays (an event line written, a folder removed) or an undo that fails. Then
-    the text is read from the disk, compared with the start: equal and nothing begun is the cause (its frame, or the problem,
-    says nothing was changed); equal after an undo says it was undone; else 321 with what is there and the one command."""
+    """Undo the steps newest first, up to one that stays (an event line written, a folder removed) or an undo that fails. No step
+    begun is the cause (its frame, or the problem, says nothing was changed). Else the text is read from the disk, compared with
+    the start: equal says it was undone; else 321 with what is there and the one command."""
     code, why = cause_of(e, read_cmd)
     left = list(STEPS)
     while left:
@@ -1456,13 +1456,14 @@ def told(e, read_cmd):
             break
         left.pop()
     began = any(not s[4] for s in STEPS)
-    same = not SNAP or SNAP["state"] == state_of(SNAP["key"], SNAP["tgt"])
-    if same and not began:   # true before the first write; said in the problem when the code's own frame does not say it
+    if not began:   # every write is a step entered before it starts: none begun is nothing changed (no disk read needed, which a
+        # swapped folder could make fail); said in the problem when the code's own frame does not say it
         try:
             frame = (el.alert_catalog.catalog().get(code) or {}).get("message", "")
         except Exception:   # the catalog is unreadable: say it in the problem
             frame = ""
         return el.fail(code, why if "nothing was changed" in frame.lower() else f"nothing was changed: {why[:170]}", getattr(e, "extra", None))
+    same = not SNAP or SNAP["state"] == state_of(SNAP["key"], SNAP["tgt"])
     key, stop = SNAP["key"], isinstance(e, (Interrupted, KeyboardInterrupt))
     if same:
         return el.fail(code if code in UNDONE_OK else "STL-CFG-321",
