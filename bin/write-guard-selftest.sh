@@ -450,7 +450,7 @@ for p in $BUILDERS; do
   OWN=/workspace/.worktrees/$C
   wg() { hookrun bind $C $p $OWN terminal "$(tjson "$1")" "${2:-$OWN}"; }
   for c in "sort -o /workspace/$ODF /etc/hostname" "perl -pi -e s/a/b/ /workspace/$ODF" "touch /workspace/$ODF" "gzip -f /workspace/$ODF" "awk -i inplace 1 /workspace/$ODF" \
-           "curl -s -o /workspace/$ODF file:///etc/hostname" "ex -sc wq /workspace/$ODF" "split -b1 /etc/hostname /workspace/$ODD/x" "tar -C /workspace/$ODD -xf /tmp/x.tar" "cp /tmp/x /workspace/$ODD/" \
+           "curl -s -o /workspace/$ODF file:///etc/hostname" "ex -sc wq /workspace/$ODF" "split -b1 /etc/hostname /workspace/$ODD/x" "tar -C /workspace/$ODD -xf /tmp/x.tar" "cp /tmp/x /workspace/$ODD/" "mkdir /workspace/$ODD/zz-new" "cp -t/workspace/$ODD /tmp/x" \
            "python3 -c \"open('/workspace/$ODF','w').write('y')\"" "node -e \"require('fs').writeFileSync('/workspace/$ODF','y')\"" "perl -e 'open(F, \">/workspace/$ODF\")'" \
            "git checkout HEAD -- $ODD" "git restore $ODD" "git rm -r -q $SCH" "git clean -fdx $SCH" "rm -rf $SCH" "mv $SCH moved" "touch $ODF" "cp /tmp/x $SCH/"; do
     ok '[ "$(wg "$c")" = 2 ] && grep -qF "STL-CFG-312" "$T/out"' "K7 $p: refused, an unknown writer or a folder that holds owner data: $c"
