@@ -71,7 +71,7 @@
         {"matcher": "^(write_file|patch|execute_code|skill_manage|cronjob_manage)$", "file": "docs/hermes-local/hooks/default/deny-write.sh", "writes": "refused"},
         {"matcher": "^(read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"},
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/default/read-only-terminal.py", "writes": "refused"},
-        {"matcher": "^(?!(?:write_file|patch|execute_code|skill_manage|cronjob_manage|terminal|process_manage|read_file|search_files|vision_analyze|skill_view|kanban_.+|memory|discord|clarify|delegate_task|session_search|skills_list|todo_list)$).+$", "file": "docs/hermes-local/hooks/default/deny-unknown-tool.sh", "writes": "refused"}
+        {"matcher": "^(?!(?:{tools})$).+$", "file": "docs/hermes-local/hooks/default/deny-unknown-tool.sh", "writes": "refused", "catch_all": true}
       ]
     },
     "builder": {
@@ -262,7 +262,7 @@
         {"matcher": "^(write_file|patch|execute_code|skill_manage|cronjob_manage)$", "file": "docs/hermes-local/hooks/default/deny-unlisted.sh", "writes": "refused"},
         {"matcher": "^(terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"},
         {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/default/read-only-terminal.py", "writes": "refused"},
-        {"matcher": "^(?!(?:write_file|patch|execute_code|skill_manage|cronjob_manage|terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$).+$", "file": "docs/hermes-local/hooks/default/deny-unknown-tool.sh", "writes": "refused"}
+        {"matcher": "^(?!(?:{tools})$).+$", "file": "docs/hermes-local/hooks/default/deny-unknown-tool.sh", "writes": "refused", "catch_all": true}
       ]
     }
   },

@@ -48,7 +48,8 @@ SCHEMA_VERSION = 1
 ROLE_KEYS = set(PERMS) | {"workspace", "allowed_overrides", "requirements", "background_review", "complete_metadata",
                           "complete_needs_review", "workers", "skills_disabled", "platform_toolsets", "config", "git_identity", "hooks",
                           "runs_unboxed"}
-HOOK_KEYS = {"matcher", "file", "command", "timeout", "workers", "writes"}   # writes: "refused" = the hook refuses every write; "judged" = a text guard that lets some through
+HOOK_KEYS = {"matcher", "file", "command", "timeout", "workers", "writes", "catch_all"}   # writes: "refused" = the hook refuses every write; "judged" = a text guard that lets some through
+CATCH_ALL = "^(?!(?:{tools})$).+$"   # T5: the matcher of a catch_all hook; {tools} is filled at render time with the tools of the role's own toolsets (role_tools)
 WRITES = ("refused", "judged")
 PROFILE_KEYS = {"role", "worker", "dir", "soul", "display_name", "approval_evidence", "review_callers", "capability_fallback"}
 TOP_KEYS = {"_comment", "schema_version", "fallback_role", "protected", "owner_settings", "owner_data", "owner_commands", "data_index",
@@ -215,6 +216,8 @@ def validate(d, root=ROOT, files=True):
                 re.compile(h["matcher"])
             except re.error:
                 errs.append(f"role {n}: matcher {h['matcher']} is not a regex")
+            if "catch_all" in h and not (h["catch_all"] is True and h["matcher"] == CATCH_ALL):
+                errs.append(f"role {n}: a catch_all hook is marked true and has the matcher {CATCH_ALL} (its tool list is filled at render time)")
             if "timeout" in h and not (_int(h["timeout"]) and h["timeout"] > 0):
                 errs.append(f"role {n}: a hook's timeout must be a positive integer")
             src = h.get("file") or h["command"]
@@ -322,7 +325,7 @@ def unboxed_problems(d):
     served = {row["role"] for row in d["profiles"].values()}
     errs = [f"role {n} must have runs_unboxed true: a profile or the fallback uses it outside the OS box" for n in sorted(need) if not roles[n]["runs_unboxed"]]
     errs += [f"role {n} is served by a profile and has no explicit platform_toolsets (a default toolset is not judged)" for n in sorted(served) if not any(roles[n].get("platform_toolsets", {}).values())]
-    cover = lambda r, t: [h for h in r.get("hooks", []) if "workers" not in h and re.fullmatch(h["matcher"], t)]
+    cover = lambda r, t: [h for h in r.get("hooks", []) if "workers" not in h and not h.get("catch_all") and re.fullmatch(h["matcher"], t)]   # a catch-all never covers a tool of the role
     for n, r in roles.items():
         if not r["runs_unboxed"]:
             if n not in served:
@@ -335,7 +338,7 @@ def unboxed_problems(d):
             errs.append(f"role {n} runs outside the box: it lists a hook that only judges writes (writes: judged)")
         errs += [f"role {n} runs outside the box: write tool {t} has no hook that refuses every write (writes: refused)"
                  for t in tools if not any(h.get("writes") == "refused" for h in cover(r, t))]
-        if not any(h.get("writes") == "refused" for h in cover(r, "\0no-such-tool")):
+        if not any(h.get("writes") == "refused" and h.get("catch_all") and "workers" not in h for h in r.get("hooks", [])):
             errs.append(f"role {n} runs outside the box: it needs a hook that refuses any tool name no other matcher names (writes: refused)")
     return errs
 
@@ -735,16 +738,36 @@ def hook_command(path):
     which a boxed worker can write, so no user-site .pth or PYTHON* variable may reach it (RT-A-01)."""
     return f"python3 -I {path}" if path.endswith(".py") else path
 
-def hooks_for(d, H, name, folder, role):
-    """[(matcher, command, timeout, repo source or None)] the profile's role installs, filtered by its worker kind."""
+def hooks_for(d, H, name, folder, role, tools=None):
+    """[(matcher, command, timeout, repo source or None)] the profile's role installs, filtered by its worker kind. tools: the role's tools
+    (role_tools), which a catch_all matcher is rendered with; without them that matcher stays the template (callers that only want the files)."""
     worker = (d["profiles"].get(name) or {}).get("worker")
     out = []
     for h in d["roles"][role].get("hooks", []):
         if "workers" in h and worker not in h["workers"]:
             continue
         cmd = hook_command(h.get("command") or f"{folder}/hooks/{os.path.basename(h['file'])}")
-        out.append((h["matcher"], cmd, int(h.get("timeout", 10)), h.get("file")))
+        m = h["matcher"].replace("{tools}", "|".join(tools)) if h.get("catch_all") and tools is not None else h["matcher"]
+        out.append((m, cmd, int(h.get("timeout", 10)), h.get("file")))
     return out
+
+
+def role_tools(d, role):
+    """T5: the sorted tool names a role's profiles have: every tool of its platform toolsets (and of kanban for an assignable role, which the
+    dispatcher adds), resolved by Hermes's own toolsets module, so a tool Hermes adds to one of those toolsets needs no edit here. Raises RolesError
+    when Hermes's module cannot be read: a catch-all is never rendered from a guess."""
+    r = d["roles"][role]
+    sets = {s for plat in r.get("platform_toolsets", {}).values() for s in plat} | ({"kanban"} if r["assignable"] else set())
+    try:
+        if "toolsets" not in sys.modules:
+            sys.path.insert(0, f"{pwd.getpwuid(os.getuid()).pw_dir}/.hermes/hermes-agent")   # Hermes's install, as the matcher audit reads it
+        import toolsets
+        tools = sorted({t for s in sets for t in toolsets.resolve_toolset(s)})
+    except Exception as e:
+        raise RolesError(f"the tools of role {role} cannot be resolved from Hermes's toolsets ({type(e).__name__})")
+    if not tools or not all(re.fullmatch(r"[A-Za-z0-9_]+", t) for t in tools):   # plain names: no regex or YAML escape is needed in the matcher
+        raise RolesError(f"role {role} has no tools, or a tool name that is not plain, to render its catch-all with")
+    return tools
 
 
 def spec(d, H):
