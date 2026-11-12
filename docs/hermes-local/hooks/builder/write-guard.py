@@ -590,7 +590,7 @@ def cands(w):
     return out
 
 
-def named_path(texts, cwd, names, budget):
+def named_path(texts, cwd, names, budget, ch=None):
     """K7: the first owner path the strings name, as (path, relation), or None; budget is a one-item list holding the time (monotonic) by which the look-ups
     must be done (K5). The tree-wide form (the card's own worktree root, `.`) is not a naming: the merge check judges what comes out of it."""
     for t in texts:
@@ -604,7 +604,9 @@ def named_path(texts, cwd, names, budget):
             if "$" not in c:
                 MEMO.add((c, cwd))
             for rp in words_of(c, cwd, names)[0]:
-                r = roles.overlap(rp, OWNER_CH)
+                r = roles.overlap(rp, ch or OWNER_CH)
+                if ch and r and r[0] not in ("equal", "unknown"):
+                    r = None   # an owner command is named by its file, not by a folder that holds it
                 if r and r[0] == "contains" and (wt := own_worktree()[0]) and os.path.realpath(rp) == os.path.realpath(wt):
                     continue   # the proven worktree is looked up only when a folder that holds owner data is named
                 if r:
@@ -637,6 +639,8 @@ def named_why(words, cwd, names, budget):
     found = named_path([w for w in words if not ASSIGN.fullmatch(w) or "/" in w], cwd, names, budget)
     if not found and (r := roles.overlap(cwd, OWNER_CH)) and r[0] in ("equal", "inside", "unknown"):
         found = cwd, r[0]
+    if not found and re.sub(r"(?<=[A-Za-z])[0-9.]+$", "", (strip_prefixes(words)[0] or [""])[0].rsplit("/", 1)[-1]) in INTERPRETERS:   # code an interpreter is given may run an owner command
+        found = named_path([w for w in words if not ASSIGN.fullmatch(w) or "/" in w], cwd, names, budget, CMD_CH)
     if not found:
         return None
     return ob(f"`{' '.join(words)[:120]}` names {found[0]}, which is owner data or an apply-tool state path ({found[1]}); only a known reader of files (cat, grep, jq, diff, git show ...) may name it. {OWNER_DATA_MSG}")
