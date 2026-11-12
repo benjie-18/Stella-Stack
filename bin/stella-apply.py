@@ -822,7 +822,7 @@ def pending_action(key, cur, cand, good, junk, strange, rec):
     if m["status"] == "rollback-pending" and now in (m["new_sha256"], m["sha256"]):
         return "refuse", bad(f"run `rollback {key}` to finish it: a rollback of {key} was interrupted")
     if now == m["new_sha256"]:
-        return "refuse", bad(finish_text(key) + f", or `rollback {key}`: it stopped after the replace")
+        return "refuse", bad(finish_text(key) + f", or `rollback {key}`: interrupted after the replace")
     if now == m["sha256"]:
         return "refuse", bad(f"run `rollback {key}` first (it removes that backup): an earlier apply of {key} stopped before "
                              "the file was replaced")
@@ -1241,8 +1241,12 @@ def failed(e, read_cmd):
     and that is true). After it: the steps are undone newest first, up to one that cannot be (an event line) or an undo that
     fails, and one coded line says what is left on disk and the one command that finishes or undoes it."""
     code, why = cause_of(e, read_cmd)
-    if not STEPS:
-        return el.fail(code, why, getattr(e, "extra", None))
+    if not STEPS:   # true before the first write; said in the problem when the code's own frame does not say it
+        try:
+            frame = (el.alert_catalog.catalog().get(code) or {}).get("message", "")
+        except Exception:   # the catalog is unreadable: say it in the problem
+            frame = ""
+        return el.fail(code, why if "nothing was changed" in frame.lower() else f"nothing was changed: {why[:170]}", getattr(e, "extra", None))
     for s in (signal.SIGINT, signal.SIGTERM):
         signal.signal(s, signal.SIG_IGN)   # the undo itself is not interrupted
     left = list(STEPS)

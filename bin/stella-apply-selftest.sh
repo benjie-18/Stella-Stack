@@ -33,6 +33,7 @@ ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)
 tree() { (cd "$R" && find . \( -path ./.git -o -path ./.supervisor/state -o -path ./.supervisor/logs \) -prune -o -printf '%y %m %p\n' | sort; \
   find . \( -path ./.git -o -path ./.supervisor/state -o -path ./.supervisor/logs \) -prune -o -type f -print0 | sort -z | xargs -0 sha256sum); }
 # whole: every folder and file under the root, the state and log folders included (type, mode, name; the bytes of each file)
+stages() { ls -A "$TMPDIR" | grep '^stella-apply-stage-'; }   # the tool's staging folders only (other cases leave temp folders of their own)
 whole() { (cd "$R" && find . -path ./.git -prune -o -printf '%y %m %p\n' | sort; find . -path ./.git -prune -o -type f -print0 | sort -z | xargs -0 sha256sum); }
 nev() { [ -f "$LOG" ] && wc -l <"$LOG" || echo 0; }
 nbk() { find "$R/.supervisor/state/backups" -name meta.json 2>/dev/null | wc -l; }
@@ -458,7 +459,7 @@ import importlib.util, sys
 sys.dont_write_bytecode = True; spec = importlib.util.spec_from_file_location(\"sa\", sys.argv[1]); sa = importlib.util.module_from_spec(spec); spec.loader.exec_module(sa)
 sys.exit(1 if [p for p in sa.problems(\".stella/connections.json\", None) if \"hook\" in p[1] or \"role\" in p[1]] else 0)" "$H/bin/stella-apply.py"' "H7 a staged check of an untouched tree reports no role-table problem"
 mkr h7c; ap apply connections --from "$C/conn.json" --dry-run >/dev/null 2>&1
-ok '[ -z "$(ls -A "$TMPDIR")" ]' "H7 a dry run removes its staging folder (in the temp folder)"
+ok '[ -z "$(stages)" ]' "H7 a dry run removes its staging folder (in the temp folder)"
 mkdir -p "$TMPDIR/stella-apply-stage-99999999-1-dead"; printf x >"$TMPDIR/stella-apply-stage-99999999-1-dead/f"; ap apply connections --from "$C/conn.json" >/dev/null 2>&1
 ok '[ ! -e "$TMPDIR/stella-apply-stage-99999999-1-dead" ]' "H7 the next apply sweeps a staging folder a killed run left"
 
@@ -526,12 +527,13 @@ for spec in "A:apply limits --from $C/limits.env" "F:apply limits --from $C/limi
       w0=$(whole | quiet); step $mode $n $cmd >"$T/o" 2>&1; rc=$?
       what="$p $mode $n (exit $rc: $(grep -o 'STL-CFG-.*' "$T/o" | head -c 150))"
       if grep -q Traceback "$T/o" || { [ $rc != 0 ] && [ "$(nlines "$T/o")" != 1 ]; }; then p1bad="$p1bad [not one coded line: $what]"; continue; fi
-      if grep -q "Nothing was changed" "$T/o"; then
+      if grep -qi "nothing was changed" "$T/o"; then   # in the frame or, where the frame does not say it, in the problem
         [ "$(whole | quiet)" = "$w0" ] || p1bad="$p1bad [said nothing was changed but something was: $what]"; continue
       fi
       [ $rc = 0 ] && continue
       grep -qE 'STL-CFG-3(21|18)' "$T/o" && grep -qE 'run `|nothing to run|was undone' "$T/o" || { p1bad="$p1bad [no state or way out: $what]"; continue; }
       if grep -q 'run `rollback limits`' "$T/o"; then ap rollback limits >/dev/null 2>&1
+      elif grep -q 'was undone' "$T/o"; then ap $cmd >/dev/null 2>&1   # the way out of an undone change is to run it again
       elif grep -q 'with the same file' "$T/o"; then ap $cmd >/dev/null 2>&1
       elif grep -q 'with a copy of the file as it is' "$T/o"; then cp "$R/.supervisor/limits.env" "$T/cur.env"; ap apply limits --from "$T/cur.env" >/dev/null 2>&1
       fi
@@ -541,9 +543,10 @@ for spec in "A:apply limits --from $C/limits.env" "F:apply limits --from $C/limi
   done
 done
 ok '[ -z "$p1bad" ]' "P1 every write of apply, finish, adopt, rollback and clean-up, failed or interrupted (SIGTERM): one coded line, 'Nothing was changed' only when true, else what is left and the one command that settles it:$p1bad"
-R=$T/p1run; rm -rf "$R"; cp -a "$BASE_B" "$R"; export STELLA_ROOT=$R; step int 4 rollback limits >"$T/o" 2>&1; rc=$?
+R=$T/p1run; rm -rf "$R"; cp -a "$BASE_B" "$R"; export STELLA_ROOT=$R; COUNT_FILE=$T/count step count 0 rollback limits >/dev/null 2>&1
+R=$T/p1run; rm -rf "$R"; cp -a "$BASE_B" "$R"; export STELLA_ROOT=$R; step int "$(cat "$T/count")" rollback limits >"$T/o" 2>&1; rc=$?   # SIGINT after the last write: a write that surely happens
 ok '[ $rc = 1 ] && [ "$(nlines "$T/o")" = 1 ] && ! grep -q Traceback "$T/o"' "P1 Ctrl-C (SIGINT) in a rollback: one coded line, no traceback (exit $rc)"
-mkr p1e; jq --arg l "$(head -c 1100000 /dev/zero | tr '\0' x)" '.entries[0].label = $l' "$T/conn.orig" >"$C/huge.json"; w0=$(whole | quiet)
+mkr p1e; head -c 1100000 /dev/zero | tr '\0' x >"$T/huge"; jq --rawfile l "$T/huge" '.entries[0].label = $l' "$T/conn.orig" >"$C/huge.json"; w0=$(whole | quiet)
 ap apply connections --from "$C/huge.json" >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 1 ] && grep -q "STL-CFG-313.*event line" "$T/o" && [ "$(whole | quiet)" = "$w0" ] && [ ! -e "$(ST)" ]' "P1 an event line too large is judged before the first write: 313, nothing written, no applied state (W3-CV3-07)"
 
@@ -643,8 +646,8 @@ ap apply owner-settings --from "$C/owner.env" >"$T/o1" 2>&1; r1=$?; ap rollback 
 ok '[ $r1 = 0 ] && [ $r2 = 0 ] && cmp -s "$T/crlf" "$R/config/owner.env"' "P3 a row read by the stack's own parser (role table owner_settings): apply over a CRLF and BOM file, then rollback, byte-identical (W3-VAL3-01)"
 cp "$T/crlf" "$C/crlf.env"; ap apply owner-settings --from "$C/crlf.env" >"$T/o" 2>&1; ok '[ $? = 0 ]' "P3 such a row takes a candidate with CR line ends and a BOM; a shell-sourced row still refuses them (H8 above)"
 mkr p3g; jq '(.files[] | select(.id == "data-files") | .path) = "./.stella/data-files.json"' "$R/.stella/data-files.json" >"$T/x" && cp "$T/x" "$R/.stella/data-files.json"
-git -C "$R" commit -qam dot; jq '.backup_dir = ".supervisor/state/other"' "$R/.stella/data-files.json" >"$C/idx.json"; w0=$(whole)
-ap apply data-files --from "$C/idx.json" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-313.*backup_dir" "$T/o" && [ "$(whole)" = "$w0" ]' "P3 the index row spelled ./ is still the index: its guards hold (W3-CV3-04)"
+git -C "$R" commit -qam dot; jq '.backup_dir = ".supervisor/state/other"' "$R/.stella/data-files.json" >"$C/idx.json"; w0=$(whole | quiet)
+ap apply data-files --from "$C/idx.json" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-313.*backup_dir" "$T/o" && [ "$(whole | quiet)" = "$w0" ]' "P3 the index row spelled ./ is still the index: its guards hold (W3-CV3-04)"
 
 # P4: a dry run changes nothing, a killed one leaves nothing past the next command
 mkr p4a; w0=$(whole); ap apply extensions/fake-ext.json --from "$C/fake-ext.json" --dry-run >"$T/o" 2>&1; rc=$?
@@ -657,9 +660,9 @@ import importlib.util, os, signal, sys
 spec = importlib.util.spec_from_file_location("sa", sys.argv[1]); sa = importlib.util.module_from_spec(spec); spec.loader.exec_module(sa)
 sa.subprocess.run = lambda *a, **k: os.kill(os.getpid(), signal.SIGKILL)
 sys.exit(sa.main(sys.argv[2:]))' "$H/bin/stella-apply.py" apply connections --from "$C/conn2.json" --dry-run >/dev/null 2>&1
-left=$(ls "$TMPDIR"); lm=$(stat -c %a "$TMPDIR"/$left 2>/dev/null)
+left=$(stages); lm=$(stat -c %a "$TMPDIR/$left" 2>/dev/null)
 ap check connections >/dev/null 2>&1
-ok '[ -n "$left" ] && [ "$lm" = 700 ] && [ -z "$(ls -A "$TMPDIR")" ] && [ "$(whole)" = "$w0" ]' "P4 a killed dry run leaves its staging copy in a 0700 folder outside the root, and the next command (here check) removes it"
+ok '[ -n "$left" ] && [ "$lm" = 700 ] && [ -z "$(stages)" ] && [ "$(whole)" = "$w0" ]' "P4 a killed dry run leaves its staging copy in a 0700 folder outside the root, and the next command (here check) removes it"
 st=$(sed 's/.*) //' /proc/$$/stat | awk '{print $20}'); mkdir "$TMPDIR/stella-apply-stage-$$-1-reused" "$TMPDIR/stella-apply-stage-$$-$st-live" "$TMPDIR/stella-apply-stage-99999999999999999999-1-x" "$TMPDIR/stella-apply-stage-zz"
 ap check connections >/dev/null 2>&1
 ok '[ ! -e "$TMPDIR/stella-apply-stage-$$-1-reused" ] && [ -d "$TMPDIR/stella-apply-stage-$$-$st-live" ] && [ ! -e "$TMPDIR/stella-apply-stage-99999999999999999999-1-x" ] && [ -d "$TMPDIR/stella-apply-stage-zz" ]' "P4 a staging name is tied to its process id and start time: a reused id does not keep a leftover, a live run keeps its own, a name of any size or shape is no error (W3-CV3-03)"

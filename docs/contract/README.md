@@ -322,8 +322,9 @@ message past the cut, upgrade if ids grow).
   failure or an interrupt after the first write undoes the steps newest first, up to an event line (which is never undone) or an
   undo that fails, and prints one line: STL-CFG-321 with the one command that finishes or undoes the change first, then what is
   on disk now (the file, the backup, the applied state, the event line written or not). When the undo put everything back the
-  line says so (318 when the event log was the cause). "Nothing was changed" is printed only before the first write; the lock
-  files, an empty event log, empty folders made on the way and the record of a backup folder already gone are not counted as
+  line says so (318 when the event log was the cause). "Nothing was changed" is printed only before the first write, and every failure there says it (in the frame or the
+  problem); the log check before a change makes nothing; the lock
+  files, empty folders made on the way and the record of a backup folder already gone are not counted as
   a change. The event line is built and judged
   (shape, schema, size) before the file is replaced, and it is synced like the state. An interrupted apply followed by a hand
   edit: `apply <id> --from <file holding the current bytes>` records them (an `adopt` line) and sets the interrupted backup
