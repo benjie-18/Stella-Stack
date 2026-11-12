@@ -140,6 +140,7 @@ def _sound(doc, limit=64):
                 raise ValueError("a string is not valid Unicode text") from None
 
 
+_LOADED_AT = [0.0]
 _LOADED = {}   # T1: the validated table of this process, keyed by the file's identity and change time (a hook that asks twice reads it once)
 
 
@@ -150,7 +151,7 @@ def load():
         with open(path(), encoding="utf-8") as f:
             st = os.fstat(f.fileno())
             key = (path(), st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)   # W4-CV3-08: the change time too: putting an old mtime back changes it
-            if key in _LOADED:
+            if key in _LOADED and time.monotonic() - _LOADED_AT[0] < 1:   # r6: a long-lived reader (the box plugin) proves the hook files anew after a second; a hook process never lives that long
                 return copy.deepcopy(_LOADED[key])
             _RF_MEMO.clear(); _bad_hook_path.cache_clear()   # W4-CV3-08: a table read anew looks its hook files up anew
             d = json.load(f, object_pairs_hook=_pairs, parse_constant=_const, parse_float=_float, parse_int=_bigint)
@@ -160,7 +161,7 @@ def load():
     errs = validate(d) + ([NOFOLDER + ": a scratch table needs a folder of its own for its alerts (set ESCALATE_SUP_DIR)"] if NOFOLDER else [])
     if errs:
         raise RolesError(f"{path()}: " + "; ".join(errs))
-    _LOADED.clear(); _LOADED[key] = d
+    _LOADED.clear(); _LOADED[key] = d; _LOADED_AT[0] = time.monotonic()
     return copy.deepcopy(d)
 
 

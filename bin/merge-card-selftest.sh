@@ -348,6 +348,8 @@ k7=0; for sp in zz-ign.txt zz-idir; do k7=$((k7+1)); c=t_0000f0$(printf '%02x' "
   printf 'CARD\n' >"$T/repo/.worktrees/$c/$sp"; git -C "$T/repo/.worktrees/$c" add -f -- "$sp"; wcommit $c; h=$(head_of "$T/repo")
   ok '[ "$(FAKE_APPROVED='$c' mc '$c' --owner-approved)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -qF "'$sp'" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ] && [ "$(cat "$T/repo/zz-ign.txt")" = OWNER-LOCAL ] && [ "$(cat "$T/repo/zz-idir/f")" = OWNER-LOCAL ]' "B.3 point 17: a card whose merge would replace the untracked $sp of the main checkout is refused, the main checkout byte-identical"
 done
+c=t_0000f0a1; wcard $c; mkdir -p "$T/repo/.worktrees/$c/zz-idir/sub"; printf 'CARD\n' >"$T/repo/.worktrees/$c/zz-idir/sub/new.txt"; git -C "$T/repo/.worktrees/$c" add -f -- zz-idir/sub/new.txt; wcommit $c; h=$(head_of "$T/repo")
+ok '[ "$(FAKE_APPROVED='$c' mc '$c' --owner-approved)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -qF "zz-idir/sub/new.txt (untracked at zz-idir)" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "r6 T5: the refusal names the path the merge would write and the untracked folder above it, not the folder alone"
 c=t_0000f0a0; wcard $c; printf 'new\n' >"$T/repo/.worktrees/$c/zz-new-tracked.txt"; git -C "$T/repo/.worktrees/$c" add zz-new-tracked.txt; wcommit $c; h=$(head_of "$T/repo")
 ok '[ "$(FAKE_APPROVED='$c' mc '$c' --owner-approved)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ]' "B.3 point 17 control: a card adding a new tracked path where nothing exists merges"
 # B.1 point 6 (r5, W1-RT6-01): a card branch that replaces a folder holding an owner path (the owner settings' folder, owner data's, the apply tool's

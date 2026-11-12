@@ -110,7 +110,7 @@ for n in (x for x in open(zf, "rb").read().decode("utf-8", "surrogateescape").sp
     for i in range(1, len(parts) + 1):
         p = "/".join(parts[:i])
         if p not in tracked and p not in dirs and os.path.lexists(os.path.join(top, p)):
-            out.append(p); break
+            out.append(n if p == n else f"{n} (untracked at {p})"); break   # r6: the path itself, and the untracked folder above it
 print(", ".join(sorted(set(out)))[:240])' "$top" "$zf" "$tz") || coded STL-CFG-303 "the main checkout's untracked files cannot be compared with the merge" "nothing was merged"
   rm -f "$tz"
   [ -z "$over" ] || coded STL-CFG-312 "$branch would replace files of the main checkout that git does not track there: $over" "Those files (ignored local files, owner files) are never replaced by a merge; nothing was merged"
@@ -173,6 +173,8 @@ fi
 if ! g commit --no-verify -q --no-edit -m "Merge $branch (card $card)"; then
   g merge --abort 2>/dev/null; echo "merge-card.sh: merge of $branch failed (commit); aborted, main left at ${before:0:12}" >&2; exit 1
 fi
+# W4-CV3-11: --no-verify skips pre-commit and commit-msg; prepare-commit-msg and post-commit of the owner's repo still run, so the result is compared once more
+[ "$(g rev-parse 'HEAD^{tree}')" = "$mtree" ] || { echo "merge-card.sh: [STL-CFG-312] THE COMMITTED MERGE IS NOT THE TREE THAT WAS CHECKED (a commit hook of this repository changed it): main is at $(g rev-parse --short HEAD), was ${before:0:12}; inspect it, undo with git -C $top reset --hard $before; NOT pushed" >&2; exit 1; }
 echo "merged $branch into main: $(g rev-parse --short HEAD)"
 [ -n "$push" ] || exit 0
 # AGENTS.md: never push to main with a failing check, so the merged tree is tested again first (review H4). History is
