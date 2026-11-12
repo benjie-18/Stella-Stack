@@ -244,25 +244,32 @@ def records():
         return {}
 
 def folder_row(row):
-    """Whether a row is a folder of entries. Where the row was applied, the applied record says it (keys <id>/<entry> or <id>);
-    else the index row: a json row with no list key whose path does not end in the format's own suffix. Never the disk: the
-    disk is compared with this (a file that became a folder, or the reverse, is drift)."""
-    keys = {k.partition("/")[1] for k in records() if k.partition("/")[0] == row["id"]}
-    if len(keys) == 1:
-        return keys == {"/"}
-    return row["format"] == "json" and row["list_key"] is None and not row["path"].endswith("." + row["format"])
+    """What a row IS: the data tool's one rule (stella_data.folder_row: a json row whose path does not end in the format's own
+    suffix is a folder of entries, every other row one file). Not the list key, not the disk, not the applied record (a record
+    that disagrees is a refusal of that row: kind_drift)."""
+    return sd.folder_row(row)
 
 def kind_drift(row, folder):
-    """None, or how the disk differs from what the row is: a missing folder, a folder that is a file, a file that is a folder."""
+    """None, or how the row disagrees with its kind, with the way out: the applied state records it as the other kind (its index
+    path was changed after an apply), the folder of a folder row is missing or is a file, the file of a one-file row is a folder.
+    The data tool's check refuses the same row (STL-CFG-310) and does not open it."""
+    keys = {k.partition("/")[1] for k in records() if k.partition("/")[0] == row["id"]}
+    if keys and keys != {"/" if folder else ""}:
+        return (f"put the index path of {row['id']} back as it was when it was applied: the applied state records it as "
+                + ("one file" if "" in keys else "a folder of entries"))
+    p, sfx = path(row["path"]), "." + row["format"]
     try:
-        st = os.lstat(path(row["path"]))
+        st = os.lstat(p)
     except FileNotFoundError:
-        return fit(f"the folder {qs(row['path'])} of {row['id']} is missing: restore it (`git checkout -- {row['path']}`)",
-                   f"restore the folder (`git checkout -- {row['path']}`): it is missing") if folder else None
+        return fit(f"make the folder of {row['id']} (`mkdir -p {row['path']}`) or restore it from git: it does not exist",
+                   f"make the folder (`mkdir -p {row['path']}`): it does not exist") if folder else None
     if folder and not stat.S_ISDIR(st.st_mode):
-        return f"{qs(row['path'])} of {row['id']} should be a folder of entries but is not: move it away and restore the folder"
+        return fit(f"rename the path of {row['id']} in the index so it ends in {sfx}, or put its folder back: {qs(row['path'])} is one file",
+                   f"rename the path of {row['id']} in the index so it ends in {sfx}, or put its folder back")
     if not folder and stat.S_ISDIR(st.st_mode):
-        return f"{qs(row['path'])} of {row['id']} should be one file but is a folder: move the folder away and restore the file"
+        return fit(f"put the file back, or rename the path of {row['id']} in the index (a folder's path has no {sfx}): {qs(row['path'])} is a folder",
+                   f"put the file of {row['id']} back: its path is a folder") if row["format"] == "json" else \
+            fit(f"put the file of {row['id']} back: {qs(row['path'])} is a folder", f"put the file of {row['id']} back: its path is a folder")
     return None
 
 # ---- which file ----
@@ -275,6 +282,8 @@ def target(arg, read_only=False):
     if did in context()["bad"]:
         raise bad(context()["bad"][did])
     folder = folder_row(row)
+    if not read_only and (why := kind_drift(row, folder)):   # what the row is, and whether the disk and the record agree, comes first
+        raise bad(why)
     if folder:
         if not slash and not read_only:
             raise bad(f"{did} is a folder: name a file as <id>/<file>")
@@ -284,8 +293,6 @@ def target(arg, read_only=False):
             raise bad(f"{json.dumps(arg)[:80]}: not a plain file name (letters, digits, dot, dash, underscore; ends in .json)")
     elif slash:
         raise bad(f"{did} is a single file: give just its id")
-    if not read_only and (why := kind_drift(row, folder)):
-        raise bad(why)
     rel = row["path"] + ("/" + entry if slash else "")
     p = path(rel)
     if slash and os.path.isdir(os.path.dirname(p)):   # names that differ only by case are one name: one file never gets two keys
@@ -348,6 +355,10 @@ def writable(key, tgt):
     written by this user. The tool never changes the mode of a folder it did not make: lifting the owner's read-only layout is
     the owner's decision. A folder whose mode allows the write and that still cannot be written is read-only where it is
     mounted (or not this user's): no chmod line then. The path is printed whole."""
+    if not os.path.isdir(os.path.dirname(tgt)):   # the file's own folder is the owner's to make, like the file's mode
+        r = rel_of(os.path.dirname(tgt))
+        raise bad(fit(f"make its folder first (`mkdir -p {r}`), then run this command again: the folder of {key} does not exist",
+                      f"make its folder first (`mkdir -p {r}`): it does not exist"))
     for p in (os.path.dirname(tgt), os.path.dirname(state_path()), bdir(key)):
         d = p
         while not os.path.isdir(d) and d != el.ROOT:
@@ -1367,7 +1378,7 @@ def do_check(arg, as_json):
             if row["id"] in context()["bad"]:
                 raise bad(context()["bad"][row["id"]])
             if why := kind_drift(row, folder_row(row)):
-                out.append(finding({"id": row["id"], "path": row["path"], "baseline": "index", "state": "drift", "code": "STL-CFG-314", "problem": why}))
+                out.append(finding({"id": row["id"], "path": row["path"], "baseline": "index", "state": "refused", "code": "STL-CFG-310", "problem": why}))
                 continue
             names = names_of(row, only, A)
         except (EventError, OSError) as e:
