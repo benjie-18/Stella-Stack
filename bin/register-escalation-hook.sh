@@ -38,6 +38,11 @@ try:
 except roles.RolesError as e:   # a broken role table registers nothing: never guess at access (D46)
     print(f"roles: INVALID {e}; no hook registered or checked ({roles.log_alert('STL-CFG-303', problem=str(e)[:300])})")
     sys.exit(1)
+try:   # T5: a catch-all's matcher excludes the tools of its role's own toolsets (Hermes resolves them); none can be rendered from a guess
+    TOOLS = {n: roles.role_tools(R, n) for n, r in R["roles"].items() if any(h.get("catch_all") for h in r.get("hooks", []))}
+except roles.RolesError as e:
+    print(f"roles: {e}; no hook registered or checked ({roles.log_alert('STL-CFG-303', problem=str(e)[:300])})")
+    sys.exit(1)
 for name, folder, role, listed in roles.profiles(R, H):
     cfg = f"{folder}/config.yaml"
     if not os.path.exists(cfg):
@@ -45,7 +50,7 @@ for name, folder, role, listed in roles.profiles(R, H):
     if not listed:   # no row: the fallback role's hooks, which open nothing, and one alert line; never left unguarded
         drift += 1
         print(f"{name}: no row in roles.json, registering role {role} (STL-CFG-303; roles.py check logs the alert)")
-    PROFILE = [("pre_tool_call", m, c, t) for m, c, t, _ in roles.hooks_for(R, H, name, folder, role)]
+    PROFILE = [("pre_tool_call", m, c, t) for m, c, t, _ in roles.hooks_for(R, H, name, folder, role, TOOLS.get(role))]
     s = s0 = open(cfg).read()
     al = f"{folder}/shell-hooks-allowlist.json"
     d = json.load(open(al)) if os.path.exists(al) else {"approvals": []}

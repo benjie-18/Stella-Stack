@@ -300,7 +300,8 @@ ok '[ "$(run no-such-profile kanban_comment "$(cm t_0000c001)")" = 2 ] && [ "$(r
 ok '[ -n "$DISP" ] && [ "$(jq "[.roles[] | select(.may_answer_for_owner == true)] | length" "$RF")" = 1 ]' "W2-RT-01: exactly one role has may_answer_for_owner, and a profile has it ($DISP)"
 # W2-RT-01: a role without the field is a worker for this rule, listed or not, whatever its `assignable`: foreign comment refused
 for r in $(jq -r '.roles | to_entries[] | select(.value.may_answer_for_owner != true) | .key' "$RF"); do
-  jq --arg r "$r" '.profiles["qa-p"] = {"role": $r} | .sandbox.boxed_profiles += ["qa-p"]' "$RF" >"$T/qa-t.json"
+  # a served role needs explicit platform_toolsets (W4 r3 table rule); one that has none gets those of the first boxed profile's role
+  jq --arg r "$r" '. as $d | .profiles["qa-p"] = {"role": $r} | .sandbox.boxed_profiles += ["qa-p"] | .roles[$r].platform_toolsets |= (if [(. // {})[] | length] | add // 0 > 0 then . else $d.roles[$d.profiles[$d.sandbox.boxed_profiles[0]].role].platform_toolsets end)' "$RF" >"$T/qa-t.json"
   ok '[ "$(ROLES_FILE=$T/qa-t.json run qa-p kanban_comment "$(cm t_0000c001)")" = 2 ] && grep -qF "not your own running card" "$T/out"' "W2-RT-01: a profile with role $r (no may_answer_for_owner) is refused a foreign comment by the own-card proof"
 done
 unset TREE_TOOL

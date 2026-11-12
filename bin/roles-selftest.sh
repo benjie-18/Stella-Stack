@@ -57,12 +57,13 @@ ok '[ "$(g planner-x kanban_create "{\"title\":\"x\",\"assignee\":\"planner-x\",
 ok '[ "$(g planner-x kanban_complete "{\"task_id\":\"t_0000c001\"}")" = 2 ] && grep -q STL-GRD-601 "$T/out"' "new role: completion still needs the card's own run"
 
 ROTF=$(jq -r '[.roles[].hooks[]? | select(.writes == "refused") | .file | select(test("terminal"))][0] | split("/")[-1]' "$RF")   # the refusing terminal hook of the roles outside the box, from the table
+FWF=$(jq -r '[.roles[.fallback_role].hooks[]? | select(.writes == "refused") | select(.matcher as $m | "write_file" | test($m)) | .file | split("/")[-1]][0] // empty' "$RF")   # the fallback's hook that refuses write_file, from the table (its own message file since W4 r3)
 # 3. A profile with no row: the fallback role, nothing opens, one STL-CFG-303 line.
 mk "$H/profiles/x-new"; : >"$SUP/logs/alerts.log"
 rc=$(ap)
 X="$H/profiles/x-new"
 ok '[ "$rc" = 1 ] && grep -q "x-new: no row in roles.json, registering role unlisted" "$T/out" && [ "$(grep -c "^STL-CFG-303" "$SUP/logs/alerts.log")" = 1 ]' "unlisted profile: apply exits 1, says so, one STL-CFG-303 alerts.log line"
-ok 'grep -qF "/workspace/bin/role-guard.py" "$X/config.yaml" && grep -qF "$X/hooks/$ROTF" "$X/config.yaml" && grep -qF "$X/hooks/deny-write.sh" "$X/config.yaml" && grep -qF "$X/hooks/secret-guard.py" "$X/config.yaml" && [ -s "$X/hooks/$ROTF" ] && ! grep -qF "write-guard.py" "$X/config.yaml"' "F1 W4 B2 (replaces: write and secret guards): unlisted profile: role guard, the read-only terminal, deny-write and secret guard registered, no write guard (a role outside the box refuses every write; never left unguarded)"
+ok 'grep -qF "/workspace/bin/role-guard.py" "$X/config.yaml" && grep -qF "$X/hooks/$ROTF" "$X/config.yaml" && [ -n "$FWF" ] && grep -qF "$X/hooks/$FWF" "$X/config.yaml" && grep -qF "$X/hooks/secret-guard.py" "$X/config.yaml" && [ -s "$X/hooks/$ROTF" ] && ! grep -qF "write-guard.py" "$X/config.yaml"' "F1 W4 B2 (replaces: write and secret guards): unlisted profile: role guard, the read-only terminal, deny-write and secret guard registered, no write guard (a role outside the box refuses every write; never left unguarded)"
 ok '[ "$(g x-new kanban_create "{}")" = 2 ] && [ "$(g x-new delegate_task "{}")" = 2 ] && [ "$(g x-new kanban_complete "{}")" = 2 ]' "unlisted profile: create, delegate and complete refused"
 rm -rf "$X"
 
@@ -267,7 +268,8 @@ bad ".roles[\"$R1\"].hooks[0].qa_unknown = 1" 'unknown key' "W4 B2: an unknown k
 bad ".roles[\"$R1\"].hooks[0].writes = \"sometimes\"" 'writes' "W4 B2: a hook's writes with another value"
 bad ".roles[\"$R1\"].hooks[0].timeout = \"x\" | del(.roles[\"$R1\"].hooks[0].writes) | .qa_x = 1" 'qa_x' "W4 B2: (control) the closed table still names a stray key"
 ok 'jq -e --arg f "$FB" ".roles[\$f].hooks | map(select(.matcher | test(\"^\\\\^\\\\(\\\\?!\"))) | length == 1" "$RF" >/dev/null' "W4 B2: the fallback role has one catch-all hook"
-ok '[ "$(python3 -I -c "import json, re, sys; d = json.load(open(sys.argv[1])); f = d[\"roles\"][d[\"fallback_role\"]]; h = f[\"hooks\"]; print(all(len([x for x in h if re.fullmatch(x[\"matcher\"], t) and \"(?!\" in x[\"matcher\"]]) == 0 for t in d[\"write_tools\"]) and any(re.fullmatch(x[\"matcher\"], \"zz-new-tool\") for x in h))" "$RF")" = True ]' "W4 B2: the catch-all matches a tool no other hook names and none of the write tools"
+# T5 (F1 W4 r4): the catch-all's exclusion is filled in at render time, so the matcher is judged as registration renders it (was: the table's text)
+ok '[ "$(python3 -I -c "import json, re, sys; sys.path.insert(0, sys.argv[2]); import roles; d = json.load(open(sys.argv[1])); fb = d[\"fallback_role\"]; h = [m for m, _, _, _ in roles.hooks_for(d, \"\", \"zz\", \"\", fb, roles.role_tools(d, fb))]; print(all(len([x for x in h if re.fullmatch(x, t) and \"(?!\" in x]) == 0 for t in d[\"write_tools\"]) and any(re.fullmatch(x, \"zz-new-tool\") for x in h))" "$RF" "$S")" = True ]' "W4 B2: the catch-all matches a tool no other hook names and none of the write tools"
 # G1: one definition of owner data (the index, every owner_only row, the table's own list)
 mkdir -p "$T/g1/.stella"; jq . /workspace/.stella/data-files.json >"$T/g1/.stella/data-files.json"
 od() { python3 -I -c 'import json, os, sys; sys.path.insert(0, sys.argv[1]); os.environ["ROLES_FILE"] = sys.argv[2]; import roles; print(json.dumps(roles.owner_paths(roles.load(), sys.argv[3])))' "$S" "$RF" "$T/g1"; }
@@ -389,6 +391,33 @@ while todo:
 bnd = set(d["boundary_paths"]) | {(h.get("file") or h["command"]).replace("/workspace/", "") for r in d["roles"].values() for h in r.get("hooks", [])}
 under = lambda f: any(f == b or f.startswith(b + "/") for b in bnd)
 missing = sorted(f for f in seen if not under(f))
+# T9 (F1 W4 r4): the data files the boundary code opens by a fixed path count too (the alert catalog, the board text, the SOUL rules). Every path-like
+# word on a code line (not a comment line) of a boundary code file that names a tracked file or folder of the tree is a load; owner data is
+# protected on its own and is left out. It cannot see a path built at run time (from data, a variable, a glob) or one split into parts.
+import subprocess
+sys.path.insert(0, f"{top}/bin"); import roles
+r = subprocess.run(["git", "-C", top, "ls-files", "-z"], capture_output=True)
+files = {x.decode() for x in r.stdout.split(b"\0") if x} if r.returncode == 0 else \
+    {os.path.relpath(os.path.join(a, f), top) for a, ds, fs in os.walk(top) for f in fs if ".git" not in a.split(os.sep)}
+data = {f for f in files if not f.endswith((".py", ".sh"))}
+try:
+    own = roles.owner_paths(d, top)
+except roles.RolesError:
+    own = []
+inn = lambda f, x: f == x or f.startswith(x + "/")
+dirs = {x for x in {os.path.dirname(f) for f in data} - {""}   # a folder of data only: no code file and no owner path in it (bin, .supervisor are not)
+        if not any(inn(f, x) for f in files if f.endswith((".py", ".sh"))) and not any(inn(o, x) for o in own)}
+mine = lambda f: any(f == o or f.startswith(o + "/") for o in own)
+code = sorted(seen | {f for f in files if f.endswith((".py", ".sh")) and under(f)})
+for p in code:
+    for line in open(f"{top}/{p}", encoding="utf-8", errors="replace"):
+        if line.lstrip().startswith("#"):
+            continue
+        for m in re.finditer(r"[\w.~-]+(?:/[\w.~-]+)+", line):
+            x = re.sub(r"^(?:workspace/|\.\./)+", "", m[0].rstrip("/."))
+            if (x in data or x in dirs) and not under(x) and not mine(x):
+                missing.append(f"{x} (named on a code line of {p})")
+missing = sorted(set(missing))
 print("\n".join(missing))
 sys.exit(1 if missing else 0)
 PY
@@ -396,10 +425,12 @@ ok 'python3 -I "$T/graph.py" /workspace >"$T/out" 2>&1' "K3: every file the boun
 # the check fails when a reached file is missing from the list (a negative control on a scratch tree)
 mkdir -p "$T/gt/bin" "$T/gt/docs/hermes-local"; cp /workspace/bin/*.py /workspace/bin/*.sh "$T/gt/bin/" 2>/dev/null; jq '.boundary_paths -= ["bin/event_log.py"]' "$RF" >"$T/gt/docs/hermes-local/roles.json"
 ok 'python3 -I "$T/graph.py" "$T/gt" 2>&1 | grep -q event_log.py' "K3: a file reached from an owner command and missing from the list is reported (negative control)"
+mkdir -p "$T/gt/docs/hermes-local"; cp /workspace/docs/hermes-local/alert-catalog.json "$T/gt/docs/hermes-local/"; jq '.boundary_paths -= ["docs/hermes-local/alert-catalog.json"]' "$RF" >"$T/gt/docs/hermes-local/roles.json"
+ok 'python3 -I "$T/graph.py" "$T/gt" 2>&1 | grep -q "docs/hermes-local/alert-catalog.json (named on a code line of bin/alert_catalog.py)"' "T9: a data file a boundary file opens by a fixed path and missing from the list is reported (negative control: the alert catalog)"
 ok '[ "$(printf "bin/json.py\0bin/zz-not-stdlib.py\0" | ROLES_FILE=$RF python3 -I $S/roles.py hits /workspace boundary | tr "\0" "\n")" = "bin/json.py" ]' "K3: a new file in bin/ that shadows a standard-library module is a boundary change; another new file is not"
 # K1b: identity, not spelling
 mkdir -p "$T/ov/.Own/sub" "$T/ov/other"; ln -s "$T/ov/.Own" "$T/ov/link"
-ok '[ "$(python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import roles; p = roles.chains([sys.argv[2] + \"/.Own/sub\", sys.argv[2] + \"/.Own/future.json\"]); print(*[ (roles.overlap(sys.argv[2] + x, p) or [None])[0] for x in (\"/.OWN/sub/x\", \"/link/sub/x\", \"/.Own\", \"/other/x\", \"/.Own/FUTURE.JSON\", \"/.Own/ZZZZZZ~1/y\")])" "$S" "$T/ov")" = "inside inside contains None equal unknown" ]' "K1b: a case variant and a link are the protected folder, a folder that holds it is \"contains\", a name that cannot be classified is \"unknown\""
+ok '[ "$(python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import roles; p = roles.chains([sys.argv[2] + \"/.Own/sub\", sys.argv[2] + \"/.Own/future.json\"]); print(*[ (roles.overlap(sys.argv[2] + x, p) or [None])[0] for x in (\"/.OWN/sub/x\", \"/link/sub/x\", \"/.Own\", \"/other/x\", \"/.Own/FUTURE.JSON\", \"/.Own/ZZZZZZ~1/y\")])" "$S" "$T/ov")" = "inside inside contains None equal None" ]' "K1b: a case variant and a link are the protected folder, a folder that holds it is \"contains\", a name that names nothing on disk is judged by its names, never by its look (T3: was \"unknown\")"
 # K5: the work of an expansion is bounded
 ok 'python3 -I -c "
 import sys, time; sys.path.insert(0, sys.argv[1]); import roles
