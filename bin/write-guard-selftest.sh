@@ -443,6 +443,38 @@ G2GIT
   : >"$WGA"
   ok '[ "$(wg "echo x > /workspace/bin/y")" = 2 ] && ! grep -qF "STL-CFG-312" "$T/out" && [ ! -s "$WGA" ]' "G4 $p: an older refusal keeps its text and writes no alert line"
 done
+# ---- F1 W4 round 3 (K7, K1b, K8, K9): the rule turned around. A command that names a path no role may write (owner data, the owner settings, the apply tool's
+# state) runs only when its verb is a known reader (the table's read_verbs); an unknown writer needs no list entry to be refused.
+ODF=$(jq -r '.files[] | select(.id == "settings") | .path' "/workspace/$(jq -r .data_index /workspace/docs/hermes-local/roles.json)"); ODD=${ODF%/*}; SCH=$(jq -r '.owner_data[0]' /workspace/docs/hermes-local/roles.json)
+for p in $BUILDERS; do
+  OWN=/workspace/.worktrees/$C
+  wg() { hookrun bind $C $p $OWN terminal "$(tjson "$1")" "${2:-$OWN}"; }
+  for c in "sort -o /workspace/$ODF /etc/hostname" "perl -pi -e s/a/b/ /workspace/$ODF" "touch /workspace/$ODF" "gzip -f /workspace/$ODF" "awk -i inplace 1 /workspace/$ODF" \
+           "curl -s -o /workspace/$ODF file:///etc/hostname" "ex -sc wq /workspace/$ODF" "split -b1 /etc/hostname /workspace/$ODD/x" "tar -C /workspace/$ODD -xf /tmp/x.tar" "cp /tmp/x /workspace/$ODD/" \
+           "python3 -c \"open('/workspace/$ODF','w').write('y')\"" "node -e \"require('fs').writeFileSync('/workspace/$ODF','y')\"" "perl -e 'open(F, \">/workspace/$ODF\")'" \
+           "git checkout HEAD -- $ODD" "git restore $ODD" "git rm -r -q $SCH" "git clean -fdx $SCH" "rm -rf $SCH" "mv $SCH moved" "touch $ODF" "cp /tmp/x $SCH/"; do
+    ok '[ "$(wg "$c")" = 2 ] && grep -qF "STL-CFG-312" "$T/out"' "K7 $p: refused, an unknown writer or a folder that holds owner data: $c"
+  done
+  ok '[ "$(wg "python3 - <<EOF${NL}open(\"/workspace/$ODF\",\"w\").write(\"y\")${NL}EOF")" = 2 ] && [ "$(wg "bash <<EOF${NL}echo x > /workspace/$ODF${NL}EOF")" = 2 ]' "K7 $p: refused: an interpreter given owner-path code in a here-document"
+  ok '[ "$(wg "cat <<EOF${NL}notes about /workspace/$ODF${NL}EOF")" = 0 ] && [ "$(wg "cat /workspace/$ODF")" = 0 ]' "K7 $p: allowed: a reader that names an owner path (a here-document body for cat, cat itself)"
+  ok '[ "$(wg "bash <<EOF${NL}export HERMES_DELEGATED_CHILD_CONTEXT=1${NL}EOF")" = 2 ] && [ "$(wg "sh <<EOF${NL}/workspace/bin/merge-card.sh x${NL}EOF")" = 2 ]' "K7 $p: refused: a here-document body is judged by the text checks it had before round 2 (the marker, an owner command by name)"
+  for c in "cat $ODF" "grep -n schema $ODF" "jq . $ODF" "diff $ODF /tmp/x" "git show HEAD:$ODF" "git diff main -- $ODF" "ls $SCH" "head -3 $SCH/zz" "git log --oneline -3 -- $ODD" "wc -l $ODF"; do
+    ok '[ "$(wg "$c")" = 0 ]' "K7 $p: allowed, a known reader names owner data: $c"
+  done
+  ok '[ "$(wg "git add .")" = 0 ] && [ "$(wg "git diff --output=/tmp/x -- $ODF")" = 2 ] && [ "$(wg "find . -name x -fprint /workspace/$ODF")" = 2 ]' "K7 $p: the tree-wide form in the worktree is allowed; a reader that writes by an option is not a reader"
+  ok '[ "$(wg "cp /tmp/x $(echo /workspace/STELLA~1)/schemas/x")" = 2 ] && [ "$(wg "cp /tmp/x /workspace/STELLA~1/schemas/x")" = 2 ] && [ "$(wg "cp /tmp/x /workspace/.STELLA/schemas/x")" = 2 ] && [ "$(wg "bash /workspace/MERGE-~1.SH x")" = 2 ]' "K1b $p: a short name and a case variant are the same folder and the same owner command"
+  : >"$WGA"; ok '[ "$(wg "touch /workspace/$ODF")" = 2 ] && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ] && grep -q "role " "$WGA"' "K8 $p: the alert line names the role"
+  ok '[ "$(wg "echo owner.env")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out"' "K8 $p: an older rule that catches a mention of the owner settings file first still says so with the code"
+  ok '[ "$(wg "cp bin/merge-card.sh /tmp/mc; bash /tmp/merge-card x")" = 2 ] && [ "$(wg "bash /tmp/merge-card x")" = 2 ] && [ "$(wg "bash bin/merge-card-selftest.sh")" = 0 ]' "K9 $p: a copy of the merge script under another name (no extension) is refused as at 900d9b3; its selftest is not the script"
+  ok '[ "$(wg "python3 -c \"print($(printf '{a,b}%.0s' $(seq 1 60)))\"")" -ge 0 ]' "K5 $p: (control) a brace-heavy word inside code is a normal call"
+  ok '[ "$(wg "tee /tmp/zz $(printf '{a,b}%.0s' $(seq 1 40))x")" = 2 ]' "K5 $p: a brace-bomb word is refused (more than 64 words), not expanded"
+done
+# K5: no input of any length makes the guard run longer than a fraction of its hook timeout
+BOMB=$(printf '{a,b}%.0s' $(seq 1 24))x; LONG=$(head -c 100000 /dev/zero | tr '\0' 'a')
+for in in "tee /tmp/zz $BOMB" "cat $BOMB" "echo $LONG" "python3 -c \"print('$LONG')\"" "cp $(printf '/workspace/bin/x%.0s ' $(seq 1 3000)) /tmp"; do
+  st=$(date +%s%N); jq -nc --arg c "$in" '{tool_name: "terminal", tool_input: {command: $c}, cwd: "/tmp", profile: "zz-qa"}' | python3 "$G" >/dev/null 2>&1; en=$(( ($(date +%s%N) - st) / 1000000 ))
+  ok '[ "$en" -lt 5000 ]' "K5: the write guard answers in ${en} ms (limit 5000, hook timeout 20 s) on a ${#in}-byte command"
+done
 ROLES_BAD=$T/roles-typeerr.json; jq '.roles[(.profiles | to_entries[0].value.role)].allowed_overrides = [{}]' /workspace/docs/hermes-local/roles.json >"$ROLES_BAD"
 ok '[ "$(jq -nc "{tool_name: \"terminal\", tool_input: {command: \"ls\"}, cwd: \"/tmp\", profile: \"x\"}" | ROLES_FILE=$ROLES_BAD python3 "$G" >"$T/out" 2>"$T/err"; echo $?)" = 2 ] && ! grep -q Traceback "$T/err" && grep -q "STL-" "$T/out"' "CV-12: a table that makes validation raise (not a RolesError) is a refusal with a coded line, never a traceback"
 ok '[ "$(echo "{" | python3 "$G" >"$T/out" 2>"$T/err"; echo $?)" = 2 ] && ! grep -q Traceback "$T/err" && grep -q "STL-CFG-312" "$T/out"' "an exception inside the guard (unreadable payload) is a coded refusal"
