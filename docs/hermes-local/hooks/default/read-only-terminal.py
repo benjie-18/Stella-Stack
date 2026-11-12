@@ -178,7 +178,7 @@ def secret_why(cmd, cwd):
         return "the command names a secret path"
     if _owner_dir(cwd):
         return f"{cwd} is the folder that holds an owner settings file"
-    for piece in sorted({x for x in re.findall(r"[\w.~$@+%/-]+", cmd) if "/" in x})[:2000]:   # K1b: any path-like piece of the command text, in code or in quotes, by identity (bounded: K5, linear)
+    for piece in sorted({x for x in re.findall(r"[\w.~$@+%/*?\[\]-]+", cmd) if "/" in x})[:2000]:   # K1b: any path-like piece of the command text, in code or in quotes, by identity (bounded: K5, linear)
         if len(piece) > 1:
             why = path_why(piece, cwd, {})
             if why and ("owner settings" in why or "[STL-CFG-312]" in why):

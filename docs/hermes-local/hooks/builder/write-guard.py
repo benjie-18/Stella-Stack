@@ -577,7 +577,7 @@ def note_names(words, names, cwd):
                 names[m[1]] = m[2]
 
 
-PATHLIKE = re.compile(r"[\w.~$@+%/-]+")   # runs of path characters; those with a slash in them are paths, or the path inside a quoted word or interpreter code (linear: K5)
+PATHLIKE = re.compile(r"[\w.~$@+%/*?\[\]-]+")   # runs of path characters; those with a slash in them are paths, or the path inside a quoted word or interpreter code (linear: K5)
 MAX_CANDS = 3000   # K5: no command costs more than this many path look-ups; past it the command is refused
 
 
