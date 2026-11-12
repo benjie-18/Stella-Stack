@@ -17,7 +17,51 @@ h1() { [ "$(tail -n +$(($2 + 1)) "$1" 2>/dev/null | grep -cF "$T")" = 0 ]; }   #
 export ESCALATE_SUP_DIR=$T/sup-h1; mkdir -p "$ESCALATE_SUP_DIR/logs"   # every script run below that can raise an alert writes into the temp folder
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 # run <hook> <tool> <tool_input json>: the hook's exit code (2 = blocked); its stdout goes to $T/out
-run() { jq -nc --arg t "$2" --argjson i "$3" '{hook_event_name: "pre_tool_call", tool_name: $t, tool_input: $i}' | "$1" >"$T/out" 2>/dev/null; echo $?; }
+# T1 (F1 W4 r5): a python hook's row is judged by ONE judge process that runs the hook's whole script with the row's payload (its printed output
+# and exit code, as the process gives them; stderr is dropped here as before). The first row of each (hook, tool, exit code) class also runs as
+# a real process and both must agree; an agreement case with a planted-difference control is at the end. Shell hooks stay processes.
+cat >"$T/pjudge.py" <<'PY'
+import base64, io, json, os, sys, traceback
+inp, outp = sys.argv[1:3]; codes = {}; open(os.path.join(os.path.dirname(inp), "jpid"), "w").write(str(os.getpid())); keep = (sys.stdout, sys.stderr, sys.stdin, sys.argv, dict(os.environ), os.getcwd())
+while True:
+    with open(inp, encoding="utf-8") as f:
+        line = f.readline()
+    if not line.strip() or line.strip() == "QUIT":
+        break
+    r = json.loads(line); g = r["hook"]
+    if g not in codes:
+        codes[g] = compile(open(g, encoding="utf-8").read(), g, "exec")
+    for m in [m for m in sys.modules if m in ("roles", "alert_catalog")]:
+        del sys.modules[m]   # as a fresh process: the stack modules read their environment when imported
+    os.environ.clear(); os.environ.update(r["env"]); os.chdir(r["cwd"])
+    out = io.StringIO(); sys.stdout, sys.stderr = out, io.StringIO(); sys.stdin = io.StringIO(r["payload"]); sys.argv = [g]
+    try:
+        exec(codes[g], {"__name__": "__main__", "__file__": g}); rc = 0
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else 0 if e.code is None else 1
+        if isinstance(e.code, str):
+            print(e.code, file=sys.stderr)
+    except BaseException:
+        traceback.print_exc(file=sys.stderr); rc = 1
+    finally:
+        sys.stdout, sys.stderr, sys.stdin, sys.argv = keep[:4]; os.environ.clear(); os.environ.update(keep[4]); os.chdir(keep[5])
+    with open(outp, "w", encoding="utf-8") as f:
+        f.write(f"{rc}\t{base64.b64encode(out.getvalue().encode()).decode()}\n")
+PY
+
+mkdir -p "$T/pj"; mkfifo "$T/pj/in" "$T/pj/oq"; python3 -I "$T/pjudge.py" "$T/pj/in" "$T/pj/oq" </dev/null >/dev/null 2>&1 & PJP=$!; trap 'kill $PJP 2>/dev/null; rm -rf "$T"' EXIT
+: >"$T/pjseen"; : >"$T/pjrows"
+pjudge() {   # pjudge <hook> <payload>: exit code echoed, stdout in $T/out (its stderr is dropped, as the process rows drop it)
+  local rc b; env -0 | jq -Rsc --arg p "$2" --arg h "$1" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, env: (split("\u0000") | map(select(length > 0) | capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}' >"$T/pj/in"
+  IFS=$'\t' read -r rc b <"$T/pj/oq"; printf '%s' "$b" | base64 -d >"$T/out"; echo "$rc"; }
+run() { local pay rc rrc; pay=$(jq -nc --arg t "$2" --argjson i "$3" '{hook_event_name: "pre_tool_call", tool_name: $t, tool_input: $i}')
+  case $1 in *.py) ;; *) printf '%s' "$pay" | "$1" >"$T/out" 2>/dev/null; echo $?; return ;; esac
+  rc=$(pjudge "$1" "$pay"); printf '%s\t%s\n' "$1" "$(printf '%s' "$pay" | base64 -w0)" >>"$T/pjrows"
+  if ! grep -qxF -- "$1|$2|$rc" "$T/pjseen"; then
+    echo "$1|$2|$rc" >>"$T/pjseen"; cp "$T/out" "$T/out.judge"; printf '%s' "$pay" | "$1" >"$T/out" 2>/dev/null; rrc=$?
+    if [ "$rrc" != "$rc" ] || ! cmp -s "$T/out" "$T/out.judge"; then echo "     route agreement: ${1##*/} $2 exit $rc in the judge, $rrc as a process" >&2; echo 99; return; fi
+  fi
+  echo "$rc"; }
 term() { run "$1" terminal "$(jq -nc --arg c "$2" '{command: $c}')"; }
 
 B=$D/default/deny-kanban-block.sh
@@ -549,4 +593,16 @@ done
 ok '[ "$(cd "$PL" && term $R "git status")" = 2 ] && [ ! -e "$T/marker4" ]' "K4: git with no -C, the terminal's folder a planted repository: refused, nothing runs"
 ok '[ "$(cd "$T" && term $R "git status")" = 2 ]' "K4: git in a folder that is no repository at all: refused"
 ok '[ "$(term $R "git -C /workspace status --short")" = 0 ]' "K4 control: git in the stack folder is allowed"
+# T1 (r5): the two routes agree on every 3rd judged row (the judge and a real hook process, the same row), and a planted difference (the judge
+# given copies of the hooks whose refusal reads otherwise) is caught
+pagree() { local n=0 i=0 h p pay rc rrc jh
+  while IFS=$'\t' read -r h p; do i=$((i+1)); [ $((i % 3)) = 1 ] || continue; pay=$(printf '%s' "$p" | base64 -d); jh=$h
+    [ -n "$1" ] && { jh=$T/pplant/$(printf '%s' "$h" | md5sum | cut -c1-8).py; [ -f "$jh" ] || sed 's/"action": "block"/"action": "blocked"/' "$h" >"$jh"; }
+    rc=$(pjudge "$jh" "$pay"); cp "$T/out" "$T/ag.judge"; printf '%s' "$pay" | "$h" >"$T/out" 2>/dev/null; rrc=$?
+    { [ "$rc" = "$rrc" ] && cmp -s "$T/out" "$T/ag.judge"; } || n=$((n+1))
+  done < <(cat "$T/pjrows"); echo "$n"; }
+mkdir -p "$T/pplant"; PN=$(wc -l <"$T/pjrows"); PD=$(pagree ""); PX2=$(pagree plant)
+ok '[ "$PN" -ge 100 ] && [ "$PD" = 0 ]' "T1 route agreement: every 3rd of $PN rows judged in one process gives the same exit code and output as a real hook process ($PD differ)"
+ok '[ "$PX2" -gt 0 ]' "T1 route agreement, negative control: a planted difference in the judge's hooks is caught ($PX2 differ)"
+printf 'QUIT\n' >"$T/pj/in"; wait "$PJP"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
