@@ -14,7 +14,7 @@ CLI: roles.py check [hermes-root]     validate the table and its coverage of the
      roles.py reviewers               JSON list of the profiles whose role may review (K8)
      roles.py owner-data [root]       JSON list: the owner data paths relative to the stack (owner_paths; exit 1 when the index cannot be read)
      roles.py refusal <code> <problem>  logs one alert line, prints "[code] <the catalog's plain message>" (for scripts that refuse)
-     roles.py hits <top> refused|boundary   NUL-separated names on stdin (relative to <top>): the ones on stdout that are, lie in or hold a path of
+     roles.py hits <top> refused|boundary [root]   NUL-separated names on stdin (relative to <top>): the ones on stdout that are, lie in or hold a path of
                                        the list, by identity not spelling (K1b); refused = owner_paths, boundary = boundary()
      roles.py boundary                JSON list: the paths that define the boundary itself, relative (boundary)
      roles.py prove [--profile P] [--task T]   the card whose own worker run this process belongs to (prove_card): JSON
@@ -540,11 +540,11 @@ def overlap(p, prot):
     return None
 
 
-def hits(d, top, names, kind):
+def hits(d, top, names, kind, root=None):
     """K1/K3: the names (relative to the tree `top`) that are, lie in or hold a path of the list `kind`: "refused" = every path no role may
     write (owner_paths: owner data, the owner settings, the apply tool's state), "boundary" = boundary(d) and any new file in a folder of
     modules whose name shadows a standard-library module (the hooks import from that folder ahead of the standard library). Raises RolesError."""
-    rel = owner_paths(d, top) if kind == "refused" else boundary(d)
+    rel = owner_paths(d, root or top) if kind == "refused" else boundary(d)
     prot = chains(os.path.join(top, x) for x in rel)
     out = []
     for n in names:
@@ -937,10 +937,10 @@ def main():
             print(json.dumps(owner_paths(d, args[0] if args else None) if cmd == "owner-data" else boundary(d)))
         except RolesError as e:
             fail("STL-CFG-303", problem=str(e)[:300])
-    elif cmd == "hits" and len(args) == 2 and args[1] in ("refused", "boundary"):   # <top> <kind>: NUL-separated names on stdin, the ones that hit on stdout (K1)
+    elif cmd == "hits" and len(args) in (2, 3) and args[1] in ("refused", "boundary"):   # <top> <kind> [<stack folder holding the data index>]: NUL-separated names on stdin, the ones that hit on stdout (K1)
         try:
             names = [os.fsdecode(x) for x in sys.stdin.buffer.read().split(b"\0") if x]
-            sys.stdout.buffer.write(b"".join(os.fsencode(x) + b"\0" for x in hits(d, args[0], names, args[1])))
+            sys.stdout.buffer.write(b"".join(os.fsencode(x) + b"\0" for x in hits(d, args[0], names, args[1], args[2] if len(args) > 2 else None)))
         except RolesError as e:
             fail("STL-CFG-303", problem=str(e)[:300])
     elif cmd == "field" and len(args) == 2:
