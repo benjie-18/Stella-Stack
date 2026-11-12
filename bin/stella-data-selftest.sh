@@ -494,4 +494,78 @@ done
 ok 'refuses b5 get data-policy && grep -q "data-policy: .*more than one index row (.*data-policy.*dp-alias" "$T/o"' "183 the first of two rows on one file is refused with the reason, naming both rows"
 # S3 VER4-09 a load error prints the file path once
 ok 'refuses g1d check && [ "$(grep "repeated" "$T/o" | grep -o "\.stella/data-policy\.json" | wc -l)" = 1 ]' "184 a load error prints the file path once"
+# ---- F1 W1 fix round 6 (QA round 5): K1 a linked row is charged alone, K2 one rule for what a row is, K3 the small ones ----
+OS=$(jq -r '.owner_settings[0]' "$ROOT/docs/hermes-local/roles.json")
+setting() { sd "$1" get --json settings CALL_TIMEOUT 2>/dev/null | jq -e '.default | type == "number"' >/dev/null; }   # the read bin/escalate.sh makes
+alone() { refuses "$1" check && grep -q "^STL-CFG-310 .*$2: .*$3" "$T/o" && [ "$(grep -c "^STL-CFG-310 " "$T/o")" = 1 ]; }   # <root> <row> <text>: check has that one line, charged to that row
+# K1 a JSON row that is, or goes through, a symbolic link is refused alone: no other row gets a line or is closed (W1-RT5-01)
+mk k1a; ln -sf settings.json "$T/k1a/.stella/capabilities.json"
+ok 'alone k1a capabilities "\.stella/capabilities\.json.*must not be a symbolic link" && setting k1a && sd k1a get settings >/dev/null 2>&1 && refuses k1a get capabilities' "185 a row linked to another row's file: only the linking row is refused; the settings read is served"
+mk k1b; ln -sf data-files.json "$T/k1b/.stella/capabilities.json"
+ok 'alone k1b capabilities "must not be a symbolic link" && setting k1b && sd k1b get --json connections >/dev/null 2>&1 && sd k1b get data-files >/dev/null 2>&1' "186 a row linked to the index: only the linking row is refused; the settings read, the catalog and the index are served"
+mk k1c; rm "$T/k1c/.stella/capabilities.json"; ln -s . "$T/k1c/.stella/capabilities.json"
+ok 'alone k1c capabilities "must not be a symbolic link" && setting k1c && sd k1c get versions >/dev/null 2>&1' "187 a row linked to a folder: only the linking row is refused"
+mk k1d; ln -s ../capabilities.json "$T/k1d/.stella/extensions/x.json"
+ok 'alone k1d extensions "\.stella/extensions/x\.json.*must not be a symbolic link" && setting k1d && sd k1d get capabilities >/dev/null 2>&1 && refuses k1d get extensions' "188 a link inside a folder row: the folder row is refused, the row whose file it points to is served"
+mk k1e; mkdir "$T/k1e/.stella/real"; mv "$T/k1e/.stella/versions.json" "$T/k1e/.stella/real/"; ln -s real "$T/k1e/.stella/vl"; ed k1e data-files.json '(.files[] | select(.id == "versions")).path = ".stella/vl/versions.json"'
+ok 'alone k1e versions "\.stella/vl .*must not be a symbolic link" && setting k1e && refuses k1e get versions' "189 a link in a parent folder below the root: the row is refused, the line names the linked folder"
+mk k1f; mkdir -p "$T/k1f/$(dirname "$OS")"; printf '{"QA_FAKE_OWNER_KEY": 1}\n' >"$T/k1f/$OS"; chmod 000 "$T/k1f/$OS"; ln -s "../../$OS" "$T/k1f/.stella/extensions/qa.json"
+ok 'alone k1f extensions "owner setting" && grep -q "must not be a symbolic link" "$T/o" && ! grep -qi "PermissionError\|QA_FAKE" "$T/o" && setting k1f' "190 a link to the owner settings file: the linking row is refused, the line says both, the file is never opened"
+mk k1g; ed k1g data-files.json '.files += [(.files[] | select(.id == "versions") | .id = "v-alias" | .path = "./.stella/versions.json")]'
+ok 'refuses k1g check && [ "$(grep -c "more than one index row (versions, v-alias)" "$T/o")" = 2 ] && ! grep -q "symbolic link" "$T/o" && setting k1g' "191 control: two rows that spell one file are each refused as named twice, never as a link"
+# K2 what a row is: a JSON row whose path does not end in .json is a folder of entries, every other row is one file (W3-RT4-05)
+FR='(.files[] | select(.id == "versions"))'   # a schema no cross-file rule reads: the row's own line is the only one
+mk k2a; cp "$T/k2a/.stella/versions.json" "$T/k2a/.stella/qa-single"; ed k2a data-files.json ".files += [$FR | .id = \"qa-single\" | .path = \".stella/qa-single\"]"
+ok 'alone k2a qa-single "\.stella/qa-single is one file.*folder of entries.*rename" && setting k2a && sd k2a get versions >/dev/null 2>&1 && refuses k2a get qa-single' "192 a single file whose path has no .json suffix is a named problem of its row (the rule calls it a folder)"
+mk k2b; mkdir "$T/k2b/.stella/qa-folder.json"; cp "$T/k2b/.stella/versions.json" "$T/k2b/.stella/qa-folder.json/a.json"; ed k2b data-files.json ".files += [$FR | .id = \"qa-folder\" | .path = \".stella/qa-folder.json\"]"
+ok 'alone k2b qa-folder "\.stella/qa-folder\.json is a folder.*one file.*rename" && setting k2b && sd k2b get versions >/dev/null 2>&1 && refuses k2b get qa-folder' "193 a folder whose path ends in .json is a named problem of its row (the rule calls it one file)"
+mk k2c; ed k2c data-files.json ".files += [$FR | .id = \"qa-none\" | .path = \".stella/qa-none\"]"
+ok 'alone k2c qa-none "\.stella/qa-none.*folder.*does not exist" && setting k2c && sd k2c get versions >/dev/null 2>&1' "194 a folder row whose folder is missing is a named problem of that row"
+mk k2d; mkdir "$T/k2d/.stella/qa-caps"; jq '.entries = [.entries[0] | .id = "qa-cap-one"]' "$T/k2d/.stella/capabilities.json" >"$T/k2d/.stella/qa-caps/a.json"
+ed k2d data-files.json '.files += [(.files[] | select(.id == "capabilities") | .id = "qa-caps" | .path = ".stella/qa-caps")]'
+ok 'sd k2d check >"$T/o" 2>&1 && [ "$(sd k2d get qa-caps qa-cap-one | jq -r .id)" = qa-cap-one ] && sd k2d list qa-caps --json | jq -e "map(.id) == [\"qa-cap-one\"]" >/dev/null' "195 control: a folder row with a list key is a folder of entries (the list key decides nothing)"
+ok 'python3 -I -c "
+import os, sys
+sys.path.insert(0, sys.argv[1]); import stella_data as s
+rs = s.rows(); js = [r for r in rs if r[\"format\"] == \"json\"]
+assert all(s.folder_row(r) == os.path.isdir(os.path.join(s.ROOT, r[\"path\"])) for r in js) and any(s.folder_row(r) for r in js)
+assert not any(s.folder_row(r) for r in rs if r[\"format\"] != \"json\")" "$BIN"' "196 control: on the shipped tree folder_row() agrees with the disk for every JSON row, and no env row is a folder"
+# K3 W1-RT5-02 a redaction_patterns that is not a list of strings is "cannot be read": every string is masked
+K3TOK=qafake0rt6aaaaaaaaaaaaaaaa.bbbbbb.ccccccccccccccccccccccccccccc   # the shape of a shipped value pattern; not a real value
+for v in null false 0 '""' '{}'; do
+  mk np; ed np capabilities.json ".entries[0].summary = \"qa pasted $K3TOK\""; ed np connections.json "(.entries[] | select(.kind == \"channel\")).redaction_patterns = $v"
+  ok 'refuses np check && grep -q "redaction_patterns" "$T/o" && { sd np get --json capabilities; sd np list capabilities; sd np search qa pasted; true; } >"$T/o" 2>&1 && ! grep -q "$K3TOK" "$T/o"' "197 redaction_patterns $v: check refuses the catalog, and get, list and search print no value a shipped pattern masks"
+  rm -rf "$T/np"
+done
+# K3 W1-RT5-03 with no readable index validate opens no file
+for u in 'printf x >>' 'jq "{schema_version, files: {}}" "$ROOT/.stella/data-files.json" >'; do
+  mk nx; mkdir -p "$T/nx/$(dirname "$OS")"; printf '{"QA_FAKE_OWNER_KEY": 1}\n' >"$T/nx/$OS"; chmod 000 "$T/nx/$OS"; eval "$u \"\$T/nx/.stella/data-files.json\""
+  ok 'refuses nx validate settings "$T/nx/$OS" && grep -q "^STL-CFG-310 .*data-files\.json.*opens no file" "$T/o" && ! grep -qi "PermissionError\|QA_FAKE" "$T/o" && refuses nx validate event "$T/ev.json" && grep -q "opens no file" "$T/o"' "198 the index cannot be read (${u%% *}): validate opens no file and says so, coded"
+  chmod 644 "$T/nx/$OS"; rm -rf "$T/nx"
+done
+# K3 W1-RT5-04 the catalog's own fault is locatable by position while its patterns cannot be read
+mk cp1; N=$(jq '[.entries[].kind] | index("channel") + 1' "$T/cp1/.stella/connections.json"); ed cp1 connections.json '(.entries[] | select(.kind == "channel")).redaction_patterns += ["("]'
+ok 'refuses cp1 check && grep -q "^STL-CFG-310 .*connections: a masked id (entry '"$N"' of its file): a redaction pattern is not a regular expression" "$T/o"' "199 a pattern that does not compile: the line says which entry by its position (entry $N)"
+mk cp2; printf '{"schema_version":1,"entries":[],"entries":[]}' >"$T/cp2/.stella/connections.json"
+ok 'refuses cp2 check && grep -q "connections\.json: repeated key a masked key (key 3 of its object)" "$T/o"' "200 a repeated key in the catalog: the line says which key by its position"
+# K3 W1-VER5-04 a row id that is a name the tool uses for something that is no row is refused
+jq '.entries |= map(.id += "-2")' "$ROOT/.stella/capabilities.json" >"$T/c2.json"
+for id in role-table schema:capabilities; do
+  mk pm; cp "$T/c2.json" "$T/pm/.stella/c2.json"; ed pm data-files.json ".files += [(.files[] | select(.id == \"capabilities\") | .id = \"$id\" | .path = \".stella/c2.json\")]"
+  ok 'refuses pm check && grep -q "^STL-CFG-310 .*data-files: .*row id '"$id"' .*keeps for" "$T/o" && ! setting pm' "201 an index row named $id is refused by check, and no read is served"
+  rm -rf "$T/pm"
+done
+mk pm2; cp "$T/c2.json" "$T/pm2/.stella/c2.json"; ed pm2 data-files.json '(.files[] | select(.id == "data-files")).id = "qa-idx"'
+ok 'sd pm2 check >"$T/o" 2>&1' "202 control: the index row of the index may have another id"
+ed pm2 data-files.json '.files += [(.files[] | select(.id == "capabilities") | .id = "data-files" | .path = ".stella/c2.json")]'
+ok 'refuses pm2 check && grep -q "row id data-files .*keeps for" "$T/o"' "203 the id the tool uses for the index is refused on a row that is not the index"
+# K3 W1-RT5-06 the entry lists a card branch may write are bounded (maxItems, data)
+for f in capabilities:entries versions:pins; do
+  s=${f%%:*}; k=${f##*:}; M=$(jq ".properties.$k.maxItems" "$ROOT/.stella/schemas/$s.schema.json")
+  mk mx; ed mx $s.json ".$k = [range($M) as \$i | (.$k[0] | .id = \"qa-\(\$i)\")]"
+  ok '[ "$M" -gt 0 ] && sd mx check >"$T/o" 2>&1' "204 control: $s with $M $k (the schema's maxItems) passes check"
+  ed mx $s.json ".$k += [.$k[0] | .id = \"qa-over\"]"
+  ok 'refuses mx check && grep -q "^STL-CFG-310 .*'"$s"': .*'"$k"': .* items is out of range" "$T/o" && refuses mx get '"$s"' && grep -q "^STL-CFG-310 " "$T/o"' "205 $s with one more entry is refused by its schema, and get is refused, coded"
+  rm -rf "$T/mx"
+done
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
