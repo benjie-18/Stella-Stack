@@ -248,8 +248,8 @@ the registry, 316 no, damaged or unrecorded backup, 318 event log not writable o
 after it had started, 322 a read command (`check`, `history`, `tail`) that could not read something, 323 an unfinished step that
 `check` sees. An unexpected exception or an interrupt (Ctrl-C, SIGTERM) is exit 1 and one coded line (the exception type, never
 a value). The problem text of every message fits the catalog's 200-character cut, with the way out first (the selftest walks
-every message in the code; it takes a name as at most 40 characters: shortcut, a longer id or entry name can push the end of a
-message past the cut, upgrade if ids grow).
+every message in the code and takes a key as at most 52 characters: an entry name longer than 40 is refused at apply before any
+write; where a path is longer, the message takes a shorter form that still prints the command whole, never a cut command).
 
 - **One change at a time.** One lock covers a whole apply or rollback, validation included, so the cross-file rules always judge
   a set with every earlier change in it. Once the lock is held the index, the gate and the target path are read again, so a run
@@ -258,7 +258,10 @@ message past the cut, upgrade if ids grow).
   or removed under it. The whole-set check stages a copy of the set in the temp folder (`TMPDIR`), outside the root, in a 0700
   folder named `stella-apply-stage-<process id>-<process start time>-<random>` with 0600 files, removed when the check ends; a
   copy a killed run left is removed by the next command of this tool (any command), once no process has that id and start time
-  (a reused process id has another start time). Boxed roles have their own temp folder. If the masked text is unchanged but the
+  (a reused process id has another start time). A temp folder inside the stack root (Python's last fallback is the current
+  folder) is refused with "set TMPDIR"; `check` and the read commands need no temp folder. Boxed roles have their own temp
+  folder. A dry run makes the refusals an apply makes before its first write (a read-only folder, the event log), still
+  changing nothing. If the masked text is unchanged but the
   bytes differ it says so in one line and names the changed keys (`-KEY (masked)` / `+KEY (masked)`). It says what an apply would
   do about an unfinished step (finish it, or record a hand edit); when an apply would be refused, the dry run prints that same
   coded refusal and exits 1.
@@ -284,28 +287,34 @@ message past the cut, upgrade if ids grow).
   is staged entry by entry, only plain regular files of the entry rule, none larger than 8 MiB (a stray entry is left out and
   `check` reports it by name; it does not refuse an unrelated apply). An env candidate is read the way its file is read, which is
   data: a row whose path the role table lists under `owner_settings` is read by the stack's own parser (`owner_config.py`, which
-  drops a byte-order mark and a carriage return at a line end), every other env row is sourced by a shell, so a carriage return or
-  a byte-order mark is refused there. Then every setting the registry stores in that data file is checked with the registry's own
+  drops a byte-order mark and a carriage return at a line end), every other env row is sourced by a shell, so a carriage return,
+  a byte-order mark or a NUL byte is refused there. Then every setting the registry stores in that data file is checked with the registry's own
   type and validation (`stella_data.setting_problems`), and a setting with no default must be present; a failure is refused with
   that registry entry's own `code`. An integer setting that is not plain decimal digits (a sign, a leading zero) is refused. Keys
   the registry does not list stay allowed. The registry is found through the index row whose schema is `settings`. A json
-  document nests at most 64 levels. **A rollback checks the saved copy with these same rules** (the row's reader, the registry, the
-  whole set): bytes saved from a file that was in use are never refused by a rule that file did not have to pass.
-- **What a row is.** Whether a row is one file or a folder of entries comes from the applied record where the row was applied
-  (keys `<id>/<entry>` or `<id>`), else from the index row (a json row with no `list_key` whose path does not end in `.json`;
-  the index has no field that says it: a `kind` field would be clearer). Never from the disk: the disk is compared with it, and
-  a file that became a folder, a folder that became a file or a missing folder is drift in `check` (314) and refuses apply and
-  rollback; a committed or applied entry that became a folder is drift too.
+  document nests at most 64 levels. A problem line of another row that has a problem before and after the candidate never
+  refuses it (rows are compared, not the text of their lines). **A rollback restores saved bytes the row's reader cannot parse
+  as they are** (they were in use so; the apply replaced them without asking them to parse); saved bytes that parse are checked
+  like a candidate (registry, whole set), and a refusal says the reason and the one way out.
+- **What a row is.** Whether a row is one file or a folder of entries is the data tool's one rule, `stella_data.folder_row`
+  (a json row whose path does not end in `.json` is a folder of entries; every other row is one file): not the list key, not the
+  disk, not the applied record. The disk and the record are compared with it: a folder row whose folder is missing or is a file,
+  a one-file row whose path is a folder, or an applied record of the other kind (the index path changed after an apply) refuses
+  that row first, with the way out, and is one 310 line in `check` (the data tool refuses the same row and does not open it); a
+  committed or applied entry that became a folder is drift (314). A row whose file's folder does not exist is refused before any
+  write, naming the `mkdir` to run.
 - **Folders the tool may not write.** Before any write the folders an apply or rollback writes in (the file's, the applied
   state's, the backups') must be writable for the user; a read-only one is refused (313) with the folder named and the two
-  commands (`chmod u+w <folder>`, then back to its mode). The tool never changes the mode of a folder or file it did not make, so
+  commands (`chmod u+w <folder>`, then back to its mode); a folder whose mode allows the write and that still cannot be written
+  is read-only where it is mounted (or not this user's): the message says so, with no chmod. The tool never changes the mode of a folder or file it did not make, so
   an owner setting on the documented read-only layout (`config/` 0555, the file 0444, docs/recovery.md) is applied by lifting
   the folder's mode first and putting it back after; the file keeps its own mode through apply and rollback.
 - **Backup and rollback.** Before a file is replaced its bytes, mode, previous applied record, both hashes and a random token are
   saved in `backup_dir/<key>/<counter>-<time>/` (`file`, `file.applied`, `meta.json`; folders 0700, files 0600); the applied
   state records, before the folder is made, its token and what the saved copy is (sha256, whether the file existed, its mode, the
-  new sha256), and rollback refuses (316) a meta file that differs from that record or holds a mode a data file may not have
-  (beyond 0777). **The backup
+  new sha256, the previous applied record), and rollback refuses (316) a meta file that differs from that record. A file whose
+  mode has a setuid, setgid or sticky bit is refused at apply before any write, with the chmod that fixes it: one mask (0777)
+  for a data file's mode in apply, meta, state and rollback. **The backup
   folder holds full copies of owner files until a rollback removes them; nothing in this tool keeps a role out of it. W4's path
   rules (read and write refusals for every role) are what does.** Backups are ordered by a counter kept in the applied state,
   never by the clock; the name carries it in eight digits, so the counter stops at 99999999 (an apply then says how to repair; a
@@ -315,7 +324,9 @@ message past the cut, upgrade if ids grow).
   **Provenance.** The tool writes, in the applied state (only this tool writes it), which backup (name and token) belongs to each
   apply, before it touches the file; the same token is in the backup's meta file and in the event line's detail. Rollback
   restores or deletes only from a folder the applied state records for that key, whose meta holds that token and a well-formed
-  record (every field is checked, `seq` included). A folder the state does not know, or whose token differs, is never restored
+  record (every field is checked, `seq` included). What a rollback marked (its token, whether the file already held the saved
+  bytes, whether the apply was logged) and which backups an adopt set aside live in the applied state; the meta file's status is
+  for `history` only. A folder the state does not know (with a meta file or without), or whose token differs, is never restored
   from and never makes the tool delete or overwrite a file: `check`, `apply` and `rollback` stop with 316 and name the folder,
   and the owner removes it by hand. This is not a defence against someone who can write the applied state; that is the hooks'
   job (W4). Beyond that: the saved copy must match its recorded sha256 (else 316, never a delete), the file must hold the bytes
@@ -328,7 +339,7 @@ message past the cut, upgrade if ids grow).
   file moved on (the change went through; the meta was removed by hand), or a meta file that is present but unreadable or wrong,
   is damage: 316, nothing deleted. A folder is removed by one rename to `.gone-<name>` first, then its content: after the rename
   the backup no longer exists for any command, and a kill leaves a `.gone-` folder the next apply or rollback sweeps.
-- **Interrupted runs.** A rollback marks its backup `rollback-pending` first, with a fresh token and what it found (whether
+- **Interrupted runs.** A rollback marks its backup in the applied state first, with a fresh token and what it found (whether
   the file already held the saved bytes, whether the apply was logged); a kill at any step is finished by the next `rollback`,
   which writes the lines the killed one did not, with the real old and new values (the saved copy and the bytes the apply
   wrote). The lines a rollback owes do not depend on how far a killed run got: the apply line first when the apply replaced the
@@ -337,23 +348,31 @@ message past the cut, upgrade if ids grow).
   bookkeeping and event line are written); otherwise `rollback` restores the file. The event log is consulted only to resume such
   a step, and only for a token as a word: the apply's token is in the backup's meta file before its line exists (W4 keeps roles
   out of that folder), the rollback's own token is in no line before its own; a line that only names the backup cannot suppress
-  the tool's line. The "nothing to restore" branch writes an event line too, saying so.
-  **After the first write.** Every write of a command (the applied state, the backup folder, the file, the event line, a meta
-  status, a removal) is entered as a step with its undo, and an interrupt is held while a write and its entry are made. A
-  failure or an interrupt after the first write undoes the steps newest first, up to an event line (which is never undone) or an
-  undo that fails, and prints one line: STL-CFG-321 with the one command that finishes or undoes the change first, then what is
-  on disk now (the file, the backup, the applied state, the event line written or not). When the undo put everything back the
-  line says so (318 when the event log was the cause). "Nothing was changed" is printed only before the first write, and every failure there says it (in the frame or the
-  problem); the log check before a change makes nothing; the lock
-  files, empty folders made on the way and the record of a backup folder already gone are not counted as
-  a change. The event line is built and judged
+  the tool's line. The "nothing to restore" branch writes an event line too, saying so. A rollback that finds its own earlier
+  run complete (its backup removed, only the record left) says so and stops: it does not go on to undo the change before it.
+  **After the first write.** Every write of a command (the applied state, each file of the backup folder, the file, the event
+  line, a meta status, a removal, each clean-up) is entered as a step BEFORE it starts, with an undo that looks at the disk (safe
+  whether the write landed or not, safe twice; a write that lands and then fails is still undone). No signal is held. A failure
+  or an interrupt undoes the steps newest first, up to an event line that is in the log or a removed folder (they stay) or an
+  undo that fails; the saved copy is removed only while the file is proven to hold the bytes it saved. The line printed is then
+  read from the disk and compared with the start (the file by hash, the backups, the applied record, the event lines): "nothing
+  was changed" (in the frame or the problem) when nothing was begun and all is as before, "it was undone" when all is as before
+  after the undo (318 or 314 keep their code then), else STL-CFG-321 with the one command that finishes or undoes the change
+  first and what is on disk now. The first SIGINT or SIGTERM puts the run in one state, stopping: further ones change nothing,
+  the run ends through the same path, never a traceback; a run waiting for a lock is ended at once, and an undo that has nothing
+  to put back takes no lock. The lock files and empty folders made on the way are not counted as a change. The event line is built and judged
   (shape, schema, size) before the file is replaced, and it is synced like the state. An interrupted apply followed by a hand
   edit: `apply <id> --from <file holding the current bytes>` records them (an `adopt` line) and sets the interrupted backup
-  aside. A pending apply whose saved copy no longer passes the checks has one way out, printed by apply and rollback alike:
-  apply a copy of the file as it is (that finishes it), then apply what you want.
+  aside. A pending apply whose saved copy does not pass the checks has one way out, printed by apply and rollback alike:
+  apply a copy of the file as it is (that finishes it), then apply what you want. **The file is judged at the moment it is
+  replaced:** a rollback validates the saved copy first and reads the file after, and every replace of a data file (apply,
+  rollback, an undo) compares the file once more with what was judged; a difference is 314, nothing replaced, the edit kept. The
+  window left is the compare and the replace being two system calls.
 - **Check.** Drift is a sha256 or mode that differs from the last applied record, or (never applied) from the committed blob,
   or a row whose disk differs from what the row is (see above). An unfinished step is 323, not drift; something check cannot read
-  is one 322 line naming it.
+  is one 322 line naming it. A git that cannot answer (it fails, a damaged object, a repository it refuses) is not "no baseline":
+  that row's line is 322 saying the committed baseline cannot be read and why, and an apply or rollback that needs it refuses
+  before any write; only "the path is not in HEAD" and a root that is no git repository mean no committed baseline.
   Folder rows list the entries on disk, the applied ones and the committed ones (a deleted committed entry is drift); an entry
   that cannot be read (a FIFO, a folder, too large) is one problem line naming it and the other rows are still checked.
   `check <id>/<name>` on a single-file row is refused like the other commands. Applying the bytes a hand edit already put there
@@ -370,8 +389,9 @@ message past the cut, upgrade if ids grow).
   Only values of keys that match a row's `redact_keys` and of registry settings whose `sensitivity` is `secret` are `***` (in the
   line, the dry run, `history` and `tail`); identity-critical and plain settings show their old and new values, so the event log
   holds old and new values of non-secret owner settings and who may read the log is item W4's question. A scalar `old` / `new`
-  of a row that has redact keys or stores a secret setting is `***` whole. `event_log.py append --detail` is scrubbed of the
-  values masked in the same call (by substring; the apply tool's own detail holds only its own text, hashes, names and the
+  of a row that has redact keys or stores a secret setting is `***` whole. `event_log.py append --detail` and every coded message
+  are scrubbed of the values masked in the same call, where such a value stands whole (not inside a longer run of letters and
+  digits, so a short value never garbles a folder name or a command; the apply tool's own detail holds only its own text, hashes, names and the
   token, and is not scrubbed, so a short masked value cannot garble the backup name or the token). No file hash is written
   for a private row (owner-only alone does not suppress it). A new file's event has `old: null`. `append --code` must be in the
   alert catalog. `tail` escapes every field it prints.
@@ -384,7 +404,10 @@ message past the cut, upgrade if ids grow).
   is not checked against the whole set. `check` reads owner-only rows' metadata without the gate (the hooks keep roles from
   running the tool). A lock file replaced while it is held (needs a write in the 0700 lock folder) gives two holders; one
   replaced while a run waits is detected. Rollback of a key whose adopt line is still missing (a kill, then a rollback before
-  the next apply) leaves that adopt without its line. A `TMPDIR` inside the stack root would put the staging copy there.
+  the next apply) leaves that adopt without its line. The staging copy in the temp folder (the json rows and the candidate) can
+  be read and written, while a check runs or after a kill until the next command, by an unboxed process of the same user (boxed
+  roles have their own /tmp; unboxed roles write nothing); before round 4 it lived in the backup folder W4 hides. How an env row
+  is read is inferred from the role table's `owner_settings` (the files the stack's own parser reads), not from a field of the row.
 
 ## The owner-only write path (item W4)
 

@@ -113,5 +113,12 @@ try:
 except e.EventError as x:
     sys.exit(0 if x.code == 'STL-CFG-313' else 1)" "$H/bin"
 ok '[ $? = 0 ] && cmp -s "$LOG" "$T/before"' "R4 a line is judged (shape, size) without being written: prepare() writes nothing and refuses a line too large (W3-CV3-07)"
+# ---- round 5 ----
+python3 -I -c "
+import sys; sys.path.insert(0, sys.argv[1]); import event_log as e
+e.SECRETS.update({'1', 'sekrit-q'})
+t = e.scrub('look at backup folder 00000051-20260101T101010000000Z: 1 and sekrit-q, (+1 more)')
+sys.exit(0 if t == 'look at backup folder 00000051-20260101T101010000000Z: *** and ***, (+*** more)' else 1)" "$H/bin"
+ok '[ $? = 0 ]' "R5 a short masked value is masked where it stands whole, never inside the tool's own text (a folder name) (W3-CRT4-09)"
 $EL bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "usage error exits 2"
 [ $fails = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
