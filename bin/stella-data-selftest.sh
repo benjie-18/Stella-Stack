@@ -4,7 +4,7 @@
 # and proves a fake entry works with no code change. The alert log goes to a temp folder (ESCALATE_SUP_DIR).
 set -u
 BIN=$(dirname "$(readlink -f "$0")"); ROOT=$(dirname "$BIN"); SD="$BIN/stella_data.py"
-T=$(mktemp -d -t stella-data-selftest.XXXXXX); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d -t stella-data-selftest.XXXXXX); SW=; trap '[ -n "$SW" ] && kill $SW 2>/dev/null; rm -rf "$T"' EXIT   # SW: case 177's link swapper
 export ESCALATE_SUP_DIR=$T/sup
 fails=0
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
@@ -275,8 +275,10 @@ mk m1h; ed m1h settings.json ".entries[0].store.data = \"$V\" | .entries[1].code
 ok 'refuses m1h check && ! grep -q qafake "$T/o"' "102 a pasted key as a settings store or code is not printed"
 # M2 a key pasted into a free-form object is masked by every read (the row's redact_keys)
 mk m2a; ed m2a role-assignments.json ".assignments[0].chain[0].parameters = {api_key:\"$V\"}"
-ed m2a connections.json ".entries[0].cost = {token:\"$V\"} | .entries[0].limits = {secret:\"$V\"} | .entries[0].models[0].cost = {password:\"$V\"} | .entries[0].tos.auth_key = \"$V\""
-ok 'sd m2a check; for c in "get role-assignments" "get role-assignments global-dispatcher" "get connections" "get connections local-model-server" "search qafake" "list connections" "list role-assignments"; do sd m2a $c >>"$T/m2" 2>&1; done; ! grep -q qafake "$T/m2"' "103 a key value in parameters, cost, limits or tos is not printed by get, list or search"
+ed m2a connections.json ".entries[0].cost = {token:\"$V\"} | .entries[0].limits = {secret:\"$V\"} | .entries[0].models[0].cost = {password:\"$V\"}"
+ok 'sd m2a check >/dev/null 2>&1 && for c in "get role-assignments" "get role-assignments global-dispatcher" "get connections" "get connections local-model-server" "search qafake" "list connections" "list role-assignments"; do sd m2a $c >>"$T/m2" 2>&1 || exit 1; done; ! grep -q qafake "$T/m2"' "103 a key value in parameters, cost or limits (data check accepts) is masked by get, list and search"
+mk m2b; ed m2b connections.json ".entries[0].tos.auth_key = \"$V\""   # tos is closed: refused, never masked (W1-VER4-06: its own root)
+ok 'refuses m2b check && for c in "get connections" "get connections local-model-server" "search qafake" "list connections"; do sd m2b $c >>"$T/m2bo" 2>&1; done; ! grep -q qafake "$T/m2bo" "$T/o"' "103b a key pasted into the closed tos object is refused, and no read prints it"
 ok '! { for d in $(jq -r ".files[] | select(.format == \"json\") | .id" "$ROOT/.stella/data-files.json"); do python3 -I "$SD" get $d; done 2>&1 | grep -q "\*\*\*"; }' "104 no field of the shipped data is masked by mistake"
 # M3 redact_keys patterns compile; list and search mask like get
 mk m3a; ed m3a data-files.json '(.files[] | select(.id == "capabilities")).redact_keys = ["("]'
@@ -402,4 +404,94 @@ ok 'grep -q 0e5 "$T/vp5/.stella/role-assignments.json" && sd vp5 check >/dev/nul
 mk vp6; ed vp6 connections.json "$LMS |= (.cost = {token:\"qafake-c\"} | .limits = {secret:\"qafake-l\"} | .models[0].cost = {password:\"qafake-m\"})"
 ok 'sd vp6 check >/dev/null 2>&1 && sd vp6 get --json connections local-model-server >"$T/o" && ! grep -q qafake "$T/o" && [ "$(jq "[.cost.token, .limits.secret, .models[0].cost.password] | map(select(. == \"***\")) | length" "$T/o")" = 3 ]' "153 a connections entry that passes check shows *** for a secret-named key in cost, limits and a model's cost"
 ok 'refuses fake validate event <(jq "del(.time)" "$T/ev.json") && grep -q "^STL-CFG-310 " "$T/o" && ! grep -qv "^STL-CFG-310 " "$T/o"' "154 validate prints every problem as a STL-CFG-310 line, for any schema"
+# ---- F1 W1 fix round 5 (QA round 4): S1 a read is judged by exactly the files its rules use, S2 bounded time, S3 the small ones ----
+ms() { local t0=$(date +%s%N); timeout 20 env STELLA_ROOT="$T/$1" python3 -I "$SD" "${@:2}" >"$T/o" 2>&1; rc=$?; el=$(( ($(date +%s%N) - t0) / 1000000 )); }
+# S1 one-document conflict: every row of the schema is refused, whatever the row order (red team d1, c2)
+QCB='.assignments += [{id:"qa-cloud-builder",scope:{level:"global"},role:"builder",effort_mode:"max",chain:[{provider:"claude-subscription",model:"sonnet",parameters:{}}]}]'
+mk pd1; ed pd1 connections.json "$OPEN"; ed pd1 role-assignments.json "$QCB"
+ok 'sd pd1 check >"$T/o" 2>&1 && sd pd1 get role-assignments qa-cloud-builder >/dev/null 2>&1' "155 control: a max-mode cloud assignment under the open shipped policy passes check and is served"
+ed pd1 data-policy.json '.default.mode = "local_only"'
+ok 'refuses pd1 get role-assignments qa-cloud-builder' "156 control: the same assignment under a local_only policy is refused"
+jq '.default.mode = "open"' "$T/pd1/.stella/data-policy.json" >"$T/pd1/.stella/dp0.json"
+for at in 0 1; do
+  cp -r "$T/pd1" "$T/pd1-$at"; ed pd1-$at data-files.json "(.files | map(.id) | index(\"data-policy\")) as \$i | .files |= .[:\$i+$at] + [(.[\$i] | .id = \"dp0\" | .path = \".stella/dp0.json\")] + .[\$i+$at:]"
+  ok 'refuses pd1-'$at' check && grep -q "^STL-CFG-310 .*dp0: .*one document" "$T/o" && grep -q "^STL-CFG-310 .*data-policy: .*one document" "$T/o" && refuses pd1-'$at' get role-assignments qa-cloud-builder && grep -q "data-policy\|dp0" "$T/o" && ! grep -q "data-files" "$T/o" && refuses pd1-'$at' get role-assignments && refuses pd1-'$at' get data-policy && refuses pd1-'$at' get dp0' "157.$at a second data-policy row (placed $([ $at = 0 ] && echo before || echo after) the shipped one): both rows are refused, and the assignments judged against the policy are not served"
+done
+# S1 a file that fails its schema never feeds a rule (red team d2)
+mk pd2; ed pd2 connections.json "$LMS.enabled = \"false\""
+ok 'refuses pd2 check && grep -q "connections: .*enabled" "$T/o" && refuses pd2 get role-assignments global-builder && grep -q "connections" "$T/o" && ! grep -q "data-files" "$T/o"' "158 a provider whose enabled is the string \"false\" (schema-invalid) feeds no rule: the chain to it is not served, the refusal names connections"
+ok 'sd pd2 get --json settings CALL_TIMEOUT | jq -e ".default | type == \"number\"" >/dev/null && sd pd2 get versions >/dev/null 2>&1 && sd pd2 get capabilities >/dev/null 2>&1' "159 control: reads whose rules do not read the connections catalog are still served"
+# S1 the validator's three variants: a bad field in one file stops only the reads that depend on it
+mk v1; ed v1 capabilities.json '.entries[0].allowed_roles = null'
+ok 'refuses v1 check && grep -q "^STL-CFG-310 .*capabilities: " "$T/o" && ! grep -q "data-files" "$T/o"' "160 a null allowed_roles in the capability registry: check names capabilities, not the index"
+ok 'sd v1 get --json settings CALL_TIMEOUT | jq -e ".default == 600 and .validation.minimum == 1" >/dev/null && sd v1 get versions >/dev/null 2>&1 && sd v1 get --json connections >/dev/null 2>&1 && sd v1 get role-assignments >/dev/null 2>&1' "161 the same broken capability registry (a file a card branch may change): get --json settings, versions, connections and role-assignments are served"
+ok 'refuses v1 get capabilities && grep -q "^STL-CFG-310 .*capabilities: " "$T/o" && refuses v1 search stella && refuses v1 list' "162 control: the broken registry itself, search and list (which serve it) are refused, naming capabilities"
+mk v2; ed v2 features.json 'del(.entries[0].depends_on)'
+ok 'refuses v2 check && grep -q "features: .*missing depends_on" "$T/o" && ! grep -q "data-files" "$T/o" && sd v2 get --json settings CALL_TIMEOUT >/dev/null 2>&1 && sd v2 get versions >/dev/null 2>&1 && sd v2 get --json connections >/dev/null 2>&1 && refuses v2 get features' "163 a feature without depends_on: features is refused, settings, versions and connections are served"
+mk v3; head -c 200 "$ROOT/.stella/connections.json" >"$T/v3/.stella/connections.json"
+ok 'refuses v3 check && grep -q "connections" "$T/o" && sd v3 get --json settings CALL_TIMEOUT >"$T/o" 2>&1 && jq -e ".default == 600 and .validation.maximum > 0 and .key == \"***\"" "$T/o" >/dev/null && sd v3 get versions | jq -e "[.. | strings] - [\"***\"] == []" >/dev/null' "164 a truncated connections catalog: the settings read is served with every string masked (the patterns cannot be read), numbers intact"
+ok 'refuses v3 get role-assignments && grep -q "connections" "$T/o" && sd fake get --json settings CALL_TIMEOUT | jq -e ".key == \"CALL_TIMEOUT\"" >/dev/null' "165 control: reads that depend on the catalog are refused; with a readable catalog the same string is shown"
+# S1 a rule that raises is a problem of the rows it read, never of the index
+mkdir -p "$T/l3/bin"; cp "$BIN/alert_catalog.py" "$BIN/roles.py" "$T/l3/bin/"; cp -r "$T/l2b/docs" "$T/l3/"
+sed 's/^def rule_features(\(.*\)):$/def rule_features(\1):\n    raise KeyError("qafake")/' "$SD" >"$T/l3/bin/stella_data.py"; mk l3r
+ok 'grep -q "raise KeyError(\"qafake\")" "$T/l3/bin/stella_data.py" && ! STELLA_ROOT=$T/l3r python3 -I "$T/l3/bin/stella_data.py" check >"$T/o" 2>&1 && grep -q "^STL-CFG-310 .*features: .*KeyError" "$T/o" && ! grep -q "data-files\|qafake" "$T/o" && STELLA_ROOT=$T/l3r python3 -I "$T/l3/bin/stella_data.py" get --json settings CALL_TIMEOUT >/dev/null 2>&1 && ! STELLA_ROOT=$T/l3r python3 -I "$T/l3/bin/stella_data.py" get features >/dev/null 2>&1' "166 a cross-file rule that raises is one line naming the rows it read; reads outside them are served"
+# S2 bounded time on data a card branch may write; owner data longer than the limit is masked whole
+mk q1; ed q1 capabilities.json '.entries += [.entries[0] | .id = "qa-long" | .summary = ("a" * 200000)]'
+ms q1 check; ok '[ $rc = 1 ] && [ $el -lt 1000 ] && grep -q "summary: length 200000" "$T/o"' "167 a 200000-character summary in the capability registry is refused by its schema ($el ms)"
+for c in "get capabilities qa-long" "search qa-long" "list capabilities"; do ms q1 $c; ok '[ $rc = 1 ] && grep -q "^STL-CFG-310 " "$T/o" && [ $el -lt 1000 ]' "168 $c answers within a second (refused, coded; $el ms)"; done
+mk q2; ed q2 capabilities.json '.entries += [.entries[0] | .id = "qa-long" | .keywords = [range(10) | ("b" * 60000) + tostring]]'
+ms q2 search qa-long; ok '[ $rc = 1 ] && [ $el -lt 1000 ]' "169 search over ten keywords of 60000 characters answers within a second ($el ms)"
+mk q3; ed q3 role-assignments.json '(.assignments[] | select(.id == "global-builder")).chain[0].parameters = {long: ("c" * 200000), near: ("d" * 1000)}'
+ms q3 get --json role-assignments global-builder; ok '[ $rc = 0 ] && [ $el -lt 1000 ] && jq -e ".chain[0].parameters.long == \"***\" and (.chain[0].parameters.near | length) == 1000" "$T/o" >/dev/null' "170 owner data: a string over the masking limit is masked whole without a pattern run, a shorter one is matched and shown ($el ms)"
+# S3 RT4-03 folder rows are listed by name, never as a glob
+BADEXT='{"schema_version":1,"qa_not_an_extension":true}'
+mk g9; mkdir "$T/g9/.stella/ext[1]"; echo "$BADEXT" >"$T/g9/.stella/ext[1]/bad.json"; mkdir "$T/g9/.stella/ext1"; cp "$T/fake/.stella/extensions/fake-ext.json" "$T/g9/.stella/ext1/"
+ed g9 data-files.json '.files += [(.files[] | select(.id == "extensions") | .id = "qa-ext" | .path = ".stella/ext[1]")]'
+ok 'refuses g9 check && grep -q "ext\[1\]/bad.json" "$T/o" && refuses g9 get qa-ext && ! grep -q fake-ext "$T/o"' "171 a folder row named with [ ] is read by its name: its own bad file is refused, a folder it would match as a glob is never read"
+mk "h[1]"; echo "$BADEXT" >"$T/h[1]/.stella/extensions/bad.json"
+ok 'refuses "h[1]" check && grep -q "extensions/bad.json" "$T/o"' "172 a stack root whose path holds [1]: a bad file in a folder row is still judged"
+# S3 RT4-04, RT4-05 the owner settings file is never opened: hard link, swapped link, validate by path, validate roles
+mk o1; mkdir -p "$T/o1/$(dirname "$OS")"; printf '{"QA_FAKE_OWNER_KEY": 1}\n' >"$T/o1/$OS"; chmod 000 "$T/o1/$OS"
+ln "$T/o1/$OS" "$T/o1/.stella/extensions/qa.json"
+ok 'refuses o1 check && grep -q "qa.json: .*owner setting" "$T/o" && ! grep -qi "PermissionError\|QA_FAKE_OWNER_KEY" "$T/o"' "173 a hard link to the owner settings file is refused by its identity and never opened"
+rm "$T/o1/.stella/extensions/qa.json"
+ok 'refuses o1 validate settings "$T/o1/$OS" && grep -q "owner setting" "$T/o" && ! grep -qi "PermissionError\|QA_FAKE" "$T/o"' "174 validate refuses a path that is the owner settings file, without opening it"
+mk o2; mkdir -p "$T/o2/$(dirname "$OS")"; printf '{"QA_FAKE_OWNER_KEY": 1}\n' >"$T/o2/$OS"; chmod 000 "$T/o2/$OS"; ed o2 data-files.json "(.files[] | select(.id == \"data-policy\")).path = \"$OS\""
+ok 'refuses o2 validate roles "$RT" && ! grep -qi "PermissionError\|QA_FAKE" "$T/o"' "175 validate roles never opens the owner file the data-policy row was pointed at"
+mk o3; ed o3 data-files.json '(.files[] | select(.id == "data-policy")).id = "qa-dp"'
+ok 'sd o3 validate roles "$RT" >"$T/o" 2>&1 && grep -qx valid "$T/o" && refuses o3 validate roles "$T/rtd.json" && grep -q "allowed_data_classes\[1\]" "$T/o"' "176 validate roles finds the data policy by its schema, not by a row id"
+chmod 644 "$T/o1/$OS"; echo '{"schema_version":1,"qa_plain":true}' >"$T/o1/docs/qa-plain.json"; ln -s "../../$OS" "$T/o1/.stella/extensions/qa.json"
+python3 -I -c "
+import os,sys
+l, t = sys.argv[1], sys.argv[1] + '.tmp'
+while True:
+    for a in sys.argv[2:]:
+        try: os.remove(t)
+        except FileNotFoundError: pass
+        os.symlink(a, t); os.replace(t, l)" "$T/o1/.stella/extensions/qa.json" ../../docs/qa-plain.json "../../$OS" & SW=$!
+hits=0; for i in $(seq 60); do sd o1 check 2>&1 | grep -q QA_FAKE_OWNER_KEY && hits=$((hits+1)); done; kill $SW; wait $SW 2>/dev/null; SW=
+ok '[ $hits = 0 ]' "177 a link swapped between a plain file and the owner settings file while check runs: the owner file is never read (0 of 60 runs; $hits)"
+# S3 RT4-02 a schema file that is a symbolic link is refused
+mk sa; ln -s role-assignments.schema.json "$T/sa/.stella/schemas/ra2.schema.json"; jq '.assignments |= map(.id += "-2")' "$T/sa/.stella/role-assignments.json" >"$T/sa/.stella/ra2.json"
+ed sa data-files.json '.files += [(.files[] | select(.id == "role-assignments") | .id = "ra2" | .path = ".stella/ra2.json" | .schema = "ra2")]'
+ok 'refuses sa check && grep -q "ra2.schema.json: .*symbolic link" "$T/o" && refuses sa get ra2' "178 a schema file that is a symbolic link is refused, and its rows are not served"
+# S3 RT4-07, VER4-04 ids and free-form key names a value pattern matches are masked by every read and every check line
+QID=qafake0rt5aaaaaaaaaaaaaaaa.bbbbbb.ccccccccccccccccccccccccccccc; QTOK=qafakeTOKEN0rt5notreal9x
+mk k1; ed k1 role-assignments.json "(.assignments[] | select(.id == \"global-builder\")).chain[0].parameters = {\"Bearer $QTOK\": \"qa\", plain_key: 1}"
+ed k1 capabilities.json ".entries += [.entries[0] | .id = \"$QID\"]"
+ok 'sd k1 check >/dev/null 2>&1 && sd k1 get --json role-assignments global-builder >"$T/o" 2>&1 && ! grep -q "$QTOK" "$T/o" && grep -q plain_key "$T/o" && jq -e ".chain[0].parameters[\"***\"] == \"qa\"" "$T/o" >/dev/null' "179 a free-form key name a value pattern matches is masked by get --json; other key names are shown"
+ok '{ sd k1 list capabilities; sd k1 list capabilities --json; sd k1 search qafake0rt5; sd k1 search --json qafake0rt5; sd k1 get --json role-assignments; } >"$T/o" 2>&1; ! grep -q "$QID\|$QTOK" "$T/o" && sd k1 get --json capabilities "$QID" | jq -e ".id == \"***\"" >/dev/null' "180 an entry id a value pattern matches is masked by list, search and get"
+mk k2; ext() { echo "{\"schema_version\":1,\"id\":\"$1\",\"kind\":\"skill\",\"summary\":\"qa\",\"hosts\":[],\"secrets\":[],\"tools\":[],\"allowed_roles\":[],\"risk_class\":\"read\",\"enabled\":$2,\"status\":\"proposed\",\"source\":\"qa\"}"; }
+ext "$QID" true >"$T/k2/.stella/extensions/a.json"; ext "$QID" false >"$T/k2/.stella/extensions/b.json"
+ok 'refuses k2 check && grep -q "duplicate entry id" "$T/o" && grep -q "switched on" "$T/o" && ! grep -q "$QID" "$T/o"' "181 check lines print no entry id a value pattern matches (duplicate id, switched on)"
+# S3 VAL4-03 settings, features and versions are one document each
+for s in settings features versions; do
+  mk od-$s; cp "$T/od-$s/.stella/$s.json" "$T/od-$s/.stella/$s-2.json"
+  ed od-$s data-files.json "(.files[] | select(.schema == \"$s\")) as \$r | .files += [\$r | .id = \"qa-$s-2\" | .path = \".stella/$s-2.json\"]"
+  ok 'refuses od-'$s' check && grep -q "qa-'$s'-2: .*one document" "$T/o" && refuses od-'$s' get qa-'$s'-2' "182 $s is one document: a second $s row is refused"
+done
+# S3 VAL4-04, VER4-03 two rows on one file: each is refused with the reason, naming both
+ok 'refuses b5 get data-policy && grep -q "data-policy: .*more than one index row (.*data-policy.*dp-alias" "$T/o"' "183 the first of two rows on one file is refused with the reason, naming both rows"
+# S3 VER4-09 a load error prints the file path once
+ok 'refuses g1d check && [ "$(grep "repeated" "$T/o" | grep -o "\.stella/data-policy\.json" | wc -l)" = 1 ]' "184 a load error prints the file path once"
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

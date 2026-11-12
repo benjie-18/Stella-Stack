@@ -13,7 +13,8 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+            "maxLength": 128
           },
           "kind": {
             "enum": [
@@ -25,24 +26,31 @@
             ]
           },
           "summary": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 1024
           },
           "keywords": {
             "type": "array",
+            "maxItems": 64,
             "items": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 128
             }
           },
           "inputs": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 1024
           },
           "outputs": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 1024
           },
           "allowed_roles": {
             "type": "array",
+            "maxItems": 64,
             "items": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 128
             }
           },
           "risk_class": {
@@ -58,12 +66,15 @@
           },
           "hosts": {
             "type": "array",
+            "maxItems": 64,
             "items": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 256
             }
           },
           "secrets": {
             "type": "array",
+            "maxItems": 64,
             "items": {
               "type": "string",
               "pattern": "^[A-Z][A-Z0-9]*_[A-Z0-9_]*$",
@@ -78,7 +89,8 @@
             ]
           },
           "source": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 1024
           },
           "triage": {
             "type": "object",
