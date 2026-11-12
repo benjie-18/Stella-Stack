@@ -304,8 +304,36 @@ def _bad_hook_path(src, command, root):
     """A command is an absolute path, a file a repo path inside the root once symlinks are followed; True when it is not, or is no file."""
     if command:
         return not src.startswith("/") or ".." in src.split("/") or not os.path.isfile(src)
-    rr = os.path.realpath(root)
-    return not _rel(src) or not os.path.isfile(f"{root}/{src}") or not os.path.realpath(f"{root}/{src}").startswith(rr.rstrip("/") + "/")
+    if not _rel(src):
+        return True
+    rr, f = _realfile(root), _realfile(f"{root}/{src}")
+    return rr is None or f is None or not stat.S_ISREG(f[1].st_mode) or not f[0].startswith(rr[0].rstrip("/") + "/")
+
+
+_RF_MEMO = {}   # T1 (r5): the folders the hook files share are looked up once per process (as the lru_cache below keeps each answer)
+
+
+def _realfile(p):
+    """(the real path, its stat) of p, following links, or None when it does not exist: os.path.realpath plus a stat, with one lstat per folder
+    that no earlier path of this process shared. A link anywhere is resolved by os.path.realpath itself (the long way)."""
+    comps, cur, st = [c for c in os.path.abspath(p).split("/") if c], "/", None
+    for c in comps:
+        cur = os.path.join(cur, c)
+        if cur not in _RF_MEMO:
+            try:
+                _RF_MEMO[cur] = os.lstat(cur)
+            except OSError:
+                _RF_MEMO[cur] = None
+        st = _RF_MEMO[cur]
+        if st is None:
+            return None
+        if stat.S_ISLNK(st.st_mode):
+            r = os.path.realpath(p)
+            try:
+                return r, os.stat(r)
+            except OSError:
+                return None
+    return cur, st if st is not None else os.lstat("/")
 
 
 _bad_hook_path = functools.lru_cache(maxsize=None)(_bad_hook_path)   # T1: the table names ~16 hook files about 60 times; each is looked up once per process
