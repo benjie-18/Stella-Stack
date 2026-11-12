@@ -166,23 +166,30 @@ def resolve(path, base):
 
 
 WTC = {}   # chains of the protected paths of each card worktree a path of this call lies in, by (worktree identity or name, kind)
-try:
-    _st = os.stat(f"{ROOT}/.worktrees")
-    WTR = (_st.st_dev, _st.st_ino)   # the folder every card worktree of the stack lies in, by identity
-except OSError:
-    WTR = None
+
+
+def _ident(p):
+    try:
+        st = os.stat(p)
+        return st.st_dev, st.st_ino
+    except OSError:
+        return None
+
+
+ROOT_ID, WTR = _ident(ROOT), _ident(f"{ROOT}/.worktrees")   # the stack folder, and the folder every card worktree of the stack lies in (it may not exist yet)
 
 
 def worktree_chains(rp, base, rels, kind):
-    """`base`, and the protected paths `rels` of the card worktree of the stack that rp lies in: the folder of rp whose parent IS <stack>/.worktrees (by
-    identity, so a short name or a case variant of either is that worktree), whether or not it exists yet. T1: only that worktree's chains are made, and only
-    when a path names it (made for every worktree on every call, 15 worktrees cost 2.7 s a call)."""
+    """`base`, and the protected paths `rels` of the card worktree of the stack that rp lies in: <stack>/.worktrees/<card>, the stack folder and the worktrees
+    folder known by identity (a short name or a case variant of either is that worktree; a worktrees folder that does not exist yet by its name), whether or
+    not the card's folder exists yet. T1: only that worktree's chains are made, and only when a path names it (made for every worktree on every call, 15
+    worktrees cost 2.7 s a call)."""
     comps, ids = roles._chain(rp)
-    k = ids.index(WTR) if WTR in ids else -1
-    if k < 0 or k >= len(comps):
+    r = ids.index(ROOT_ID) if ROOT_ID in ids else -1
+    if r < 0 or len(comps) < r + 2 or not ((r + 1 < len(ids) and ids[r + 1] == WTR) or comps[r].casefold() == ".worktrees"):
         return base
-    wt = "/" + "/".join(comps[:k + 1])
-    key = (ids[k + 1] if k + 1 < len(ids) else wt.casefold(), kind)
+    wt = "/" + "/".join(comps[:r + 2])
+    key = (ids[r + 2] if r + 2 < len(ids) else wt.casefold(), kind)
     if key not in WTC:
         WTC[key] = roles.chains([f"{wt}/{d}" for d in rels])
     return base + WTC[key]
