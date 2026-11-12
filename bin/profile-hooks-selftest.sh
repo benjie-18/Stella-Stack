@@ -598,8 +598,9 @@ ok '[ "$(term $R "git -C /workspace status --short")" = 0 ]' "K4 control: git in
 pagree() { local n=0 i=0 h p pay rc rrc jh
   while IFS=$'\t' read -r h p; do i=$((i+1)); [ $((i % 3)) = 1 ] || continue; pay=$(printf '%s' "$p" | base64 -d); jh=$h
     [ -n "$1" ] && { jh=$T/pplant/$(printf '%s' "$h" | md5sum | cut -c1-8).py; [ -f "$jh" ] || sed 's/"action": "block"/"action": "blocked"/' "$h" >"$jh"; }
-    rc=$(pjudge "$jh" "$pay"); cp "$T/out" "$T/ag.judge"; printf '%s' "$pay" | "$h" >"$T/out" 2>/dev/null; rrc=$?
-    { [ "$rc" = "$rrc" ] && cmp -s "$T/out" "$T/ag.judge"; } || n=$((n+1))
+    rc=$(pjudge "$jh" "$pay"); cp "$T/out" "$T/ag.judge"
+    [ -f "$T/ag.real.$i" ] || { printf '%s' "$pay" | "$h" >"$T/ag.real.$i" 2>/dev/null; echo $? >"$T/ag.rc.$i"; }   # the process run once per row, kept for the control
+    { [ "$rc" = "$(<"$T/ag.rc.$i")" ] && cmp -s "$T/ag.real.$i" "$T/ag.judge"; } || n=$((n+1))
   done < <(cat "$T/pjrows"); echo "$n"; }
 mkdir -p "$T/pplant"; PN=$(wc -l <"$T/pjrows"); PD=$(pagree ""); PX2=$(pagree plant)
 ok '[ "$PN" -ge 100 ] && [ "$PD" = 0 ]' "T1 route agreement: every 3rd of $PN rows judged in one process gives the same exit code and output as a real hook process ($PD differ)"

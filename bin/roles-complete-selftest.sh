@@ -77,8 +77,9 @@ done
 # T1: the two routes agree on a sample of the tables above (every 10th), and a planted difference (a copy of roles.py whose INVALID line reads
 # otherwise, given to the driver only) is caught
 agree() { local n=0 i=0 f rc rrc; while read -r f; do i=$((i+1)); [ $((i % 10)) = 1 ] || continue; cp "$T/rows.$((i-1)).json" "$T/ag.json"
-    rc=$(S=$1 cli "$T/ag.json" reviewers); ROLES_FILE=$T/ag.json python3 "$S/roles.py" reviewers >"$T/ag.real" 2>&1; rrc=$?
-    { [ "$rc" = "$rrc" ] && [ "$(sort "$T/out")" = "$(sort "$T/ag.real")" ]; } || n=$((n+1)); done <"$T/rows"; echo "$n"; }
+    rc=$(S=$1 cli "$T/ag.json" reviewers)
+    [ -f "$T/ag.real.$i" ] || { ROLES_FILE=$T/ag.json python3 "$S/roles.py" reviewers >"$T/ag.real.$i" 2>&1; echo $? >"$T/ag.rc.$i"; }   # the process run once per row, kept for the control
+    { [ "$rc" = "$(<"$T/ag.rc.$i")" ] && [ "$(sort "$T/out")" = "$(sort "$T/ag.real.$i")" ]; } || n=$((n+1)); done <"$T/rows"; echo "$n"; }
 mkdir -p "$T/px"; sed 's/roles: INVALID/roles: NOT VALID/' "$S/roles.py" >"$T/px/roles.py"; cp "$S"/alert_catalog.py "$T/px/" 2>/dev/null
 NR=$(wc -l <"$T/rows"); ND=$(agree "$S"); NX=$(agree "$T/px")
 ok '[ "$NR" -ge 100 ] && [ "$ND" = 0 ]' "T1 route agreement: every 10th of $NR tables gives the same exit code and output in the driver as a real roles.py process ($ND differ)"

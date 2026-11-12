@@ -377,12 +377,12 @@ MT=$SRC; export ROLES_FILE=$SRC
 # process and as a real hook process each (stdin, exit code, printed output), and any difference fails. Negative control: the same sample with
 # the in-process route given hook copies whose refusal text differs by one word must show differences.
 agree() {   # agree <rows> <hook dir for the in-process route, or "">: the number of rows whose two routes differ
-  local h b rc blk rrc n=0 jh
-  jstart agree; while IFS=$'\t' read -r h b; do
+  local h b rc blk rrc n=0 jh i=0
+  jstart agree; while IFS=$'\t' read -r h b; do i=$((i+1))
     jh=$h; [ -n "$2" ] && [ -f "$2/${h#$T/h/}" ] && jh=$2/${h#$T/h/}
     printf '%s\t%s\t%s\n' "$jh" "$T/agree.judge" "$b" >&"$JW"; IFS=$'\t' read -r rc blk <&"$JR"
-    printf '%s' "$b" | "$h" >"$T/agree.out" 2>/dev/null; rrc=$?
-    { [ "$rc" = "$rrc" ] && cmp -s "$T/agree.judge" "$T/agree.out"; } || n=$((n+1))
+    [ -f "$T/agree.out.$i" ] || { printf '%s' "$b" | "$h" >"$T/agree.out.$i" 2>/dev/null; echo $? >"$T/agree.rc.$i"; }   # the process run once per row, kept for the control
+    { [ "$rc" = "$(<"$T/agree.rc.$i")" ] && cmp -s "$T/agree.judge" "$T/agree.out.$i"; } || n=$((n+1))
   done <"$1"; jstop; echo "$n"; }
 awk 'NR % 25 == 1' "$T/j/rows" >"$T/j/sample"
 mkdir -p "$T/hx"; (cd "$T/h" && find . -name '*.py' | while read -r f; do mkdir -p "$T/hx/${f%/*}"; sed 's/"block"/"blocked"/' "$f" >"$T/hx/$f"; done)

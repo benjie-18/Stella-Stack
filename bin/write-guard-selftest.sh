@@ -581,8 +581,8 @@ bjagree() { local n=0 i=0 c a ws br p e pay rc rrc args
   while IFS=$'\t' read -r c a ws br p e; do i=$((i+1)); [ $((i % 10)) = 1 ] || continue
     mapfile -d '' -t args < <(printf '%s' "$e" | base64 -d); pay=$(printf '%s' "$p" | base64 -d)
     rc=$(G=$1 NOCLS=1 bjrun "$c" "$a" "$ws" "$br" "$pay" agree "${args[@]}"); cp "$T/out" "$T/ag.judge"
-    rrc=$(bound bind "$c" "$a" "$ws" "$br" "$pay" -- env "${args[@]}" python3 "$G")
-    { [ "$rc" = "$rrc" ] && [ "$(sort "$T/out")" = "$(sort "$T/ag.judge")" ]; } || n=$((n+1))
+    [ -f "$T/ag.real.$i" ] || { bound bind "$c" "$a" "$ws" "$br" "$pay" -- env "${args[@]}" python3 "$G" >"$T/ag.rc.$i"; cp "$T/out" "$T/ag.real.$i"; }   # the process run once per row, kept for the control
+    { [ "$rc" = "$(<"$T/ag.rc.$i")" ] && [ "$(sort "$T/ag.real.$i")" = "$(sort "$T/ag.judge")" ]; } || n=$((n+1))
   done < <(cat "$T/bjrows"); echo "$n"; }
 sed 's/"action": "block"/"action": "blocked"/' "$G" >"$T/wg-planted.py"
 BN=$(wc -l <"$T/bjrows"); BD=$(bjagree "$G"); BX=$(bjagree "$T/wg-planted.py")

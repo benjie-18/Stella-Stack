@@ -130,7 +130,8 @@ ok 'bad ".sandbox.home_protect = [\"a/../b\"]" home_protect' "1.37 home_protect 
 # T1 (r5): the two routes agree on every 3rd table judged above (the driver and a real process), and a planted difference (a driver copy of the
 # validator script whose verdict word reads otherwise) is caught
 vagree() { local n=0 i; for ((i = 0; i < $(wc -l <"$T/vrows"); i += 3)); do
-    [ "$(dval "$1" "$T/vrow.$i.json")" = "$(ROLES_FILE=$T/vrow.$i.json python3 "$T/val.py" "$S")" ] || n=$((n+1)); done; echo "$n"; }
+    [ -f "$T/vag.$i" ] || ROLES_FILE=$T/vrow.$i.json python3 "$T/val.py" "$S" >"$T/vag.$i"   # the process run once per row, kept for the control
+    [ "$(dval "$1" "$T/vrow.$i.json")" = "$(<"$T/vag.$i")" ] || n=$((n+1)); done; echo "$n"; }
 sed 's/print("VALID")/print("FINE")/' "$T/val.py" >"$T/val-planted.py"
 VN=$(wc -l <"$T/vrows"); VD=$(vagree "$T/val.py"); VX=$(vagree "$T/val-planted.py")
 ok '[ "$VN" -ge 40 ] && [ "$VD" = 0 ]' "T1 route agreement: every 3rd of $VN tables gives the same verdict in the driver as in a real process ($VD differ)"

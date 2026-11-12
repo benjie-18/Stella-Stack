@@ -357,8 +357,9 @@ ok '[ -n "$GM" ] && [[ kanban_comment =~ $GM ]] && [[ kanban_complete =~ $GM ]] 
 ragree() { local n=0 i=0 p e pay rc rrc args
   while IFS=$'\t' read -r p e; do i=$((i+1)); [ $((i % 5)) = 1 ] || continue
     mapfile -d '' -t args < <(printf '%s' "$e" | base64 -d); pay=$(printf '%s' "$p" | base64 -d)
-    rc=$(rjudge "$1" "$pay" "${args[@]}"); cp "$T/out" "$T/ag.judge"; printf '%s' "$pay" | env "${args[@]}" python3 "$G" >"$T/out" 2>&1; rrc=$?
-    { [ "$rc" = "$rrc" ] && [ "$(sort "$T/out")" = "$(sort "$T/ag.judge")" ]; } || n=$((n+1))
+    rc=$(rjudge "$1" "$pay" "${args[@]}"); cp "$T/out" "$T/ag.judge"
+    [ -f "$T/ag.real.$i" ] || { printf '%s' "$pay" | env "${args[@]}" python3 "$G" >"$T/ag.real.$i" 2>&1; echo $? >"$T/ag.rc.$i"; }   # the process run once per row, kept for the control
+    { [ "$rc" = "$(<"$T/ag.rc.$i")" ] && [ "$(sort "$T/ag.real.$i")" = "$(sort "$T/ag.judge")" ]; } || n=$((n+1))
   done < <(cat "$T/rjrows"); echo "$n"; }
 sed 's/"action": "block"/"action": "blocked"/' "$G" >"$T/rg-planted.py"
 RN=$(wc -l <"$T/rjrows"); RD=$(ragree "$G"); RX=$(ragree "$T/rg-planted.py")

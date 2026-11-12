@@ -400,8 +400,9 @@ bad 'del(.read_verbs)' 'read_verbs' "K7: the list of readers missing"
 bad 'del(.main_branch)' 'main_branch' "K9: the main branch missing"
 # T1: the two routes agree on every 5th generated table above, and a planted difference (a driver copy of roles.py whose INVALID line reads otherwise) is caught
 cagree() { local n=0 i rc rrc; for ((i = 0; i < $(wc -l <"$T/crows"); i += 5)); do
-    rc=$(dchk "$1" "$T/crow.$i.json"); ROLES_FILE=$T/crow.$i.json python3 $S/roles.py check "$H2" >"$T/ag.real" 2>&1; rrc=$?
-    { [ "$rc" = "$rrc" ] && [ "$(sort "$T/out")" = "$(sort "$T/ag.real")" ]; } || n=$((n+1)); done; echo "$n"; }
+    rc=$(dchk "$1" "$T/crow.$i.json")
+    [ -f "$T/ag.real.$i" ] || { ROLES_FILE=$T/crow.$i.json python3 $S/roles.py check "$H2" >"$T/ag.real.$i" 2>&1; echo $? >"$T/ag.rc.$i"; }   # the process run once per row, kept for the control
+    { [ "$rc" = "$(<"$T/ag.rc.$i")" ] && [ "$(sort "$T/out")" = "$(sort "$T/ag.real.$i")" ]; } || n=$((n+1)); done; echo "$n"; }
 mkdir -p "$T/px"; sed 's/roles: INVALID/roles: NOT VALID/' "$S/roles.py" >"$T/px/roles.py"; cp "$S"/alert_catalog.py "$T/px/"
 CN=$(wc -l <"$T/crows"); CD=$(cagree "$S"); CX=$(cagree "$T/px")
 ok '[ "$CN" -ge 50 ] && [ "$CD" = 0 ]' "T1 route agreement: every 5th of $CN generated tables gives the same exit code and output in the driver as a real roles.py check ($CD differ)"
