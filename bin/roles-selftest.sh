@@ -346,9 +346,11 @@ bad ".roles[\"$R1\"].qa_unknown_key = \"SECRETVALUE\"" 'qa_unknown_key' "C6: an 
 ok '[ -s "$T/out" ] && ! grep -q SECRETVALUE "$T/out"' "C6: the output of that check is not empty and does not hold the value"
 
 # F1 W4 round 3 (K6): the table rules close.
-NOPROF=$(jq -r --argjson named "$(jq -c '[.profiles[].role]' "$RF")" '[.roles | keys[] | select(. as $r | $named | index($r) | not)][0]' "$RF")   # a role no profile names
-for g in $(jq -r '.judged_hooks[]' "$RF"); do
-  bad ".roles[\"$NOPROF\"].hooks |= map(select((.file // .command) != \"$g\"))" 'lacks the guard' "K6: the unserved role $NOPROF drops $g"
+NOPROF=$(jq -r --argjson named "$(jq -c '[.profiles[].role]' "$RF")" '[.roles | to_entries[] | select(.key as $r | ($named | index($r) | not) and (.value.runs_unboxed | not)) | .key][0]' "$RF")   # a role no profile names
+for r in $(jq -r --argjson named "$(jq -c '[.profiles[].role]' "$RF")" '.roles | to_entries[] | select(.key as $r | ($named | index($r) | not) and (.value.runs_unboxed | not)) | .key' "$RF"); do   # every such role (the eight): none may drop a guard
+  for g in $(jq -r '.judged_hooks[]' "$RF"); do
+    bad ".roles[\"$r\"].hooks |= map(select((.file // .command) != \"$g\"))" 'lacks the guard' "K6: the unserved role $r drops $g"
+  done
 done
 bad ".roles[\"$COORD\"].hooks |= map(select(.matcher | test(\"\\\\(\\\\?!\") | not))" 'any tool name' "K6: the coordinator (runs_unboxed) without the catch-all"
 bad ".roles[\"$FB\"].hooks |= map(if (.matcher | test(\"\\\\(\\\\?!\")) then . + {workers: [\"w\"]} else . end) | .roles[\"$FB\"].workers = [\"w\"]" 'any tool name' "K6: a catch-all that has a workers filter does not count for the role as a whole"
