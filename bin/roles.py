@@ -22,7 +22,7 @@ CLI: roles.py check [hermes-root]     validate the table and its coverage of the
                                        {card, workspace, branch} and exit 0; else the failed proof on stderr, exit 1
                                        (exit 3: the board could not be read)
 """
-import codecs, copy, functools, glob, hashlib, itertools, json, os, pwd, re, sqlite3, subprocess, sys, time
+import codecs, copy, functools, glob, hashlib, itertools, json, os, pwd, re, sqlite3, stat, subprocess, sys, time
 
 ROOT = "/workspace"   # the stack repo: roles.json, the protected repo paths and the hook sources live here
 PERMS = ("assignable", "may_answer_for_owner", "may_complete", "may_unblock", "may_claim", "may_delegate", "may_create_cards", "may_review")
@@ -527,6 +527,21 @@ def boundary(d):
 
 def _chain(p):
     """K1b: (the names of a path's components, the (device, inode) of the root and of each existing prefix): a path is known by what it is."""
+    a = os.path.abspath(p)
+    if ".." not in str(p).split("/"):   # T1: one lstat per component when no prefix is a link (realpath, then an lstat of each prefix, is two)
+        comps, ids, cur = [c for c in a.split("/") if c], [], "/"
+        for i in range(len(comps) + 1):
+            try:
+                st = os.lstat(cur)
+            except OSError:
+                return comps, ids
+            if stat.S_ISLNK(st.st_mode):
+                break   # a link: resolved the long way below
+            ids.append((st.st_dev, st.st_ino))
+            if i < len(comps):
+                cur = os.path.join(cur, comps[i])
+        else:
+            return comps, ids
     comps = [c for c in os.path.realpath(p).split("/") if c]
     ids, cur = [], "/"
     for i in range(len(comps) + 1):
