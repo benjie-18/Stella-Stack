@@ -16,7 +16,8 @@ C=t_$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n'); W=$T/wt/$C; mkdir -p "$W"
 ln -s /workspace/config "$W/link"
 G=${WG:-/workspace/docs/hermes-local/hooks/builder/write-guard.py}
 fails=0
-ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
+ok() { local REAL=; case $1 in *'$WGA'*|*'$AL'*|*FAKE_LOG*) REAL=1 ;; esac   # T1 (r5): a case that reads the alert log or the board calls runs its hooks as real processes
+  if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 unset HERMES_KANBAN_WORKSPACE HERMES_KANBAN_TASK
 # K1: the card is proven by its own worker process, never by HERMES_KANBAN_* (Hermes sets them after the worker starts and
 # strips them from hooks). A fake worker, bound to a running card on a stub board (`hermes` first on PATH), runs the hook
@@ -25,7 +26,7 @@ export PATH="$T/bin:$PATH" FAKE_CARDS=$T/cards FAKE_LOG=$T/hermes.log
 EXPECT_HOME=$(getent passwd "$(id -u)" | cut -d: -f6)/.hermes; export EXPECT_HOME
 mkdir -p "$T/bin" "$FAKE_CARDS"
 sleep 600 & STR=$!   # a live process that is no ancestor of any hook
-trap 'kill $STR 2>/dev/null; rm -rf "$T" ${NR:+"$NR"} ${NR2:+"$NR2"} ${LN:+"$LN"}' EXIT   # NR, NR2, LN: the S3A-01 rows build folders under /workspace/.scratch, outside $T
+trap 'kill $STR $(cat "$T"/bj/*/jpid 2>/dev/null) 2>/dev/null; rm -rf "$T" ${NR:+"$NR"} ${NR2:+"$NR2"} ${LN:+"$LN"}' EXIT   # NR, NR2, LN: the S3A-01 rows build folders under /workspace/.scratch, outside $T
 cat >"$T/bin/hermes" <<'SH'
 #!/usr/bin/env bash
 # stub: `kanban --board <b> show <id> --json` and `kanban --board <b> list [--assignee <p>] --status running --json`, from
@@ -82,9 +83,64 @@ bound() {  # bound <fixture> <card> <assignee> <workspace> <branch> <payload> --
   touch "$d/go"; wait "$w"; cp "$d/out" "$T/out"; cat "$d/rc"; }
 hookrun() {  # hookrun <fixture> <card> <profile> <workspace> <tool> <tool_input json> <cwd> [env...]: the guard's exit code, as run
   # by a worker bound per <fixture> to <card>, assigned to ${ASG:-<profile>}; the payload names <profile>
-  local fx=$1 c=$2 pr=$3 ws=$4 tool=$5 in=$6 cwd=$7; shift 7
-  bound "$fx" "$c" "${ASG:-$pr}" "$ws" "stella/$c-x" "$(jq -nc --arg t "$tool" --argjson a "$in" --arg c "$cwd" --arg p "$pr" \
-    '{tool_name: $t, tool_input: $a, session_id: "s1", cwd: $c, profile: $p, extra: {}}')" -- env "$@" python3 "$G"; }
+  local fx=$1 c=$2 pr=$3 ws=$4 tool=$5 in=$6 cwd=$7 pay; shift 7
+  pay=$(jq -nc --arg t "$tool" --argjson a "$in" --arg c "$cwd" --arg p "$pr" '{tool_name: $t, tool_input: $a, session_id: "s1", cwd: $c, profile: $p, extra: {}}')
+  if [ "$fx" = bind ] && [ -z "${REAL:-}" ]; then bjrun "$c" "${ASG:-$pr}" "$ws" "stella/$c-x" "$pay" "$pr|$tool" "$@"; return; fi
+  bound "$fx" "$c" "${ASG:-$pr}" "$ws" "stella/$c-x" "$pay" -- env "$@" python3 "$G"; }
+# T1 (F1 W4 r5): a bound row (fixture bind, no alert or board-call assertion) is judged by a judge that runs AS the bound worker's child, one per
+# (card, assignee, workspace, branch): the card proof is the real one (the process tree, the stub board), and the hook's whole script runs in it with
+# the row's environment, folder and payload, its exit code and printed output as a process gives them. The first row of each (profile, tool,
+# exit code) class also runs through bound() as a real hook process, and both must agree. The other fixtures (the proof failing) stay processes.
+cat >"$T/bjudge.py" <<'PY'
+import base64, io, json, os, sys, traceback
+inp, outp = sys.argv[1:3]; codes = {}; open(os.path.join(os.path.dirname(inp), "jpid"), "w").write(str(os.getpid())); keep = (sys.stdout, sys.stderr, sys.stdin, sys.argv, dict(os.environ), os.getcwd())
+while True:
+    with open(inp, encoding="utf-8") as f:
+        line = f.readline()
+    if not line.strip() or line.strip() == "QUIT":
+        break
+    r = json.loads(line); g = r["hook"]
+    if g not in codes:
+        codes[g] = compile(open(g, encoding="utf-8").read(), g, "exec")
+    for m in [m for m in sys.modules if m in ("roles", "alert_catalog")]:
+        del sys.modules[m]   # as a fresh process: the stack modules read their environment when imported
+    os.environ.clear(); os.environ.update(r["env"]); os.chdir(r["cwd"])
+    out = io.StringIO(); sys.stdout = sys.stderr = out; sys.stdin = io.StringIO(r["payload"]); sys.argv = [g]
+    try:
+        exec(codes[g], {"__name__": "__main__", "__file__": g}); rc = 0
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else 0 if e.code is None else 1
+        if isinstance(e.code, str):
+            print(e.code, file=out)
+    except BaseException:
+        traceback.print_exc(file=out); rc = 1
+    finally:
+        sys.stdout, sys.stderr, sys.stdin, sys.argv = keep[:4]; os.environ.clear(); os.environ.update(keep[4]); os.chdir(keep[5])
+    with open(outp, "w", encoding="utf-8") as f:
+        f.write(f"{rc}\t{base64.b64encode(out.getvalue().encode()).decode()}\n")
+PY
+: >"$T/bjseen"; : >"$T/bjrows"
+bjrun() {   # bjrun <card> <assignee> <workspace> <branch> <payload> <class> [env...]: exit code echoed, output in $T/out
+  local c=$1 a=$2 ws=$3 br=$4 pay=$5 cls=$6 d rc b req; shift 6
+  d=$T/bj/$(printf '%s' "$c|$a|$ws|$br" | md5sum | cut -c1-16)
+  if [ ! -s "$d/card.json" ]; then   # a judge for this binding: a fake worker that runs it, the card bound to that worker
+    mkdir -p "$d"; mkfifo "$d/in" "$d/oq"; : >"$d/payload"; rm -f "$FAKE_CARDS"/*.json
+    bash "$T/worker.sh" "$d" "$T/runner.py" python3 -I "$T/bjudge.py" "$d/in" "$d/oq" </dev/null >/dev/null 2>&1 &
+    for _ in $(seq 200); do [ -s "$d/pid" ] && break; sleep 0.02; done
+    mk bind "$c" "$a" "$ws" "$br" "$(cat "$d/pid")"; cp "$FAKE_CARDS"/*.json "$d/card.json"; echo "$d" >>"$T/bjdirs"; touch "$d/go"
+  fi
+  rm -f "$FAKE_CARDS"/*.json; cp "$d/card.json" "$FAKE_CARDS/$(printf '%s' "$c" | tr -c 'A-Za-z0-9_' '_').json"
+  req=$(env -0 "$@" | jq -Rsc --arg p "$pay" --arg h "$G" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, env: (split("\u0000") | map(select(length > 0) | capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}')
+  printf '%s\n' "$req" >"$d/in"; IFS=$'\t' read -r rc b <"$d/oq"; printf '%s' "$b" | base64 -d >"$T/out"
+  [ -n "${NOCLS:-}" ] || printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$c" "$a" "$ws" "$br" "$(printf '%s' "$pay" | base64 -w0)" "$(printf '%s\0' "$@" | base64 -w0)" >>"$T/bjrows"
+  if [ -z "${NOCLS:-}" ] && ! grep -qxF -- "$cls|$rc" "$T/bjseen"; then
+    echo "$cls|$rc" >>"$T/bjseen"; cp "$T/out" "$T/out.judge"
+    local rrc; rrc=$(bound bind "$c" "$a" "$ws" "$br" "$pay" -- env "$@" python3 "$G")
+    if [ "$rrc" != "$rc" ] || [ "$(sort "$T/out")" != "$(sort "$T/out.judge")" ]; then echo "     route agreement: $cls exit $rc in the judge, $rrc as a process" >&2; echo 99; return; fi
+    cp "$T/out.judge" "$T/out"
+  fi
+  echo "$rc"; }
+bjstop() { local d; [ -s "$T/bjdirs" ] || return 0; while read -r d; do printf 'QUIT\n' >"$d/in"; done <"$T/bjdirs"; : >"$T/bjdirs"; }
 wjson() { jq -nc --arg p "$1" '{path: $p, content: "x"}'; }
 tjson() { jq -nc --arg c "$1" '{command: $c}'; }
 # run <tool> <tool_input json> [cwd]: the guard's exit code; its message in $T/out. The card is ${CARD-$C} (none when CARD is
@@ -519,4 +575,18 @@ ok '[ "$(jq -nc "{tool_name: \"terminal\", tool_input: {command: \"ls\"}, cwd: \
 ok '[ "$(echo "{" | python3 "$G" >"$T/out" 2>"$T/err"; echo $?)" = 2 ] && ! grep -q Traceback "$T/err" && grep -q "STL-CFG-312" "$T/out"' "an exception inside the guard (unreadable payload) is a coded refusal"
 ok '[ "$(ls -A /workspace/.worktrees 2>/dev/null | sort)" = "$REAL_BEFORE" ]' "the real /workspace/.worktrees gained no entries during the run"
 ok '[ "$(tail -c +$((LIVE_SIZE + 1)) "$LIVE_ALERTS" 2>/dev/null | grep -c "^STL-GRD-603 ")" = 0 ]' "no STL-GRD-603 line from this test reached the live alerts.log"
+# T1 (r5): the two routes agree on every 10th bound row judged above (the judge and a real bound hook process, the same row), and a planted
+# difference (the judge given a copy of the guard whose refusal reads otherwise) is caught
+bjagree() { local n=0 i=0 c a ws br p e pay rc rrc args
+  while IFS=$'\t' read -r c a ws br p e; do i=$((i+1)); [ $((i % 10)) = 1 ] || continue
+    mapfile -d '' -t args < <(printf '%s' "$e" | base64 -d); pay=$(printf '%s' "$p" | base64 -d)
+    rc=$(G=$1 NOCLS=1 bjrun "$c" "$a" "$ws" "$br" "$pay" agree "${args[@]}"); cp "$T/out" "$T/ag.judge"
+    rrc=$(bound bind "$c" "$a" "$ws" "$br" "$pay" -- env "${args[@]}" python3 "$G")
+    { [ "$rc" = "$rrc" ] && [ "$(sort "$T/out")" = "$(sort "$T/ag.judge")" ]; } || n=$((n+1))
+  done < <(cat "$T/bjrows"); echo "$n"; }
+sed 's/"action": "block"/"action": "blocked"/' "$G" >"$T/wg-planted.py"
+BN=$(wc -l <"$T/bjrows"); BD=$(bjagree "$G"); BX=$(bjagree "$T/wg-planted.py")
+ok '[ "$BN" -ge 100 ] && [ "$BD" = 0 ]' "T1 route agreement: every 10th of $BN bound rows judged in the worker's judge gives the same exit code and output as a real bound hook process ($BD differ)"
+ok '[ "$BX" -gt 0 ]' "T1 route agreement, negative control: a planted difference in the judge's guard is caught ($BX differ)"
+bjstop   # the judges end
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
