@@ -31,6 +31,9 @@
   "data_index": ".stella/data-files.json",
   "worker_markers": ["HERMES_KANBAN_WORKSPACE", "HERMES_KANBAN_TASK", "HERMES_DELEGATED_CHILD_CONTEXT"],
   "worker_pins": {"workspace": "HERMES_KANBAN_WORKSPACE", "branch": "HERMES_KANBAN_BRANCH"},
+  "main_branch": "main",
+  "judged_hooks": ["docs/hermes-local/hooks/builder/git-guard.py", "docs/hermes-local/hooks/builder/write-guard.py", "docs/hermes-local/hooks/builder/secret-guard.py",
+                   "docs/hermes-local/hooks/builder/model-guard.py", "docs/hermes-local/hooks/builder/deny-skill-manage.sh"],
   "self_config_kinds": ["soul", "souls", "hook", "hooks", "toolset", "toolsets", "roles", "role table", "guard", "guards", "skill", "skills"],
   "profiles": {
     "default": {"role": "dispatcher", "dir": "", "soul": "default.md", "display_name": "Stella"},
@@ -59,7 +62,8 @@
         {"matcher": "^kanban_block$", "file": "docs/hermes-local/hooks/default/deny-kanban-block.sh"},
         {"matcher": "^(write_file|patch|execute_code|skill_manage|cronjob_manage)$", "file": "docs/hermes-local/hooks/default/deny-write.sh", "writes": "refused"},
         {"matcher": "^(read_file|search_files|vision_analyze|skill_view)$", "file": "docs/hermes-local/hooks/builder/secret-guard.py"},
-        {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/default/read-only-terminal.py", "writes": "refused"}
+        {"matcher": "^(terminal|process_manage)$", "file": "docs/hermes-local/hooks/default/read-only-terminal.py", "writes": "refused"},
+        {"matcher": "^(?!(?:write_file|patch|execute_code|skill_manage|cronjob_manage|terminal|process_manage|read_file|search_files|vision_analyze|skill_view|kanban_.+|memory|discord|clarify|delegate_task|session_search|skills_list|todo_list)$).+$", "file": "docs/hermes-local/hooks/default/deny-write.sh", "writes": "refused"}
       ]
     },
     "builder": {

@@ -16,6 +16,7 @@ CLI: roles.py check [hermes-root]     validate the table and its coverage of the
      roles.py refusal <code> <problem>  logs one alert line, prints "[code] <the catalog's plain message>" (for scripts that refuse)
      roles.py hits <top> refused|boundary [root]   NUL-separated names on stdin (relative to <top>): the ones on stdout that are, lie in or hold a path of
                                        the list, by identity not spelling (K1b); refused = owner_paths, boundary = boundary()
+     roles.py root                    the stack folder (ROOT)
      roles.py boundary                JSON list: the paths that define the boundary itself, relative (boundary)
      roles.py prove [--profile P] [--task T]   the card whose own worker run this process belongs to (prove_card): JSON
                                        {card, workspace, branch} and exit 0; else the failed proof on stderr, exit 1
@@ -51,7 +52,8 @@ HOOK_KEYS = {"matcher", "file", "command", "timeout", "workers", "writes"}   # w
 WRITES = ("refused", "judged")
 PROFILE_KEYS = {"role", "worker", "dir", "soul", "display_name", "approval_evidence", "review_callers", "capability_fallback"}
 TOP_KEYS = {"_comment", "schema_version", "fallback_role", "protected", "owner_settings", "owner_data", "owner_commands", "data_index",
-            "worker_markers", "self_config_kinds", "profiles", "roles", "sandbox", "owner_commands_by_name", "boundary_paths", "write_tools", "worker_pins"}
+            "worker_markers", "self_config_kinds", "profiles", "roles", "sandbox", "owner_commands_by_name", "boundary_paths", "write_tools", "worker_pins",
+            "main_branch", "judged_hooks"}
 ROOT_PROFILE = "default"   # Hermes's own name for the profile that lives in the root of ~/.hermes
 
 
@@ -268,6 +270,11 @@ def validate(d, root=ROOT):
     wp = d.get("worker_pins")   # the variables the box sets to a worker's workspace and branch (the commit guard checks a marked commit against them)
     if not (isinstance(wp, dict) and set(wp) == {"workspace", "branch"} and all(isinstance(v, str) and KEY.fullmatch(v) for v in wp.values())):
         errs.append("worker_pins needs {workspace, branch}, each an environment variable name (A-Z, digits, _)")
+    if not (isinstance(d.get("main_branch"), str) and NAME.fullmatch(d["main_branch"])):   # the stack's main branch (the commit guard refuses a worker on it)
+        errs.append("main_branch needs the name of the stack's main branch")
+    jh = d.get("judged_hooks")   # K6: the guards every role outside the box that no profile serves carries (defined once, here)
+    if not (isinstance(jh, list) and jh and _set(jh) and all(_rel(x) for x in jh)):
+        errs.append("judged_hooks needs a non-empty list of hook files (paths relative to the stack repo), no file twice")
     wm = d.get("worker_markers")   # the environment variables that mark a worker's process (commit guard, apply tool, settings tool)
     if not (isinstance(wm, list) and wm and _set(wm) and all(KEY.fullmatch(x) for x in wm)):
         errs.append("worker_markers needs a non-empty list of environment variable names (A-Z, digits, _), no name twice")
@@ -288,16 +295,23 @@ def _hooks(r, judged=True):
 
 
 def unboxed_problems(d):
-    """B2 (F1 W4): a text guard cannot decide what a shell will do, so a role that runs outside the OS box must refuse every write by
+    """B2/K6 (F1 W4): a text guard cannot decide what a shell will do, so a role that runs outside the OS box must refuse every write by
     its hooks: every profile outside sandbox.boxed_profiles and the fallback role have runs_unboxed true; such a role has explicit
-    toolsets, a hook that refuses (writes: refused) and no hook that only judges (writes: judged) on each tool of write_tools, and
-    the fallback also has a hook for any tool name no other matcher names. Run on a table whose rows are already well formed."""
+    toolsets, a hook that refuses (writes: refused) and no hook that only judges (writes: judged) on each tool of write_tools, and a hook
+    that refuses any tool name no other matcher names. A role a profile serves has explicit toolsets. A role in the box that no profile
+    serves carries every guard of judged_hooks (the full judged set, defined once). A hook with a workers filter covers a profile only
+    when the profile names that worker kind, so it is never counted for a role as a whole. Run on a table whose rows are already well formed."""
     roles, boxed, tools = d["roles"], set((d.get("sandbox") or {}).get("boxed_profiles") or []), d["write_tools"]
     need = {d["fallback_role"]} | {row["role"] for p, row in d["profiles"].items() if p not in boxed}
+    served = {row["role"] for row in d["profiles"].values()}
     errs = [f"role {n} must have runs_unboxed true: a profile or the fallback uses it outside the OS box" for n in sorted(need) if not roles[n]["runs_unboxed"]]
-    cover = lambda r, t: [h for h in r.get("hooks", []) if re.fullmatch(h["matcher"], t)]
+    errs += [f"role {n} is served by a profile and has no explicit platform_toolsets (a default toolset is not judged)" for n in sorted(served) if not any(roles[n].get("platform_toolsets", {}).values())]
+    cover = lambda r, t: [h for h in r.get("hooks", []) if "workers" not in h and re.fullmatch(h["matcher"], t)]
     for n, r in roles.items():
         if not r["runs_unboxed"]:
+            if n not in served:
+                have = {h.get("file") or h["command"] for h in r.get("hooks", [])}
+                errs += [f"role {n} is in the box and served by no profile: it lacks the guard {j} of judged_hooks" for j in d["judged_hooks"] if j not in have]
             continue
         if not any(r.get("platform_toolsets", {}).values()):
             errs.append(f"role {n} runs outside the box: it needs explicit platform_toolsets")
@@ -305,8 +319,8 @@ def unboxed_problems(d):
             errs.append(f"role {n} runs outside the box: it lists a hook that only judges writes (writes: judged)")
         errs += [f"role {n} runs outside the box: write tool {t} has no hook that refuses every write (writes: refused)"
                  for t in tools if not any(h.get("writes") == "refused" for h in cover(r, t))]
-    if not cover(roles[d["fallback_role"]], "\0no-such-tool"):
-        errs.append(f"fallback_role {d['fallback_role']} needs a hook for any tool name no other matcher names")
+        if not any(h.get("writes") == "refused" for h in cover(r, "\0no-such-tool")):
+            errs.append(f"role {n} runs outside the box: it needs a hook that refuses any tool name no other matcher names (writes: refused)")
     return errs
 
 
@@ -943,6 +957,8 @@ def main():
             sys.stdout.buffer.write(b"".join(os.fsencode(x) + b"\0" for x in hits(d, args[0], names, args[1], args[2] if len(args) > 2 else None)))
         except RolesError as e:
             fail("STL-CFG-303", problem=str(e)[:300])
+    elif cmd == "root" and not args:
+        print(ROOT)
     elif cmd == "field" and len(args) == 2:
         print(json.dumps(role_of(d, args[0])[1].get(args[1])))
     else:

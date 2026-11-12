@@ -226,19 +226,39 @@ ALLOWED = ("hermes kanban list|show, /workspace/bin/escalations-status.sh, /work
            "ls, cat, head, tail, grep, wc, jq, echo, pwd (no cd: use absolute paths or git -C)")
 
 
+def _vouched():
+    """K4: the repositories this terminal may run git in: the stack's own folder and the main checkout of each project bound to the board (the binding the
+    hooks already read). None when the binding cannot be read: then only the stack is vouched for."""
+    out = {os.path.realpath(_roles.ROOT).casefold()}
+    try:
+        out |= {os.path.realpath(p["repo"]).casefold() for p in _roles.board_projects(_roles.board()) if p["repo"]}
+    except Exception:
+        pass
+    return out
+
+
 def _git_dir_why(here):
-    """Why git must not run in `here`: inside a card worktree (a sibling folder of the sandbox table) or inside any .git folder, where a builder's repo config
-    (a clean filter, fsmonitor, diff.external, gpg.program) would run code as this user (final red-team S6N-02). Compared case-insensitively (9p). An unreadable table refuses."""
+    """Why git must not run in `here`. A repository's own config can name a program git runs (core.fsmonitor, diff.external, textconv and clean
+    filters, core.pager, core.hooksPath, aliases, gpg.program), and a boxed worker can leave a repository of its own anywhere it can write (its profile
+    home, the box tmp folder, /tmp, a card worktree), so git runs only where the repository can be vouched for (K4): the toplevel found by looking for
+    .git (a short 8.3 or odd spelling of the path does not matter) is the stack's folder or the main checkout of a bound project, and its .git is a folder
+    (a linked worktree has a file). Anything else, or a table that cannot be read, refuses."""
     try:
         siblings = {x.casefold() for x in _roles.sandbox(_roles.load())["sibling_dirs"]}
     except Exception:
         return "the sandbox table cannot be read, so git is not run in a card folder"
     rp = os.path.realpath(here)
     a = rp
-    while a and a != "/":   # a linked worktree has a .git FILE: found by looking, so a short (8.3) or odd spelling of the path does not matter
-        if os.path.isfile(os.path.join(a, ".git")):
-            return f"git is not run inside a linked worktree ({here}): a builder's repo config could run code there"
+    while a and a != "/":
+        if os.path.lexists(os.path.join(a, ".git")):
+            break
         a = os.path.dirname(a)
+    else:
+        return f"git is not run in {here}: it is not inside the stack or a bound project's main checkout"
+    if not os.path.isdir(os.path.join(a, ".git")) or os.path.islink(os.path.join(a, ".git")):
+        return f"git is not run inside a linked worktree or a repository whose .git is not a plain folder ({here}): its config could run code there"
+    if a.casefold() not in _vouched():
+        return f"git is not run in {here}: only the stack and the main checkout of a bound project are vouched for, any other repository's config could run code"
     parts = [x.casefold() for x in rp.split("/") if x]
     parts += [x.casefold() for x in os.path.normpath(here).split("/") if x]
     if any(x in siblings for x in parts):

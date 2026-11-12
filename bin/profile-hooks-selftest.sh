@@ -532,4 +532,16 @@ ok '[ -s "$ESCALATE_SUP_DIR/logs/alerts.log" ] && grep -qF "$T" "$ESCALATE_SUP_D
 mkdir -p "$T/plant/logs"; echo "STL-X earlier line" >"$T/plant/logs/alerts.log"
 ESCALATE_SUP_DIR="$T/plant" python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import alert_catalog as a; _, tag, kv = a.render("STL-CFG-312", {"problem": sys.argv[2]}); a.log(tag, kv)' "$(dirname "$(readlink -f "$0")")" "$T/planted" 2>/dev/null
 ok '! h1 "$T/plant/logs/alerts.log" 1 && h1 "$T/plant/logs/alerts.log" 2' "H1: planted call: a line naming a temp path added to a log fails the check; the same log counted from after it passes"
+# F1 W4 round 3 (K4): the allow-list terminal runs git only in a repository it can vouch for (the stack, the main checkout of a bound project). A repository a
+# boxed worker left behind names a program in its own config for each of: fsmonitor, external diff, textconv, clean filter, pager, hooks path, an alias, gpg.program.
+PL=$T/planted4; git init -q "$PL"; printf '#!/bin/sh\necho ran >>%s/marker4\nexit 1\n' "$T" >"$T/prog4"; chmod +x "$T/prog4"
+for kv in core.fsmonitor diff.external core.pager core.hooksPath alias.st gpg.program diff.x.textconv filter.x.clean; do git -C "$PL" config "$kv" "$T/prog4"; done
+printf '* diff=x filter=x\n' >"$PL/.gitattributes"; printf 'a\n' >"$PL/f"; git -C "$PL" add f .gitattributes 2>/dev/null; git -C "$PL" -c core.fsmonitor= -c user.name=t -c user.email=t@example.invalid commit -q -m x 2>/dev/null; printf 'b\n' >"$PL/f"
+rm -f "$T/marker4"
+for c in "git -C $PL status" "git -C $PL diff" "git -C $PL log -1" "git -C $PL show HEAD" "git -C $PL/ rev-parse HEAD" "git -C $PL st"; do
+  ok '[ "$(term $R "$c")" = 2 ] && [ ! -e "$T/marker4" ]' "K4: a repository outside the stack and the bound projects is refused, nothing it names runs: $c"
+done
+ok '[ "$(cd "$PL" && term $R "git status")" = 2 ] && [ ! -e "$T/marker4" ]' "K4: git with no -C, the terminal's folder a planted repository: refused, nothing runs"
+ok '[ "$(cd "$T" && term $R "git status")" = 2 ]' "K4: git in a folder that is no repository at all: refused"
+ok '[ "$(term $R "git -C /workspace status --short")" = 0 ]' "K4 control: git in the stack folder is allowed"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
