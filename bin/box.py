@@ -8,7 +8,7 @@ The card's branch ref is not bound from the shared refs/heads/<project> folder (
 over one spelling of a sibling's ref hides only that spelling): the box sees a private copy of its own ref, and run() applies
 it to the real repo after the call, for this ref only, as a compare-and-swap.
 """
-import ast, contextlib, fnmatch, json, os, re, shutil, signal, stat, subprocess, sys, tarfile, time, uuid
+import ast, contextlib, fnmatch, json, os, pwd, re, shutil, signal, stat, subprocess, sys, tarfile, time, uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import roles
@@ -320,7 +320,7 @@ def plan(d, profile, proof, *, hermes_root, home, roots, stack_root=None, spec=N
             must[common] = [("ro", common, common)] + [("rw", x, x) for x in (f"{common}/objects", gd)] + \
                            [("rw", priv + "/refs", refs), ("rw", priv + "/logs", logs)] + \
                            [("ro", f"{gd}/{f}", f"{gd}/{f}") for f in ("commondir", "gitdir")]   # read-only over the writable folder
-            env["HERMES_KANBAN_BRANCH"] = branch
+            env[d["worker_pins"]["branch"]] = branch
             env["GIT_CONFIG_GLOBAL"] = pdir + "/home/.gitconfig"   # HH-06: HOME=<dir> / XDG_CONFIG_HOME=<dir> cannot make git read a planted config (the commit hook stays on); the file is read-only (home_protect)
         else:
             ov_r = sb["profile_overrides"].get(profile, {})
@@ -356,7 +356,7 @@ def plan(d, profile, proof, *, hermes_root, home, roots, stack_root=None, spec=N
                 raise BoxError(f"the worktree holds a symlink that leaves it ({bad}); the reviewing box does not start")
             must[wt], must[common] = [("ro", wt, wt)], [("ro", common, common)]
             env["GIT_DIR"], env["GIT_WORK_TREE"] = gd, wt   # S6I-01: git here never discovers a repo the builder planted in a subfolder (its config can name programs git runs)
-        env["HERMES_KANBAN_WORKSPACE"] = wt   # the commit guard's marker: the proof cannot run inside the box (design 4.4)
+        env[d["worker_pins"]["workspace"]] = wt   # the commit guard's marker: the proof cannot run inside the box (design 4.4)
     inside = lambda p, m: p == m or p.startswith(m + "/")
     out, done = [("tmpfs", "/tmp")] + ([("tmpfs", "/commandhistory")] if os.path.isdir("/commandhistory") else []), set()
 
@@ -698,6 +698,32 @@ def _sweep_after(spec, enc, pid):
         pass
 
 
+def merge_exec(top, wt, branch, card, script):
+    """K2 (F1 W4): run `script` (the card's test command, in bash) in the OS box with the plan a builder's worker gets: the card worktree
+    writable, the rest read-only, the owner settings files and the state paths not mounted, the worker markers set. The profile is the first
+    of sandbox.boxed_profiles whose role has a writable card worktree (one without broker variables first): from the table, never named here.
+    The box is the only way: there is no unboxed run. Raises BoxError when the box cannot start. Returns the script's exit code."""
+    d = roles.load()
+    sb = roles.sandbox(d)
+    ps = sorted((p for p in (sb or {}).get("boxed_profiles", []) if p in d["profiles"] and d["roles"][d["profiles"][p]["role"]]["workspace"] == "git-worktree"),
+                key=lambda p: (bool(sb["profile_overrides"].get(p, {}).get("broker_env")), p))
+    if not ps:
+        raise BoxError("no boxed profile gets a writable card worktree, so the card's tests have no box to run in")
+    home = pwd.getpwuid(os.getuid()).pw_dir
+    root = os.environ.get("BOX_HERMES_ROOT") or f"{home}/.hermes"
+    argv, over = box_argv(d, ps[0], {"card": card, "workspace": wt, "branch": branch}, hermes_root=root, home=home, roots=[top])
+    env = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "LC_ALL", "LC_CTYPE")}
+    env.update({m: card for m in roles.worker_markers(d)})
+    env.update(over)
+    return subprocess.run(argv + ["--chdir", wt, "bash", "-c", script], env=env, stdin=subprocess.DEVNULL).returncode
+
+
+if __name__ == "__main__" and sys.argv[1:2] == ["exec"]:   # exec <top> <worktree> <branch> <card> <script>: exit 126 and a coded line when the box cannot start
+    try:
+        sys.exit(merge_exec(*sys.argv[2:6], sys.argv[6]))
+    except (BoxError, roles.RolesError, OSError) as e:
+        print(roles.plain("STL-CFG-312", problem=f"the box for the card's tests could not start: {str(e)[:200]}"), file=sys.stderr)
+        sys.exit(126)
 if __name__ == "__main__" and sys.argv[1:2] == ["run"]:
     sys.exit(run(json.loads(sys.argv[2]), sys.argv[4:]))
 if __name__ == "__main__" and sys.argv[1:2] == ["sweep"]:

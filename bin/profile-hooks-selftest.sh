@@ -367,6 +367,11 @@ sed -i '/command: ".*write-guard.py"/{n;s/timeout: [0-9]*/timeout: 7/}' "$H/prof
 ok '[ "$(wt profiles/builder-local/ write-guard.py)" = 7 ] && HOME="$T/home" "$REG" --check | grep -q "TIMEOUT DRIFT"' "K1-RT-11: a hook registered with another timeout than roles.json: --check reports drift"
 HOME="$T/home" "$REG" >/dev/null
 ok '[ -n "$want" ] && [ "$(wt profiles/builder-local/ write-guard.py)" = "$want" ] && [ "$(grep -c write-guard.py "$H/profiles/builder-local/config.yaml")" = 1 ]' "K1-RT-11: apply sets the timeout from roles.json in place ($want s), no duplicate entry"
+# F1 W4 round 3 (K5): a guard registered without fail_closed is reported by --check (a hook timeout would let the call through), and apply puts it back
+sed -i '/command: ".*write-guard.py"/{n;n;/fail_closed: true/d}' "$H/profiles/builder-local/config.yaml"
+ok '! grep -A3 "command: \".*write-guard.py\"" "$H/profiles/builder-local/config.yaml" | grep -q fail_closed && HOME="$T/home" "$REG" --check | grep -q "FAIL-OPEN.*write-guard.py"' "K5: a registered write guard without fail_closed: --check reports FAIL-OPEN"
+HOME="$T/home" "$REG" >/dev/null
+ok 'grep -A3 "command: \".*write-guard.py\"" "$H/profiles/builder-local/config.yaml" | grep -q fail_closed && HOME="$T/home" "$REG" --check >/dev/null' "K5: apply restores fail_closed, --check is clean again"
 # S4, S24, F25, S25: apply-hermes-local.sh against a scratch HOME with a hermes stub whose `config get` fails. It must not
 # abort before the hook and toolset steps; an unmarked SOUL keeps its first line; SOUL.md, config.yaml and the allowlist
 # are replaced atomically with a backup first; hooks registered but not listed are reported.
@@ -532,4 +537,16 @@ ok '[ -s "$ESCALATE_SUP_DIR/logs/alerts.log" ] && grep -qF "$T" "$ESCALATE_SUP_D
 mkdir -p "$T/plant/logs"; echo "STL-X earlier line" >"$T/plant/logs/alerts.log"
 ESCALATE_SUP_DIR="$T/plant" python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import alert_catalog as a; _, tag, kv = a.render("STL-CFG-312", {"problem": sys.argv[2]}); a.log(tag, kv)' "$(dirname "$(readlink -f "$0")")" "$T/planted" 2>/dev/null
 ok '! h1 "$T/plant/logs/alerts.log" 1 && h1 "$T/plant/logs/alerts.log" 2' "H1: planted call: a line naming a temp path added to a log fails the check; the same log counted from after it passes"
+# F1 W4 round 3 (K4): the allow-list terminal runs git only in a repository it can vouch for (the stack, the main checkout of a bound project). A repository a
+# boxed worker left behind names a program in its own config for each of: fsmonitor, external diff, textconv, clean filter, pager, hooks path, an alias, gpg.program.
+PL=$T/planted4; git init -q "$PL"; printf '#!/bin/sh\necho ran >>%s/marker4\nexit 1\n' "$T" >"$T/prog4"; chmod +x "$T/prog4"
+for kv in core.fsmonitor diff.external core.pager core.hooksPath alias.st gpg.program diff.x.textconv filter.x.clean; do git -C "$PL" config "$kv" "$T/prog4"; done
+printf '* diff=x filter=x\n' >"$PL/.gitattributes"; printf 'a\n' >"$PL/f"; git -C "$PL" add f .gitattributes 2>/dev/null; git -C "$PL" -c core.fsmonitor= -c user.name=t -c user.email=t@example.invalid commit -q -m x 2>/dev/null; printf 'b\n' >"$PL/f"
+rm -f "$T/marker4"
+for c in "git -C $PL status" "git -C $PL diff" "git -C $PL log -1" "git -C $PL show HEAD" "git -C $PL/ rev-parse HEAD" "git -C $PL st"; do
+  ok '[ "$(term $R "$c")" = 2 ] && [ ! -e "$T/marker4" ]' "K4: a repository outside the stack and the bound projects is refused, nothing it names runs: $c"
+done
+ok '[ "$(cd "$PL" && term $R "git status")" = 2 ] && [ ! -e "$T/marker4" ]' "K4: git with no -C, the terminal's folder a planted repository: refused, nothing runs"
+ok '[ "$(cd "$T" && term $R "git status")" = 2 ]' "K4: git in a folder that is no repository at all: refused"
+ok '[ "$(term $R "git -C /workspace status --short")" = 0 ]' "K4 control: git in the stack folder is allowed"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

@@ -173,4 +173,21 @@ ok '[ $rc = 1 ] && grep -q STL-CFG-313 "$T/o" && ! grep -q "Second One\|Fake One
 cp "$T/owner.keep" "$R/config/owner.env"; chmod 600 "$R/config/owner.env"
 ok '[ "$(snap)" = "$B" ]' "G5: the fixture is back as it was"
 
+
+# F1 W4 round 3 (K9): the read, the candidate and the apply are one critical section; get serves no default the entry refuses; a store read that fails is not "a change failed"
+LIM=$R/.supervisor/limits.env; lim() { sed -n "s/^$1=//p" "$LIM"; }
+printf "CALL_TIMEOUT=600\nQUEUE_MAX=1\n" >"$LIM"; lost=0
+for i in 1 2 3 4 5; do
+  e0=$(nev); st set CALL_TIMEOUT $((700+i)) >"$T/c1a" 2>&1 & a=$!; st set QUEUE_MAX $((10+i)) >"$T/c1b" 2>&1 & b=$!; wait $a; ra=$?; wait $b; rb=$?
+  { [ "$ra" = 0 ] && [ "$rb" = 0 ] && [ "$(lim CALL_TIMEOUT)" = $((700+i)) ] && [ "$(lim QUEUE_MAX)" = $((10+i)) ] && [ "$(nev)" = $((e0+2)) ]; } || lost=$((lost+1))
+done
+ok '[ $lost = 0 ]' "K9: two sets of two keys of one store file at once both land, both say applied, one event line each ($lost bad rounds of 5)"
+printf "CALL_TIMEOUT=600\nCALL_TIMEOUT=601\n" >"$LIM"
+st get CALL_TIMEOUT >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q "STL-CFG-310" "$T/o" && ! grep -q "STL-CFG-313" "$T/o"' "K9: get on a store that holds a key twice names an invalid data file (STL-CFG-310), not a change that failed"
+printf "CALL_TIMEOUT=600\nQUEUE_MAX=1\n" >"$LIM"; cp "$R/.stella/settings.json" "$T/settings.keep"
+jq '(.entries[] | select(.key == "CALL_TIMEOUT") | .default) = "not a number"' "$T/settings.keep" >"$R/.stella/settings.json"; sed -i '/^CALL_TIMEOUT=/d' "$LIM"
+st get CALL_TIMEOUT >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q "STL-CFG-310" "$T/o"' "K9: get serves no default value that the entry's own rules refuse"
+cp "$T/settings.keep" "$R/.stella/settings.json"; printf "CALL_TIMEOUT=600\nQUEUE_MAX=1\n" >"$LIM"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

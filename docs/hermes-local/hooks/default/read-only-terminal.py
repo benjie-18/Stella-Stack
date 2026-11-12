@@ -12,7 +12,7 @@ import json, re, shlex, sys
 # as the shell would), brace expansion ({a,b}), $'…' escapes, option values (--include=…) and command lines nested in
 # quotes. Recursing into a folder that holds secrets counts too. Not caught: a path the shell builds at run time (an
 # unknown variable, $(…), an encoder).
-import codecs, fnmatch, glob, os, pwd, re, shlex
+import codecs, fnmatch, glob, os, pwd, re, shlex, time
 SECRETS = (".env*", "*.pem", "*.key", "~/.hermes/.env", "~/.hermes/auth.json", "~/.claude/.credentials*",
            "~/.local/share/opencode/auth.json", "~/.hermes/broker", "~/.ssh", "~/.aws", "~/.config/gh")
 SECRET_OK = (".env.example", ".env.sample", ".env.template")
@@ -25,8 +25,11 @@ try:   # K6: the owner settings files (roles.json owner_settings) are read by no
     OWNER_FILES = {os.path.realpath(f).casefold() for f in _roles.owner_settings(_t)}   # B2V-01: /workspace is case-insensitive
     OWNER_TREES = [os.path.realpath(t).casefold() for t in _roles.state_trees(_t)]   # B1 (F1 W4): the apply tool's backups, applied state and event log hold owner values: no role reads them
     OWNER_TEXT = [p.casefold() for p in _roles.state_paths(_t)]   # ... however the path is spelled in a command (an interpreter's code included)
+    FILE_CH = _roles.chains(_roles.owner_settings(_t))   # K1b: a path is one of these by what it IS (identity: a short name, a case variant, a link), never by its spelling
+    TREE_CH = _roles.chains(_roles.state_trees(_t))
+    DIR_CH = _roles.chains({os.path.dirname(f) for f in _roles.owner_settings(_t)} | set(_roles.state_trees(_t)))
 except Exception as _e:
-    OWNER_FILES, OWNER_TREES, OWNER_TEXT = None, [], []
+    OWNER_FILES, OWNER_TREES, OWNER_TEXT, FILE_CH, TREE_CH, DIR_CH = None, [], [], [], [], []
     UNREADABLE = f"the role table or the data index cannot be read ({type(_e).__name__}), so every read is refused until it is fixed [STL-CFG-303]"
 SECRET_DIRS = [f"{h}/{d}" for h in HOMES for d in (".hermes", ".claude", ".local/share/opencode", ".ssh", ".aws", ".config/gh")]
 SECRET_DIRS.append("/proc")   # a recursive search of /proc reads every process's environment
@@ -42,15 +45,20 @@ SPLIT = {"&&", "||", ";", "|", "&", "(", ")"}
 def _within(p, root):
     return p == root or p.startswith(root.rstrip("/") + "/")
 
+def _hit(p, ch, rels):
+    x = _roles.overlap(p, ch)
+    return bool(x) and x[0] in rels
+
+
 def _owner_dir(p):
     """True when p is a folder that holds an owner settings file, or inside one (RT7-01: never the terminal's folder)."""
-    return any(_within(os.path.realpath(p).casefold(), os.path.dirname(f)) for f in OWNER_FILES or ()) or any(_within(os.path.realpath(p).casefold(), t) for t in OWNER_TREES)
+    return _hit(p, DIR_CH, ("equal", "inside", "unknown"))
 
 def secret_path(p):
     n = os.path.normpath(p)
     if re.match(r"/proc/(?:self|thread-self|\d+)(?:/|$)", n):   # another process's environment, memory, fds: a review token lives there while a review runs
         return True
-    if OWNER_FILES is None or os.path.realpath(p).casefold() in OWNER_FILES or any(_within(os.path.realpath(p).casefold(), t) for t in OWNER_TREES):
+    if OWNER_FILES is None or _hit(p, FILE_CH, ("equal", "unknown")) or _hit(p, TREE_CH, ("equal", "inside", "unknown")):
         return True
     b = os.path.basename(p).casefold()   # B2V-01: .ENV is .env on a case-insensitive mount
     if b not in SECRET_OK and any(fnmatch.fnmatch(b, s) for s in SECRETS if "/" not in s):
@@ -74,10 +82,15 @@ def _ansi(cmd):
     return _roles.ansi(cmd)
 
 
+DEADLINE = [0.0]   # K5: when the look-ups of one command must be done (monotonic); 0 = no limit (a single path from a tool call)
+
+
 def path_why(word, cwd, names=None, recursive=False):
     """Why reading `word` (a path as written, relative to `cwd`) reads a secret, or None."""
     if OWNER_FILES is None:
         return UNREADABLE
+    if DEADLINE[0] and time.monotonic() > DEADLINE[0]:
+        return "the command names too many paths to check in time"
     words = _braces(word)
     if len(words) > 64:
         return f"{word[:60]}… expands to more than 64 words, too many to check"
@@ -86,17 +99,20 @@ def path_why(word, cwd, names=None, recursive=False):
             continue   # the standard streams as written (they resolve to this process's own pipes); a link that resolves to one is not exempt
         p = _where(w, cwd, names or {})
         raw = os.path.realpath(os.path.join(cwd or "/", os.path.expanduser(w)))   # without normpath first: the kernel follows a link before it applies ..
-        for x in [p, raw] + (glob.glob(p) if glob.has_magic(p) else []):
+        g = _roles.globs(p) if glob.has_magic(p) else []   # K5: bounded
+        if g is None:
+            return f"{word} is a glob with too many wildcard parts to check"
+        for x in [p, raw] + g:
             for q in {x, os.path.realpath(x)}:
-                if OWNER_FILES and os.path.realpath(q).casefold() in OWNER_FILES:
+                if _hit(q, FILE_CH, ("equal", "unknown")):
                     return f"{word} is an owner settings file ({q})"   # B2V-16
-                if any(_within(os.path.realpath(q).casefold(), t) for t in OWNER_TREES):
+                if _hit(q, TREE_CH, ("equal", "inside", "unknown")):
                     return f"{word} is an owner state path of the apply tool ({q}) [STL-CFG-312]"
                 if secret_path(q):
                     return f"{word} is a secret path ({q})"
                 if recursive and os.path.isdir(q) and any(_within(q, d) or _within(d, q) for d in SECRET_DIRS):
                     return f"recursing into {q} reads secret files"
-                if recursive and any(_within(f, os.path.realpath(q).casefold()) for f in list(OWNER_FILES or ()) + OWNER_TREES):   # also a folder that does not exist (yet)
+                if recursive and (_hit(q, FILE_CH, ("contains",)) or _hit(q, TREE_CH, ("contains",))):   # also a folder that does not exist (yet)
                     return f"recursing into {q} reads an owner settings file or an owner state path [STL-CFG-312]"   # K6: the folder that holds one
         b = os.path.basename(w)
         if b.startswith(".") and glob.has_magic(b) and any(fnmatch.fnmatch(n, b) for n in (".env", ".env.local", ".credentials.json")):
@@ -152,11 +168,12 @@ def _search_paths(name, words, base, names):
         ops = ops[1:]   # the first operand is the pattern
     # shortcut: a value-taking option missing from VALUE_OPTS shifts the words; only an existing path counts, so a shifted
     # pattern word never hides the current folder unless it also names an existing path. Session 2 option A replaces this.
-    return [w for w in ops if os.path.exists(p := _where(w, base, names)) or (glob.has_magic(p) and glob.glob(p))]   # RT8-01: a glob that matches names paths
+    return [w for w in ops if os.path.exists(p := _where(w, base, names)) or (glob.has_magic(p) and _roles.globs(p))]   # RT8-01: a glob that matches names paths
 
 def secret_why(cmd, cwd):
     """Why the shell command line `cmd`, run in `cwd`, reads a secret path, or None."""
     cmd = _ansi(cmd)
+    DEADLINE[0] = time.monotonic() + 4.0
     if OWNER_FILES is None:
         return UNREADABLE
     if any(os.path.basename(f) in cmd.casefold() for f in OWNER_FILES):
@@ -167,6 +184,11 @@ def secret_why(cmd, cwd):
         return "the command names a secret path"
     if _owner_dir(cwd):
         return f"{cwd} is the folder that holds an owner settings file"
+    for piece in sorted({x for x in re.findall(r"[\w.~$@+%/*?\[\]-]+", cmd) if "/" in x})[:2000]:   # K1b: any path-like piece of the command text, in code or in quotes, by identity (bounded: K5, linear)
+        if len(piece) > 1:
+            why = path_why(piece, cwd, {})
+            if why and ("owner settings" in why or "[STL-CFG-312]" in why):
+                return why
     for toks in all_lines(cmd):
         here, names, seg = cwd, {}, []
         for t in toks + [";"]:
@@ -226,19 +248,39 @@ ALLOWED = ("hermes kanban list|show, /workspace/bin/escalations-status.sh, /work
            "ls, cat, head, tail, grep, wc, jq, echo, pwd (no cd: use absolute paths or git -C)")
 
 
+def _vouched():
+    """K4: the repositories this terminal may run git in: the stack's own folder and the main checkout of each project bound to the board (the binding the
+    hooks already read). None when the binding cannot be read: then only the stack is vouched for."""
+    out = {os.path.realpath(_roles.ROOT).casefold()}
+    try:
+        out |= {os.path.realpath(p["repo"]).casefold() for p in _roles.board_projects(_roles.board()) if p["repo"]}
+    except Exception:
+        pass
+    return out
+
+
 def _git_dir_why(here):
-    """Why git must not run in `here`: inside a card worktree (a sibling folder of the sandbox table) or inside any .git folder, where a builder's repo config
-    (a clean filter, fsmonitor, diff.external, gpg.program) would run code as this user (final red-team S6N-02). Compared case-insensitively (9p). An unreadable table refuses."""
+    """Why git must not run in `here`. A repository's own config can name a program git runs (core.fsmonitor, diff.external, textconv and clean
+    filters, core.pager, core.hooksPath, aliases, gpg.program), and a boxed worker can leave a repository of its own anywhere it can write (its profile
+    home, the box tmp folder, /tmp, a card worktree), so git runs only where the repository can be vouched for (K4): the toplevel found by looking for
+    .git (a short 8.3 or odd spelling of the path does not matter) is the stack's folder or the main checkout of a bound project, and its .git is a folder
+    (a linked worktree has a file). Anything else, or a table that cannot be read, refuses."""
     try:
         siblings = {x.casefold() for x in _roles.sandbox(_roles.load())["sibling_dirs"]}
     except Exception:
         return "the sandbox table cannot be read, so git is not run in a card folder"
     rp = os.path.realpath(here)
     a = rp
-    while a and a != "/":   # a linked worktree has a .git FILE: found by looking, so a short (8.3) or odd spelling of the path does not matter
-        if os.path.isfile(os.path.join(a, ".git")):
-            return f"git is not run inside a linked worktree ({here}): a builder's repo config could run code there"
+    while a and a != "/":
+        if os.path.lexists(os.path.join(a, ".git")):
+            break
         a = os.path.dirname(a)
+    else:
+        return f"git is not run in {here}: it is not inside the stack or a bound project's main checkout"
+    if not os.path.isdir(os.path.join(a, ".git")) or os.path.islink(os.path.join(a, ".git")):
+        return f"git is not run inside a linked worktree or a repository whose .git is not a plain folder ({here}): its config could run code there"
+    if a.casefold() not in _vouched():
+        return f"git is not run in {here}: only the stack and the main checkout of a bound project are vouched for, any other repository's config could run code"
     parts = [x.casefold() for x in rp.split("/") if x]
     parts += [x.casefold() for x in os.path.normpath(here).split("/") if x]
     if any(x in siblings for x in parts):
@@ -310,19 +352,38 @@ def why_not(cmd, cwd):
     return None
 
 
+PAY = sys.stdin.read()
 try:
-    p = json.load(sys.stdin)
+    p = json.loads(PAY)
     args = p.get("tool_input") or {}
     if p.get("tool_name") == "process_manage":
         reason = None if args.get("action") in ("list", "poll", "log", "wait") else f"process_manage {args.get('action')}"
     else:
         reason = why_not(str(args.get("command") or ""), args.get("workdir") or p.get("cwd") or os.getcwd())
 except Exception as e:  # fail closed: a payload we cannot read is refused
-    reason = f"unreadable payload: {type(e).__name__}"
+    p, reason = {}, f"unreadable payload: {type(e).__name__}"
 if reason is None:
     sys.exit(0)
+
+
+def coded(code, problem):   # K8: the catalog code, its plain message, one alert line for the call (the role's other hook that refuses it writes none); the role named, no owner value
+    try:
+        role = _roles.role_of(_roles.load(), p.get("profile"))[0]
+    except Exception:
+        role = "unknown"
+    try:
+        return _roles.plain(code, once=PAY, problem=f"{problem} (role {role})")
+    except Exception:   # the role module itself is missing: the code and the problem still print
+        return f"[{code}] {problem}"
+
+
+if "the role table or the data index cannot be read" in reason:
+    print(json.dumps({"action": "block", "message": "This profile's terminal is read-only: " + coded("STL-CFG-303", "the role table or the data index cannot be read by a read guard") + " Every command is refused until it is fixed."}))
+    sys.exit(2)
 if "[STL-CFG-312]" in reason:   # G4: the code, the catalog's plain message, one alert line; no value from any owner file
-    reason = _roles.plain("STL-CFG-312", problem="a role tried to read an owner state path of the apply tool") + " " + reason.replace(" [STL-CFG-312]", "")
-print(json.dumps({"action": "block", "message": f"The dispatcher's terminal is read-only ({reason}). Allowed: {ALLOWED}. "
-                  "Dispatchers do not change files: create a card for a worker instead."}))
+    reason = coded("STL-CFG-312", "a role tried to read an owner state path of the apply tool") + " " + reason.replace(" [STL-CFG-312]", "")
+elif "owner settings" in reason:   # an older rule caught it first: it still says so with the code
+    reason = coded("STL-CFG-312", "a role tried to read an owner settings file") + " " + reason
+print(json.dumps({"action": "block", "message": f"This profile's terminal is read-only ({reason}). Allowed: {ALLOWED}. "
+                  "This profile does not change files: create a card for a worker instead."}))
 sys.exit(2)

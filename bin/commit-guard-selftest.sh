@@ -152,4 +152,22 @@ git -C "$K/main" reset -q -- f11; rm -f "$K/main/f11"
 ok '[ "$(guard "$K/main" HERMES_DELEGATED_CHILD_CONTEXT=1)" = 1 ] && grep -qF "cannot be proven" "$T/err"' "HERMES_DELEGATED_CHILD_CONTEXT=1 with no bound run and no workspace env: refused (cannot be proven)"
 N1=$(git -C "$K/main" rev-list --count HEAD)   # counted here: an earlier case's commit (the pre-K1 code) must not shift this one
 ok '(echo own > $K/main/fo && git -C $K/main add fo) && (cd $K/main && env PATH=/usr/bin:/bin git commit -q -m owner) && [ "$(git -C $K/main rev-list --count HEAD)" = "$((N1+1))" ]' "owner commit with no markers and hermes off PATH: allowed"
+# F1 W4 round 3 (K1, K1b, K8, K9): the refused set holds the apply tool's state paths too; a name is compared by identity; the refusal is coded with one alert line;
+# the stack folder, the main branch and the pins come from the table, and a pin the guard needs but cannot read refuses instead of passing.
+export ESCALATE_SUP_DIR=$T/sup; mkdir -p "$T/sup/logs"; : >"$T/sup/logs/alerts.log"; WGA=$T/sup/logs/alerts.log
+STP=$(jq -r '.event_log' /workspace/.stella/data-files.json)
+git -C "$W" reset -q --hard "$(git -C "$R" rev-parse main)"; mkdir -p "$W/${STP%/*}"; echo x >"$W/$STP"; git -C "$W" add -f "$STP"
+ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "STL-CFG-312" "$T/err" && [ "$(wc -l <"$WGA")" = 1 ]' "K1: a worker staging the apply tool's event log: refused, the code, one alert line"
+ok '[ "$(guard "$W")" = 0 ]' "K1: the same file staged by the owner (no worker marker): allowed"
+git -C "$W" reset -q; rm -rf "$W/${STP%%/*}"
+SCH=$(jq -r '.owner_data[0]' /workspace/docs/hermes-local/roles.json); mkdir -p "$W/$SCH"; echo x >"$W/$SCH/zz.json"; git -C "$W" add -f "$SCH/zz.json" && git -C "$W" -c core.hooksPath=/dev/null commit -q -m "schema"
+mkdir -p "$W/$(echo "$SCH" | tr a-z A-Z)"; echo y >"$W/$(echo "$SCH" | tr a-z A-Z)/new.json"; git -C "$W" add -f -A
+ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "K1b: a new file in another spelling (case) of an owner data folder: refused for a worker"
+git -C "$W" reset -q --hard; rm -rf "$W/$(echo "$SCH" | tr a-z A-Z)"
+for k in main_branch worker_pins; do
+  jq "del(.$k)" /workspace/docs/hermes-local/roles.json >"$GT/docs/hermes-local/roles.json"; echo z >"$W/zz-k9"; git -C "$W" add zz-k9
+  ok '[ "$(CG=$GT/bin/commit-guard.sh guard "$W" "${WK[@]}")" = 1 ] && grep -qi "cannot be read" "$T/err"' "K9: $k absent from the table: a worker's commit is refused, not passed"
+  git -C "$W" reset -q; rm -f "$W/zz-k9"
+done
+cp /workspace/docs/hermes-local/roles.json "$GT/docs/hermes-local/roles.json"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

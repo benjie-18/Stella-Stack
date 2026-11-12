@@ -344,4 +344,67 @@ ok '[ "$rc" = 1 ] && echo "$out" | grep -qiE "not (be )?logged|alert folder"' "C
 # C6 (W2-VER3-07): the "names the key, not its value" case asserts the value is absent from the check's output
 bad ".roles[\"$R1\"].qa_unknown_key = \"SECRETVALUE\"" 'qa_unknown_key' "C6: an unknown key with a value"
 ok '[ -s "$T/out" ] && ! grep -q SECRETVALUE "$T/out"' "C6: the output of that check is not empty and does not hold the value"
+
+# F1 W4 round 3 (K6): the table rules close.
+NOPROF=$(jq -r --argjson named "$(jq -c '[.profiles[].role]' "$RF")" '[.roles | to_entries[] | select(.key as $r | ($named | index($r) | not) and (.value.runs_unboxed | not)) | .key][0]' "$RF")   # a role no profile names
+for r in $(jq -r --argjson named "$(jq -c '[.profiles[].role]' "$RF")" '.roles | to_entries[] | select(.key as $r | ($named | index($r) | not) and (.value.runs_unboxed | not)) | .key' "$RF"); do   # every such role (the eight): none may drop a guard
+  for g in $(jq -r '.judged_hooks[]' "$RF"); do
+    bad ".roles[\"$r\"].hooks |= map(select((.file // .command) != \"$g\"))" 'lacks the guard' "K6: the unserved role $r drops $g"
+  done
+done
+bad ".roles[\"$COORD\"].hooks |= map(select(.matcher | test(\"\\\\(\\\\?!\") | not))" 'any tool name' "K6: the coordinator (runs_unboxed) without the catch-all"
+bad ".roles[\"$FB\"].hooks |= map(if (.matcher | test(\"\\\\(\\\\?!\")) then . + {workers: [\"w\"]} else . end) | .roles[\"$FB\"].workers = [\"w\"]" 'any tool name' "K6: a catch-all that has a workers filter does not count for the role as a whole"
+SERVED=$(jq -r '.profiles | to_entries[] | select(.value.role != "x") | .value.role' "$RF" | head -1)
+bad "del(.roles[\"$SERVED\"].platform_toolsets)" 'explicit platform_toolsets' "K6: a role a profile serves, without explicit toolsets"
+bad 'del(.judged_hooks)' 'judged_hooks' "K6: the judged set missing"
+bad 'del(.read_verbs)' 'read_verbs' "K7: the list of readers missing"
+bad 'del(.main_branch)' 'main_branch' "K9: the main branch missing"
+# every hook entry that says writes: refused refuses a write of every tool its matcher names (the marker is tied to what the hook does)
+for h in $(jq -r '[.roles[].hooks[]? | select(.writes == "refused") | (.file // .command)] | unique[]' "$RF"); do
+  for t in $(jq -r --arg h "$h" '[.roles[].hooks[]? | select((.file // .command) == $h and .writes == "refused") | .matcher] | unique[]' "$RF" | while read -r m; do jq -r '.write_tools[]' "$RF" | while read -r w; do python3 -I -c 'import re,sys; print(sys.argv[2]) if re.fullmatch(sys.argv[1], sys.argv[2]) else None' "$m" "$w"; done; done | grep -v '^None$' | sort -u); do
+    case $h in *.py) run="python3 -I /workspace/$h";; /*) run=$h;; *) run="bash /workspace/$h";; esac
+    ok '[ "$(jq -nc --arg t "$t" "{tool_name: \$t, tool_input: {command: \"touch /tmp/zz-w4\", path: \"/tmp/zz-w4\", content: \"x\"}, cwd: \"/tmp\", profile: \"zz\"}" | $run >/dev/null 2>&1; echo $?)" = 2 ]' "K6: $h (writes: refused) refuses $t"
+  done
+done
+# K3: the boundary list is found, not remembered: every file the boundary code imports, sources or installs is on it (the graph is computed from the tree)
+cat >"$T/graph.py" <<'PY'
+import json, os, re, sys
+top = sys.argv[1]
+d = json.load(open(f"{top}/docs/hermes-local/roles.json"))
+binf = {f for f in os.listdir(f"{top}/bin") if re.fullmatch(r"[\w.-]+\.(py|sh)", f) and "selftest" not in f}
+INST = {"register-escalation-hook.sh", "register-toolsets.sh", "apply-hermes-local.sh", "merge-card.sh", "commit-guard.sh"}   # they run the files they name
+entry = set(d["owner_commands"]) | {"bin/roles.py", "bin/merge-card.sh", "bin/commit-guard.sh", "bin/box.py", "bin/register-escalation-hook.sh", "bin/register-toolsets.sh", "bin/apply-hermes-local.sh"}
+entry |= {(h.get("file") or h["command"]).replace("/workspace/", "") for r in d["roles"].values() for h in r.get("hooks", [])}
+seen, todo = set(), sorted(entry)
+while todo:
+    p = todo.pop()
+    if p in seen or not os.path.isfile(f"{top}/{p}"):
+        continue
+    seen.add(p)
+    t = open(f"{top}/{p}", encoding="utf-8", errors="replace").read()
+    todo += [f"bin/{m[1]}.py" for m in re.finditer(r"^\s*(?:import|from)\s+([A-Za-z_]\w*)", t, re.M) if f"{m[1]}.py" in binf]
+    todo += [f"bin/{m[1]}" for m in re.finditer(r"(?:^|[\s\"'(])(?:\.|source)\s+[\"']?[^\n]*?([\w.-]+\.sh)", t, re.M) if m[1] in binf]
+    if os.path.basename(p) in INST:
+        todo += [f"bin/{m[1]}" for m in re.finditer(r"([\w-]+\.(?:py|sh))", t) if m[1] in binf]
+bnd = set(d["boundary_paths"]) | {(h.get("file") or h["command"]).replace("/workspace/", "") for r in d["roles"].values() for h in r.get("hooks", [])}
+under = lambda f: any(f == b or f.startswith(b + "/") for b in bnd)
+missing = sorted(f for f in seen if not under(f))
+print("\n".join(missing))
+sys.exit(1 if missing else 0)
+PY
+ok 'python3 -I "$T/graph.py" /workspace >"$T/out" 2>&1' "K3: every file the boundary's own code loads (owner commands, hooks, installers, the merge script, the role table tool and what they import or source) is on the boundary list"
+# the check fails when a reached file is missing from the list (a negative control on a scratch tree)
+mkdir -p "$T/gt/bin" "$T/gt/docs/hermes-local"; cp /workspace/bin/*.py /workspace/bin/*.sh "$T/gt/bin/" 2>/dev/null; jq '.boundary_paths -= ["bin/event_log.py"]' "$RF" >"$T/gt/docs/hermes-local/roles.json"
+ok 'python3 -I "$T/graph.py" "$T/gt" 2>&1 | grep -q event_log.py' "K3: a file reached from an owner command and missing from the list is reported (negative control)"
+ok '[ "$(printf "bin/json.py\0bin/zz-not-stdlib.py\0" | ROLES_FILE=$RF python3 -I $S/roles.py hits /workspace boundary | tr "\0" "\n")" = "bin/json.py" ]' "K3: a new file in bin/ that shadows a standard-library module is a boundary change; another new file is not"
+# K1b: identity, not spelling
+mkdir -p "$T/ov/.Own/sub" "$T/ov/other"; ln -s "$T/ov/.Own" "$T/ov/link"
+ok '[ "$(python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import roles; p = roles.chains([sys.argv[2] + \"/.Own/sub\", sys.argv[2] + \"/.Own/future.json\"]); print(*[ (roles.overlap(sys.argv[2] + x, p) or [None])[0] for x in (\"/.OWN/sub/x\", \"/link/sub/x\", \"/.Own\", \"/other/x\", \"/.Own/FUTURE.JSON\", \"/.Own/ZZZZZZ~1/y\")])" "$S" "$T/ov")" = "inside inside contains None equal unknown" ]' "K1b: a case variant and a link are the protected folder, a folder that holds it is \"contains\", a name that cannot be classified is \"unknown\""
+# K5: the work of an expansion is bounded
+ok 'python3 -I -c "
+import sys, time; sys.path.insert(0, sys.argv[1]); import roles
+t = time.time(); a = roles.braces(\"{a,b}\" * 60 + \"x\"); b = roles.braces(\"{\" + \"a,\" * 50000 + \"a}\" + \"x\" * 100000); c = roles.braces(\"{a,b}\" * 20000 + \"x\" * 50000)
+assert len(a) > 64 and len(b) > 64 and len(c) > 64 and time.time() - t < 2, time.time() - t
+assert roles.braces(\"a{b,c}d\") == [\"abd\", \"acd\"]
+" "$S"' "K5: brace expansion past 64 words is cut off at once, in time, whatever the word's length; a small expansion is unchanged"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
