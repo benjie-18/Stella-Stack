@@ -76,10 +76,11 @@ try:
         HOLD_CH = roles.chains(sorted({f"{ROOT}/{os.path.dirname(d)}" for d in OWNER_REL if os.path.dirname(d)}))   # the folders of the main checkout that hold owner data or state: nothing new is made in them
         CMD_MSG = {}
         MARKERS, PINS = RT["worker_markers"], RT["worker_pins"]   # K9: the worker markers and pins are the table's, named nowhere else
+        MARK_PFX = [m[:max(10, len(m) * 2 // 5)] for m in MARKERS]   # a marker's front part: ${!HERMES_DELEG*} and a quote-split name name it too
         READERS = {v for v in RT["read_verbs"] if " " not in v}   # K7: the verbs that may name an owner path (data: the role table)
         GIT_READS = {v.split(" ", 1)[1] for v in RT["read_verbs"] if v.startswith("git ")}
     except Exception as e:   # every call is refused below until the table (and the index it names) can be read
-        RT, PROTECTED, CONFIG, OWNER_FILES, OWNER_REL, OWNER_CMDS, BY_NAME, OWNER_CH, HOLD_CH, CMD_MSG, READERS, GIT_READS, WT_DIRS, MARKERS, PINS, RT_ERROR = None, [], [], [], [], [], [], [], [], {}, set(), set(), [], [], {}, str(e)[:200]
+        RT, PROTECTED, CONFIG, OWNER_FILES, OWNER_REL, OWNER_CMDS, BY_NAME, OWNER_CH, HOLD_CH, CMD_MSG, READERS, GIT_READS, WT_DIRS, MARKERS, PINS, MARK_PFX, RT_ERROR = None, [], [], [], [], [], [], [], [], {}, set(), set(), [], [], {}, [], str(e)[:200]
     HOMES = roles.homes()
 except Exception as e:   # not even the role module loads: refuse, with a coded line
     print(json.dumps({"action": "block", "message": f"write guard: [{OB}] the role module cannot be loaded ({type(e).__name__}); every write is refused until it is fixed"}))
@@ -669,7 +670,7 @@ def marker_reason(cmd):
         for raw in simple:
             if any(NAME_RX and NAME_RX.search(w.casefold()) for w in raw):   # a spelling the text match missed (merge''-card.sh): the shell's word is the name
                 return ob(named_cmd(" ".join(raw).casefold()))
-            if any(m in w for w in raw for m in MARKERS) and (any(re.fullmatch("(?:" + "|".join(map(re.escape, MARKERS)) + r")\w*=.*", w) for w in raw) or
+            if any(m in w for w in raw for m in MARK_PFX) and (any(re.fullmatch("(?:" + "|".join(map(re.escape, MARK_PFX)) + r")\w*=.*", w) for w in raw) or
                     {w.rsplit("/", 1)[-1] for w in raw} & {"unset", "export", "env", "declare", "typeset", "readonly", "local"}):
                 return KANBAN_CLI
             words = strip_prefixes(raw)[0]
