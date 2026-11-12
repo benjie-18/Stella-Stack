@@ -26,6 +26,7 @@ if [ "${1:-}" = --quick ]; then   # the quick tier (the "quick" list of the test
 fi
 [ $# = 0 ] && set -- "${suite[@]}"
 set -- "${@%-selftest}"   # the watchdog reruns a failed check by the name it printed (<name>-selftest)
+mapfile -t u < <(printf '%s\n' "$@" | awk '!seen[$0]++'); set -- "${u[@]}"   # a name given twice runs once (first-seen order): job folders are per name
 R=$(mktemp -d) || { echo "selftests FAIL (1)"; echo "     FAIL cannot make a temp folder"; exit 1; }
 trap 'chmod -R u+rwX "$R" 2>/dev/null; rm -rf "$R"' EXIT
 

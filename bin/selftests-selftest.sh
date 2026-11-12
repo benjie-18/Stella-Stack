@@ -50,6 +50,8 @@ ok '! overlap a b && [ "$(grep -c "^ok " "$T/out")" = 2 ]' "S2 N=1: the same pat
 echo '{"test_rerun": {"parallel": 2}}' >"$T/set.json"; rm -f "$T/marks"/*; SELFTESTS_TIMES="$T/times" run f a b
 ok '[ "$(sed -n 1p "$T/out")" = "FAIL f-selftest" ] && [ "$(grep "^ok " "$T/out" | tr -d "\n")" = "ok   a-selftestok   b-selftest" ] && [ "$(cut -f2,3 "$T/times" | tr "\n" " ")" = "f	FAIL a	ok b	ok " ] && grep -Eq "^[0-9]+\.[0-9]{3}	f	FAIL$" "$T/times"' "S2 the output is in list order whatever finished first; SELFTESTS_TIMES gets one line per selftest"
 
+run a a-selftest a
+ok '[ "$(cat "$T/out")" = "$(printf "ok   a-selftest\nselftests PASS")" ]' "S2 a name given twice (also as <name>-selftest) runs once, first-seen order"
 # S4 the quick tier: --quick runs the names `test-map.py quick` prints, same isolation and output; an unreadable or empty list is one FAIL, never the full list, never nothing
 cat >"$T/tree/bin/test-map.py" <<'S'
 import os, sys
