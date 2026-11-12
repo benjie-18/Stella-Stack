@@ -85,12 +85,22 @@ def _ansi(cmd):
 DEADLINE = [0.0]   # K5: when the look-ups of one command must be done (monotonic); 0 = no limit (a single path from a tool call)
 
 
+SEEN = {}   # T1: the verdict of each (word, folder, names it uses, recursive) of this call; a command that repeats a path looks it up once
+
+
 def path_why(word, cwd, names=None, recursive=False):
     """Why reading `word` (a path as written, relative to `cwd`) reads a secret, or None."""
     if OWNER_FILES is None:
         return UNREADABLE
     if DEADLINE[0] and time.monotonic() > DEADLINE[0]:
         return "the command names too many paths to check in time"
+    key = (word, cwd, recursive, tuple(sorted((names or {}).items())) if "$" in word else ())
+    if key not in SEEN:
+        SEEN[key] = _path_why(word, cwd, names, recursive)
+    return SEEN[key]
+
+
+def _path_why(word, cwd, names, recursive):
     words = _braces(word)
     if len(words) > 64:
         return f"{word[:60]}… expands to more than 64 words, too many to check"

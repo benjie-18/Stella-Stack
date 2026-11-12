@@ -52,13 +52,13 @@ def _hit(p, ch, rels):
 
 def _owner_dir(p):
     """True when p is a folder that holds an owner settings file, or inside one (RT7-01: never the terminal's folder)."""
-    return _hit(p, DIR_CH, ("equal", "inside", "unknown"))
+    return _hit(p, DIR_CH, ("equal", "inside"))
 
 def secret_path(p):
     n = os.path.normpath(p)
     if re.match(r"/proc/(?:self|thread-self|\d+)(?:/|$)", n):   # another process's environment, memory, fds: a review token lives there while a review runs
         return True
-    if OWNER_FILES is None or _hit(p, FILE_CH, ("equal", "unknown")) or _hit(p, TREE_CH, ("equal", "inside", "unknown")):
+    if OWNER_FILES is None or _hit(p, FILE_CH, ("equal",)) or _hit(p, TREE_CH, ("equal", "inside")):
         return True
     b = os.path.basename(p).casefold()   # B2V-01: .ENV is .env on a case-insensitive mount
     if b not in SECRET_OK and any(fnmatch.fnmatch(b, s) for s in SECRETS if "/" not in s):
@@ -85,12 +85,22 @@ def _ansi(cmd):
 DEADLINE = [0.0]   # K5: when the look-ups of one command must be done (monotonic); 0 = no limit (a single path from a tool call)
 
 
+SEEN = {}   # T1: the verdict of each (word, folder, names it uses, recursive) of this call; a command that repeats a path looks it up once
+
+
 def path_why(word, cwd, names=None, recursive=False):
     """Why reading `word` (a path as written, relative to `cwd`) reads a secret, or None."""
     if OWNER_FILES is None:
         return UNREADABLE
     if DEADLINE[0] and time.monotonic() > DEADLINE[0]:
         return "the command names too many paths to check in time"
+    key = (word, cwd, recursive, tuple(sorted((names or {}).items())) if "$" in word else ())
+    if key not in SEEN:
+        SEEN[key] = _path_why(word, cwd, names, recursive)
+    return SEEN[key]
+
+
+def _path_why(word, cwd, names, recursive):
     words = _braces(word)
     if len(words) > 64:
         return f"{word[:60]}… expands to more than 64 words, too many to check"
@@ -104,9 +114,9 @@ def path_why(word, cwd, names=None, recursive=False):
             return f"{word} is a glob with too many wildcard parts to check"
         for x in [p, raw] + g:
             for q in {x, os.path.realpath(x)}:
-                if _hit(q, FILE_CH, ("equal", "unknown")):
+                if _hit(q, FILE_CH, ("equal",)):
                     return f"{word} is an owner settings file ({q})"   # B2V-16
-                if _hit(q, TREE_CH, ("equal", "inside", "unknown")):
+                if _hit(q, TREE_CH, ("equal", "inside")):
                     return f"{word} is an owner state path of the apply tool ({q}) [STL-CFG-312]"
                 if secret_path(q):
                     return f"{word} is a secret path ({q})"
