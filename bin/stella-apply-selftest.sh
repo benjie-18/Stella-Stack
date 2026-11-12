@@ -236,9 +236,12 @@ printf 'planted-bytes' >"$R/.stella/.stella-apply.dead"; printf keep >"$R/.stell
 ap apply connections --from "$C/conn2.json" >/dev/null 2>&1
 ok '[ ! -e "$R/.stella/.stella-apply.dead" ] && [ -e "$R/.stella/.stella-apply-keep" ]' "G3 the next run sweeps the tool's own stray temp file, only that name"
 mkdir "$(BK)/connections/00000001-unfinished"; printf 'copy' >"$(BK)/connections/00000001-unfinished/file"
-ap check connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-323 "$T/o"' "G3 check reports a backup folder without a readable meta file (323, an unfinished step)"
-ap apply connections --from "$C/conn.json" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "rollback" "$T/o"' "G3 apply refuses while such a folder is there"
-ap rollback connections >"$T/o" 2>&1; ok '[ ! -e "$(BK)/connections/00000001-unfinished" ]' "G3 rollback removes the folder without a meta file"
+# (round 5, Q4: a folder the applied state does not record is never deleted by a command; the owner removes it by hand)
+ap check connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-316.*00000001-unfinished.*remove it by hand" "$T/o"' "G3 check reports a backup folder the applied state does not record, without a meta file (316, named, the way out)"
+ap apply connections --from "$C/conn.json" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-316.*00000001-unfinished.*remove it by hand" "$T/o"' "G3 apply refuses while such a folder is there, naming it and the way out"
+ap rollback connections >"$T/o" 2>&1; rc=$?; kept=$([ -f "$(BK)/connections/00000001-unfinished/file" ] && echo yes)
+rm -r "$(BK)/connections/00000001-unfinished"; ap apply connections --from "$C/conn.json" >"$T/o2" 2>&1; ra=$?
+ok '[ $rc = 1 ] && grep -q STL-CFG-316 "$T/o" && [ "$kept" = yes ] && [ $ra = 0 ] && ap check connections >/dev/null 2>&1' "G3 rollback deletes no folder it did not record (316); the printed way out (remove it by hand) ends the block: the next apply works, check is clean"
 
 # G4 rollback restores only what the tool saved
 for m in damaged missing badmeta; do
@@ -389,9 +392,9 @@ ap apply connections --from "$C/conn.json" >"$T/o" 2>&1; ok '[ $? = 0 ]' "H1 a c
 mkr h2a; ap apply connections --from "$C/conn.json" >/dev/null 2>&1; d=$(ls -d "$(BK)"/connections/*); head -c 40 "$d/meta.json" >"$T/m" && cat "$T/m" >"$d/meta.json"
 ap rollback connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-316 "$T/o" && [ -f "$d/file" ]' "H2 a meta file that is present but unreadable is damage: 316, nothing deleted"
 mkr h2b; ap apply connections --from "$C/conn.json" >/dev/null 2>&1; ap apply connections --from "$C/conn2.json" >/dev/null 2>&1; mkdir "$(BK)/connections/00000009-stray"
-ap rollback connections >"$T/o" 2>&1
-ok '[ $? = 0 ] && grep -q "nothing was restored" "$T/o" && [ ! -e "$(BK)/connections/00000009-stray" ] && cmp -s "$C/conn2.json" "$R/.stella/connections.json" && [ "$(nbk)" = 2 ] && [ "$(nev)" = 2 ]' "H2 removing an unfinished folder is its own step: nothing else is restored"
-ap rollback connections >/dev/null 2>&1; ok 'cmp -s "$C/conn.json" "$R/.stella/connections.json"' "H2 the next rollback undoes the last apply"
+ap rollback connections >"$T/o" 2>&1   # (round 5, Q4: an unrecorded folder is named and kept, 316; nothing else is restored)
+ok '[ $? = 1 ] && grep -q "STL-CFG-316.*00000009-stray.*remove it by hand" "$T/o" && [ -d "$(BK)/connections/00000009-stray" ] && cmp -s "$C/conn2.json" "$R/.stella/connections.json" && [ "$(nbk)" = 2 ] && [ "$(nev)" = 2 ]' "H2 a stray folder stops the rollback on its own: named with the way out, nothing restored, nothing deleted"
+rmdir "$(BK)/connections/00000009-stray"; ap rollback connections >/dev/null 2>&1; ok 'cmp -s "$C/conn.json" "$R/.stella/connections.json"' "H2 after the printed way out (the stray folder removed by hand) the next rollback undoes the last apply"
 mkr h2c; kill_at applied apply connections --from "$C/conn.json" >/dev/null 2>&1; d=$(ls -d "$(BK)"/connections/*); rm "$d/meta.json"; git -C "$R" checkout -q -- .stella/connections.json
 ap check connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "removes it" "$T/o"' "H2 the advice for an unfinished folder (no meta, the file holds the saved bytes) says what the command will do"
 mkr h2d; ap apply connections --from "$C/conn.json" >/dev/null 2>&1; d=$(ls -d "$(BK)"/connections/*); rm "$d/meta.json"
@@ -426,7 +429,7 @@ ok '[ $? = 0 ]' "H4 a lock file replaced while a run waits: the waiter locks the
 # H5 the proof that was lost: the event line fails after the file was replaced
 mkr h5a; mode=$(stat -c %a "$R/.stella/connections.json"); B=$(tree)
 fail_event apply connections --from "$C/conn.json" >"$T/o" 2>&1; rc=$?
-ok '[ $rc = 1 ] && grep -q STL-CFG-318 "$T/o" && [ "$(tree)" = "$B" ] && [ "$(stat -c %a "$R/.stella/connections.json")" = "$mode" ] && [ "$(nbk)" = 0 ] && jq -e ".applied.connections == null and (.backups // {} | length) == 0" "$(ST)" >/dev/null' "H5 apply: the event line fails after the replace: bytes and mode back, no applied record, no backup"
+ok '[ $rc = 1 ] && grep -q STL-CFG-318 "$T/o" && [ "$(tree)" = "$B" ] && [ "$(stat -c %a "$R/.stella/connections.json")" = "$mode" ] && [ "$(nbk)" = 0 ] && { [ ! -e "$(ST)" ] || jq -e ".applied.connections == null and (.backups // {} | length) == 0" "$(ST)" >/dev/null; }' "H5 apply: the event line fails after the replace: bytes and mode back, no applied record (no state file, or one without the key), no backup"
 ap apply connections --from "$C/conn.json" >/dev/null 2>&1; chmod 600 "$R/.stella/connections.json"; rec0=$(jq -c .applied "$(ST)"); B=$(tree); m=$(find "$(BK)" -name meta.json)
 fail_event rollback connections >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 1 ] && grep -q STL-CFG-318 "$T/o" && [ "$(tree)" = "$B" ] && [ "$(stat -c %a "$R/.stella/connections.json")" = 600 ] && [ "$(nbk)" = 1 ] && [ "$(jq -r .status "$m")" = done ] && [ "$(jq -c .applied "$(ST)")" = "$rec0" ]' "H5 rollback: the event line fails after the restore: bytes and mode back, applied state and backup as before, meta status done"
