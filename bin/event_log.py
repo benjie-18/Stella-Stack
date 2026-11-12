@@ -131,9 +131,11 @@ def locked(p):
 SECRETS = set()   # values seen under masked keys; scrub() removes them from any text
 
 def scrub(text):
+    """Each value seen under a masked key, where it stands as a whole value (not inside a longer run of letters and digits), is
+    ***: the tool's own text (a folder name, a code, a command) is never garbled by a short value like 1 or on."""
     for x in sorted(SECRETS, key=len, reverse=True):
         if x:   # an empty value would match between every two characters
-            text = text.replace(x, MASK)
+            text = re.sub(r"(?<![A-Za-z0-9])" + re.escape(x) + r"(?![A-Za-z0-9])", MASK, text)
     return text
 
 def depth(v):
@@ -290,6 +292,7 @@ def append(line, row_id=None, scrub_detail=True):
     try:
         p = log_path()
         with locked(p + ".lock"):
+            made = not os.path.lexists(p)   # a log this append makes and then cannot write a line to is removed again
             fd = open_file(p, os.O_RDWR | os.O_APPEND | os.O_CREAT)
             try:
                 size = os.fstat(fd).st_size
@@ -302,6 +305,8 @@ def append(line, row_id=None, scrub_detail=True):
                 except BaseException:
                     try:
                         os.ftruncate(fd, size)   # whole or not at all
+                        if made and size == 0:
+                            os.unlink(p)
                     except OSError:
                         pass
                     raise
