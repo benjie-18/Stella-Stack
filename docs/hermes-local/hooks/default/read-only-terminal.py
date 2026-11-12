@@ -94,7 +94,10 @@ def path_why(word, cwd, names=None, recursive=False):
             continue   # the standard streams as written (they resolve to this process's own pipes); a link that resolves to one is not exempt
         p = _where(w, cwd, names or {})
         raw = os.path.realpath(os.path.join(cwd or "/", os.path.expanduser(w)))   # without normpath first: the kernel follows a link before it applies ..
-        for x in [p, raw] + (glob.glob(p) if glob.has_magic(p) else []):
+        g = _roles.globs(p) if glob.has_magic(p) else []   # K5: bounded
+        if g is None:
+            return f"{word} is a glob with too many wildcard parts to check"
+        for x in [p, raw] + g:
             for q in {x, os.path.realpath(x)}:
                 if _hit(q, FILE_CH, ("equal", "unknown")):
                     return f"{word} is an owner settings file ({q})"   # B2V-16
@@ -160,7 +163,7 @@ def _search_paths(name, words, base, names):
         ops = ops[1:]   # the first operand is the pattern
     # shortcut: a value-taking option missing from VALUE_OPTS shifts the words; only an existing path counts, so a shifted
     # pattern word never hides the current folder unless it also names an existing path. Session 2 option A replaces this.
-    return [w for w in ops if os.path.exists(p := _where(w, base, names)) or (glob.has_magic(p) and glob.glob(p))]   # RT8-01: a glob that matches names paths
+    return [w for w in ops if os.path.exists(p := _where(w, base, names)) or (glob.has_magic(p) and _roles.globs(p))]   # RT8-01: a glob that matches names paths
 
 def secret_why(cmd, cwd):
     """Why the shell command line `cmd`, run in `cwd`, reads a secret path, or None."""
@@ -175,8 +178,8 @@ def secret_why(cmd, cwd):
         return "the command names a secret path"
     if _owner_dir(cwd):
         return f"{cwd} is the folder that holds an owner settings file"
-    for piece in sorted(set(re.findall(r"[\w.~$@+%-]*(?:/[\w.~$@+%-]*)+", cmd)))[:2000]:   # K1b: any path-like piece of the command text, in code or in quotes, by identity (bounded: K5)
-        if "/" in piece and len(piece) > 1:
+    for piece in sorted({x for x in re.findall(r"[\w.~$@+%/-]+", cmd) if "/" in x})[:2000]:   # K1b: any path-like piece of the command text, in code or in quotes, by identity (bounded: K5, linear)
+        if len(piece) > 1:
             why = path_why(piece, cwd, {})
             if why and ("owner settings" in why or "[STL-CFG-312]" in why):
                 return why

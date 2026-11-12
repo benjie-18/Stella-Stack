@@ -22,7 +22,7 @@ CLI: roles.py check [hermes-root]     validate the table and its coverage of the
                                        {card, workspace, branch} and exit 0; else the failed proof on stderr, exit 1
                                        (exit 3: the board could not be read)
 """
-import codecs, glob, hashlib, json, os, pwd, re, sqlite3, subprocess, sys, time
+import codecs, glob, hashlib, itertools, json, os, pwd, re, sqlite3, subprocess, sys, time
 
 ROOT = "/workspace"   # the stack repo: roles.json, the protected repo paths and the hook sources live here
 PERMS = ("assignable", "may_answer_for_owner", "may_complete", "may_unblock", "may_claim", "may_delegate", "may_create_cards", "may_review")
@@ -617,6 +617,14 @@ def braces(word, limit=64):
     return out
 
 
+def globs(p, limit=500, depth=3):
+    """K5: the matches of a glob pattern, with the work bounded: at most `limit` matches are taken, and a pattern with more than `depth` wildcard
+    path components is too wide to scan (None: the caller refuses it)."""
+    if sum(1 for c in p.split("/") if glob.has_magic(c)) > depth:
+        return None
+    return list(itertools.islice(glob.iglob(p), limit))
+
+
 def expand_word(word, cwd, names=None):
     """G2 (F1 W4): (real paths, unresolved) for a shell word as the shell will read it: braces, ~, variables the hook can know (names, then
     its own environment), globs, then realpath. unresolved is true when an expansion is left that only the shell can compute ($(..), a
@@ -630,7 +638,11 @@ def expand_word(word, cwd, names=None):
         e = os.path.join(cwd or "/", os.path.expanduser(w))
         out.append(os.path.realpath(e))
         if glob.has_magic(e):
-            out += [os.path.realpath(g) for g in sorted(glob.glob(e))[:500]]
+            g = globs(e)
+            if g is None:
+                unres = True   # too many wildcard parts to scan: the caller treats it as a word only the shell can compute
+            else:
+                out += [os.path.realpath(x) for x in sorted(g)]
     return out, unres
 
 

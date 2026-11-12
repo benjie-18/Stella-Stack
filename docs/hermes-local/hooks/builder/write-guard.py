@@ -577,7 +577,7 @@ def note_names(words, names, cwd):
                 names[m[1]] = m[2]
 
 
-PATHLIKE = re.compile(r"[\w.~$@+%-]*(?:/[\w.~$@+%-]*)+")   # something with a slash in it: a path, or the path inside a quoted word or interpreter code
+PATHLIKE = re.compile(r"[\w.~$@+%/-]+")   # runs of path characters; those with a slash in them are paths, or the path inside a quoted word or interpreter code (linear: K5)
 MAX_CANDS = 3000   # K5: no command costs more than this many path look-ups; past it the command is refused
 
 
@@ -585,7 +585,7 @@ def cands(w):
     """The strings of a shell word that may be a path: the word, and the path-like pieces of a word that holds code, an assignment or an option value."""
     out = [w]
     if re.search(r"[\s'\"(){};=,\[\]<>|&]", w) or len(w) > 80:
-        out += PATHLIKE.findall(w)
+        out += [x for x in PATHLIKE.findall(w) if "/" in x]
     return out
 
 
