@@ -40,25 +40,38 @@ It also names the event log, the backup folder, the applied-state file and the r
 relative, has no `..` part and must resolve (symlinks followed) inside the stack root; `check` refuses one that does not,
 and `get`, `list` and `search` never read it. The index row of the index is `owner_only`: it decides which files are.
 Two rows that resolve to one file (`./x` and `x`, a folder row and a row on one of its files) are refused, and neither is
-opened. A row whose file is one of the role table's `owner_settings` must be format `env` and `owner_only`; `check` and the
-read commands never open that file, whatever the row says. When the role table cannot be read, `check` says so, only the
-files of env rows stay closed, and the rules that read the table do not run: the rows they judge (role assignments,
+opened; each of them is refused with that reason, naming every row. A row whose file is one of the role table's
+`owner_settings` must be format `env` and `owner_only`; `check`, `validate` and the read commands never open that file,
+whatever the row or the path says: before a byte is read, the identity of the file (device and inode, from `stat` and again
+from the opened file) is compared with the owner settings files' and every env row's file, so a hard link, a symlink or a
+link swapped during the run is refused unread. A folder row lists the `*.json` names of its folder (by name: `[`, `*`, `?` in
+the row path or the stack root are plain characters, never a glob). When the role table cannot be read, `check` says so, only
+the files of env rows stay closed, and the rules that read the table do not run: the rows they judge (role assignments,
 capabilities, extensions, connections) are refused, the others are still judged and served.
 
 **Every file a row names is judged by every rule of its schema.** All the files of all the rows of one schema form one merged
 view: the cross-file rules read every entry of it, and one entry id in two files (or twice in one) is refused. A schema that
-is one document by nature says so with `"x-one-document": true` (the index, the data policy, the role assignments); a second
-file of such a schema, in another row or in the same folder, is refused. That merged view is what `check` judges and what the
-read commands serve.
+is one document by nature says so with `"x-one-document": true` (the index, the data policy, the role assignments, the
+settings registry, the features, the versions); a second file of such a schema, in another row or in the same folder, makes
+every file of that schema refused (each with a line naming them all), so neither is "the" document and row order decides
+nothing. **A file that fails its schema feeds no rule**: its entries are not in the merged view, and every rule that reads its
+schema does not run; the rows those rules judge get one line "not judged by the cross-file rules: <the refused row> is
+refused". A rule that fails anyway is one line naming every row it read (never the index). That merged view is what `check`
+judges and what the read commands serve.
 
-Schemas use a small JSON Schema subset (the list is in the docstring of `bin/stella_data.py`). A schema that uses any
+Schemas use a small JSON Schema subset (the list is in the docstring of `bin/stella_data.py`). A schema's identity is its name:
+the file `<name>.schema.json` in `.stella/schemas/`. A schema file that is a symbolic link is refused; a byte copy under
+another name is another schema, which the cross-file rules do not read (the schemas folder is owner data). A schema that uses any
 other keyword is an error, never ignored; so is a keyword with a wrong value (`required` as a string, an external `$ref`).
 `const` and `enum` compare by JSON type (`true` is not 1); `pattern` is read as ECMA-262 does, so `$` is the very end of the
 value. Data files are strict JSON: a repeated key, NaN and Infinity are errors. **What a problem line may print** (schema or
 cross-file, in `check`, `validate` and every read command): a value taken from the file under check only when it is an id that
 exists in the data (an entry id, a role, a provider); any other value is named by its field, its JSON type and, for a string, its
 length. A key name taken from the file (an unknown key, a repeated key, a key of a free-form map in a path) is printed only when
-no value pattern of the connections catalog (`redaction_patterns`) matches it; else it is "a masked key" at its path. File paths
+no value pattern of the connections catalog (`redaction_patterns`) matches it; else it is "a masked key" at its path. An entry
+id (an assignment, a provider, a feature, a host, a setting key; a role name only when the role table holds it) is printed the
+same way: "a masked id" when a value pattern matches it. A key name or id longer than 1024 characters, or any of them while
+the catalog's patterns cannot be read, counts as matched. File paths
 from the index are printed: they locate the file. Lines that bin/roles.py writes about the role table are passed through as it
 writes them (item W2). Numbers must fit a float (a number too large, or a non-zero number so small it would read as 0, is refused), strings must be valid Unicode text, and nesting is limited to 64 levels
 (one limit for `check` and the read commands). Every data file needs `schema_version`. `check` also runs the
@@ -87,19 +100,48 @@ connections `subkind`, `label`, `auth_types`, `secrets` (names), `actions[]` and
 of a versions pin; approved hosts `scope` and `approved_by`; the index's `event_log`, `backup_dir` and `applied_state` (only
 their paths are checked here; the apply and event-log tools use them).
 
-Read commands fail closed and never serve what `check` refuses: `get`, `list` and `search` run the same rules as `check` (the
-schema and the cross-file rules) on the files they serve, and a problem of one of those files, or of the index, gives exit 1
-and one `STL-CFG-310` line naming it (the first problem, and how many more), never a traceback, never an empty result and no
-data. A file with no problem of its own is still served while another file has one. A read leaves out what it does not need:
-it does not validate the role table itself, and it opens only the rows whose schema the cross-file rules read or the served
-rows' schema. `list` with no id and `search` serve every row, so a problem anywhere refuses them. `get` on an env-format row
-says the id is known and not readable through this tool (`STL-CFG-319`, no alert line). `get`, `list` and `search` mask the value of any key matching the row's `redact_keys` (at any depth, so a key pasted into
+**A read is judged by exactly the files its rules use.** Read commands fail closed and never serve what `check` refuses: a read
+of a row depends on that row, on every row of every schema read by a rule that judges the row's schema (the list `RULES` in
+`bin/stella_data.py` says which schemas each rule judges and reads; the dependencies are derived from it, never written per
+command), on the role table when such a rule reads it, and on the index. It is served only when none of them has a problem
+(schema or cross-file); else exit 1 and one `STL-CFG-310` line naming the first problem and the row it belongs to ("<row>, which
+this read depends on: ...") and how many more, never a traceback, never an empty result and no data. A file outside that set
+never refuses the read. What each read depends on today:
+
+| read of | depends on (besides the index) |
+|---|---|
+| settings | settings |
+| versions | versions |
+| features | features |
+| approved-hosts | approved-hosts |
+| capabilities | capabilities, the role table |
+| extensions | extensions, the role table |
+| connections | connections, data-policy, the role table |
+| data-policy | data-policy, connections |
+| role-assignments | role-assignments, connections, data-policy, the role table |
+| the index (`data-files`) | nothing else |
+
+A read runs only the rules that read one of those files, and opens only the files those rules read (a rule that raises is a
+problem of every row it read, so it runs for a read of any of them). `list` with no id and `search` serve every row, so a
+problem anywhere refuses them. `get` on an env-format row says the id is known and not readable through this tool
+(`STL-CFG-319`, no alert line). `get`, `list` and `search` mask the value of any key matching the row's `redact_keys` (at any depth, so a key pasted into
 a free-form object such as `parameters`, `cost` or `limits` is masked), the default of a `secret` setting, and every string a
-value pattern of the connections catalog (`redaction_patterns`, from every entry) matches, inside lists too; `search` matches
-the masked text, so it never answers for a masked value. `check` refuses a `redact_keys` pattern that is not a regular
+value pattern of the connections catalog (`redaction_patterns`, from every entry) matches, inside lists too; a key name the
+schema does not fix (a key of a free-form object such as `parameters`, a project name, an entry id used as a key) and an entry
+id in `list` and `search` are masked (`***`, then `***2`, ...) the same way. No pattern runs on a string longer than 1024
+characters: it is masked whole (`MASK_LIMIT`), so a read takes bounded time per string. The catalog is a dependency of every
+read through its patterns only: when they cannot be read (no JSON row of the connections schema, a row of it that is not
+opened, a file of it that does not load, a `redaction_patterns` that is not a list of strings, a pattern that does not
+compile; a file check refuses for another field still gives its patterns, since one more pattern never prints a value), every read that is otherwise
+served masks every string, id and free-form key name instead of refusing (numbers, booleans and the key names the schema fixes
+stay), so the settings read keeps its numbers and nothing unmasked is printed; `check` names what is wrong with the catalog.
+`search` matches the masked text, so it never answers for a masked value. `check` refuses a `redact_keys` pattern that is not a regular
 expression. The patterns are the owner's picks: a name pattern also hides a non-secret field whose name it matches (the
 shipped one ends in `token`, so `usd_per_input_token` would be shown as `***`), and a value no pattern matches is shown;
-change the pattern, not the code. `validate <schema> <file>` prints each problem as a `STL-CFG-310` line, for every schema. A command that fails in a way not listed here ends in exit 1 and one
+change the pattern, not the code. `validate <schema> <file>` prints each problem as a `STL-CFG-310` line, for every schema;
+it refuses, unread, a file that is an owner setting (the identity test above); `validate roles` finds the data policy through
+the rows whose schema is `data-policy`. `validate` answers about any other JSON file the caller names, against a schema of the
+stack root it runs on. A command that fails in a way not listed here ends in exit 1 and one
 `STL-CFG-310` line naming only the exception type. `search` matches values, not key names, ignoring case (also non-ASCII text).
 
 **Secrets are names only.** A `secrets` field holds variable names such as `SOME_API_KEY`, never a value. The schema enforces
@@ -146,6 +188,8 @@ One schema for tools, skills, MCP servers, commands and extensions: `id`, `kind`
 `outputs`, `allowed_roles`, `risk_class`, `hosts`, `secrets`, `status` (proposed, approved, disabled), `source`, `triage`.
 `search` lists approved entries first. **Finding a capability grants nothing:** using it still goes through the role
 table and the gates. *To add one:* append an entry for everything you add (a tool, skill, command, MCP server, extension).
+A card branch may change this file, so its text is bounded by the schema: `id` 128 characters, `summary`, `inputs`, `outputs`
+and `source` 1024, each keyword and allowed role 128, each host 256, at most 64 keywords, allowed roles, hosts and secrets.
 
 ### `.stella/features.json`
 `entries[]`: `id`, `owner_phase`, `status` (planned, off, preview, on), `depends_on[]`, `flag`.
@@ -156,6 +200,8 @@ One manifest per file (see its README); `enabled` is the disable switch; install
 
 ### `.stella/versions.json`
 `pins[]`: `id`, `kind`, `version`, `source`, optional `integrity`, and `tested_with` (`stack_commit`, `date`, `with[]`).
+A card branch may change this file, so its text is bounded by the schema: `id`, `kind`, `version`, `stack_commit` and `date`
+128 characters, `source`, `integrity` and each `with` item 1024, at most 64 `with` items.
 
 ### `.stella/settings.json` (settings registry)
 Every owner-editable setting: `key`, `label`, `type`, `validation`, `scope`, `sensitivity` (plain, identity_critical,
