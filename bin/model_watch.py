@@ -24,16 +24,23 @@ def settings():
     return watchdog_settings.load()["model_watch"]
 
 
+def model_answer(text):
+    """(model, base_url) from what `hermes config get model` prints (lines `key: value`, quotes stripped; "" when absent). The one
+    reader of that answer: bin/hardcode-lint.sh reads a profile's model and host with it too."""
+    c = dict(re.findall(r"^\s*([A-Za-z_]+):\s*(\S.*?)\s*$", text, re.M))
+    return c.get("default", "").strip("'\""), c.get("base_url", "").strip("'\"")
+
+
 def model_config(profile_home):
-    """{default, base_url, ...} from `hermes config get model` in the profile's own home (lines `key: value`)."""
+    """(model, base_url) from `hermes config get model` in the profile's own home; ("", "") when the call fails."""
     r = subprocess.run(["hermes", "config", "get", "model"], capture_output=True, text=True, timeout=30,
                        env=dict(os.environ, HERMES_HOME=profile_home))
-    return dict(re.findall(r"^\s*([A-Za-z_]+):\s*(\S.*?)\s*$", r.stdout, re.M)) if r.returncode == 0 else {}
+    return model_answer(r.stdout) if r.returncode == 0 else ("", "")
 
 
 def server_cause(cfg, s):
     """(cause token, detail for alerts.log): what the profile's model server says about the profile's model."""
-    base, model = cfg.get("base_url", "").strip("'\""), cfg.get("default", "").strip("'\"")
+    model, base = cfg
     if not base or not model:
         return "unknown", "the profile's model or base_url is not configured"
     root = re.sub(r"/v1/?$", "", base.rstrip("/"))

@@ -299,6 +299,18 @@
       "resolvable": false
     },
     {
+      "code": "STL-LIM-405",
+      "area": "LIM",
+      "severity": "warning",
+      "title": "a Claude request was lost (not sent, not saved)",
+      "message": "A request to Claude {model} for card {card} was not sent and could not be saved for later: {problem}. It is lost. Later requests that cannot be sent are lost the same way until this is fixed; this alert comes at most once an hour.",
+      "action": "fix or move aside the file the message names, then run the lost requests again: .supervisor/escalations.log has one NOT_QUEUED line for each (see STL-LIM-405 in docs/alert-codes.md).",
+      "cause": "The list of held requests (.supervisor/state/queue.jsonl) cannot be read, parsed or written: a cut or hand-edited line, a permission, or a full disk.",
+      "check": ".supervisor/escalations.log (NOT_QUEUED, one line per lost request); .supervisor/state/queue.jsonl; `bin/escalate-drain.sh --list`.",
+      "related": "F1 W5; bin/escalate.sh (F15, F28)",
+      "resolvable": false
+    },
+    {
       "code": "STL-RCV-501",
       "area": "RCV",
       "severity": "warning",
