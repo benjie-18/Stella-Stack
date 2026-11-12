@@ -65,10 +65,11 @@ try:
         WT_DIRS = glob.glob(f"{ROOT}/.worktrees/*")   # K1b: a path is protected by what it is, in the main checkout and in every card worktree of the stack
         OWNER_CH = roles.chains([f"{b}/{d}" for b in [ROOT, *WT_DIRS] for d in OWNER_REL])
         CMD_MSG = {}
+        MARKERS, PINS = RT["worker_markers"], RT["worker_pins"]   # K9: the worker markers and pins are the table's, named nowhere else
         READERS = {v for v in RT["read_verbs"] if " " not in v}   # K7: the verbs that may name an owner path (data: the role table)
         GIT_READS = {v.split(" ", 1)[1] for v in RT["read_verbs"] if v.startswith("git ")}
     except Exception as e:   # every call is refused below until the table (and the index it names) can be read
-        RT, PROTECTED, CONFIG, OWNER_FILES, OWNER_REL, OWNER_CMDS, BY_NAME, OWNER_CH, CMD_MSG, READERS, GIT_READS, WT_DIRS, RT_ERROR = None, [], [], [], [], [], [], [], {}, set(), set(), [], str(e)[:200]
+        RT, PROTECTED, CONFIG, OWNER_FILES, OWNER_REL, OWNER_CMDS, BY_NAME, OWNER_CH, CMD_MSG, READERS, GIT_READS, WT_DIRS, MARKERS, PINS, RT_ERROR = None, [], [], [], [], [], [], [], {}, set(), set(), [], [], {}, str(e)[:200]
     HOMES = roles.homes()
 except Exception as e:   # not even the role module loads: refuse, with a coded line
     print(json.dumps({"action": "block", "message": f"write guard: [{OB}] the role module cannot be loaded ({type(e).__name__}); every write is refused until it is fixed"}))
@@ -100,7 +101,7 @@ V4A_OPS = (re.compile(r"\*\*\*\s*Move\s+File:\s*(.+?)\s*->\s*(.+)"), re.compile(
            re.compile(r"\*\*\*\s*Move\s+to:\s*(.+)"))
 OWNER_ENV = ("commands may not mention owner.env: it holds the owner config. If it must change, call kanban_block with "
              "kind needs_input and say what should change")
-KANBAN_CLI = ("builders never run `hermes kanban` or touch HERMES_DELEGATED_CHILD_CONTEXT: change your card with the "
+KANBAN_CLI = ("builders never run `hermes kanban` or touch " + ", ".join(MARKERS or ["the worker markers"]) + ": change your card with the "
               "kanban tools (kanban_comment, kanban_block, kanban_complete, ...)")
 OWNER_DATA_MSG = ("owner data: only the owner's apply path writes it. If it must change, call kanban_block with kind needs_input "
                   "and say what should change")
@@ -137,7 +138,7 @@ def named_cmd(text):
     return next((msg for rel, msg in CMDS.items() if m and os.path.splitext(os.path.basename(rel))[0].casefold() == m[0]), None)
 
 
-FINAL = {OWNER_ENV, KANBAN_CLI}
+FINAL = {KANBAN_CLI}
 
 
 def ob(detail):
@@ -178,9 +179,10 @@ def worktree(p):
             CALL["fault"] = ((j or {}).get("task") or {}).get("id") or "?", roles.streak(j), why
         return None, f"no card worktree known: {why}"
     card, ws = j["task"]["id"], os.path.realpath(j["task"].get("workspace_path") or "/")
-    env = os.environ.get("HERMES_KANBAN_WORKSPACE", "")
+    CALL["card"] = card
+    env = os.environ.get(PINS["workspace"], "")
     if env and os.path.realpath(env) != ws:
-        return None, f"no card worktree known: HERMES_KANBAN_WORKSPACE {env} is not card {card}'s workspace {ws}"
+        return None, f"no card worktree known: {PINS['workspace']} {env} is not card {card}'s workspace {ws}"
     for repo in sorted(repos() or [ROOT], key=len, reverse=True):   # RT6-01: the F8 rule in the deepest bound repo holding the workspace (S3A-01: a project repo inside the stack root)
         rr = os.path.realpath(repo)   # S3A-01b (RT15): never realpath `own`, a worktree swapped for a symlink to the repo root would resolve to itself
         if inside(ws, rr) or inside(rr, ws):   # / contains every repo too
@@ -643,7 +645,7 @@ def marker_reason(cmd):
         for raw in simple:
             if any(NAME_RX and NAME_RX.search(w.casefold()) for w in raw):   # a spelling the text match missed (merge''-card.sh): the shell's word is the name
                 return ob(named_cmd(" ".join(raw).casefold()))
-            if any("HERMES_DELEG" in w for w in raw) and (any(re.fullmatch(r"HERMES_DELEG\w*=.*", w) for w in raw) or
+            if any(m in w for w in raw for m in MARKERS) and (any(re.fullmatch("(?:" + "|".join(map(re.escape, MARKERS)) + r")\w*=.*", w) for w in raw) or
                     {w.rsplit("/", 1)[-1] for w in raw} & {"unset", "export", "env", "declare", "typeset", "readonly", "local"}):
                 return KANBAN_CLI
             words = strip_prefixes(raw)[0]
@@ -661,7 +663,7 @@ def command_reason(cmd, base):
     cmd = clean(cmd)
     low = whole.casefold()
     if any(os.path.basename(f).casefold() in low for f in OWNER_FILES):   # K6: the owner settings files, from roles.json
-        return OWNER_ENV
+        return ob(OWNER_ENV)   # K8: an older rule that catches it first still says so with the code
     if NAME_RX and NAME_RX.search(low):   # owner_commands_by_name: any command text naming it (the breadth it had at 900d9b3)
         return ob(named_cmd(low))
     for part in [cmd, *BODIES]:   # the command, then each here-document line: judged by the text checks they had before round 2 (VER2-08)
@@ -719,7 +721,7 @@ def command_reason(cmd, base):
 
 def reason(p):
     if RT is None:
-        return f"the role table cannot be read ({RT_ERROR}) [STL-CFG-303]; every write is refused until it is fixed"
+        return f"the role table cannot be read ({RT_ERROR}); every write is refused until it is fixed [STL-CFG-303]"
     name, a = p.get("tool_name"), p.get("tool_input") or {}
     base = p.get("cwd") or os.getcwd()
     CALL.clear()
@@ -765,14 +767,30 @@ def reason(p):
     return None
 
 
+PAY = sys.stdin.read()
 try:
-    why = reason(json.load(sys.stdin))
+    P = json.loads(PAY)
+    why = reason(P)
 except Exception as e:  # fail closed: a call we cannot judge is refused, with a coded line
-    why = ob(f"the write guard could not judge this call ({type(e).__name__})")
+    P, why = {}, ob(f"the write guard could not judge this call ({type(e).__name__})")
 if why is None:
     sys.exit(0)
+
+
+def coded(code, problem):   # K8: the catalog code, its plain message, one alert line for the call (the role's other hook that refuses it writes none); the role and the card named
+    try:
+        role = roles.role_of(RT, P.get("profile"))[0]
+    except Exception:
+        role = "unknown"
+    card = CALL.get("card")
+    return roles.plain(code, once=PAY, problem=f"{problem} (role {role}{', card ' + card if card else ''})")
+
+
+if why.endswith("[STL-CFG-303]"):
+    print(json.dumps({"action": "block", "message": "write guard: " + coded("STL-CFG-303", "the role table or the data index cannot be read by the write guard") + " Every write is refused until it is fixed."}))
+    sys.exit(2)
 if why.startswith(f"[{OB}] "):   # one alert line per refusal, the catalog's plain message, no value from any owner file
-    why = roles.plain(OB, problem="a role's attempt on owner data, an owner state path or an owner command") + " " + why[len(OB) + 3:]
+    why = coded(OB, "a role's attempt on owner data, an owner state path or an owner command") + " " + why[len(OB) + 3:]
 tail = "" if why.startswith("[STL-GRD-603]") else " (D40). This refusal is final for this attempt."
 print(json.dumps({"action": "block", "message": f"write guard: {why}{tail}"}))
 sys.exit(2)

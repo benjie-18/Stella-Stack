@@ -22,7 +22,7 @@ CLI: roles.py check [hermes-root]     validate the table and its coverage of the
                                        {card, workspace, branch} and exit 0; else the failed proof on stderr, exit 1
                                        (exit 3: the board could not be read)
 """
-import codecs, glob, json, os, pwd, re, sqlite3, subprocess, sys
+import codecs, glob, hashlib, json, os, pwd, re, sqlite3, subprocess, sys, time
 
 ROOT = "/workspace"   # the stack repo: roles.json, the protected repo paths and the hook sources live here
 PERMS = ("assignable", "may_answer_for_owner", "may_complete", "may_unblock", "may_claim", "may_delegate", "may_create_cards", "may_review")
@@ -634,14 +634,34 @@ def expand_word(word, cwd, names=None):
     return out, unres
 
 
-def plain(code, **kv):
-    """'[CODE] <the catalog's plain message>' for a refusal, with the alert line logged: one call per refusal (G4). kv holds no owner value."""
-    log_alert(code, **kv)
+def plain(code, once=None, **kv):
+    """'[CODE] <the catalog's plain message>' for a refusal, with the alert line logged: one call per refusal (G4). kv holds no owner value. once: a key for
+    the call (its payload); the hooks of one role that refuse the same call each print the message, but only the first writes the alert line (K8)."""
+    log_alert(code, once=once, **kv)
     try:
         import alert_catalog
         return f"[{code}] " + alert_catalog.render(code, kv)[0].split("\n")[1]
     except Exception:
         return f"[{code}]"
+
+
+def _first(code, key):
+    """True for the first caller with this (code, key, parent process) in 30 s: a marker file made with O_EXCL in the alert folder (hooks run as separate
+    processes under one parent, so a marker is how they tell they refuse the same call)."""
+    d = os.path.join(os.environ.get("ESCALATE_SUP_DIR") or f"{ROOT}/.supervisor", "once")
+    os.makedirs(d, exist_ok=True)
+    for old in glob.glob(d + "/*"):   # markers older than an hour go
+        if time.time() - os.stat(old).st_mtime > 3600:
+            os.unlink(old)
+    f = os.path.join(d, hashlib.sha1(f"{code}|{key}|{os.getppid()}".encode()).hexdigest()[:24])
+    try:
+        os.close(os.open(f, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        return True
+    except FileExistsError:
+        if time.time() - os.stat(f).st_mtime > 30:
+            os.utime(f)
+            return True
+        return False
 
 
 def protected(d):
@@ -875,7 +895,7 @@ def streak(j):
                    default=""))
 
 
-def log_alert(code, streak="", **kv):
+def log_alert(code, streak="", once=None, **kv):
     """One line in .supervisor/logs/alerts.log (bin/alert_catalog.py), and the rendered message's first line. K11: when
     the code's catalog "page" policy says so (once per card per streak, or once an hour), the message also goes to #alerts
     as bin/alert.sh sends it (`hermes send` to $ALERT_TARGET, with the root profile's home, which owns the Discord bot:
@@ -887,6 +907,8 @@ def log_alert(code, streak="", **kv):
     try:
         import alert_catalog
         body, tag, kv2 = alert_catalog.render(code, kv)
+        if once and not _first(code, once):   # another hook of this call wrote the line
+            return body.split("\n", 1)[0]
         alert_catalog.log(tag, kv2)
         due, f = alert_catalog.page_due(tag, str(kv.get("card") or ""), streak)
         if due and not scratch():   # a scratch table never pages the owner
