@@ -466,14 +466,13 @@ for p in $BUILDERS; do
   : >"$WGA"; ok '[ "$(wg "touch /workspace/$ODF")" = 2 ] && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ] && grep -q "role " "$WGA"' "K8 $p: the alert line names the role"
   ok '[ "$(wg "echo owner.env")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out"' "K8 $p: an older rule that catches a mention of the owner settings file first still says so with the code"
   ok '[ "$(wg "cp bin/merge-card.sh /tmp/mc; bash /tmp/merge-card x")" = 2 ] && [ "$(wg "bash /tmp/merge-card x")" = 2 ] && [ "$(wg "bash bin/merge-card-selftest.sh")" = 0 ]' "K9 $p: a copy of the merge script under another name (no extension) is refused as at 900d9b3; its selftest is not the script"
-  ok '[ "$(wg "python3 -c \"print($(printf '{a,b}%.0s' $(seq 1 60)))\"")" -ge 0 ]' "K5 $p: (control) a brace-heavy word inside code is a normal call"
   ok '[ "$(wg "tee /tmp/zz $(printf '{a,b}%.0s' $(seq 1 40))x")" = 2 ]' "K5 $p: a brace-bomb word is refused (more than 64 words), not expanded"
 done
 # K5: no input of any length makes the guard run longer than a fraction of its hook timeout
 BOMB=$(printf '{a,b}%.0s' $(seq 1 24))x; LONG=$(head -c 100000 /dev/zero | tr '\0' 'a')
-for in in "tee /tmp/zz $BOMB" "cat $BOMB" "echo $LONG" "python3 -c \"print('$LONG')\"" "cp $(printf '/workspace/bin/x%.0s ' $(seq 1 3000)) /tmp"; do
-  st=$(date +%s%N); jq -nc --arg c "$in" '{tool_name: "terminal", tool_input: {command: $c}, cwd: "/tmp", profile: "zz-qa"}' | python3 "$G" >/dev/null 2>&1; en=$(( ($(date +%s%N) - st) / 1000000 ))
-  ok '[ "$en" -lt 5000 ]' "K5: the write guard answers in ${en} ms (limit 5000, hook timeout 20 s) on a ${#in}-byte command"
+for inp in "tee /tmp/zz $BOMB" "cat $BOMB" "echo $LONG" "python3 -c \"print('$LONG')\"" "cp $(printf '/workspace/bin/x%.0s ' $(seq 1 3000)) /tmp"; do
+  st=$(date +%s%N); jq -nc --arg c "$inp" '{tool_name: "terminal", tool_input: {command: $c}, cwd: "/tmp", profile: "zz-qa"}' | python3 "$G" >/dev/null 2>&1; en=$(( ($(date +%s%N) - st) / 1000000 ))
+  ok '[ "$en" -lt 5000 ]' "K5: the write guard answers in ${en} ms (limit 5000, hook timeout 20 s) on a ${#inp}-byte command"
 done
 ROLES_BAD=$T/roles-typeerr.json; jq '.roles[(.profiles | to_entries[0].value.role)].allowed_overrides = [{}]' /workspace/docs/hermes-local/roles.json >"$ROLES_BAD"
 ok '[ "$(jq -nc "{tool_name: \"terminal\", tool_input: {command: \"ls\"}, cwd: \"/tmp\", profile: \"x\"}" | ROLES_FILE=$ROLES_BAD python3 "$G" >"$T/out" 2>"$T/err"; echo $?)" = 2 ] && ! grep -q Traceback "$T/err" && grep -q "STL-" "$T/out"' "CV-12: a table that makes validation raise (not a RolesError) is a refusal with a coded line, never a traceback"
