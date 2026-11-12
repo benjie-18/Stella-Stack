@@ -14,29 +14,42 @@ check fails when: the map is unreadable, repeats a key or breaks its schema; a s
 target or an always gate has no selftest file; a selftest is missing from the suite list of the runner (or the list
 cannot be read); a suite selftest is not executable, on disk or in the mode git records; a file that looks like a test
 (test_like) is neither a suite selftest nor listed in not_tests; a selftest can reach a file (see reach) whose
-selection leaves that selftest out; a row that is not a scan row has a glob that matches every path; a row that adds
-no target beyond the always gates matches more than prose (see prose); or a tracked file is matched by no row (and is
-not on the full list, which the stack ships empty).
+selection leaves that selftest out; a row that is not a scan row has a glob that does not start with a literal first
+path component (see loose: such a glob matches paths under names the map does not spell); a row that, for a file it
+matches, adds no target beyond the always gates and the scan rows matching that file, matches more than prose (see
+prose); a file a row matches has a name select never narrows; or a tracked file is matched by no row (and is not on
+the full list, which the stack ships empty).
 select: full is the answer for an input or a map that cannot be trusted, never for a file of a checked tree. A file on
 the full list (matched without regard to case), or matched by no row, selects the full suite; so does no file name at
 all. The map, its schema and this tool select their rows' targets like any other file: safe, because this tool's
 selftest is an always gate and runs `check`, which refuses a map whose rows leave out a selftest that reaches a file. `scan` rows add targets (a selftest that reads a whole folder) but do not count as a match. Pass
 both sides of a rename (`git diff --name-only --no-renames`): the new path alone can narrow the selection. A name with
-white space (at either end too, on stdin as well), a control character, a leading dash or bytes that are not UTF-8
-selects the full suite. Whatever stops select before it has an answer IS the answer full (exit 0 like every full answer,
+white space (at either end too, on stdin as well), a control character (U+0000 to U+001F, U+007F to U+009F), a leading
+dash or bytes that are not UTF-8 selects the full suite. A narrow answer always holds this tool's own selftest (named
+from this file's name and test_file) when the root has it, whatever the map says, so a map cannot drop the gate that
+runs `check`; in the tool's own tree a missing selftest of the tool is the answer full. select checks itself the shape
+of what it reads (always, full, globs and targets are lists of names), whatever the schema file accepts. Whatever stops select before it has an answer IS the answer full (exit 0 like every full answer,
 so a caller that pipes the answer into a runner runs everything; the plain reason on stderr; with --json `full` true,
 the reason and no targets): names on stdin that cannot be read, a map or a schema that is missing, unreadable, a
-folder, empty, not JSON, no object or against its schema, a root that does not exist, any other error. select also
-answers full when the map breaks the rule that needs no file list (a glob over every path), and when the selection
-would be empty. Only a tool that cannot start (python3 or one of its own modules missing) prints nothing and exits
-non-zero: a caller treats a non-zero exit or an empty answer as full. shortcut: the rules that need the file list (prose, reach, selftests, suite list, modes) are
-left to `check` (about 1.7 s on the stack tree against 0.05 s for a select), which every selection runs through the
-always gate test-map; upgrade if a map may drop that gate."""
+folder or other non-regular file, empty, not JSON, no object or against its schema, a module of this tool that is missing
+or broken, a root that does not exist, any other error. select also
+answers full when the map breaks the rule that needs no file list (loose), and when the selection would be empty. Only
+a missing python3 prints nothing and exits non-zero: a caller treats a non-zero exit or an empty answer as full. Run
+directly (no -I), the tool restarts itself under `python3 -I`, so PYTHONPATH and the current folder do not decide what
+it imports. shortcut: a file planted in this tool's own folder under a standard module's name is still imported;
+upgrade with the boundary rule for that folder. shortcut: the rules that need the file list (prose, reach, selftests, suite list, modes) are
+left to `check` (about 2 s on the stack tree against 0.05 s for a select), which every narrow selection runs through
+this tool's own selftest."""
 import fnmatch, json, os, re, subprocess, sys, textwrap
 
+if __name__ == "__main__" and not sys.flags.isolated:   # run directly: PYTHONPATH and the current folder must not decide what is imported
+    try:
+        os.execv(sys.executable, [sys.executable, "-I", *sys.argv])
+    except OSError:
+        pass   # no interpreter to restart under: go on as started
+
 BIN = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, BIN)   # python3 -I does not add the script folder
-import alert_catalog, stella_data
+sys.path.insert(0, BIN)   # python3 -I does not add the script folder; this tool's modules are imported where they are used
 
 ROOT = os.environ.get("STELLA_ROOT") or os.path.dirname(BIN)
 MAP = ".stella/test-map.json"
@@ -52,6 +65,12 @@ def no_repeats(pairs):
 
 def read():
     """(map, schema problems)."""
+    try:   # here, not at the top: select owes its answer even when a module of this tool is missing or broken
+        import stella_data
+    except Exception as e:
+        raise RuntimeError(f"a module of this tool cannot be loaded ({type(e).__name__}: {e}), so the map cannot be checked") from None
+    if os.path.exists(os.path.join(ROOT, MAP)) and not os.path.isfile(os.path.join(ROOT, MAP)):
+        raise ValueError("not a regular file")   # a FIFO would hang the open
     with open(os.path.join(ROOT, MAP), encoding="utf-8") as f:
         m = json.load(f, object_pairs_hook=no_repeats)
     with open(SCHEMA, encoding="utf-8") as f:
@@ -133,28 +152,41 @@ def uncommented(text):
     return re.sub(r"(?m)^[ \t]*#(?!!).*$", "", text)
 
 
-# shortcut: a glob is taken to match every path when it matches these unlikely names; upgrade if a real glob needs them
-PROBES = ("zq9", ".zq9", "zq9/.zq9/zq9.zq9")
+def loose(globs):
+    """The first glob that does not start with a literal first path component: a folder or top-level file name with no
+    wildcard character, not empty, "." or "..". A glob that does can only match paths under the name it spells, so a
+    path under a name no row spells (a new folder, a new top-level file) is matched by no such glob, whatever follows."""
+    return next((g for g in globs for first in [g.split("/")[0]] if first in ("", ".", "..") or re.search(r"[*?\[]", first)), None)
 
 
-def every(globs):
-    return next((g for g in globs if all(fnmatch.fnmatchcase(p, g) for p in PROBES)), None)
+def shape(m):
+    """select reads these whatever the schema file accepts: a string where a list belongs would be read letter by letter."""
+    names = lambda v: isinstance(v, list) and all(isinstance(x, str) for x in v)
+    if not (isinstance(m, dict) and names(m.get("always")) and names(m.get("full")) and isinstance(m.get("test_file"), str)
+            and m["test_file"].count("{name}") == 1 and isinstance(m.get("map"), list)
+            and all(isinstance(r, dict) and names(r.get("globs")) and names(r.get("targets")) for r in m["map"])):
+        raise ValueError("always, full, and the globs and targets of every map row must be lists of names, and test_file one {name} pattern")
 
 
 def wide(m):
-    """The rule that needs no file list: a row that is not a scan row may have no glob that matches every path."""
+    """The rule that needs no file list: every glob of a row that is not a scan row starts with a literal first path
+    component (loose), so no such row matches a path under a name the map does not spell."""
     return [f"map row {i} ({', '.join(r['globs'])}) {'is not a scan row,' if r['targets'] else 'has no targets'} and its "
-            f"glob {every(r['globs'])} matches every path" for i, r in enumerate(m["map"], 1) if not r.get("scan") and every(r["globs"])]
+            f"glob {loose(r['globs'])} matches every path of a folder or top-level file it does not name: start each glob with a literal folder or file name"
+            for i, r in enumerate(m["map"], 1) if not r.get("scan") and loose(r["globs"])]
 
 
-def prose(m, files):
-    """A row that adds no target beyond the always gates selects what a row with no targets selects, so it may match only
-    prose: refuse a row that matches code (follow, #!), an executable, a test-like file, or a file that a code or data
-    file (the `data` globs; every file when the list is empty or missing) names, by the name search reach uses. The
-    selftest file of a gate the row names, and its tool named like it (bin/test-map.py for bin/test-map-selftest.sh), are
-    the exception: only that gate can test them. One problem per row; a glob over every path is wide()'s."""
-    rows = [(i, r) for i, r in enumerate(m["map"], 1)
-            if not set(r["targets"]) - set(m["always"]) and not r.get("scan") and not every(r["globs"])]
+def prose(m, files, reached):
+    """A row is judged file by file: where it adds no target beyond the always gates and the scan rows that match the
+    file, the file is selected as by a row with no targets, so it must be prose: refuse a row that so matches code
+    (follow, #!), an executable, a test-like file, or a file that a code or data file (the `data` globs; every file when
+    the list is empty or missing) names, by the name search reach uses. The exception is the selftest file of a target
+    the row names, and that selftest's tool: the file named like the target beside it (bin/test-map.py for
+    bin/test-map-selftest.sh) that the selftest itself names (reached). One problem per row; a loose glob is wide()'s."""
+    scans = [r for r in m["map"] if r.get("scan")]
+    adds = lambda r, f: set(r["targets"]) - set(m["always"]) - {t for s in scans if matches(f, s["globs"]) for t in s["targets"]}
+    rows = [(i, r, fs) for i, r in enumerate(m["map"], 1) if not r.get("scan") and not loose(r["globs"])
+            for fs in [[f for f in sorted(files) if matches(f, r["globs"]) and not adds(r, f)]] if fs]
     if not rows:
         return []
     by_base, named = {}, {}
@@ -181,13 +213,16 @@ def prose(m, files):
     head, tail = m["test_file"].split("{name}")
     path = lambda t: head + t + tail
     probs = []
-    for i, r in rows:
-        row = f"map row {i} ({', '.join(r['globs'])}) " + (
-            f"adds no target beyond the always gates ({', '.join(r['targets'])})" if r["targets"] else "has no targets")
-        # a gate's own files: its selftest, and its tool named like it (bin/{name}.<ext>), which only that gate can test
-        own = lambda f: any(f == path(t) or (f.startswith(head + t + ".") and "/" not in f[len(head):]) for t in r["targets"])
-        bad = next(((f, w) for f in sorted(files) if matches(f, r["globs"]) and not own(f) for w in [why(f)] if w), None)
+    for i, r, fs in rows:
+        # a target's own files: its selftest, and the tool named like it (bin/{name}.<ext>) that this selftest names
+        own = lambda f: any(f == path(t) or (f in reached.get(t, ()) and f.startswith(head + t + ".") and "/" not in f[len(head):])
+                            for t in r["targets"])
+        bad = next(((f, w) for f in fs if not own(f) for w in [why(f)] if w), None)
         if bad:
+            row = f"map row {i} ({', '.join(r['globs'])}) " + (
+                "has no targets" if not r["targets"] else
+                f"adds no target beyond the always gates ({', '.join(r['targets'])})" if not set(r["targets"]) - set(m["always"]) else
+                f"adds no target ({', '.join(r['targets'])}) for {bad[0]} beyond the always gates and the scan rows that match it")
             probs.append(f"{row}, so it may match only prose, but it matches {bad[0]}: {bad[1]}")
     return probs
 
@@ -225,11 +260,15 @@ def reach(m, files, tests):
     return out
 
 
+# several names joined into one (a quoted $(git diff), -z output) would match one narrow row; C0 and C1 controls; a surrogate is a byte that is not UTF-8
+ODD = re.compile(r"^-|[\s\x00-\x1f\x7f-\x9f\ud800-\udfff]")
+
+
 def select(files, m=None):
     m = m or load()
     targets, reason = set(m["always"]), []
     for f in files:
-        if re.search(r"[\s\x00-\x1f\x7f\ud800-\udfff]", f) or f.startswith("-"):   # several names joined into one (a quoted $(git diff), -z output) would match one narrow row; a surrogate is a byte that is not UTF-8
+        if ODD.search(f):
             reason.append(f"{f!r}: not one plain file name (white space, a control character, a leading dash or not UTF-8)")
             continue
         f = os.path.normpath(f)
@@ -288,11 +327,14 @@ def check():
             probs.append(f"{tests[t]} is not executable in git (mode {files[tests[t]]}): a fresh checkout cannot run it")
     reached = reach(m, files, tests)
     for f in sorted(files):
+        if ODD.search(f) and any(matches(os.path.normpath(f), r["globs"]) for r in m["map"] if not r.get("scan")):
+            probs.append(f"{f}: a row matches this file, but select never narrows such a name (white space, a control character "
+                         "or a leading dash): every change to it would select the full suite; rename the file")
         sel = select([f], m)
         missing = [] if sel["full"] else sorted(t for t in tests if f in reached[t] and t not in sel["targets"])
         if missing:
             probs += pack(f"{f}: its map rows leave out ", missing, ", which can reach it")
-    return probs + prose(m, files)
+    return probs + prose(m, files, reached)
 
 
 def fail(problem, out=sys.stdout, where=""):
@@ -305,7 +347,14 @@ def fail(problem, out=sys.stdout, where=""):
         n = n * 10 + 9
     for i, part in enumerate(parts, 1):
         part = part if len(parts) == 1 else f"(part {i} of {len(parts)}) {part}"
-        print("STL-CFG-310 " + alert_catalog.render("STL-CFG-310", {"problem": part + where})[0].split("\n")[1], file=out)   # the plain message line
+        line = part + where   # what goes out when the catalog module or its list is missing or broken: the problem itself
+        try:
+            import alert_catalog
+            text = alert_catalog.render("STL-CFG-310", {"problem": line})[0].split("\n")[1]   # the plain message line
+            line = text if line in text else line
+        except Exception:
+            pass
+        print("STL-CFG-310 " + line, file=out)
 
 
 def complain(probs, out=sys.stdout):
@@ -335,6 +384,7 @@ def main(argv):
                 files = [f for f in sys.stdin.buffer.read().decode("utf-8", "surrogateescape").split("\n") if f]
             what = MAP
             m = load()
+            shape(m)
             what = "the selection could not be made"
             # no file name at all (an empty stdin, no argument) is a failed diff, not "nothing changed": the full suite
             sel = select(files, m) if files else {"full": True, "reason": ["no file name given"], "targets": sorted(m["always"])}
@@ -342,6 +392,13 @@ def main(argv):
             if broken:   # a map that fails check cannot narrow anything
                 complain(broken, sys.stderr)
                 sel["full"], sel["reason"] = True, sel["reason"] + [f"the map fails check: {p}" for p in broken]
+            if not sel["full"]:   # a narrow answer holds this tool's own selftest, which runs check: no map can drop its gate
+                gate = os.path.splitext(os.path.basename(__file__))[0]
+                mine = m["test_file"].replace("{name}", gate)
+                if os.path.isfile(os.path.join(ROOT, mine)):
+                    sel["targets"] = sorted({*sel["targets"], gate})
+                elif os.path.realpath(ROOT) == os.path.realpath(os.path.dirname(BIN)):   # a scratch root has no selftest of this tool
+                    raise ValueError(f"{mine}, the selftest of this tool, is missing from its own tree, so nothing would check the map")
         except Exception as e:
             sel = {"full": True, "reason": [f"{what}: {type(e).__name__}: {e}"], "targets": []}
             complain(sel["reason"], sys.stderr)

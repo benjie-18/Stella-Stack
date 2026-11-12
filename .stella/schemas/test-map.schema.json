@@ -50,6 +50,7 @@
         "type": "object",
         "properties": {
           "globs": {
+            "description": "Unless the row is a scan row, each glob starts with a literal first path component (a folder or top-level file name without * ? [): bin/test-map.py check refuses any other.",
             "type": "array",
             "minItems": 1,
             "items": {
