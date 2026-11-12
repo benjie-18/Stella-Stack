@@ -620,11 +620,10 @@ rm -f "$T/p2-second-link"
 mkr p2b; mkdir -p "$(dirname "$(ST)")"; printf '{"schema_version":1,"applied":{},"counter":"7"}\n' >"$(ST)"
 ap check connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-310.*counter.*applied.json" "$T/o"' "P2 a counter of the wrong type names the field and the file"
 mkr p2c; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; m=$(find "$(BK)" -name meta.json); jq '.status = "pending"' "$m" >"$T/m" && cat "$T/m" >"$m"
-jq '(.entries[] | select(.key == "CALL_TIMEOUT") | .validation.maximum) = 500' "$R/.stella/settings.json" >"$T/x" && cp "$T/x" "$R/.stella/settings.json"
+jq '(.entries[] | select(.key == "CALL_TIMEOUT") | .validation.minimum) = 700' "$R/.stella/settings.json" >"$T/x" && cp "$T/x" "$R/.stella/settings.json"   # the saved 600 fails, the current 900 passes
 ap rollback limits >"$T/o1" 2>&1; ap apply limits --from "$C/g5ok.env" >"$T/o2" 2>&1
 ok 'grep -qF "apply limits --from <file>\` with a copy of the file as it is" "$T/o1" && grep -qF "apply limits --from <file>\` with a copy of the file as it is" "$T/o2"' "P2 a pending backup whose saved copy no longer validates: apply and rollback print the same one way out (W3-CV3-08)"
-cp "$R/.supervisor/limits.env" "$C/p2cur.env"; jq '(.entries[] | select(.key == "CALL_TIMEOUT") | .validation.maximum) = 100000' "$R/.stella/settings.json" >"$T/x" && cp "$T/x" "$R/.stella/settings.json"
-ap apply limits --from "$C/p2cur.env" >/dev/null 2>&1; ok 'ap check limits >/dev/null 2>&1' "P2 and that way out works"
+cp "$R/.supervisor/limits.env" "$C/p2cur.env"; ap apply limits --from "$C/p2cur.env" >/dev/null 2>&1; ok 'ap check limits >/dev/null 2>&1' "P2 and that way out works (no rule relaxed)"
 
 # P3: what a row is comes from the record or the index row; the disk is compared with it
 mkr p3a; ok 'ap check >/dev/null 2>&1' "P3 control: an untouched root is clean"
