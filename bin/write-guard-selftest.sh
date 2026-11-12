@@ -16,8 +16,7 @@ C=t_$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n'); W=$T/wt/$C; mkdir -p "$W"
 ln -s /workspace/config "$W/link"
 G=${WG:-/workspace/docs/hermes-local/hooks/builder/write-guard.py}
 fails=0
-ok() { local REAL=; case $1 in *'$WGA'*|*'$AL'*|*FAKE_LOG*) REAL=1 ;; esac   # T1 (r5): a case that reads the alert log or the board calls runs its hooks as real processes
-  if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
+ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 unset HERMES_KANBAN_WORKSPACE HERMES_KANBAN_TASK
 # K1: the card is proven by its own worker process, never by HERMES_KANBAN_* (Hermes sets them after the worker starts and
 # strips them from hooks). A fake worker, bound to a running card on a stub board (`hermes` first on PATH), runs the hook
@@ -26,7 +25,7 @@ export PATH="$T/bin:$PATH" FAKE_CARDS=$T/cards FAKE_LOG=$T/hermes.log
 EXPECT_HOME=$(getent passwd "$(id -u)" | cut -d: -f6)/.hermes; export EXPECT_HOME
 mkdir -p "$T/bin" "$FAKE_CARDS"
 sleep 600 & STR=$!   # a live process that is no ancestor of any hook
-trap 'kill $STR $(cat "$T"/bj/*/jpid 2>/dev/null) 2>/dev/null; rm -rf "$T" ${NR:+"$NR"} ${NR2:+"$NR2"} ${LN:+"$LN"}' EXIT   # NR, NR2, LN: the S3A-01 rows build folders under /workspace/.scratch, outside $T
+trap 'kill $STR 2>/dev/null; rm -rf "$T" ${NR:+"$NR"} ${NR2:+"$NR2"} ${LN:+"$LN"}' EXIT   # NR, NR2, LN: the S3A-01 rows build folders under /workspace/.scratch, outside $T
 cat >"$T/bin/hermes" <<'SH'
 #!/usr/bin/env bash
 # stub: `kanban --board <b> show <id> --json` and `kanban --board <b> list [--assignee <p>] --status running --json`, from
@@ -81,6 +80,25 @@ bound() {  # bound <fixture> <card> <assignee> <workspace> <branch> <payload> --
   for _ in $(seq 200); do [ -s "$d/pid" ] && break; sleep 0.02; done
   [ "$fx" = none ] || mk "$fx" "$c" "$a" "$ws" "$br" "$(cat "$d/pid")"
   touch "$d/go"; wait "$w"; cp "$d/out" "$T/out"; cat "$d/rc"; }
+hookrun() {  # hookrun <fixture> <card> <profile> <workspace> <tool> <tool_input json> <cwd> [env...]: the guard's exit code, as run
+  # by a worker bound per <fixture> to <card>, assigned to ${ASG:-<profile>}; the payload names <profile>
+  local fx=$1 c=$2 pr=$3 ws=$4 tool=$5 in=$6 cwd=$7; shift 7
+  bound "$fx" "$c" "${ASG:-$pr}" "$ws" "stella/$c-x" "$(jq -nc --arg t "$tool" --argjson a "$in" --arg c "$cwd" --arg p "$pr" \
+    '{tool_name: $t, tool_input: $a, session_id: "s1", cwd: $c, profile: $p, extra: {}}')" -- env "$@" python3 "$G"; }
+wjson() { jq -nc --arg p "$1" '{path: $p, content: "x"}'; }
+tjson() { jq -nc --arg c "$1" '{command: $c}'; }
+# run <tool> <tool_input json> [cwd]: the guard's exit code; its message in $T/out. The card is ${CARD-$C} (none when CARD is
+# empty) and its recorded workspace ${WS-$W}; HERMES_KANBAN_WORKSPACE is set to the same value, as Hermes keeps it. No
+# HERMES_KANBAN_TASK: Hermes strips it from the hook, so the card comes from the worker's process tree only.
+run() { local c=${CARD-$C} fx=bind; [ -n "$c" ] || fx=none
+  hookrun "$fx" "$c" builder-local "${WS-$W}" "$1" "$2" "${3:-$W}" "HERMES_KANBAN_WORKSPACE=${WS-$W}"; }
+wf() { run write_file "$(jq -nc --arg p "$1" '{path: $p, content: "x"}')" "${2:-$W}"; }
+sh() { run terminal "$(jq -nc --arg c "$1" '{command: $c}')" "${2:-$W}"; }
+said() { grep -q -- "$1" "$T/out"; }
+
+# ---- T1 (F1 W4 r5): lines 1..98 above are the harness the qa tests take; the in-process route is defined here, after it
+ok() { local REAL=; case $1 in *'$WGA'*|*'$AL'*|*FAKE_LOG*) REAL=1 ;; esac   # T1 (r5): a case that reads the alert log or the board calls runs its hooks as real processes
+  if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 hookrun() {  # hookrun <fixture> <card> <profile> <workspace> <tool> <tool_input json> <cwd> [env...]: the guard's exit code, as run
   # by a worker bound per <fixture> to <card>, assigned to ${ASG:-<profile>}; the payload names <profile>
   local fx=$1 c=$2 pr=$3 ws=$4 tool=$5 in=$6 cwd=$7 pay; shift 7
@@ -145,17 +163,6 @@ bjrun() {   # bjrun <card> <assignee> <workspace> <branch> <payload> <class> [en
   fi
   echo "$rc"; }
 bjstop() { local d; [ -s "$T/bjdirs" ] || return 0; while read -r d; do printf 'QUIT\n' >"$d/in"; done <"$T/bjdirs"; : >"$T/bjdirs"; }
-wjson() { jq -nc --arg p "$1" '{path: $p, content: "x"}'; }
-tjson() { jq -nc --arg c "$1" '{command: $c}'; }
-# run <tool> <tool_input json> [cwd]: the guard's exit code; its message in $T/out. The card is ${CARD-$C} (none when CARD is
-# empty) and its recorded workspace ${WS-$W}; HERMES_KANBAN_WORKSPACE is set to the same value, as Hermes keeps it. No
-# HERMES_KANBAN_TASK: Hermes strips it from the hook, so the card comes from the worker's process tree only.
-run() { local c=${CARD-$C} fx=bind; [ -n "$c" ] || fx=none
-  hookrun "$fx" "$c" builder-local "${WS-$W}" "$1" "$2" "${3:-$W}" "HERMES_KANBAN_WORKSPACE=${WS-$W}"; }
-wf() { run write_file "$(jq -nc --arg p "$1" '{path: $p, content: "x"}')" "${2:-$W}"; }
-sh() { run terminal "$(jq -nc --arg c "$1" '{command: $c}')" "${2:-$W}"; }
-said() { grep -q -- "$1" "$T/out"; }
-
 ok '[ "$(wf "$W/a.md")" = 0 ] && [ "$(wf sub/b.md)" = 0 ]' "write_file inside the own worktree (absolute and relative): allowed"
 ok '[ "$(wf /workspace/config/owner.env)" = 2 ] && said "only inside their own worktree"' "write_file /workspace/config/owner.env: refused, says to write in the worktree"
 ok '[ "$(wf /workspace/bin/x)" = 2 ]' "write_file /workspace/bin/x: refused"
