@@ -672,12 +672,12 @@ cp "$R/.supervisor/limits.env" "$C/p2cur.env"; ap apply limits --from "$C/p2cur.
 mkr p3a; ok 'ap check >/dev/null 2>&1' "P3 control: an untouched root is clean"
 rm "$R/.stella/connections.json"; mkdir "$R/.stella/connections.json"
 ap check connections >"$T/o1" 2>&1; r1=$?; ap check >"$T/o2" 2>&1; r2=$?; ap apply connections --from "$C/conn.json" >"$T/o3" 2>&1; r3=$?
-ok '[ $r1 = 1 ] && [ $r2 = 1 ] && grep -q "STL-CFG-314.*folder" "$T/o1" && [ $r3 = 1 ] && grep -q STL-CFG-313 "$T/o3"' "P3 a single-file row whose file became a folder: drift in check (314, exit 1), apply refused (D2)"
-mkr p3b; rm "$R/config/owner.env"; mkdir "$R/config/owner.env"; ap check owner-settings >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-314 "$T/o"' "P3 an env row whose file became a folder is drift (W3-VAL3-05)"
+ok '[ $r1 = 1 ] && [ $r2 = 1 ] && grep -q "STL-CFG-310.*put the file back.*folder" "$T/o1" && [ $r3 = 1 ] && grep -q STL-CFG-313 "$T/o3"' "P3 a single-file row whose file became a folder: one line in check (310, the row is not opened, exit 1), apply refused (D2)"
+mkr p3b; rm "$R/config/owner.env"; mkdir "$R/config/owner.env"; ap check owner-settings >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-310 "$T/o"' "P3 an env row whose file became a folder is one line in check (310) (W3-VAL3-05)"
 mkr p3c; rm -rf "$R/.stella/extensions"; printf '{}\n' >"$R/.stella/extensions"
 ap check extensions >"$T/o1" 2>&1; r1=$?; ap apply extensions/fake-ext.json --from "$C/fake-ext.json" >"$T/o2" 2>&1; r2=$?
-ok '[ $r1 = 1 ] && grep -q STL-CFG-314 "$T/o1" && [ $r2 = 1 ] && grep -q STL-CFG-313 "$T/o2" && [ "$(cat "$R/.stella/extensions")" = "{}" ]' "P3 a folder row whose folder became a file: drift, and apply refuses (never a new kind of target)"
-mkr p3d; rm -rf "$R/.stella/extensions"; ap check extensions >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-314.*missing" "$T/o"' "P3 a missing folder of a folder row is drift"
+ok '[ $r1 = 1 ] && grep -q STL-CFG-310 "$T/o1" && [ $r2 = 1 ] && grep -q STL-CFG-313 "$T/o2" && [ "$(cat "$R/.stella/extensions")" = "{}" ]' "P3 a folder row whose folder became a file: one line in check (310), and apply refuses (never a new kind of target)"
+mkr p3d; rm -rf "$R/.stella/extensions"; ap check extensions >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-310.*mkdir -p .stella/extensions.*does not exist" "$T/o"' "P3 a missing folder of a folder row is one line in check (310) with the way out"
 mkr p3e; cp "$C/fake-ext.json" "$R/.stella/extensions/fake-ext.json"; git -C "$R" add -A >/dev/null 2>&1; git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qm ext
 rm "$R/.stella/extensions/fake-ext.json"; mkdir "$R/.stella/extensions/fake-ext.json"; ap check extensions >"$T/o" 2>&1
 ok '[ $? = 1 ] && grep -q "STL-CFG-314.*fake-ext.json" "$T/o"' "P3 a committed entry that became a folder is drift (314)"
@@ -839,6 +839,26 @@ ok '[ $rc = 1 ] && grep -q "chmod u+w .stella" "$T/o"' "Q7 a dry run makes the r
 mkr q7h; ap apply connections --from "$C/conn.json" --dry-run >/dev/null 2>&1; w0=$(whole)
 inproc 'sa.text = lambda *a, **k: os.kill(os.getpid(), signal.SIGKILL)' apply connections --from "$C/conn2.json" --dry-run >/dev/null 2>&1
 ap check connections >/dev/null 2>&1; ok '[ "$(whole)" = "$w0" ] && [ -z "$(stages)" ]' "Q7 a dry run killed at its diff leaves the root as it was and no staging copy past the next command (W3-VAL4-07)"
+
+# Q2 what a row IS: the data tool's one rule (stella_data.folder_row); the disk and the applied record are compared with it
+mkr q2; mkdir -p "$R/.stella/qa-folder.json" "$R/.stella/qa-caps"; cp "$C/fake-ext.json" "$R/.stella/qa-single"; cp "$C/fake-ext.json" "$R/.stella/qa-folder.json/a.json"
+jq '.entries = [.entries[0] | .id = "qa-cap-one"]' "$R/.stella/capabilities.json" >"$R/.stella/qa-caps/a.json"
+q2row() { printf '{"id":"%s","path":"%s","schema":"%s","format":"json","owner_only":false,"redact_keys":[],"list_key":%s,"id_field":"%s"}' "$@"; }
+jq --argjson a "$(q2row qa-single .stella/qa-single extension null id)" --argjson b "$(q2row qa-folder .stella/qa-folder.json extension null id)" \
+   --argjson c "$(q2row qa-caps .stella/qa-caps capabilities '"entries"' id)" \
+   --argjson d "$(jq -c '.files[]|select(.id=="limits")|.id="qa-env"|.path="qa-newdir/qa.env"|.owner_only=false' "$R/.stella/data-files.json")" \
+   '.files += [$a, $b, $c, $d]' "$R/.stella/data-files.json" >"$T/x" && cp "$T/x" "$R/.stella/data-files.json"
+git -C "$R" add -A >/dev/null 2>&1; git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qm kinds
+jq '.entries[0].summary = "Q2 caps"' "$R/.stella/qa-caps/a.json" >"$C/q2c.json"; printf 'QA_X=1\n' >"$C/q2d.env"; w0=$(whole | quiet)
+ap apply qa-single --from "$C/fake-ext2.json" >"$T/oa" 2>&1; ra=$?; ap apply qa-folder/a.json --from "$C/fake-ext2.json" >"$T/ob" 2>&1; rb=$?
+ap apply qa-env --from "$C/q2d.env" >"$T/od" 2>&1; rd=$?
+ok '[ $ra = 1 ] && grep -q "STL-CFG-313.*ends in .json" "$T/oa" && [ $rb = 1 ] && grep -q "STL-CFG-313.*rename the path of qa-folder" "$T/ob" && [ $rd = 1 ] && grep -q "STL-CFG-313.*mkdir -p qa-newdir" "$T/od" && [ "$(whole | quiet)" = "$w0" ]' "Q2 a one-file json row with no suffix and a folder named *.json are refused with the way out (the data tool refuses them too); an env row whose folder is missing is refused before any write, naming the folder (W3-RT4-05 a, b, d)"
+ap check >"$T/o" 2>&1; ok '[ "$(grep -c "STL-CFG-310.*qa-single" "$T/o")" = 1 ] && [ "$(grep -c "STL-CFG-310.*qa-folder" "$T/o")" = 1 ]' "Q2 check shows one line for each row whose disk disagrees with the rule"
+ap apply qa-caps/a.json --from "$C/q2c.json" >"$T/oc" 2>&1; ok '[ $? = 0 ]' "Q2 a folder row with a list key is a folder of entries and applies (W3-RT4-05 c)"
+mkr q2r; ap apply connections --from "$C/conn.json" >/dev/null 2>&1; mkdir "$R/.stella/conns"; cp "$C/conn.json" "$R/.stella/conns/a.json"
+jq '(.files[] | select(.id == "connections") | .path) = ".stella/conns"' "$R/.stella/data-files.json" >"$T/x" && cp "$T/x" "$R/.stella/data-files.json"
+ap check connections >"$T/o1" 2>&1; r1=$?; ap rollback connections/a.json >"$T/o2" 2>&1; r2=$?
+ok '[ $r1 = 1 ] && grep -q "put the index path of connections back" "$T/o1" && [ $r2 = 1 ] && grep -q "put the index path of connections back" "$T/o2"' "Q2 an applied record that disagrees with the rule (the index path changed after an apply) refuses that row with its way out, one line in check"
 
 $AP bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "usage error exits 2"
 [ $fails = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
