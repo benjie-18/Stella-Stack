@@ -105,6 +105,8 @@ ok '[ "$(grep -c "merge-card.sh: running this branch'"'"'s own test command in t
 ok '[ "$(FAKE_APPROVED=t_00000001 mc t_00000001)" = 0 ] && [ "$(g rev-list --parents -n1 HEAD | wc -w)" = 3 ] && [ "$(head_of "$T/remote.git" main)" = "$h0" ]' "clean merge: --no-ff merge commit on main; without --push the remote is untouched"
 ok '[ "$(grep -c "running this branch" "$T/out")" = 1 ] && [ "$(grep -n "running this branch" "$T/out" | cut -d: -f1)" -lt "$(grep -n "^merged " "$T/out" | cut -d: -f1)" ]' "D42: a clean merge prints the warning once, before the merge"
 ok 'g rev-parse -q --verify stella/t_00000001-x >/dev/null && [ -d "$T/repo/.worktrees/t_00000001" ]' "the card branch and worktree are kept"
+sleep 1.5   # B.1 (r5): longer than the box's sweep helper waits after its launcher ends
+ok '[ ! -e "$T/repo/.worktrees/merge-check-t_00000001" ] && [ ! -e "$T/repo/.git/worktrees/merge-check-t_00000001" ] && ! g rev-parse -q --verify merge-check/t_00000001 >/dev/null' "B.1 (r5): the throw-away test worktree, its git dir entry and its branch are gone after the merge, and stay gone (no late sweep re-makes them)"
 ok '[ "$(FAKE_APPROVED=t_00000001 mc t_00000001)" = 3 ] && grep -q "ahead" "$T/out"' "a merged branch (not ahead of main) is refused"
 h1=$(head_of "$T/repo")
 ok '[ "$(FAKE_APPROVED=t_00000002 mc t_00000002 --push)" = 0 ] && [ "$(head_of "$T/remote.git" main)" = "$(head_of "$T/repo")" ] && [ "$(head_of "$T/repo")" != "$h1" ]' "--push pushes main to its upstream (the scratch bare remote)"

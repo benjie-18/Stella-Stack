@@ -939,6 +939,12 @@ ok 'cmp -s "$W/docs/hermes-local/plugins/os-box/__init__.py" "$H5/profiles/$P/pl
 ok 'grep -qx -- "-p $R config set terminal.backend local" "$A5/calls" && ! grep -q -- "-p $R plugins enable" "$A5/calls" && [ ! -e "$H5/profiles/$R/plugins" ]' "5.5 an unboxed profile is pinned to the unboxed backend and gets no plugin"
 n1=$(grep -c ' set \| enable ' "$A5/calls"); ok '[ "$(reg --check)" = 1 ] && grep -q "plugin os-box DRIFT" "$T/out" && [ "$(grep -c " set \| enable " "$A5/calls")" = "$n1" ]' "5.6 --check reports the plugin drift and changes nothing"
 
+# B.1 (r5): the sweep never writes into a worktree the caller has removed (it re-made .worktrees/<card>/.git and .git/worktrees/<card>)
+ok 'ROLES_FILE=$T/roles.json python3 -I -c "
+import os, sys; sys.path.insert(0, sys.argv[1]); import box
+t = sys.argv[2]; wt, gd = t + \"/gone/.worktrees/t_0000g0ne\", t + \"/gone/.git/worktrees/t_0000g0ne\"
+box._sanitise({\"wt\": wt, \"gd\": gd, \"common\": t + \"/gone/.git\"}, {wt + \"/.git\": b\"gitdir: \" + gd.encode() + b\"\\n\", gd + \"/gitdir\": wt.encode() + b\"/.git\\n\"})
+sys.exit(1 if os.path.lexists(wt) or os.path.lexists(gd) else 0)" "$W/bin" "$T"' "B.1 (r5): the sweep after a box writes nothing into a worktree (and git dir) the caller removed meanwhile"
 exec {CW}>&- {CR}<&-; wait "$CPID"   # the validator driver ends
 [ -n "${KEEP:-}" ] && echo "KEPT $T"
 [ "$fails" = 0 ] && echo "box selftest PASS" || { echo "box selftest FAIL ($fails)"; exit 1; }
