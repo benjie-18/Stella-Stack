@@ -74,13 +74,12 @@ try:
         WT_DIRS = glob.glob(f"{ROOT}/.worktrees/*")   # K1b: a path is protected by what it is, in the main checkout and in every card worktree of the stack
         OWNER_CH = roles.chains([f"{b}/{d}" for b in [ROOT, *WT_DIRS] for d in OWNER_REL])
         HOLD_CH = roles.chains(sorted({f"{ROOT}/{os.path.dirname(d)}" for d in OWNER_REL if os.path.dirname(d)}))   # the folders of the main checkout that hold owner data or state: nothing new is made in them
-        CMD_MSG = {}
         MARKERS, PINS = RT["worker_markers"], RT["worker_pins"]   # K9: the worker markers and pins are the table's, named nowhere else
         MARK_PFX = [m[:max(10, len(m) * 2 // 5)] for m in MARKERS]   # a marker's front part: ${!HERMES_DELEG*} and a quote-split name name it too
         READERS = {v for v in RT["read_verbs"] if " " not in v}   # K7: the verbs that may name an owner path (data: the role table)
         GIT_READS = {v.split(" ", 1)[1] for v in RT["read_verbs"] if v.startswith("git ")}
     except Exception as e:   # every call is refused below until the table (and the index it names) can be read
-        RT, PROTECTED, CONFIG, OWNER_FILES, OWNER_REL, OWNER_CMDS, BY_NAME, OWNER_CH, HOLD_CH, CMD_MSG, READERS, GIT_READS, WT_DIRS, MARKERS, PINS, MARK_PFX, RT_ERROR = None, [], [], [], [], [], [], [], [], {}, set(), set(), [], [], {}, [], str(e)[:200]
+        RT, PROTECTED, CONFIG, OWNER_FILES, OWNER_REL, OWNER_CMDS, BY_NAME, OWNER_CH, HOLD_CH, READERS, GIT_READS, WT_DIRS, MARKERS, PINS, MARK_PFX, RT_ERROR = None, [], [], [], [], [], [], [], [], set(), set(), [], [], {}, [], str(e)[:200]
     HOMES = roles.homes()
 except Exception as e:   # not even the role module loads: refuse, with a coded line
     print(json.dumps({"action": "block", "message": f"write guard: [{OB}] the role module cannot be loaded ({type(e).__name__}); every write is refused until it is fixed"}))
@@ -132,15 +131,17 @@ CD_MSG = ("the terminal stays inside your worktree: Hermes keeps its folder betw
 CMDS = {c[len(ROOT) + 1:]: f"{c[len(ROOT) + 1:]} is an owner command: no role runs it (the owner runs it from the owner's own path; merging a card into main is the owner's step, F31)"
         for c in OWNER_CMDS}
 CMD_CH = roles.chains([f"{b}/{c}" for b in [ROOT, *(WT_DIRS if RT else [])] for c in CMDS])
-CMD_MSG.update({f"{b}/{c}": m for b in [ROOT, *(WT_DIRS if RT else [])] for c, m in CMDS.items()})
 NAME_RX = re.compile("|".join(r"(?<![\w-])" + re.escape(n) + r"(?![\w-])" for n in BY_NAME)) if BY_NAME else None
 
 
 def owner_cmd_of(rp):
     """The refusal text when rp (a path) is an owner command of the stack, or its copy in a card worktree of the stack, by what the path IS (a short name
     or a case variant included); else None. A copy elsewhere is a different file: the name check (named_cmd) and the box and the merge cover it."""
-    r = roles.overlap(rp, CMD_CH)
-    return CMD_MSG.get(r[1]) if r and r[0] in ("equal", "unknown") else None
+    r = roles.overlap(rp, worktree_chains(rp, CMD_CH, list(CMDS), "cmd"))
+    if not r or r[0] not in ("equal", "unknown"):
+        return None
+    q = r[1]
+    return CMDS.get(q.split("/.worktrees/", 1)[1].split("/", 1)[1] if "/.worktrees/" in q else q[len(ROOT) + 1:])
 
 
 def named_cmd(text):
@@ -166,11 +167,30 @@ def resolve(path, base):
     return os.path.realpath(os.path.join(base, os.path.expanduser(os.path.expandvars(path))))
 
 
+WTC = {}   # chains of the protected paths of a card worktree that does not exist yet (or was made after this hook started), by (folder, kind)
+
+
+def worktree_chains(rp, base, rels, kind):
+    """`base`, and the protected paths `rels` of the card worktree rp lies in when that worktree is not one of WT_DIRS (a path under <stack>/.worktrees/<card> is
+    judged as that card's own copy whether or not the folder exists yet)."""
+    m = re.match(re.escape(ROOT.casefold()) + r"/\.worktrees/[^/]+", rp.casefold())
+    wt = rp[:m.end()] if m else None
+    if not wt or wt in WT_DIRS:
+        return base
+    if (wt, kind) not in WTC:
+        WTC[wt, kind] = roles.chains([f"{wt}/{d}" for d in rels])
+    return base + WTC[wt, kind]
+
+
+def owner_chains(rp):
+    return worktree_chains(rp, OWNER_CH, OWNER_REL, "data")
+
+
 def owner_data_hit(rp):
     """F1 W4/K1b: rp (a path) is, or is inside, an owner data path of the stack (bin/roles.py owner_paths: owner data, the owner settings, the apply
     tool's state), in its main checkout or in a card worktree of it, decided by identity (roles.overlap): another spelling of it, a short name or a
     case variant, is the same path, and a name that cannot be classified counts. Reading owner data stays allowed; this is asked of writes only."""
-    r = roles.overlap(rp, OWNER_CH)
+    r = roles.overlap(rp, owner_chains(rp))
     return bool(r) and r[0] in ("equal", "inside", "unknown")
 
 
@@ -608,7 +628,7 @@ def named_path(texts, cwd, names, budget, ch=None):
             if "$" not in c:
                 MEMO.add((c, cwd, id(ch)))
             for rp in words_of(c, cwd, names)[0]:
-                r = roles.overlap(rp, ch or OWNER_CH)
+                r = roles.overlap(rp, (worktree_chains(rp, CMD_CH, list(CMDS), "cmd") if ch is CMD_CH else ch) or owner_chains(rp))
                 if ch is CMD_CH and r and r[0] not in ("equal", "unknown"):
                     r = None   # an owner command is named by its file, not by a folder that holds it
                 if ch is HOLD_CH and r and r[0] == "contains":
@@ -645,7 +665,7 @@ def named_why(words, cwd, names, budget):
     found = named_path([w for w in words if not ASSIGN.fullmatch(w) or "/" in w], cwd, names, budget)
     if not found:   # the main checkout's folders that hold owner data (.stella, the state folders): no new file or folder is made in them by an unknown writer
         found = named_path([w for w in words if not ASSIGN.fullmatch(w) or "/" in w], cwd, names, budget, HOLD_CH)
-    if not found and (r := roles.overlap(cwd, OWNER_CH)) and r[0] in ("equal", "inside", "unknown"):
+    if not found and (r := roles.overlap(cwd, owner_chains(cwd))) and r[0] in ("equal", "inside", "unknown"):
         found = cwd, r[0]
     if not found and re.sub(r"(?<=[A-Za-z])[0-9.]+$", "", (strip_prefixes(words)[0] or [""])[0].rsplit("/", 1)[-1]) in INTERPRETERS:   # code an interpreter is given may run an owner command
         found = named_path([w for w in words if not ASSIGN.fullmatch(w) or "/" in w], cwd, names, budget, CMD_CH)
