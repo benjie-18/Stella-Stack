@@ -14,7 +14,7 @@ or bin/roles.py prove says this process is a worker or cannot tell), STL-CFG-312
 back on the controlling terminal (none = no terminal), STL-CFG-317; an unknown key, STL-CFG-311 with one alert line.
 Exit: 0 ok (a set of the value already stored is "no change"); 1 refused or failed; 2 usage. The value of a secret is never
 printed, logged or put in a message. Only env-format stores are written (the stores of the registry today)."""
-import json, os, re, subprocess, sys, tempfile
+import fcntl, json, os, re, subprocess, sys, tempfile
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
 import event_log as el
@@ -78,24 +78,24 @@ def is_owner_file(row):
     return row["owner_only"] or row["path"] in role_table()["owner_settings"]
 
 
-def read_store(row):
-    """(file bytes or None, {key: value}) of an env-format store."""
+def read_store(row, code="STL-CFG-313"):
+    """(file bytes or None, {key: value}) of an env-format store. code: the catalog code of a store that cannot be read (a change that failed, or for a read, a data file that is invalid)."""
     try:
         with open(el.path(row["path"]), "rb") as f:
             raw = f.read()
     except FileNotFoundError:
         return None, {}
     except (OSError, ValueError) as e:
-        raise Refuse("STL-CFG-313", f"{row['id']} cannot be read: {type(e).__name__}")
+        raise Refuse(code, f"{row['id']} cannot be read: {type(e).__name__}")
     try:
         text = raw.decode("utf-8-sig")
         cfg = oc.parse_env(text, row["id"])
     except (oc.OwnerConfigError, UnicodeDecodeError) as e:
-        raise Refuse("STL-CFG-313", f"{row['id']} is not a valid env file: {str(e)[:120]}")
+        raise Refuse(code, f"{row['id']} is not a valid env file: {str(e)[:120]}")
     keys = [m[1] for l in text.split("\n") if (m := oc.LINE.fullmatch(l))]
     dup = sorted({k for k in keys if keys.count(k) > 1})   # G5: the apply tool refuses a key held twice, so no verdict ("no change") is given on such a file
     if dup:
-        raise Refuse("STL-CFG-313", f"{row['id']} holds a key twice ({', '.join(dup)[:80]}): fix the file first; the apply tool refuses it too")
+        raise Refuse(code, f"{row['id']} holds a key twice ({', '.join(dup)[:80]}): fix the file first; the apply tool refuses it too")
     return raw, cfg
 
 
@@ -125,9 +125,11 @@ def problems(e, value):
 def current(e):
     """(value or None, where it came from) of an entry; the default when nothing is stored."""
     row, k = store(e)
-    _, cfg = read_store(row)
+    _, cfg = read_store(row, "STL-CFG-310")   # a read of a store that does not parse is a data file that is invalid, not a change that failed
     if k in cfg:
         return typed_stored(e, cfg[k]), "store"
+    if e["default"] is not None and problems(e, e["default"]):   # the registry's own default is refused by its own rules: no value is served
+        raise Refuse("STL-CFG-310", f"{e['key']}: the default in the registry is rejected by the entry's own rules")
     return e["default"], "default"
 
 
@@ -169,6 +171,16 @@ def confirm(e):
 
 def do_set(key, text, dry):
     need_owner("a settings change")
+    # K9: the read of the store, the candidate and the apply are one critical section (a lock of this tool's own): two sets at once are two
+    # changes in turn, never one lost and never one reported as failed because the other was running. Blocks until the other is done.
+    lock = el.path(os.path.dirname(sd.load(sd.INDEX)["applied_state"]) + "/settings.lock")
+    os.makedirs(os.path.dirname(lock), exist_ok=True)
+    with open(lock, "a") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        return set_locked(key, text, dry)
+
+
+def set_locked(key, text, dry):
     e = entry(key)
     if e["sensitivity"] == SECRET:
         raise Refuse("STL-CFG-315", f"{key} is a secret: secrets live in the vault, never in the registry or here")
@@ -213,7 +225,7 @@ def do_check(as_json):
             row, k = store(e)
             if e["sensitivity"] == SECRET or (is_owner_file(row) and why):
                 continue   # a secret is never read; an owner file is not read for a worker
-            _, cfg = read_store(row)
+            _, cfg = read_store(row, "STL-CFG-310")
             if k in cfg:
                 try:
                     bad = problems(e, typed(e, cfg[k]))

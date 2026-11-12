@@ -367,6 +367,11 @@ sed -i '/command: ".*write-guard.py"/{n;s/timeout: [0-9]*/timeout: 7/}' "$H/prof
 ok '[ "$(wt profiles/builder-local/ write-guard.py)" = 7 ] && HOME="$T/home" "$REG" --check | grep -q "TIMEOUT DRIFT"' "K1-RT-11: a hook registered with another timeout than roles.json: --check reports drift"
 HOME="$T/home" "$REG" >/dev/null
 ok '[ -n "$want" ] && [ "$(wt profiles/builder-local/ write-guard.py)" = "$want" ] && [ "$(grep -c write-guard.py "$H/profiles/builder-local/config.yaml")" = 1 ]' "K1-RT-11: apply sets the timeout from roles.json in place ($want s), no duplicate entry"
+# F1 W4 round 3 (K5): a guard registered without fail_closed is reported by --check (a hook timeout would let the call through), and apply puts it back
+sed -i '/command: ".*write-guard.py"/{n;n;/fail_closed: true/d}' "$H/profiles/builder-local/config.yaml"
+ok '! grep -A3 "command: \".*write-guard.py\"" "$H/profiles/builder-local/config.yaml" | grep -q fail_closed && HOME="$T/home" "$REG" --check | grep -q "FAIL-OPEN.*write-guard.py"' "K5: a registered write guard without fail_closed: --check reports FAIL-OPEN"
+HOME="$T/home" "$REG" >/dev/null
+ok 'grep -A3 "command: \".*write-guard.py\"" "$H/profiles/builder-local/config.yaml" | grep -q fail_closed && HOME="$T/home" "$REG" --check >/dev/null' "K5: apply restores fail_closed, --check is clean again"
 # S4, S24, F25, S25: apply-hermes-local.sh against a scratch HOME with a hermes stub whose `config get` fails. It must not
 # abort before the hook and toolset steps; an unmarked SOUL keeps its first line; SOUL.md, config.yaml and the allowlist
 # are replaced atomically with a backup first; hooks registered but not listed are reported.

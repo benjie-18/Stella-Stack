@@ -53,7 +53,7 @@ WRITES = ("refused", "judged")
 PROFILE_KEYS = {"role", "worker", "dir", "soul", "display_name", "approval_evidence", "review_callers", "capability_fallback"}
 TOP_KEYS = {"_comment", "schema_version", "fallback_role", "protected", "owner_settings", "owner_data", "owner_commands", "data_index",
             "worker_markers", "self_config_kinds", "profiles", "roles", "sandbox", "owner_commands_by_name", "boundary_paths", "write_tools", "worker_pins",
-            "main_branch", "judged_hooks"}
+            "main_branch", "judged_hooks", "read_verbs"}
 ROOT_PROFILE = "default"   # Hermes's own name for the profile that lives in the root of ~/.hermes
 
 
@@ -275,6 +275,9 @@ def validate(d, root=ROOT):
     jh = d.get("judged_hooks")   # K6: the guards every role outside the box that no profile serves carries (defined once, here)
     if not (isinstance(jh, list) and jh and _set(jh) and all(_rel(x) for x in jh)):
         errs.append("judged_hooks needs a non-empty list of hook files (paths relative to the stack repo), no file twice")
+    rv = d.get("read_verbs")   # K7: the verbs that may name an owner path (a command word, or "git <subcommand>")
+    if not (isinstance(rv, list) and rv and _set(rv) and all(re.fullmatch(r"[A-Za-z0-9_.\[\]+-]+(?: [a-z0-9-]+)?", x) for x in rv)):
+        errs.append("read_verbs needs a non-empty list of command words (or \"git <subcommand>\") that only read files, no entry twice")
     wm = d.get("worker_markers")   # the environment variables that mark a worker's process (commit guard, apply tool, settings tool)
     if not (isinstance(wm, list) and wm and _set(wm) and all(KEY.fullmatch(x) for x in wm)):
         errs.append("worker_markers needs a non-empty list of environment variable names (A-Z, digits, _), no name twice")
