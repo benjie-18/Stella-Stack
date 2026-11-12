@@ -369,12 +369,12 @@ def coded(code, problem):   # K8: the catalog code, its plain message, one alert
 
 
 if "the role table or the data index cannot be read" in reason:
-    print(json.dumps({"action": "block", "message": "The dispatcher's terminal is read-only: " + coded("STL-CFG-303", "the role table or the data index cannot be read by a read guard") + " Every command is refused until it is fixed."}))
+    print(json.dumps({"action": "block", "message": "This profile's terminal is read-only: " + coded("STL-CFG-303", "the role table or the data index cannot be read by a read guard") + " Every command is refused until it is fixed."}))
     sys.exit(2)
 if "[STL-CFG-312]" in reason:   # G4: the code, the catalog's plain message, one alert line; no value from any owner file
     reason = coded("STL-CFG-312", "a role tried to read an owner state path of the apply tool") + " " + reason.replace(" [STL-CFG-312]", "")
 elif "owner settings" in reason:   # an older rule caught it first: it still says so with the code
     reason = coded("STL-CFG-312", "a role tried to read an owner settings file") + " " + reason
-print(json.dumps({"action": "block", "message": f"The dispatcher's terminal is read-only ({reason}). Allowed: {ALLOWED}. "
-                  "Dispatchers do not change files: create a card for a worker instead."}))
+print(json.dumps({"action": "block", "message": f"This profile's terminal is read-only ({reason}). Allowed: {ALLOWED}. "
+                  "This profile does not change files: create a card for a worker instead."}))
 sys.exit(2)

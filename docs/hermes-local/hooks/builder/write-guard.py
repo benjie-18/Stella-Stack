@@ -12,10 +12,19 @@ so the owner-only write path is three layers, each holding on its own for the ro
 This guard is the mistake guard in front of them. It reads a command the way the shell will: $'..' decoded, an unquoted newline is a
 `;`, every redirect operator (> >> >| &> &>> >&word <>) is judged, and every word it judges (a redirect target, an argument of a write
 verb, a git path, the command word, each argument of an interpreter) is expanded first (quotes, braces, globs, ~, the variables the
-hook can know) with the code the read guard shares (roles.expand_word) and compared as a real path without regard to case. A judged
-word that still holds an expansion only the shell can compute ($(..), an unknown variable) is refused when the command could write or
-run. Not seen: an interpreter that loads a file by import or reads code from stdin, code run inside another agent CLI (its own git and
-file tools): layers 1 and 3.
+hook can know) with the code the read guard shares (roles.expand_word, bounded in work) and compared as a real path BY IDENTITY
+(roles.overlap: the device and inode of each existing component, so a short 8.3 name, a case variant or a link is the same path).
+The rule is turned around for the paths no role may write (owner data, the owner settings, the apply tool's state): a command that
+NAMES one (as a word, inside interpreter code or a quoted command line, in a here-document body, or as a folder that holds one) runs
+only when its verb is a known reader (roles.json read_verbs); an unknown writer needs no entry to be refused. Here-document bodies
+are also judged by the text checks they had before round 2 (an owner command by name, the worker markers). A judged word that still
+holds an expansion only the shell can compute ($(..), an unknown variable) is refused when the command could write or run.
+What it cannot see, each with the layer that covers it (the contract's list a to g): a path the shell builds at run time in a command
+that is neither a reader nor a listed write verb (the box, the merge); an interpreter that loads code from a file this guard does not
+name, by import, -m or a pipe (the box, the merge); code run inside another agent CLI and that CLI's own git and file tools (the box,
+the merge); a name that is the same path only across a mount this hook does not see (the box mounts none of the protected paths); git
+routes it does not classify, plumbing built in a script or a patch from stdin (the commit guard, the merge); a hook that times out or
+crashes (Hermes's policy; the stack registers every guard fail_closed and bounds the work of every expansion, K5).
 The protected paths are the one list in roles.json (shared with the card guard, bin/role-guard.py). Only a role whose workspace is
 git-worktree has a card worktree; any other role writes only to its profile's own cache/scratch.
  1. write_file / patch (also V4A patch text, its headers parsed with Hermes's own grammar, tools/patch_parser.py: both
