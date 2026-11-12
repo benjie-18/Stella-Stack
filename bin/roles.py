@@ -14,6 +14,8 @@ CLI: roles.py check [hermes-root]     validate the table and its coverage of the
      roles.py reviewers               JSON list of the profiles whose role may review (K8)
      roles.py owner-data [root]       JSON list: the owner data paths relative to the stack (owner_paths; exit 1 when the index cannot be read)
      roles.py refusal <code> <problem>  logs one alert line, prints "[code] <the catalog's plain message>" (for scripts that refuse)
+     roles.py hits <top> refused|boundary   NUL-separated names on stdin (relative to <top>): the ones on stdout that are, lie in or hold a path of
+                                       the list, by identity not spelling (K1b); refused = owner_paths, boundary = boundary()
      roles.py boundary                JSON list: the paths that define the boundary itself, relative (boundary)
      roles.py prove [--profile P] [--task T]   the card whose own worker run this process belongs to (prove_card): JSON
                                        {card, workspace, branch} and exit 0; else the failed proof on stderr, exit 1
@@ -458,8 +460,11 @@ def index(d, root=None):
 def owner_paths(d, root=None):
     """G1 (F1 W4): the one definition of owner data, as paths relative to the stack: the index itself, every path of an index row with
     owner_only true, and the table's own owner_data list (what the index cannot name, for example its schemas folder). The write guard,
-    the commit guard and the merge check all use this; a new owner-only row is protected with no other edit. Raises RolesError."""
-    return sorted({d["data_index"], *d["owner_data"], *d["owner_settings"], *(x["path"] for x in index(d, root)["files"] if x["owner_only"])})
+    the commit guard and the merge check all use this; a new owner-only row is protected with no other edit. It holds the owner settings and the
+    apply tool's state paths too: every path no role may write. Raises RolesError."""
+    ix = index(d, root)
+    return sorted({d["data_index"], *d["owner_data"], *d["owner_settings"], *(x["path"] for x in ix["files"] if x["owner_only"]),
+                   ix["backup_dir"], ix["applied_state"], ix["event_log"]})   # K1: the apply tool's state is a path no role writes either, the same list
 
 
 def owner_data(d):
@@ -480,10 +485,80 @@ def state_trees(d):
 
 
 def boundary(d):
-    """B3 (F1 W4): the paths that define the boundary itself, relative: the table's boundary_paths and every hook file or command it
-    names. A card branch that changes one meets a flag at the merge."""
+    """B3/K3 (F1 W4): the paths that define the boundary itself, relative: the table's boundary_paths (a list of data: every file the boundary's own
+    code loads, kept complete by a selftest that walks the import and source graph) and every hook file or command the table names. A card
+    branch that changes one meets a flag at the merge."""
     hooks = {(h.get("file") or h["command"]) for r in d["roles"].values() for h in r.get("hooks", [])}
     return sorted(set(d["boundary_paths"]) | {h[len(ROOT) + 1:] if h.startswith(ROOT + "/") else h for h in hooks})
+
+
+def _chain(p):
+    """K1b: (the names of a path's components, the (device, inode) of the root and of each existing prefix): a path is known by what it is."""
+    comps = [c for c in os.path.realpath(p).split("/") if c]
+    ids, cur = [], "/"
+    for i in range(len(comps) + 1):
+        try:
+            st = os.lstat(cur)
+        except OSError:
+            break
+        ids.append((st.st_dev, st.st_ino))
+        if i < len(comps):
+            cur = os.path.join(cur, comps[i])
+    return comps, ids
+
+
+ALIAS = re.compile(r"~\d")   # an 8.3 short name (NTFS): STELLA~1 is .stella on this mount
+
+
+def chains(paths):
+    """The protected paths (absolute), ready for overlap()."""
+    return [(p, _chain(p)) for p in paths]
+
+
+def overlap(p, prot):
+    """K1b, the one way every guard asks "is this path one of those": (relation, protected path) or None. The relation is "equal", "inside" (p lies
+    in a protected path) or "contains" (p is a folder that holds one). It is decided by IDENTITY where p or a parent of it exists (the device and
+    inode of each existing component, so STELLA~1, .STELLA and a symlink name the same folder), and by the casefolded names below the deepest
+    folder both paths share. A name that does not exist yet and looks like a short alias, in a folder that holds a protected path, cannot be
+    classified: relation "unknown" (the caller refuses it)."""
+    pc, pi = _chain(p)
+    fold = [c.casefold() for c in pc]
+    for q, (qc, qi) in prot:
+        pos = {i: k for k, i in enumerate(qi)}
+        qf = [c.casefold() for c in qc]
+        for j in range(len(pi) - 1, -1, -1):
+            k = pos.get(pi[j])
+            if k is None:
+                continue
+            pr, qr = fold[j:], qf[k:]
+            n = min(len(pr), len(qr))
+            if pr[:n] == qr[:n]:
+                return ("equal" if len(pr) == len(qr) else "inside" if len(pr) > len(qr) else "contains"), q
+        e = len(pi) - 1   # the existing components of p; the next one, if any, does not exist
+        if e < len(pc) and ALIAS.search(pc[e]) and pi[-1] in pos:
+            return "unknown", q
+    return None
+
+
+def hits(d, top, names, kind):
+    """K1/K3: the names (relative to the tree `top`) that are, lie in or hold a path of the list `kind`: "refused" = every path no role may
+    write (owner_paths: owner data, the owner settings, the apply tool's state), "boundary" = boundary(d) and any new file in a folder of
+    modules whose name shadows a standard-library module (the hooks import from that folder ahead of the standard library). Raises RolesError."""
+    rel = owner_paths(d, top) if kind == "refused" else boundary(d)
+    prot = chains(os.path.join(top, x) for x in rel)
+    out = []
+    for n in names:
+        if n.startswith("/") or ".." in n.split("/"):
+            out.append(n); continue
+        r = overlap(os.path.join(top, n), prot)
+        if r:
+            out.append(n)
+        elif kind == "boundary":
+            dirs = {os.path.dirname(x) for x in d["boundary_paths"] if x.endswith(".py")}
+            base, ext = os.path.splitext(os.path.basename(n))
+            if os.path.dirname(n) in dirs and ext == ".py" and base in sys.stdlib_module_names:
+                out.append(n)
+    return out
 
 
 def owner_commands(d):
@@ -502,10 +577,27 @@ def ansi(cmd):
     return re.sub(r"\$'((?:[^'\\]|\\.)*)'", dec, cmd).replace('$"', '"')
 
 
-def braces(word):
-    """bash brace expansion of {a,b} (innermost first; not {1..3}); more than 64 words is for the caller to refuse."""
-    m = re.search(r"(?<!\$)\{([^{}]*,[^{}]*)\}", word)
-    return [word] if not m else [w for alt in m[1].split(",") for w in braces(word[:m.start()] + alt + word[m.end():])][:65]
+BRACE = re.compile(r"(?<!\$)\{([^{}]*,[^{}]*)\}")
+
+
+def braces(word, limit=64):
+    """bash brace expansion of {a,b} (innermost first; not {1..3}). K5: the work is bounded, not only the output: every step that splits a
+    word adds at least one to the count of words held, and the first time the count passes `limit` the caller gets limit+1 words back
+    (it refuses the word), so no word of any length or depth costs more than about `limit` passes over it."""
+    work, out = [word], []
+    while work:
+        w = work.pop()
+        m = BRACE.search(w)
+        if not m:
+            out.append(w)
+        else:
+            alts = m[1].split(",")
+            if len(out) + len(work) + len(alts) > limit:
+                return [w] * (limit + 1)
+            work += [w[:m.start()] + a + w[m.end():] for a in reversed(alts)]
+        if len(out) + len(work) > limit:
+            return (out + work)[:limit + 1]
+    return out
 
 
 def expand_word(word, cwd, names=None):
@@ -843,6 +935,12 @@ def main():
     elif cmd in ("owner-data", "boundary"):   # [root]: the stack folder whose index is read (the commit guard passes its own tree)
         try:
             print(json.dumps(owner_paths(d, args[0] if args else None) if cmd == "owner-data" else boundary(d)))
+        except RolesError as e:
+            fail("STL-CFG-303", problem=str(e)[:300])
+    elif cmd == "hits" and len(args) == 2 and args[1] in ("refused", "boundary"):   # <top> <kind>: NUL-separated names on stdin, the ones that hit on stdout (K1)
+        try:
+            names = [os.fsdecode(x) for x in sys.stdin.buffer.read().split(b"\0") if x]
+            sys.stdout.buffer.write(b"".join(os.fsencode(x) + b"\0" for x in hits(d, args[0], names, args[1])))
         except RolesError as e:
             fail("STL-CFG-303", problem=str(e)[:300])
     elif cmd == "field" and len(args) == 2:
