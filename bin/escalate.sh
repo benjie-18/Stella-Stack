@@ -6,9 +6,11 @@
 # Queue (F15, F28, F29): a call refused by a zeroed or exceeded limit (Opus slots, Haiku per day) and every pool-exhausted
 # call is recorded in state/queue.jsonl with its prompt file, and raises one #alerts line; the caller still gets 3 or 75.
 # A queue file that cannot be read, parsed or written is never read as empty and never reported as written: the call is not queued,
-# the caller still gets 3 or 75, and the stderr line, the card note and one STL-CFG-310 alert say it was lost. A refusal for an
-# unreadable settings registry raises the same alert. Nothing retries it: bin/escalate-drain.sh (manual) replays it. Beyond QUEUE_MAX queued entries the call is refused
-# unqueued (one #alerts line an hour). ESCALATE_REPLAY=<id> (set by the drain) never queues or alerts again.
+# the caller still gets 3 or 75, the stderr line, the card note and a NOT_QUEUED log line say it was lost, and STL-LIM-405 tells the
+# owner (one #alerts line an hour: the file stays broken until it is fixed). An unreadable settings registry is checked after the
+# usage checks and refuses the call (STL-CFG-310, one #alerts line an hour). Nothing retries a call: bin/escalate-drain.sh (manual)
+# replays a queued one. Beyond QUEUE_MAX queued entries the call is refused unqueued (NOT_QUEUED, one #alerts line an hour).
+# ESCALATE_REPLAY=<id> (set by the drain) never queues or alerts again.
 # Test hook (Stage 6 T15): ESCALATE_FORCE_POOL_EXHAUSTED=1 skips claude and takes the fallback path. The fallback config
 # (FALLBACK_CONFIG, default docs/hermes-local/fallback-routing.json) says whether a low-risk call is served by a fallback runner
 # when the pool is exhausted and which models it tries; disabled or missing = NO_REROUTE and queue.
@@ -51,32 +53,21 @@ registry() {  # registry <KEY>: sets reg_def reg_min reg_max from the settings r
   v=$(python3 -I /workspace/bin/stella_data.py get --json settings "$1" 2>/dev/null | jq -er '[.default, .validation.minimum, .validation.maximum]
     | select(all(type == "number" and . == floor) and .[1] <= .[0] and .[0] <= .[2]) | @tsv') && read -r reg_def reg_min reg_max <<<"$v" && [ -n "$reg_max" ] && return
   python3 -I /workspace/bin/alert_catalog.py preview STL-CFG-310 problem="$p" >&2 2>/dev/null || echo "STL-CFG-310 $p" >&2   # fallback: no catalog, still a code
-  # Nothing is queued (the queue bound is what could not be read) and the prompt is not read: the caller keeps it. The owner is told on the alerts channel.
-  hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-CFG-310 problem="$p; escalate.sh refused the call for card ${card:-?} ($model $purpose): it was not run and not queued, the caller still holds the prompt")" >/dev/null 2>&1
+  # Nothing is queued (the queue bound is what could not be read) and the prompt is not read: the caller keeps it. The owner is told
+  # on the alerts channel once an hour (a standing condition), never for a replay; each refused call has its own log line.
+  if [ -z "${ESCALATE_REPLAY:-}" ] && once_per_hour registry-unreadable; then
+    hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-CFG-310 problem="$p; escalate.sh refused the call for card $card ($model $purpose): it was not run and not queued, the caller still holds the prompt; later calls are refused the same way until it is fixed (each in escalations.log, SETTING_UNREADABLE)")" >/dev/null 2>&1
+  fi
   refuse SETTING_UNREADABLE 2 "$p; no call without a timeout, no unbounded queue"
 }
-# A limit that is set but outside the registry's type and range is treated like a bad timeout: one warning, then the registry
-# default (`timeout 0` means no timeout; a non-number makes `[ -ge ]` fail, which would queue without bound).
-registry CALL_TIMEOUT; ct_def=$reg_def ct_min=$reg_min ct_max=$reg_max
-registry QUEUE_MAX; qm_def=$reg_def qm_min=$reg_min qm_max=$reg_max
-# shortcut: nine digits at most (a number of days still fits in 64 bits); longer is out of range anyway
-secs=; if [[ "${CALL_TIMEOUT:-}" =~ ^([1-9][0-9]{0,8})([smhd]?)$ ]]; then
-  case "${BASH_REMATCH[2]}" in m) mul=60;; h) mul=3600;; d) mul=86400;; *) mul=1;; esac; secs=$(( ${BASH_REMATCH[1]} * mul )); fi
-if [ -z "$secs" ] || [ "$secs" -lt "$ct_min" ] || [ "$secs" -gt "$ct_max" ]; then bad_timeout="${CALL_TIMEOUT:-}"; CALL_TIMEOUT=$ct_def
-  log WARN null "" false null "CALL_TIMEOUT='$bad_timeout' is not a positive duration of $ct_min to $ct_max seconds (0 would disable the timeout); using $CALL_TIMEOUT"
-  echo "escalate.sh: warning: CALL_TIMEOUT='$bad_timeout' is not a positive duration of $ct_min to $ct_max seconds; using $CALL_TIMEOUT" >&2; fi
-if [ -z "${QUEUE_MAX:-}" ]; then QUEUE_MAX=$qm_def   # unset or empty: the default, silently
-elif ! [[ "$QUEUE_MAX" =~ ^[0-9]{1,9}$ ]] || [ "$((10#$QUEUE_MAX))" -lt "$qm_min" ] || [ "$((10#$QUEUE_MAX))" -gt "$qm_max" ]; then
-  log WARN null "" false null "QUEUE_MAX='$QUEUE_MAX' is not a whole number from $qm_min to $qm_max; using $qm_def"
-  echo "escalate.sh: warning: QUEUE_MAX='$QUEUE_MAX' is not a whole number from $qm_min to $qm_max; using $qm_def" >&2; QUEUE_MAX=$qm_def
-else QUEUE_MAX=$((10#$QUEUE_MAX)); fi
 note() { kanban comment --author escalate.sh "$card" "$1" >/dev/null 2>&1; }
 QUEUE="$STATE/queue.jsonl"
 queue_failed() {  # queue_failed <what>: the call is not in the queue, and every message says so (the prompt goes: nothing points at it)
   flock -u 6; rm -f "$prompt"; qid=""
   qnote="NOT queued: $1; fix the file (the call is lost, run it again)"
   echo "escalate.sh: warning: $1" >&2
-  hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-CFG-310 problem="$1; the $model $purpose call for card $card ($reason) was not queued and is lost")" >/dev/null 2>&1
+  log NOT_QUEUED null none false null "$1; the call is lost"   # every lost call has its own line; the alert below is once an hour
+  once_per_hour queue-unusable && hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-LIM-405 card="$card" model="${model^}" problem="$1" since="$(date -u +%FT%TZ)")" >/dev/null 2>&1
 }
 queue() {  # queue <LIMIT|POOL_EXHAUSTED> <what happened>: one entry and one #alerts line; sets qid ("" if not queued), qnote
   qid="" qnote="not queued"
@@ -89,6 +80,7 @@ queue() {  # queue <LIMIT|POOL_EXHAUSTED> <what happened>: one entry and one #al
   if [ "$nq" -ge "$QUEUE_MAX" ]; then
     flock -u 6; rm -f "$prompt"
     qnote="not queued: the queue is full (QUEUE_MAX=$QUEUE_MAX)"
+    log NOT_QUEUED null none false null "the queue is full (QUEUE_MAX=$QUEUE_MAX); the call is lost"
     once_per_hour queue-full && hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-LIM-403 max="$QUEUE_MAX" why="$1" card="$card" since="$(date -u +%FT%TZ)")" >/dev/null 2>&1
     return 0
   fi
@@ -127,6 +119,22 @@ case "$model" in
     claude_model=$([ "$purpose" = plan ] && echo opusplan || echo opus) ;;
   *) refuse USAGE 2 "model must be haiku, sonnet or opus" ;;
 esac
+# The settings registry is read after the usage checks: a bad call is refused for what it is, before any alert.
+# A limit that is set but outside the registry's type and range is treated like a bad timeout: one warning, then the registry
+# default (`timeout 0` means no timeout; a non-number makes `[ -ge ]` fail, which would queue without bound).
+registry CALL_TIMEOUT; ct_def=$reg_def ct_min=$reg_min ct_max=$reg_max
+registry QUEUE_MAX; qm_def=$reg_def qm_min=$reg_min qm_max=$reg_max
+# shortcut: nine digits at most (a number of days still fits in 64 bits); longer is out of range anyway
+secs=; if [[ "${CALL_TIMEOUT:-}" =~ ^([1-9][0-9]{0,8})([smhd]?)$ ]]; then
+  case "${BASH_REMATCH[2]}" in m) mul=60;; h) mul=3600;; d) mul=86400;; *) mul=1;; esac; secs=$(( ${BASH_REMATCH[1]} * mul )); fi
+if [ -z "$secs" ] || [ "$secs" -lt "$ct_min" ] || [ "$secs" -gt "$ct_max" ]; then bad_timeout="${CALL_TIMEOUT:-}"; CALL_TIMEOUT=$ct_def
+  log WARN null "" false null "CALL_TIMEOUT='$bad_timeout' is not a positive duration of $ct_min to $ct_max seconds (0 would disable the timeout); using $CALL_TIMEOUT"
+  echo "escalate.sh: warning: CALL_TIMEOUT='$bad_timeout' is not a positive duration of $ct_min to $ct_max seconds; using $CALL_TIMEOUT" >&2; fi
+if [ -z "${QUEUE_MAX:-}" ]; then QUEUE_MAX=$qm_def   # unset or empty: the default, silently
+elif ! [[ "$QUEUE_MAX" =~ ^[0-9]{1,9}$ ]] || [ "$((10#$QUEUE_MAX))" -lt "$qm_min" ] || [ "$((10#$QUEUE_MAX))" -gt "$qm_max" ]; then
+  log WARN null "" false null "QUEUE_MAX='$QUEUE_MAX' is not a whole number from $qm_min to $qm_max; using $qm_def"
+  echo "escalate.sh: warning: QUEUE_MAX='$QUEUE_MAX' is not a whole number from $qm_min to $qm_max; using $qm_def" >&2; QUEUE_MAX=$qm_def
+else QUEUE_MAX=$((10#$QUEUE_MAX)); fi
 
 prompt="$STATE/prompt-$(date -u +%Y%m%dT%H%M%SZ)-$card-$$.txt"
 cat >"$prompt"
