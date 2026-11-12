@@ -71,7 +71,7 @@ PY
 
 mkdir -p "$T/rj/seen"; mkfifo "$T/rj/in" "$T/rj/oq"; python3 -I "$T/rjudge.py" "$T/rj/in" "$T/rj/oq" </dev/null >/dev/null 2>&1 & RJP=$!; : >"$T/rjrows"
 RJENV=$(env | sort | md5sum)   # the judge's environment at start; a row is sent with its own variables only while the exported environment is the same
-declare -A ROLE_OF; while IFS=$'\t' read -r p r; do ROLE_OF[$p]=$r; done < <(jq -r '.fallback_role as $f | (.profiles | to_entries[] | "\(.key)\t\(.value.role)"), "\t\($f)"' "$RF")
+declare -A ROLE_OF; while IFS=$'\t' read -r p r; do ROLE_OF[$p]=$r; done < <(jq -r '.profiles | to_entries[] | "\(.key)\t\(.value.role)"' "$RF"); ROLE_FB=$(jq -r .fallback_role "$RF")
 rjudge() {   # rjudge <guard> <payload> [env...]: exit code echoed, output in $T/out
   local g=$1 pay=$2 rc b; shift 2
   if [ "$(env | sort | md5sum)" = "$RJENV" ]; then
@@ -84,7 +84,7 @@ run() { local prof=$1 tool=$2 in=$3 pay rc rrc; shift 3
   pay=$(jq -nc --arg p "$prof" --arg t "$tool" --argjson i "$in" '{hook_event_name: "pre_tool_call", tool_name: $t, tool_input: $i, profile: $p, extra: {}}')
   if [ -n "${REAL:-}" ]; then printf '%s' "$pay" | env "$@" python3 "$G" >"$T/out" 2>&1; echo $?; return; fi
   rc=$(rjudge "$G" "$pay" "$@"); printf '%s\t%s\n' "$(printf '%s' "$pay" | base64 -w0)" "$([ $# -gt 0 ] && printf '%s\0' "$@" | base64 -w0)" >>"$T/rjrows"
-  local k="${ROLE_OF[$prof]:-${ROLE_OF[""]}}|$rc"   # the class: the profile's role (the fallback for a profile with no row) and the verdict
+  local k="${ROLE_OF[${prof:-?}]:-$ROLE_FB}|$rc"   # the class: the profile's role (the fallback for a profile with no row) and the verdict
   if [ ! -e "$T/rj/seen/$k" ]; then
     : >"$T/rj/seen/$k"; cp "$T/out" "$T/out.judge"; printf '%s' "$pay" | env "$@" python3 "$G" >"$T/out" 2>&1; rrc=$?
     if [ "$rrc" != "$rc" ] || [ "$(sort "$T/out")" != "$(sort "$T/out.judge")" ]; then echo "     route agreement: $prof $tool exit $rc in the judge, $rrc as a process" >&2; echo 99; return; fi
