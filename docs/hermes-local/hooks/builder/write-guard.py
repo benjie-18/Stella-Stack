@@ -71,15 +71,14 @@ try:
         OWNER_REL = [p for p in roles.owner_paths(RT) if p not in RT["owner_settings"]] + roles.state_paths(RT)   # G1/B1: owner data and the apply tool's state, from the index and the table, never named here (the owner settings keep their older refusals)
         OWNER_CMDS = roles.owner_commands(RT)
         BY_NAME = [os.path.splitext(os.path.basename(c))[0].casefold() for c in OWNER_CMDS if c[len(ROOT) + 1:] in RT["owner_commands_by_name"]]   # K9: the stem, so a copy without its extension is the same name
-        WT_DIRS = glob.glob(f"{ROOT}/.worktrees/*")   # K1b: a path is protected by what it is, in the main checkout and in every card worktree of the stack
-        OWNER_CH = roles.chains([f"{b}/{d}" for b in [ROOT, *WT_DIRS] for d in OWNER_REL])
+        OWNER_CH = roles.chains([f"{ROOT}/{d}" for d in OWNER_REL])   # K1b: the main checkout's; a card worktree's own copies are added when a path lies in it (worktree_chains, T1)
         HOLD_CH = roles.chains(sorted({f"{ROOT}/{os.path.dirname(d)}" for d in OWNER_REL if os.path.dirname(d)}))   # the folders of the main checkout that hold owner data or state: nothing new is made in them
         MARKERS, PINS = RT["worker_markers"], RT["worker_pins"]   # K9: the worker markers and pins are the table's, named nowhere else
         MARK_PFX = [m[:max(10, len(m) * 2 // 5)] for m in MARKERS]   # a marker's front part: ${!HERMES_DELEG*} and a quote-split name name it too
         READERS = {v for v in RT["read_verbs"] if " " not in v}   # K7: the verbs that may name an owner path (data: the role table)
         GIT_READS = {v.split(" ", 1)[1] for v in RT["read_verbs"] if v.startswith("git ")}
     except Exception as e:   # every call is refused below until the table (and the index it names) can be read
-        RT, PROTECTED, CONFIG, OWNER_FILES, OWNER_REL, OWNER_CMDS, BY_NAME, OWNER_CH, HOLD_CH, READERS, GIT_READS, WT_DIRS, MARKERS, PINS, MARK_PFX, RT_ERROR = None, [], [], [], [], [], [], [], [], set(), set(), [], [], {}, [], str(e)[:200]
+        RT, PROTECTED, CONFIG, OWNER_FILES, OWNER_REL, OWNER_CMDS, BY_NAME, OWNER_CH, HOLD_CH, READERS, GIT_READS, MARKERS, PINS, MARK_PFX, RT_ERROR = None, [], [], [], [], [], [], [], [], set(), set(), [], {}, [], str(e)[:200]
     HOMES = roles.homes()
 except Exception as e:   # not even the role module loads: refuse, with a coded line
     print(json.dumps({"action": "block", "message": f"write guard: [{OB}] the role module cannot be loaded ({type(e).__name__}); every write is refused until it is fixed"}))
@@ -130,7 +129,7 @@ CD_MSG = ("the terminal stays inside your worktree: Hermes keeps its folder betw
 # STELLA_ROOT names); a project's own file with the same base name is no mention.
 CMDS = {c[len(ROOT) + 1:]: f"{c[len(ROOT) + 1:]} is an owner command: no role runs it (the owner runs it from the owner's own path; merging a card into main is the owner's step, F31)"
         for c in OWNER_CMDS}
-CMD_CH = roles.chains([f"{b}/{c}" for b in [ROOT, *(WT_DIRS if RT else [])] for c in CMDS])
+CMD_CH = roles.chains([f"{ROOT}/{c}" for c in CMDS])
 NAME_RX = re.compile("|".join(re.escape(n) + r"(?![\w-])" for n in BY_NAME)) if BY_NAME else None   # T4: any prefix (a copy, /tmp/x-merge-card.sh), no suffix word (its -selftest)
 
 
@@ -140,8 +139,7 @@ def owner_cmd_of(rp):
     r = roles.overlap(rp, worktree_chains(rp, CMD_CH, list(CMDS), "cmd"))
     if not r or r[0] != "equal":
         return None
-    q = r[1]
-    return CMDS.get(q.split("/.worktrees/", 1)[1].split("/", 1)[1] if "/.worktrees/" in q else q[len(ROOT) + 1:])
+    return next((msg for rel, msg in CMDS.items() if r[1].endswith("/" + rel)), None)   # the chain's path is <stack or card worktree>/<rel>
 
 
 def named_cmd(text):
@@ -167,19 +165,27 @@ def resolve(path, base):
     return os.path.realpath(os.path.join(base, os.path.expanduser(os.path.expandvars(path))))
 
 
-WTC = {}   # chains of the protected paths of a card worktree that does not exist yet (or was made after this hook started), by (folder, kind)
+WTC = {}   # chains of the protected paths of each card worktree a path of this call lies in, by (worktree identity or name, kind)
+try:
+    _st = os.stat(f"{ROOT}/.worktrees")
+    WTR = (_st.st_dev, _st.st_ino)   # the folder every card worktree of the stack lies in, by identity
+except OSError:
+    WTR = None
 
 
 def worktree_chains(rp, base, rels, kind):
-    """`base`, and the protected paths `rels` of the card worktree rp lies in when that worktree is not one of WT_DIRS (a path under <stack>/.worktrees/<card> is
-    judged as that card's own copy whether or not the folder exists yet)."""
-    m = re.match(re.escape(ROOT.casefold()) + r"/\.worktrees/[^/]+", rp.casefold())
-    wt = rp[:m.end()] if m else None
-    if not wt or wt in WT_DIRS:
+    """`base`, and the protected paths `rels` of the card worktree of the stack that rp lies in: the folder of rp whose parent IS <stack>/.worktrees (by
+    identity, so a short name or a case variant of either is that worktree), whether or not it exists yet. T1: only that worktree's chains are made, and only
+    when a path names it (made for every worktree on every call, 15 worktrees cost 2.7 s a call)."""
+    comps, ids = roles._chain(rp)
+    k = ids.index(WTR) if WTR in ids else -1
+    if k < 0 or k >= len(comps):
         return base
-    if (wt, kind) not in WTC:
-        WTC[wt, kind] = roles.chains([f"{wt}/{d}" for d in rels])
-    return base + WTC[wt, kind]
+    wt = "/" + "/".join(comps[:k + 1])
+    key = (ids[k + 1] if k + 1 < len(ids) else wt.casefold(), kind)
+    if key not in WTC:
+        WTC[key] = roles.chains([f"{wt}/{d}" for d in rels])
+    return base + WTC[key]
 
 
 def owner_chains(rp):
