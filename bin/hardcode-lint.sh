@@ -120,12 +120,18 @@ def kept(f):
     if st is not None and st in ids: return False
     real[f] = (rp, st); return True
 universe = [f for f in universe if kept(f)]
+# The files the shell and the data tool read by name (and the allow list) are judged the same way; the role table and the index
+# themselves are read first, as JSON, to learn the paths (an env file is not JSON: it is refused, never counted).
+for x in ["docs/hermes-local/roles.json", rt["data_index"], board, ".supervisor/limits.env", ap, *(r["path"] for r in idx["files"] if r["id"] == "connections")]:
+    rp = os.path.realpath(root / x)
+    if any(under(rp, o) or under(o, rp) for o in prot) or ident(rp) in ids: err("an input of the lint is, or points at, an owner or state path: " + json.dumps(x))
 for f in universe:
     if "\n" in f or "\t" in f: err("a file name has a tab or a newline: " + json.dumps(f))
 scan = [rx(p) for p in allow["scan"]]; skip = [(rx(s["file"], bool(s.get("run_by"))), s.get("run_by")) for s in allow["skip"]]
 runs = {}
 def listed(rb):  # the words of the runner's `for <name> in <words>;` lists: what it runs, not any word of its text
     if rb not in runs:
+        if rb not in real: err("the file a skip row names as its runner is not a file of the root the lint may read: " + rb)
         try: txt = (root / rb).read_text(encoding="utf-8", errors="replace")
         except OSError: err("the file a skip row names as its runner cannot be read: " + rb)
         runs[rb] = {w for m in re.finditer(r"(?m)^\s*for\s+\w+\s+in\s+([^;\n]*);", txt) for w in m.group(1).split()}
@@ -184,9 +190,11 @@ except ValueError: h = None
 if h: print(h)
 EOF
 )
-if [ "$mode" = --list ]; then counts=$(python3 -I -B -c "$PY" "$R" "$A" --list "" "$BOARD") || die "the file list failed: ${counts#ERROR$'\t'}"; printf '%s\n' "$counts"; exit 0; fi
-[ -n "$H" ] || die "neither HARDCODE_HOME nor HOME is set: no home folder to read the projects database and the Hermes homes from"
 need "role table" "$R/docs/hermes-local/roles.json"; need "limits file" "$R/.supervisor/limits.env"; need "board file" "$R/$BOARD"
+# The file list first, in every mode: the one step every entry and every input file passes (owner and state paths judged) before the shell reads any
+lst=$(python3 -I -B -c "$PY" "$R" "$A" --list "" "$BOARD") || die "the file list failed: ${lst#ERROR$'\t'}"
+[ "$mode" != --list ] || { printf '%s\n' "$lst"; exit 0; }
+[ -n "$H" ] || die "neither HARDCODE_HOME nor HOME is set: no home folder to read the projects database and the Hermes homes from"
 need "home folder" "$H"; need "Hermes folder" "$H/.hermes" "$H/.hermes/projects.db" "$H/.hermes/profiles"
 roles=$(jq -r --argjson pw "$(jq -c '[.plain_words[].word]' "$A")" '[(.profiles | keys[]), (.roles | keys[])][] | select(IN($pw[]) | not)' \
   "$R/docs/hermes-local/roles.json" 2>/dev/null) || die "the role table (docs/hermes-local/roles.json) cannot be read"

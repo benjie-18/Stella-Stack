@@ -7,8 +7,8 @@
 # call is recorded in state/queue.jsonl with its prompt file, and raises one #alerts line; the caller still gets 3 or 75.
 # A queue file that cannot be read, parsed or written is never read as empty and never reported as written: the call is not queued,
 # the caller still gets 3 or 75, the stderr line, the card note and a NOT_QUEUED log line say it was lost, and STL-LIM-405 tells the
-# owner (one #alerts line an hour: the file stays broken until it is fixed). An unreadable settings registry is checked after the
-# usage checks and refuses the call (STL-CFG-310, one #alerts line an hour). Nothing retries a call: bin/escalate-drain.sh (manual)
+# owner (one alert an hour: the file stays broken until it is fixed). An unreadable settings registry is checked after the
+# usage checks and refuses the call (STL-CFG-310, one alert an hour). Nothing retries a call: bin/escalate-drain.sh (manual)
 # replays a queued one. Beyond QUEUE_MAX queued entries the call is refused unqueued (NOT_QUEUED, one #alerts line an hour).
 # ESCALATE_REPLAY=<id> (set by the drain) never queues or alerts again.
 # Test hook (Stage 6 T15): ESCALATE_FORCE_POOL_EXHAUSTED=1 skips claude and takes the fallback path. The fallback config
