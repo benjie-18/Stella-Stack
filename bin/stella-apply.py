@@ -967,7 +967,7 @@ def apply_locked(row, key, tgt, rel, cand):
     back = f"`rollback {key}`"
     did(key, f"backup {name}: recorded", lambda: unregister(key, name), back,   # known before the file is touched
         lambda: register(key, name, {k: meta[k] for k in ("token", "sha256", "existed", "mode", "new_sha256")}, seq))
-    did(key, "its folder kept (status pending)", lambda: drop_backup(bd), back, lambda: os.mkdir(bd, 0o700))
+    did(key, "its folder kept (status pending until done)", lambda: drop_backup(bd), back, lambda: os.mkdir(bd, 0o700))
     if cur is not None:
         atomic_write(os.path.join(bd, "file"), cur, 0o600)
     atomic_write(os.path.join(bd, "file.applied"), cand, 0o600)   # the bytes this apply writes: old side of a rollback's line
@@ -977,7 +977,7 @@ def apply_locked(row, key, tgt, rel, cand):
     did(key, "applied state: the new bytes", lambda: set_applied(key, prev), back, lambda: set_applied(key, rec_of(cand, mode), seq))
     did(key, "event line: written", None, f"`apply {key} --from <file>` with the same file", lambda: log(row, line))
     meta["status"] = "done"
-    atomic_write(os.path.join(bd, "meta.json"), json.dumps(meta).encode(), 0o600)
+    did(key, "backup: status done", None, None, lambda: atomic_write(os.path.join(bd, "meta.json"), json.dumps(meta).encode(), 0o600))
     print(f"applied: {key} (backup {name})")
     return 0
 
@@ -995,7 +995,7 @@ def finish_apply(row, key, tgt, cand, new_doc, name, meta):
     if line:
         did(key, "event line: written", None, again, lambda: log(row, line))
     meta["status"] = "done"
-    atomic_write(os.path.join(bd, "meta.json"), json.dumps(meta).encode(), 0o600)
+    did(key, "backup: status done", None, None, lambda: atomic_write(os.path.join(bd, "meta.json"), json.dumps(meta).encode(), 0o600))
     print(f"applied: {key} (backup {name}; the bookkeeping of an interrupted apply was finished)")
     return 0
 
@@ -1261,7 +1261,7 @@ def failed(e, read_cmd):
                        {"detail": "file: as before; backup: none; event line: none"})
     way, said = left[-1][3], [w for _, w, _, _ in left]
     said += [] if any("line: written" in w for w in said) else ["event line: not written"]
-    return el.fail("STL-CFG-321", (f"run {way}: " if way else "nothing to run (the next apply or rollback clears what is left): ")
+    return el.fail("STL-CFG-321", (f"run {way}: " if way else "nothing to run (the change is complete): ")
                    + f"the change of {key} stopped ({why[:60]})", {"detail": "; ".join(said)})
 
 def interrupted(sig, frame):
