@@ -12,9 +12,9 @@ mkhome() {  # a scratch home whose projects.db holds one slug
   rm -rf "$H"; mkdir -p "$H/.hermes"
   python3 -I -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1] + "/.hermes/projects.db"); c.execute("create table projects (slug text)"); c.execute("insert into projects values (?)", (sys.argv[2],)); c.commit()' "$H" "$slug"
 }
-cp_listed() {  # cp_listed <source root> <dest>: copy the lint's own list of that root; a failed list, tar or extract is a failure
+cp_listed() {  # cp_listed <source root> <dest>: copy the lint's own list of that root, each line a file name (never an option); a failed list, tar or extract is a failure
   local l; l=$(STELLA_ROOT=$1 HARDCODE_ALLOW= "$L" --list) && printf '%s\n' "$l" >"$T/list" \
-    && ( set -o pipefail; tar -C "$1" --no-recursion -T "$T/list" -cf - | tar -C "$2" -xf - )
+    && ( set -o pipefail; tar -C "$1" --no-recursion --verbatim-files-from -T "$T/list" -cf - | tar -C "$2" -xf - )
 }
 fresh() {  # a clean scratch root (the listed files only, never the tree), and a fresh scratch home; a failed copy ends the selftest
   rm -rf "$S"; mkdir -p "$S"; mkhome
@@ -169,7 +169,7 @@ ok 'refused' "F6/RT2-07: an own_names text that holds a literal glued to other l
 fresh; edit '.baseline += [.baseline[0]]'; ok 'refused' "F6/RT2-08: a baseline row repeated (same file and literal) is refused"
 # F5/F6: the CLI's model answer is read by model_watch.py's rule; no model line is a "not checked" line, never silence
 rxl='^\s*([A-Za-z_]+):\s*(\S.*?)\s*$'
-ok 'grep -qF -- "$rxl" "$W/bin/model_watch.py" && grep -qF -- "$rxl" "$L"' "F6/RT2-05: the lint and bin/model_watch.py read the CLI answer with the same regex"
+ok 'grep -qF -- "$rxl" "$W/bin/model_watch.py" && grep -q "from model_watch import model_answer" "$L" && ! grep -qF -- "$rxl" "$L"' "F6/RT2-05/V5 (was: the same regex in both): the lint reads the CLI answer with bin/model_watch.py's own reader (model_answer), not a copy of its regex"
 mdl=zzlocal-testonly:9b; mh=zz-rt2.invalid
 modelcase() {  # modelcase <answer text>: the stub hermes prints it (exit 0)
   fresh; withcat; : >"$H/.hermes/config.yaml"; plant bin/alert.sh "model $mdl on $mh"; printf '#!/bin/sh\ncat "%s/model.out"\n' "$T" >"$T/stub/hermes"; printf '%s' "$1" >"$T/model.out"; }
