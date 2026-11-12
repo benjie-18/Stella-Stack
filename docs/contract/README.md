@@ -216,27 +216,39 @@ lines and messages, not data files. Check a sample with `stella_data.py validate
 
 ## The apply tool and the event log (`bin/stella-apply.py`, `bin/event_log.py`)
 
-`stella-apply.py apply <id> --from <file> [--dry-run]`, `check [<id>] [--json]`, `rollback <id>`, `history <id> [--json]`.
+`stella-apply.py apply <id> --from <file> [--dry-run]`, `check [<id>] [--json]` (`--check` is accepted for `check`), `rollback <id>`,
+`history <id> [--json]`.
 A single-file row is addressed by its id only; a folder row by `<id>/<name>`, where the name is letters, digits, dot, dash and
 underscore, starts with a letter, digit or underscore, and ends in `.json`. Exit 0 ok, 1 refused or failed (or drift), 2 usage.
-Every failure is one catalog code and its plain message: 310 data unreadable (the read commands) or a change that stopped half-way (the message says what was left), 311 unknown id, 312 owner-only,
-313 refused (invalid candidate, a link, a path clash, a restore that no longer validates), 314 drift or a hand edit rollback would
-overwrite, a setting's own code (today 315) for an env candidate that breaks the registry, 316 no, damaged or unrecorded backup, 318 event log.
-An unexpected exception is exit 1 and one coded line (the exception type, never a value).
+Every failure is one catalog code and its plain message: 310 data unreadable, 311 unknown id, 312 owner-only, 313 a change
+refused before it wrote anything (invalid candidate, a link, a path clash, a read-only folder, a restore that no longer
+validates), 314 drift or a hand edit rollback would overwrite, a setting's own code (today 315) for an env candidate that breaks
+the registry, 316 no, damaged or unrecorded backup, 318 event log not writable or a line not readable, 321 a change that stopped
+after it had started, 322 a read command (`check`, `history`, `tail`) that could not read something, 323 an unfinished step that
+`check` sees. An unexpected exception or an interrupt (Ctrl-C, SIGTERM) is exit 1 and one coded line (the exception type, never
+a value). The problem text of every message fits the catalog's 200-character cut, with the way out first (the selftest walks
+every message in the code; it takes a name as at most 40 characters: shortcut, a longer id or entry name can push the end of a
+message past the cut, upgrade if ids grow).
 
 - **One change at a time.** One lock covers a whole apply or rollback, validation included, so the cross-file rules always judge
   a set with every earlier change in it. Once the lock is held the index, the gate and the target path are read again, so a run
   that waited acts on the state of that moment; after flock the locked file must still be the file at the lock path (else the
-  run locks again, then refuses). `--dry-run` takes no lock and changes no data file, backup, applied state or event line; it
-  stages a temporary copy of the set under `<backup_dir>/.stage/<pid>-...` and removes it when it ends (a copy a killed run
-  left is swept by the next apply or rollback once its process is gone). If the masked text is unchanged but the bytes differ it
-  says so in one line and names the changed keys (`-KEY (masked)` / `+KEY (masked)`). It also says what an apply would do about
-  an unfinished step (refuse, finish it, or record a hand edit).
+  run locks again, then refuses). `--dry-run` takes no lock and leaves the root as it was: no folder or file is made, changed
+  or removed under it. The whole-set check stages a copy of the set in the temp folder (`TMPDIR`), outside the root, in a 0700
+  folder named `stella-apply-stage-<process id>-<process start time>-<random>` with 0600 files, removed when the check ends; a
+  copy a killed run left is removed by the next command of this tool (any command), once no process has that id and start time
+  (a reused process id has another start time). Boxed roles have their own temp folder. If the masked text is unchanged but the
+  bytes differ it says so in one line and names the changed keys (`-KEY (masked)` / `+KEY (masked)`). It says what an apply would
+  do about an unfinished step (finish it, or record a hand edit); when an apply would be refused, the dry run prints that same
+  coded refusal and exits 1.
 - **One row, one real file.** The target, each folder on the way, the backup folder, the applied-state file, the event log
   and their locks must not be symbolic links and must resolve to the path the index names. No two paths of the index (rows,
   `event_log`, `backup_dir`, `applied_state`) may be one file: the same device and inode, or the same name up to upper and lower
   case (the stack's own disk is case-insensitive); a path inside a folder row's folder or inside the backup folder is another
-  path's file; a file with more than one hard link, or a mount point, is not read. Folder entries that differ only by case from an
+  path's file; a file with more than one hard link, or a mount point, is not read (the message says how to find the other link
+  or what to unmount). Such a problem on a row's file refuses that row only: `check` shows it as one line (322) and the other
+  rows work. A problem of the index file, the event log, the backup folder or the applied state stops every command. Paths are
+  compared by identity (the index's own guards too: `./.stella/data-files.json` is the index). Folder entries that differ only by case from an
   existing entry are one name and refused. The same checks run on a candidate index before it is applied. Applying the index
   itself is refused when the candidate is not a valid index, changes the three paths, drops the index's own row or a row that
   still has a backup. The index is read at the start and again once the lock is held. Every file the tool opens (a row, a folder
@@ -249,14 +261,30 @@ An unexpected exception is exit 1 and one coded line (the exception type, never 
   "could not run" is refused even when the current tree already had that problem (the candidate that removes the cause is the
   way out). The staged set holds the index, the schemas, the role table and the hook files it names, and every json row; a folder
   is staged entry by entry, only plain regular files of the entry rule, none larger than 8 MiB (a stray entry is left out and
-  `check` reports it by name; it does not refuse an unrelated apply). An env candidate is syntax-checked, then every setting the
-  registry stores in that data file is checked with the registry's own type and validation (`stella_data.setting_problems`), and
-  a setting with no default must be present; a failure is refused with that registry entry's own `code`. An env candidate with a
-  carriage return or a byte-order mark, or an integer setting that is not plain decimal digits (a sign, a leading zero), is
-  refused: a shell reading the file with `.` would read it differently. Keys the registry does not list stay allowed. The registry
-  is found through the index row whose schema is `settings`. A json document nests at most 64 levels.
+  `check` reports it by name; it does not refuse an unrelated apply). An env candidate is read the way its file is read, which is
+  data: a row whose path the role table lists under `owner_settings` is read by the stack's own parser (`owner_config.py`, which
+  drops a byte-order mark and a carriage return at a line end), every other env row is sourced by a shell, so a carriage return or
+  a byte-order mark is refused there. Then every setting the registry stores in that data file is checked with the registry's own
+  type and validation (`stella_data.setting_problems`), and a setting with no default must be present; a failure is refused with
+  that registry entry's own `code`. An integer setting that is not plain decimal digits (a sign, a leading zero) is refused. Keys
+  the registry does not list stay allowed. The registry is found through the index row whose schema is `settings`. A json
+  document nests at most 64 levels. **A rollback checks the saved copy with these same rules** (the row's reader, the registry, the
+  whole set): bytes saved from a file that was in use are never refused by a rule that file did not have to pass.
+- **What a row is.** Whether a row is one file or a folder of entries comes from the applied record where the row was applied
+  (keys `<id>/<entry>` or `<id>`), else from the index row (a json row with no `list_key` whose path does not end in `.json`;
+  the index has no field that says it: a `kind` field would be clearer). Never from the disk: the disk is compared with it, and
+  a file that became a folder, a folder that became a file or a missing folder is drift in `check` (314) and refuses apply and
+  rollback; a committed or applied entry that became a folder is drift too.
+- **Folders the tool may not write.** Before any write the folders an apply or rollback writes in (the file's, the applied
+  state's, the backups') must be writable for the user; a read-only one is refused (313) with the folder named and the two
+  commands (`chmod u+w <folder>`, then back to its mode). The tool never changes the mode of a folder or file it did not make, so
+  an owner setting on the documented read-only layout (`config/` 0555, the file 0444, docs/recovery.md) is applied by lifting
+  the folder's mode first and putting it back after; the file keeps its own mode through apply and rollback.
 - **Backup and rollback.** Before a file is replaced its bytes, mode, previous applied record, both hashes and a random token are
-  saved in `backup_dir/<key>/<counter>-<time>/` (`file`, `file.applied`, `meta.json`; folders 0700, files 0600). **The backup
+  saved in `backup_dir/<key>/<counter>-<time>/` (`file`, `file.applied`, `meta.json`; folders 0700, files 0600); the applied
+  state records, before the folder is made, its token and what the saved copy is (sha256, whether the file existed, its mode, the
+  new sha256), and rollback refuses (316) a meta file that differs from that record or holds a mode a data file may not have
+  (beyond 0777). **The backup
   folder holds full copies of owner files until a rollback removes them; nothing in this tool keeps a role out of it. W4's path
   rules (read and write refusals for every role) are what does.** Backups are ordered by a counter kept in the applied state,
   never by the clock; the name carries it in eight digits, so the counter stops at 99999999 (an apply then says how to repair; a
@@ -273,21 +301,36 @@ An unexpected exception is exit 1 and one coded line (the exception type, never 
   the apply wrote or the bytes it replaced (anything else is a hand edit: 314, untouched), and the restored content goes
   through the same validation as a candidate (else 313: apply the content you want instead). A restored file that git does not
   track keeps the restored hash as its applied baseline, so a later hand edit is drift.
-  **Unfinished and damaged folders.** A folder whose `meta.json` is missing (the only thing a kill can leave) is unfinished:
-  `check` reports it (314), `apply` refuses, and `rollback` removes it, says so, and stops there with exit 0 (nothing is
-  restored in that run; run it again to undo the last change). A meta file that is present but unreadable or wrong is damage:
-  316, nothing deleted. A folder is removed meta file first, so a kill during a removal leaves an unfinished folder, never a
-  damaged one.
-- **Interrupted runs.** A rollback marks its backup `rollback-pending` first; a kill at any step is finished by the next
-  `rollback`, which writes the event line the killed one did not, with the real old and new values (the saved copy and the
-  bytes the apply wrote). An apply killed after the replace is finished by repeating it (the missing bookkeeping and event line
-  are written); otherwise `rollback` restores the file. The event log is consulted only to resume such a step, and only for the
-  token, which nobody can know before the line exists: a line already in the log that names the backup cannot suppress the
-  tool's own line. The "nothing to restore" branch writes an event line too, saying so. A failure after the replace says what
-  state was left (STL-CFG-310) and what the next run will do; "Nothing was changed" is printed only when that is true. An
-  interrupted apply followed by a hand edit: `apply <id> --from <file holding the current bytes>` records them (an `adopt`
-  line) and sets the interrupted backup aside.
-- **Check.** Drift is a sha256 or mode that differs from the last applied record, or (never applied) from the committed blob.
+  **Unfinished and damaged folders.** A folder whose `meta.json` is missing while the file still holds the bytes it saved (a
+  kill before the meta was written) is unfinished: `check` reports it (323), `apply` refuses, and `rollback` removes it, says so,
+  and stops there with exit 0 (nothing is restored in that run; run it again to undo the last change). A missing meta while the
+  file moved on (the change went through; the meta was removed by hand), or a meta file that is present but unreadable or wrong,
+  is damage: 316, nothing deleted. A folder is removed by one rename to `.gone-<name>` first, then its content: after the rename
+  the backup no longer exists for any command, and a kill leaves a `.gone-` folder the next apply or rollback sweeps.
+- **Interrupted runs.** A rollback marks its backup `rollback-pending` first, with a fresh token and what it found (whether
+  the file already held the saved bytes, whether the apply was logged); a kill at any step is finished by the next `rollback`,
+  which writes the lines the killed one did not, with the real old and new values (the saved copy and the bytes the apply
+  wrote). The lines a rollback owes do not depend on how far a killed run got: the apply line first when the apply replaced the
+  file and never logged it, then its own line when there was a logged change or the file changes; an apply that never took
+  effect and never logged is removed with no line. An apply killed after the replace is finished by repeating it (the missing
+  bookkeeping and event line are written); otherwise `rollback` restores the file. The event log is consulted only to resume such
+  a step, and only for a token as a word: the apply's token is in the backup's meta file before its line exists (W4 keeps roles
+  out of that folder), the rollback's own token is in no line before its own; a line that only names the backup cannot suppress
+  the tool's line. The "nothing to restore" branch writes an event line too, saying so.
+  **After the first write.** Every write of a command (the applied state, the backup folder, the file, the event line, a meta
+  status, a removal) is entered as a step with its undo, and an interrupt is held while a write and its entry are made. A
+  failure or an interrupt after the first write undoes the steps newest first, up to an event line (which is never undone) or an
+  undo that fails, and prints one line: STL-CFG-321 with the one command that finishes or undoes the change first, then what is
+  on disk now (the file, the backup, the applied state, the event line written or not). When the undo put everything back the
+  line says so (318 when the event log was the cause). "Nothing was changed" is printed only before the first write; the lock
+  files, an empty event log and empty folders made on the way are not counted as a change. The event line is built and judged
+  (shape, schema, size) before the file is replaced, and it is synced like the state. An interrupted apply followed by a hand
+  edit: `apply <id> --from <file holding the current bytes>` records them (an `adopt` line) and sets the interrupted backup
+  aside. A pending apply whose saved copy no longer passes the checks has one way out, printed by apply and rollback alike:
+  apply a copy of the file as it is (that finishes it), then apply what you want.
+- **Check.** Drift is a sha256 or mode that differs from the last applied record, or (never applied) from the committed blob,
+  or a row whose disk differs from what the row is (see above). An unfinished step is 323, not drift; something check cannot read
+  is one 322 line naming it.
   Folder rows list the entries on disk, the applied ones and the committed ones (a deleted committed entry is drift); an entry
   that cannot be read (a FIFO, a folder, too large) is one problem line naming it and the other rows are still checked.
   `check <id>/<name>` on a single-file row is refused like the other commands. Applying the bytes a hand edit already put there
@@ -318,7 +361,7 @@ An unexpected exception is exit 1 and one coded line (the exception type, never 
   is not checked against the whole set. `check` reads owner-only rows' metadata without the gate (the hooks keep roles from
   running the tool). A lock file replaced while it is held (needs a write in the 0700 lock folder) gives two holders; one
   replaced while a run waits is detected. Rollback of a key whose adopt line is still missing (a kill, then a rollback before
-  the next apply) leaves that adopt without its line.
+  the next apply) leaves that adopt without its line. A `TMPDIR` inside the stack root would put the staging copy there.
 
 ## The owner-only write path (item W4)
 
@@ -340,4 +383,4 @@ The canonical env writer refuses a value that holds both a single quote and any 
 ## Alert codes
 `STL-CFG-310` (a data file is invalid), `STL-CFG-311` (a name is not in the data) and `STL-CFG-319` (an env-format row is
 not readable through this tool) are used by `stella_data.py`.
-`STL-CFG-312` to `318` are used by the apply and event-log tools (see above).
+`STL-CFG-312` to `318` and `321` to `323` are used by the apply and event-log tools (see above).

@@ -334,6 +334,10 @@ chmod u+w config config/owner.env
 chmod 555 config; chmod 444 config/owner.env
 ```
 
+An owner setting applied with the tool (`bin/settings.py set`, `bin/stella-apply.py apply owner-settings`) on this layout needs
+`chmod u+w config` first and `chmod 555 config` after: the tool refuses before any write while `config/` is read-only, never
+changes a mode itself, and keeps the file's own mode (444) through apply and rollback.
+
 Editing the file from Windows (Explorer or an editor on the host folder) needs none of these steps: the modes apply
 inside the container only. `config/` at 555 also means a `git checkout` or `git pull` that changes
 `config/owner.example.env` needs `chmod u+w config` first, then `chmod 555 config` again.

@@ -13,8 +13,9 @@ CLI: event_log.py append --type T --what W [--old JSON] [--new JSON] [--code C] 
      event_log.py tail [--json] [-n N]       the last N lines (default 20), masked again on the way out; lines that are not
                                              event objects are counted and reported on stderr (one STL-CFG-318 line)
 Exit: 0 ok; 1 refused (STL-CFG-313 invalid line, STL-CFG-318 log not writable; the catalog's plain message on stderr); 2 usage.
-The stack root is the parent of this file's folder, or STELLA_ROOT (a scratch root in tests). Importers use build, append,
-preflight, mask, redactor, scrub, SECRETS, note_secrets, depth, read_log, path, locked, open_file, open_dir, say and fail.
+The stack root is the parent of this file's folder, or STELLA_ROOT (a scratch root in tests). Importers use build, prepare,
+append, preflight, mask, redactor, scrub, SECRETS, note_secrets, depth, read_log, path, locked, open_file, open_dir, mkdirs,
+say and fail. A file opened for writing (the log, a lock) must have one hard link; every line written is synced.
 Limits of a line (one rule for the writer and the reader, the reader's with a margin): the writer refuses nesting beyond
 WRITE_DEPTH or a line beyond WRITE_MAX bytes (313); the reader counts a line beyond READ_DEPTH / READ_MAX, or one it cannot
 parse, mask or print for any reason, as unreadable (reported, 318) and goes on. Every file opened (log, lock) must be a regular
@@ -34,9 +35,9 @@ WRITE_DEPTH, READ_DEPTH = 16, 64   # nesting of a line: the writer's limit is fa
 WRITE_MAX, READ_MAX = 1 << 20, 4 << 20   # bytes of a line, same idea
 
 class EventError(Exception):
-    def __init__(self, code, problem):
+    def __init__(self, code, problem, extra=None):
         super().__init__(problem)
-        self.code, self.problem = code, problem
+        self.code, self.problem, self.extra = code, problem, extra or {}   # extra: more placeholders of the catalog row
 
 def path(rel):
     """Absolute path of a root-relative path from the index. Refused when it leaves the root (symlinks resolved), and, when
@@ -59,8 +60,10 @@ def open_dir(d):
     """An open folder that is d itself: no link on its last part, and the path the kernel gives the descriptor is d (a parent
     swapped for a link after the path was checked is refused here; later steps work relative to this descriptor)."""
     fd = os.open(d, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
-        if os.readlink(f"/proc/self/fd/{fd}").casefold() != d.casefold():
+    try:   # the same name (up to case only where no folder on the way is a link: the stack's disk ignores case) and the same folder
+        real, parts = os.readlink(f"/proc/self/fd/{fd}"), d.split(os.sep)
+        if (real != d and (real.casefold() != d.casefold() or any(os.path.islink(os.sep.join(parts[:i])) for i in range(2, len(parts) + 1)))) \
+                or not os.path.samestat(os.fstat(fd), os.lstat(d)):
             raise ValueError("a folder on the way is not where the index puts it")
     except BaseException:
         os.close(fd)
@@ -75,16 +78,39 @@ def open_file(p, flags, mode=0o600):
         fd = os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, mode, dir_fd=dfd)
     finally:
         os.close(dfd)
-    if not stat.S_ISREG(os.fstat(fd).st_mode):
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or (flags & (os.O_WRONLY | os.O_RDWR) and st.st_nlink > 1):
         os.close(fd)
-        raise ValueError("is not a regular file")
+        raise ValueError("is not a regular file" if not stat.S_ISREG(st.st_mode) else "has more than one hard link (it may be another file)")
     return fd
+
+def mkdirs(p, base=None):
+    """p and the folders on the way below base (the stack root), each made 0700 through its parent opened and checked by
+    open_dir: a parent swapped for a link is refused, nothing is made outside base."""
+    base = base or ROOT
+    rel = os.path.relpath(p, base)
+    if rel == ".":
+        return
+    if rel == ".." or rel.startswith(".." + os.sep):
+        raise ValueError("a folder to make is outside the stack root")
+    d = base
+    for part in rel.split(os.sep):
+        fd = open_dir(d)
+        try:
+            os.mkdir(part, 0o700, dir_fd=fd)
+        except FileExistsError:
+            pass
+        finally:
+            os.close(fd)
+        d = os.path.join(d, part)
+    os.close(open_dir(d))
 
 @contextlib.contextmanager
 def locked(p):
     """flock on p. After the lock is taken the file at the path must still be the file that was locked (it can be replaced while
     a run waits): else the run locks again, a few times, then refuses."""
-    os.makedirs(os.path.dirname(p), exist_ok=True)
+    if not os.path.isdir(os.path.dirname(p)):
+        mkdirs(os.path.dirname(p))
     for _ in range(5):
         fd = open_file(p, os.O_RDWR | os.O_CREAT)
         fcntl.flock(fd, fcntl.LOCK_EX)
@@ -122,16 +148,17 @@ def depth(v):
             todo += [(y, n + 1) for y in x]
     return d
 
-def say(code, problem, alert=False):
-    """The catalog code and its plain message on stderr (the problem text scrubbed); with alert=True one alert line too."""
-    body, tag, kv = alert_catalog.render(code, {"problem": scrub(problem)})
+def say(code, problem, alert=False, extra=None):
+    """The catalog code and its plain message on stderr (the problem text and extra values scrubbed); with alert=True one alert
+    line too."""
+    body, tag, kv = alert_catalog.render(code, {"problem": scrub(problem), **{k: scrub(str(v)) for k, v in (extra or {}).items()}})
     if alert:
         alert_catalog.log(tag, kv)
     print(f"{code} {body.split(chr(10))[1]}", file=sys.stderr)
 
-def fail(code, problem):
+def fail(code, problem, extra=None):
     """Print the catalog code and its plain message, log one alert line; the exit code to return."""
-    say(code, problem, alert=True)
+    say(code, problem, alert=True, extra=extra)
     return 1
 
 # ---- masking ----
@@ -206,7 +233,7 @@ def preflight():
     """Raises EventError(318) when the log cannot be appended to now; creates the log folder and an empty log if there are none."""
     try:
         p = log_path()
-        os.makedirs(os.path.dirname(p), mode=0o700, exist_ok=True)
+        mkdirs(os.path.dirname(p))
         os.close(open_file(p, os.O_WRONLY | os.O_APPEND | os.O_CREAT))
     except (OSError, ValueError) as e:
         raise EventError("STL-CFG-318", why(e))
@@ -218,9 +245,9 @@ def sensitive_row(line, row_id):
     secret_rows = {e["store"]["data"] for e in registry()["entries"] if e["sensitivity"] == "secret"}
     return next((r for r in sd.rows() if r["id"] == rid and (r["redact_keys"] or rid in secret_rows)), None)
 
-def append(line, row_id=None, scrub_detail=True):
-    """Mask, validate, append one line under the lock; returns the line written. EventError 313 (invalid, nothing
-    written) or 318 (not written). The line goes out in one write; if that fails or is short, the file is cut back.
+def prepare(line, row_id=None, scrub_detail=True):
+    """(the line as written, its bytes): masked and validated, or EventError 313. A caller judges a line with this before it
+    changes anything; append() does the same again when it writes.
     scrub_detail=False: the caller's detail is the tool's own text (no outside value in it), which a scrub by substring could garble."""
     try:
         if depth(line) > WRITE_DEPTH:
@@ -243,10 +270,16 @@ def append(line, row_id=None, scrub_detail=True):
         raise EventError("STL-CFG-313", f"event line: {type(e).__name__}" + (" (nested too deeply)" if depth(line) > WRITE_DEPTH else ""))
     errs += [f"{k} must not be empty" for k in ("type", "what") if line.get(k) == ""]   # the schema subset has no minLength here
     if errs:
-        raise EventError("STL-CFG-313", "event line: " + "; ".join(errs)[:300])
+        raise EventError("STL-CFG-313", "event line: " + "; ".join(errs)[:180])
     data = (json.dumps(line, ensure_ascii=True, separators=(",", ":")) + "\n").encode()
     if len(data) > WRITE_MAX:
         raise EventError("STL-CFG-313", f"event line: larger than {WRITE_MAX} bytes")
+    return line, data
+
+def append(line, row_id=None, scrub_detail=True):
+    """Mask, validate, append one line under the lock and sync it; returns the line written. EventError 313 (invalid, nothing
+    written) or 318 (not written). The line goes out in one write; if that fails or is short, the file is cut back."""
+    line, data = prepare(line, row_id, scrub_detail)
     try:
         p = log_path()
         with locked(p + ".lock"):
@@ -258,6 +291,7 @@ def append(line, row_id=None, scrub_detail=True):
                 try:
                     if os.write(fd, data) != len(data):
                         raise OSError("short write")
+                    os.fsync(fd)   # a line is as durable as the state it reports
                 except BaseException:
                     try:
                         os.ftruncate(fd, size)   # whole or not at all
@@ -337,7 +371,7 @@ def main(argv):
     except EventError as e:
         return fail(e.code, e.problem)
     except Exception as e:   # shortcut: one code for every surprise; a bug is told apart by the exception type in the line
-        return fail("STL-CFG-313", f"unexpected {type(e).__name__}")
+        return fail("STL-CFG-313" if o.cmd == "append" else "STL-CFG-322", f"unexpected {type(e).__name__}")   # tail changes nothing
     return 0
 
 if __name__ == "__main__":
