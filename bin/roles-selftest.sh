@@ -476,8 +476,9 @@ mkdir -p "$T/gt/bin" "$T/gt/docs/hermes-local"; cp /workspace/bin/*.py /workspac
 ok 'python3 -I "$T/graph.py" "$T/gt" 2>&1 | grep -q event_log.py' "K3: a file reached from an owner command and missing from the list is reported (negative control)"
 mkdir -p "$T/gt/docs/hermes-local"; cp /workspace/docs/hermes-local/alert-catalog.json "$T/gt/docs/hermes-local/"; jq '.boundary_paths -= ["docs/hermes-local/alert-catalog.json"]' "$RF" >"$T/gt/docs/hermes-local/roles.json"
 ok 'python3 -I "$T/graph.py" "$T/gt" 2>&1 | grep -q "docs/hermes-local/alert-catalog.json (named on a code line of bin/alert_catalog.py)"' "T9: a data file a boundary file opens by a fixed path and missing from the list is reported (negative control: the alert catalog)"
-cp /workspace/package.json "$T/gt/"; jq '.boundary_paths -= ["package.json"]' "$RF" >"$T/gt/docs/hermes-local/roles.json"
-ok 'python3 -I "$T/graph.py" "$T/gt" 2>&1 | grep -q "^package.json (named on a code line of bin/merge-card.sh)"' "B.2 point 10: the package manifest the merge reads its test command from is a boundary path, and missing from the list it is reported"
+PKG=$(grep -oE '[a-z]+\.json' /workspace/bin/merge-card.sh | grep -v data | sort -u | head -1)   # the manifest the merge reads its test command from, taken from merge-card.sh, not named here
+cp "/workspace/$PKG" "$T/gt/"; jq --arg p "$PKG" '.boundary_paths -= [$p]' "$RF" >"$T/gt/docs/hermes-local/roles.json"
+ok '[ -n "$PKG" ] && python3 -I "$T/graph.py" "$T/gt" 2>&1 | grep -q "^$PKG (named on a code line of bin/merge-card.sh)"' "B.2 point 10: the package manifest ($PKG) the merge reads its test command from is a boundary path, and missing from the list it is reported"
 ok '[ "$(printf "bin/json.py\0bin/zz-not-stdlib.py\0" | ROLES_FILE=$RF python3 -I $S/roles.py hits /workspace boundary | tr "\0" "\n")" = "bin/json.py" ]' "K3: a new file in bin/ that shadows a standard-library module is a boundary change; another new file is not"
 II=__init''__.py   # the package-init base name, split so the test-map reach scan does not tie this selftest to every __init__.py
 ok '[ "$(printf "bin/json/$II\0bin/sqlite3/$II\0bin/re.cpython-311-x86_64-linux-gnu.so\0bin/zz-not-stdlib/$II\0bin/roles.py\0" | ROLES_FILE=$RF python3 -I $S/roles.py hits /workspace boundary | tr "\0" " ")" = "bin/json/$II bin/sqlite3/$II bin/re.cpython-311-x86_64-linux-gnu.so bin/roles.py " ]' "B.3 point 18: a package or a compiled module in bin/ named like a module the boundary imports from outside the repo (json, sqlite3, re) is a boundary change; another name is not"
@@ -497,11 +498,13 @@ assert roles.braces(\"a{b,c}d\") == [\"abd\", \"acd\"]
 # B.2 point 8 (r5, W4-CV3-01): every guard that reads the table refuses every call, STL-CFG-303, when the table names a hook file that is not there (as before
 # the phase); control: the intact table allows the same calls
 jq '.roles.builder.hooks += [{"matcher": "^zz-none$", "file": "docs/hermes-local/hooks/builder/zz-missing-hook.sh"}]' "$RF" >"$T/mh.json"
-gcall() { jq -nc --arg t "$2" --argjson i "$3" --arg p "$4" '{tool_name: $t, tool_input: $i, session_id: "s1", cwd: "/tmp", profile: $p, extra: {}}' | ROLES_FILE=$1 python3 -I "/workspace/docs/hermes-local/hooks/$5" >"$T/gc.out" 2>&1; echo $?; }
-for gc in "write_file|{\"path\":\"/tmp/zz-x\",\"content\":\"x\"}|builder-local|builder/write-guard.py" "read_file|{\"path\":\"/workspace/README.md\"}|builder-local|builder/secret-guard.py" \
-          "terminal|{\"command\":\"ls\"}|default|default/read-only-terminal.py" "read_file|{\"path\":\"/workspace/README.md\"}|default|builder/secret-guard.py"; do
-  IFS='|' read -r t i pr hk <<<"$gc"
-  ok '[ "$(gcall "$RF" "$t" "$i" "$pr" "$hk")" = 0 ] && [ "$(gcall "$T/mh.json" "$t" "$i" "$pr" "$hk")" = 2 ] && grep -q "STL-CFG-303" "$T/gc.out"' "B.2 point 8: ${hk##*/} ($pr $t): allowed with the intact table, refused with STL-CFG-303 when the table names a missing hook file"
+# the guard file for each (role, tool) comes from the table, not named here (so the test-map reach scan ties this selftest to no guard by name)
+gcall() { jq -nc --arg t "$2" --argjson i "$3" --arg p "$4" '{tool_name: $t, tool_input: $i, session_id: "s1", cwd: "/tmp", profile: $p, extra: {}}' | ROLES_FILE=$1 python3 -I "/workspace/$5" >"$T/gc.out" 2>&1; echo $?; }
+guardfile() { jq -r --arg r "$1" --arg t "$2" '[.roles[$r].hooks[]? | select((.file // "") | test("guard|terminal")) | select(.matcher as $m | $t | test("^(?:" + $m + ")$")) | .file][0]' "$RF"; }
+for gc in "builder-local|builder|write_file|{\"path\":\"/tmp/zz-x\",\"content\":\"x\"}" "builder-local|builder|read_file|{\"path\":\"/tmp/zz-x\"}" \
+          "default|dispatcher|terminal|{\"command\":\"ls\"}" "default|dispatcher|read_file|{\"path\":\"/tmp/zz-x\"}"; do
+  IFS='|' read -r pr role t i <<<"$gc"; hk=$(guardfile "$role" "$t")
+  ok '[ -n "$hk" ] && [ "$hk" != null ] && [ "$(gcall "$RF" "$t" "$i" "$pr" "$hk")" = 0 ] && [ "$(gcall "$T/mh.json" "$t" "$i" "$pr" "$hk")" = 2 ] && grep -q "STL-CFG-303" "$T/gc.out"' "B.2 point 8: the $role guard for $t ($pr): allowed with the intact table, refused with STL-CFG-303 when the table names a missing hook file"
 done
 exec {CW}>&- {CR}<&-; wait "$CPID"   # the check driver ends
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

@@ -189,7 +189,7 @@ ok '[ "$dgood" = 1 ]' "RT24 differential: the secret guard refuses everything it
 ok '[ "$(term $T/pre-sg.py "echo a # n\\${NL}cat /workspace/$OB.e\"nv\"")" = 2 ]' "RT24 differential premise: the pre-RT22-01 copy refuses a tokenised read after a backslash comment"
 # B.2 point 9 (r5, W4-CV3-03): jq builds a file name from a NAMED folder and a module word (jq -L <dir> 'import ...'); the folder it searches is judged. A
 # state-path folder and a Hermes-home folder are both refused, by the whole `-L <dir>` and the attached `-L<dir>` form, through both read guards.
-EVD=/workspace/$(dirname "$(jq -r .event_log /workspace/.stella/data-files.json)")   # the folder holding the event log (a state path)
+EVD=/workspace/$(dirname "$(jq -r .event_log "/workspace/$(jq -r .data_index /workspace/docs/hermes-local/roles.json)")")   # the folder holding the event log (a state path), via the data index
 for g in "$S" "$R"; do
   for c in "jq -L $EVD -n 'import \"events\" as \$a; \$a'" "jq -L$EVD -n 'import \"events\" as \$a; \$a'" "jq --library-path $EVD -n 'include \"events\"; .'"; do
     ok '[ "$(term $g "$c")" = 2 ] && grep -q "STL-CFG-312" "$T/out"' "B.2 point 9: $(basename $g) refuses jq searching the state-path folder: $c"
