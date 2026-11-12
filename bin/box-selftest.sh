@@ -2,6 +2,7 @@
 # Option A (OS box) self-test. Layers: 1 roles.py sandbox validator and spec; 2 box.py mount list; 3 the real bwrap box on
 # scratch trees (git-route attacks fail inside, succeed outside); 4 the terminal plugin (provider flags, env, refusals).
 # The `sandbox` block of roles.json is data: profile names come from the table, never from this file's logic.
+# selftest: serial
 # Not part of `npm test` (the suite is not changed by this build); run as: flock .scratch/readiness/test.lock bin/box-selftest.sh
 set -u
 T=$(mktemp -d); trap '[ -n "${KEEP:-}" ] || rm -rf "$T"' EXIT

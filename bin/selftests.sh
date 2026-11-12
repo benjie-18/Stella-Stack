@@ -65,10 +65,17 @@ run_one() {
   fi
   { echo "FAIL $t-selftest"; echo "     FAIL $out"; } >"$R/res-$k"; echo 1 >"$R/rc-$k"; echo 0 >"$R/ms-$k"
 }
-for n in "$@"; do run_one "$n"; done
+# N at once, from the watchdog settings (test_rerun.parallel; 1 = serial, the same path); shortcut: 4 when unreadable, a data file of its own if more knobs come.
+N=$(python3 -I "$ROOT/bin/watchdog_settings.py" get test_rerun.parallel 2>/dev/null); [[ $N =~ ^[1-9][0-9]*$ ]] || N=4
+run_set() { local n=$1 t; shift; for t; do while [ "$(jobs -rp | wc -l)" -ge "$n" ]; do wait -n; done; run_one "$t" & done; wait; }
+par=(); ser=()   # a selftest that must not share the machine says so in its own file: a line "# selftest: serial"; those run after the batch, alone
+for n in "$@"; do if grep -qs '^# selftest: serial$' "$ROOT/bin/$n-selftest.sh"; then ser+=("$n"); else par+=("$n"); fi; done
+run_set "$N" "${par[@]}"; run_set 1 "${ser[@]}"
 
-fails=0
+fails=0   # printed in list order, whatever order they finished in
 for n in "$@"; do
-  cat "$R/res-${n//[^A-Za-z0-9._-]/_}"; [ "$(cat "$R/rc-${n//[^A-Za-z0-9._-]/_}")" = 0 ] || fails=$((fails+1))
+  k=${n//[^A-Za-z0-9._-]/_}; cat "$R/res-$k"; [ "$(cat "$R/rc-$k")" = 0 ] || fails=$((fails+1))
+  # SELFTESTS_TIMES=<file>: one line "<seconds>	<name>	<ok|skip|FAIL>" per selftest
+  [ -z "${SELFTESTS_TIMES:-}" ] || printf '%d.%03d\t%s\t%s\n' $(( $(<"$R/ms-$k") / 1000 )) $(( $(<"$R/ms-$k") % 1000 )) "$n" "$(head -1 "$R/res-$k" | cut -d' ' -f1)" >>"$SELFTESTS_TIMES"
 done
 [ "$fails" = 0 ] && echo "selftests PASS" || { echo "selftests FAIL ($fails)"; exit 1; }

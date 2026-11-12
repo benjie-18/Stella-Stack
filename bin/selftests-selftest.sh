@@ -41,6 +41,15 @@ ok 'grep -qx "FAIL nope-selftest" "$T/out" && grep -q "no such selftest" "$T/out
 run ../x
 ok 'grep -qx "FAIL ../x-selftest" "$T/out" && [ "$(cat "$T/rc")" = 1 ]' "S1 a name that is not plain characters is FAIL"
 
+# S2 up to N at once (N is data: test_rerun.parallel in the watchdog settings); a selftest marked serial runs alone, after the batch
+overlap() { awk 'FNR==1{s[++n]=$1; e[n]=$2} END{exit !(s[1] < e[2] && s[2] < e[1])}' "$T/marks/$1" "$T/marks/$2"; }
+echo '{"test_rerun": {"parallel": 2}}' >"$T/set.json"; rm -f "$T/marks"/*; run a b s
+ok 'overlap a b && ! overlap a s && ! overlap b s && [ "$(grep -c "^ok " "$T/out")" = 3 ] && [ "$(tail -1 "$T/out")" = "selftests PASS" ]' "S2 N=2: a and b run at the same time (and pass), the serial selftest overlaps neither"
+echo '{"test_rerun": {"parallel": 1}}' >"$T/set.json"; rm -f "$T/marks"/*; run a b
+ok '! overlap a b && [ "$(grep -c "^ok " "$T/out")" = 2 ]' "S2 N=1: the same path run one at a time, no overlap"
+echo '{"test_rerun": {"parallel": 2}}' >"$T/set.json"; rm -f "$T/marks"/*; SELFTESTS_TIMES="$T/times" run f a b
+ok '[ "$(sed -n 1p "$T/out")" = "FAIL f-selftest" ] && [ "$(grep "^ok " "$T/out" | tr -d "\n")" = "ok   a-selftestok   b-selftest" ] && [ "$(cut -f2,3 "$T/times" | tr "\n" " ")" = "f	FAIL a	ok b	ok " ] && grep -Eq "^[0-9]+\.[0-9]{3}	f	FAIL$" "$T/times"' "S2 the output is in list order whatever finished first; SELFTESTS_TIMES gets one line per selftest"
+
 # fail closed: no bubblewrap on PATH, and a bubblewrap that refuses: every selftest FAIL with a plain line, nothing ran
 mkdir -p "$T/nobwrap" "$T/badbwrap"
 for f in /usr/bin/* /bin/*; do [ "${f##*/}" = bwrap ] || ln -sf "$f" "$T/nobwrap/" 2>/dev/null; done
