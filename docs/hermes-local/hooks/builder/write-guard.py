@@ -839,12 +839,7 @@ if why is None:
 
 
 def coded(code, problem):   # K8: the catalog code, its plain message, one alert line for the call (the role's other hook that refuses it writes none); the role and the card named
-    try:
-        role = roles.role_of(RT, P.get("profile"))[0]
-    except Exception:
-        role = "unknown"
-    card = CALL.get("card")
-    return roles.plain(code, once=PAY, problem=f"{problem} (role {role}{', card ' + card if card else ''})")
+    return roles.hook_refusal(code, problem, PAY, CALL.get("card"))   # B.1 (r5): the one way a hook refuses
 
 
 if why.endswith("[STL-CFG-303]"):
@@ -852,6 +847,8 @@ if why.endswith("[STL-CFG-303]"):
     sys.exit(2)
 if why.startswith(f"[{OB}] "):   # one alert line per refusal, the catalog's plain message, no value from any owner file
     why = coded(OB, "a role's attempt on owner data, an owner state path or an owner command") + " " + why[len(OB) + 3:]
+elif not why.startswith("[STL-GRD-603]"):   # B.1 (r5): every other refusal (outside the worktree, agent config, the board CLI ...) carries the code of a refusal by the role's rules
+    why = coded("STL-GRD-604", "the write guard refused a write outside the card's own worktree or a command its role may not run") + " " + why
 tail = "" if why.startswith("[STL-GRD-603]") else " (D40). This refusal is final for this attempt."
 print(json.dumps({"action": "block", "message": f"write guard: {why}{tail}"}))
 sys.exit(2)

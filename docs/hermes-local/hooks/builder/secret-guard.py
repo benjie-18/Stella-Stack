@@ -284,11 +284,7 @@ if why is None:
 
 def coded(code, problem):   # K8: the catalog code, its plain message, one alert line for the call (the role's other hook that refuses it writes none); the role named, no owner value
     try:
-        role = _roles.role_of(_t, P.get("profile"))[0]
-    except Exception:
-        role = "unknown"
-    try:
-        return _roles.plain(code, once=PAY, problem=f"{problem} (role {role})")
+        return _roles.hook_refusal(code, problem, PAY)   # B.1 (r5): the one way a hook refuses
     except Exception:   # the role module itself is missing: the code and the problem still print
         return f"[{code}] {problem}"
 
@@ -300,6 +296,8 @@ if "[STL-CFG-312]" in why:   # G4: the code, the catalog's plain message, one al
     why = coded("STL-CFG-312", "a role tried to read an owner state path of the apply tool") + " " + why.replace(" [STL-CFG-312]", "")
 elif "owner settings" in why:   # an older rule caught it first: it still says so with the code
     why = coded("STL-CFG-312", "a role tried to read an owner settings file") + " " + why
+else:   # B.1 (r5): every other refusal of this guard (a secret path) carries the code of a refusal by the role's rules
+    why = coded("STL-GRD-604", "the secret guard refused a read of a secret path") + " " + why
 tail = ("No agent reads the owner settings file (the owner's rule): leave it out of the task. To search, name a narrower "
         "folder that does not hold it (for example bin or docs)." if "owner settings" in why else   # RT7-03, B2V-16
         "Agents here never read secrets (.env files, keys, Hermes, Claude, OpenCode, GitHub, SSH or AWS credentials). If the "

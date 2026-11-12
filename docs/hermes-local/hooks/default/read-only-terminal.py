@@ -379,11 +379,7 @@ if reason is None:
 
 def coded(code, problem):   # K8: the catalog code, its plain message, one alert line for the call (the role's other hook that refuses it writes none); the role named, no owner value
     try:
-        role = _roles.role_of(_roles.load(files=False), p.get("profile"))[0]
-    except Exception:
-        role = "unknown"
-    try:
-        return _roles.plain(code, once=PAY, problem=f"{problem} (role {role})")
+        return _roles.hook_refusal(code, problem, PAY)   # B.1 (r5): the one way a hook refuses
     except Exception:   # the role module itself is missing: the code and the problem still print
         return f"[{code}] {problem}"
 
@@ -395,6 +391,8 @@ if "[STL-CFG-312]" in reason:   # G4: the code, the catalog's plain message, one
     reason = coded("STL-CFG-312", "a role tried to read an owner state path of the apply tool") + " " + reason.replace(" [STL-CFG-312]", "")
 elif "owner settings" in reason:   # an older rule caught it first: it still says so with the code
     reason = coded("STL-CFG-312", "a role tried to read an owner settings file") + " " + reason
+else:   # B.1 (r5): every other refusal of the read-only terminal carries the code of a refusal by the role's rules
+    reason = coded("STL-GRD-604", "the read-only terminal refused a command its role may not run") + " " + reason
 print(json.dumps({"action": "block", "message": f"This profile's terminal is read-only ({reason}). Allowed: {ALLOWED}. "
                   "This profile does not change files: create a card for a worker instead."}))
 sys.exit(2)

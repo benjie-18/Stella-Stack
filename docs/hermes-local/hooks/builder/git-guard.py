@@ -165,8 +165,9 @@ def check(cmd):
     return None
 
 
+PAY = sys.stdin.read()
 try:
-    p = json.load(sys.stdin)
+    p = json.loads(PAY)
     a = p.get("tool_input") or {}
     cmd = a.get("data") if p.get("tool_name") == "process_manage" else a.get("command")
     reason = check(str(cmd or ""))
@@ -174,7 +175,15 @@ except Exception as e:  # fail closed: a payload we cannot read is refused
     reason = f"unreadable payload: {type(e).__name__}"
 if reason is None:
     sys.exit(0)
-print(json.dumps({"action": "block", "message": f"git guard: {reason} (D36). Before any git command, "
+
+def coded(problem):   # B.1 (r5): the one way a hook refuses (bin/roles.py hook_refusal): the catalog code, one alert line per call naming the role
+    try:
+        sys.path.insert(0, "/workspace/bin")
+        import roles
+        return roles.hook_refusal("STL-GRD-604", problem, PAY)
+    except Exception:   # the role module itself is missing: the code and the problem still print
+        return f"[STL-GRD-604] {problem}"
+print(json.dumps({"action": "block", "message": f"git guard: {coded('the git guard refused a command its role may not run')} {reason} (D36). Before any git command, "
                   "`git rev-parse --show-toplevel` must equal your card workspace and `git branch --show-current` your "
                   "card branch; otherwise kanban_block with kind capability. Never git config, --no-verify, git add -A "
                   "or ., or push to main."}))

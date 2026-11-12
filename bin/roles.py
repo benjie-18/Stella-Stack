@@ -728,23 +728,45 @@ def plain(code, once=None, **kv):
         return f"[{code}]"
 
 
+def call_key(payload):
+    """B.1 (r5): (key, window in seconds) of the tool call a hook payload belongs to. Hermes puts the call's id in extra.tool_call_id: the hooks of one call
+    share it and a retry has a new one, so the key is the id and needs no window. A payload without one is keyed on its bytes and the parent process,
+    and only hooks that start within 2 s of the first count as the same call (the limit: a retry of the same payload sooner than that writes no line)."""
+    try:
+        cid = (json.loads(payload).get("extra") or {}).get("tool_call_id")
+    except (ValueError, AttributeError, TypeError):
+        cid = None
+    return (f"id:{cid}", None) if isinstance(cid, str) and cid else (f"payload:{payload}|{os.getppid()}", 2)
+
+
 def _first(code, key):
-    """True for the first caller with this (code, key, parent process) in 30 s: a marker file made with O_EXCL in the alert folder (hooks run as separate
-    processes under one parent, so a marker is how they tell they refuse the same call)."""
+    """True for the first hook of a call to refuse it with this code: a marker file made with O_EXCL in the alert folder (hooks run as separate processes,
+    so a marker is how they tell they refuse the same call). key: a call key (call_key) or any text (then the old rule: the parent process, 30 s)."""
     d = os.path.join(os.environ.get("ESCALATE_SUP_DIR") or f"{ROOT}/.supervisor", "once")
     os.makedirs(d, exist_ok=True)
     for old in glob.glob(d + "/*"):   # markers older than an hour go
         if time.time() - os.stat(old).st_mtime > 3600:
             os.unlink(old)
-    f = os.path.join(d, hashlib.sha1(f"{code}|{key}|{os.getppid()}".encode()).hexdigest()[:24])
+    key, window = key if isinstance(key, tuple) else (f"{code}|{key}|{os.getppid()}", 30)   # a call key: one line per refused call, whatever code each hook gives
+    f = os.path.join(d, hashlib.sha1(key.encode()).hexdigest()[:24])
     try:
         os.close(os.open(f, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
         return True
     except FileExistsError:
-        if time.time() - os.stat(f).st_mtime > 30:
+        if window is not None and time.time() - os.stat(f).st_mtime > window:
             os.utime(f)
             return True
         return False
+
+
+def hook_refusal(code, problem, payload, card=None):
+    """B.1 (r5), the one way a hook refuses: '[CODE] <the catalog's plain message>' with exactly one alert line per refused call (the first hook of the call
+    to refuse with this code writes it), naming the role of the payload's profile and, where the caller knows it, the card."""
+    try:
+        role = role_of(load(files=False), json.loads(payload).get("profile"))[0]
+    except Exception:
+        role = "unknown"
+    return plain(code, once=call_key(payload), problem=f"{problem} (role {role}{', card ' + card if card else ''})")
 
 
 def protected(d):
@@ -1040,6 +1062,9 @@ def fail(code, **kv):
 
 def main():
     cmd, args = (sys.argv[1] if len(sys.argv) > 1 else ""), sys.argv[2:]
+    if cmd == "hook-refusal" and len(args) == 2:   # <code> <problem>, the payload on stdin: a shell hook's refusal line (hook_refusal); never fails
+        print(hook_refusal(args[0], args[1][:300], sys.stdin.read()))
+        sys.exit(0)
     if cmd == "prove":   # needs no role table: the board and the kernel only
         o = dict(zip(args[::2], args[1::2]))
         j, why = prove_card(o.get("--profile"), o.get("--task", ""))

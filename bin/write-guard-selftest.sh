@@ -508,7 +508,7 @@ G2GIT
   : >"$WGA"
   ok '[ "$(wg "echo x > /workspace/.supervisor/logs/events.jsonl")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out" && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ]' "G4 $p: a redirect into an owner state path (the event log): the code, one alert line"
   : >"$WGA"
-  ok '[ "$(wg "echo x > /workspace/bin/y")" = 2 ] && ! grep -qF "STL-CFG-312" "$T/out" && [ ! -s "$WGA" ]' "G4 $p: an older refusal keeps its text and writes no alert line"
+  ok '[ "$(wg "echo x > /workspace/bin/y")" = 2 ] && ! grep -qF "STL-CFG-312" "$T/out" && grep -qF "[STL-GRD-604]" "$T/out" && [ "$(grep -c "^STL-GRD-604 " "$WGA")" = 1 ] && [ "$(wc -l <"$WGA")" = 1 ]' "G4 $p: an older refusal keeps its text, is not called owner data, and carries the role-rule code with one alert line (B.1, r5: was no code and no line)"
 done
 # ---- F1 W4 round 3 (K7, K1b, K8, K9): the rule turned around. A command that names a path no role may write (owner data, the owner settings, the apply tool's
 # state) runs only when its verb is a known reader (the table's read_verbs); an unknown writer needs no list entry to be refused.
