@@ -77,10 +77,23 @@ pairs() {   # "<label> <role>" for each profile, then each role no profile has (
 
 # matrix <tag> <owner path> <its folder> <glob/recursion cases: 1|0>: every case above for every role
 matrix() {
-  local tag=$1 own=$2 dir=$3 deep=$4 rel lab role c ex okc bad h
+  local tag=$1 own=$2 dir=$3 deep=$4 rel lab role c ex okc bad h n=0 t f
   ln -sfn "$own" "$T/lnk"
   rel=${own#/workspace/}; ex=${own%.env}.example.env
+  # T1 (F1 W4 r4): the roles run six at a time, as in 3b (each in a subshell with its own output files; the hook copies and hook lists are made first)
+  mkdir -p "$T/m1"; rm -f "$T"/m1/*
+  while read -r lab role; do setw "$lab"; for t in read_file search_files vision_analyze skill_view terminal process_manage write_file patch; do for h in $(hooks_for "$MT" "$role" $t); do hf "$h" >/dev/null; done; done; done < <(pairs)
   while read -r lab role; do
+    n=$((n+1)); matrix_role "$n" >"$T/m1/$n.out" 2>&1 &
+    [ $((n % 6)) = 0 ] && wait
+  done < <(pairs)
+  wait
+  for f in $(ls "$T"/m1/*.out | sort -V); do cat "$f"; fails=$((fails + $(grep -c '^FAIL' "$f"))); done
+}
+matrix_role() {   # matrix_role <n>: matrix's cases for one role ($lab, $role and the matrix's locals are the caller's); runs in a subshell, writes only $T/m1/<n>.*
+    local n=$1
+    hk() { printf '%s' "$2" | "$1" >"$T/m1/$n.o" 2>"$T/m1/$n.e"; echo $?; }
+    blocked() { [ "$1" = 2 ] && jq -e '.action == "block"' "$T/m1/$n.o" >/dev/null 2>&1; }
     setw "$lab"
     L="$tag $lab/$role"
     refuse "$L" "$role" read_file "$(js --arg p "$own" '{path: $p}')" "owner file"
@@ -137,7 +150,6 @@ matrix() {
       [ "$(hk "$(hf "$h")" "$(pl terminal '{"command": "cat package.json"}')")" = 0 ] || continue
       say "$([ "$(hk "$(hf "$h")" "$(pl terminal "$(js --arg c "cat $ex" '{command: $c}')")")" = 0 ]; echo $?)" "$L terminal control: cat of the owner example file allowed by $(basename "$h")"
     done
-  done < <(pairs)
 }
 
 jq -e . "$SRC" >/dev/null 2>&1 || { echo "FAIL the role table $SRC is not readable"; echo "selftest FAIL (1)"; exit 1; }
