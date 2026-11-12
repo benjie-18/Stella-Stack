@@ -2,6 +2,7 @@
 # Option A (OS box) self-test. Layers: 1 roles.py sandbox validator and spec; 2 box.py mount list; 3 the real bwrap box on
 # scratch trees (git-route attacks fail inside, succeed outside); 4 the terminal plugin (provider flags, env, refusals).
 # The `sandbox` block of roles.json is data: profile names come from the table, never from this file's logic.
+# selftest: serial
 # Not part of `npm test` (the suite is not changed by this build); run as: flock .scratch/readiness/test.lock bin/box-selftest.sh
 set -u
 T=$(mktemp -d); trap '[ -n "${KEEP:-}" ] || rm -rf "$T"' EXIT
@@ -707,6 +708,7 @@ ok 'attack x "git fetch -u --refmap=refs/heads/card/x:refs/heads/main origin ref
 # real on a tree on the stack's own kind of mount (9p, case-insensitive): a bind over one spelling of a ref hides only that spelling
 # (`T_SIB` overwrites `t_sib`), so the card's refs cannot be per-file read-only binds inside a shared folder: the box gets a private
 # copy of its own ref, and box.py applies it to the real repo after the call.
+mkdir -p "${HH_TREE:-$W/.scratch/readiness}"   # an ignored folder: absent in a fresh copy
 L=$(mktemp -d "${HH_TREE:-$W/.scratch/readiness}/hh-box.XXXXXX"); F2=$L/f
 trap '[ -n "${KEEP:-}" ] || rm -rf "$T" "$L"' EXIT
 mkdir -p "$F2/ws/.stella" "$F2/home/.hermes/profiles/$P/home" "$F2/home/.hermes/profiles/$P/skills" "$F2/R.git"

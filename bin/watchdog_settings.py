@@ -14,7 +14,7 @@ PATH = os.environ.get("WATCHDOG_SETTINGS") or f"{os.path.dirname(BIN)}/docs/herm
 GATEWAY_KEYS = {"process_match": str, "pause_file": str, "activity_logs": list, "activity_window_minutes": int,
                 "connected_marker": str, "disconnected_marker": str, "marker_scan_bytes": int,
                 "log_time_format": str, "log_timezone": str}
-RERUN_KEYS = {"failed_check_line": str, "failed_detail_line": str, "rerun_command": str}
+RERUN_KEYS = {"failed_check_line": str, "failed_detail_line": str, "rerun_command": str, "parallel": int}
 MW_KEYS = {"window_minutes": int, "min_errors": int, "error_line": str, "progress_line": str, "log_time_format": str,
            "log_timezone": str, "loaded_models_path": str}   # K4: bin/model_watch.py
 
@@ -41,7 +41,7 @@ def validate():
     except Exception as e:
         return [f"{PATH}: {type(e).__name__}: {e}"]
     errs = [] if s.get("schema_version") == 1 else [f"schema_version is {s.get('schema_version')!r}, expected 1"]
-    for section, keys in (("gateway", GATEWAY_KEYS), ("test_rerun", RERUN_KEYS), ("model_watch", MW_KEYS)):
+    for section, keys in (("gateway", GATEWAY_KEYS), ("test_rerun", RERUN_KEYS), ("test_step", {"npm_script": str}), ("model_watch", MW_KEYS)):
         d = s.get(section)
         if not isinstance(d, dict):
             errs.append(f"{section}: missing")

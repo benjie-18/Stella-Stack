@@ -490,3 +490,6 @@ The canonical env writer refuses a value that holds both a single quote and any 
 `STL-CFG-310` (a data file is invalid), `STL-CFG-311` (a name is not in the data) and `STL-CFG-319` (an env-format row is
 not readable through this tool) are used by `stella_data.py`.
 `STL-CFG-312` to `318` and `321` to `323` are used by the apply and event-log tools (see above).
+
+## How the suite runs (decided by the owner 2026-11-12)
+Two tiers. The full suite (`npm test`, `bin/selftests.sh`) runs at merge and on the final hash. The quick tier (`npm run test:quick`, `bin/selftests.sh --quick`) is what the 15-minute watchdog runs; its list is the `quick` key of `.stella/test-map.json` (data: `bin/test-map.py quick` prints it, `check` refuses a name outside the suite list). Either way each selftest runs isolated in its own copy of the tree and a bubblewrap mount namespace (own tree, alert log and temp folder), at most `test_rerun.parallel` at once (watchdog settings); a selftest whose file holds the line `# selftest: serial` runs alone after the batch. Inside a box that forbids nested namespaces the suite fails, by design. Output is in list order; `SELFTESTS_TIMES=<file>` records the seconds per selftest.
