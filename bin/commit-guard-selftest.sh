@@ -107,6 +107,15 @@ git -C "$W" rm -q .stella/schemas/zz-w4.json
 ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "G3: a deletion of owner data: refused for a worker"
 ok '[ "$(guard "$W")" = 0 ]' "G3: the same deletion by the owner: allowed"
 git -C "$W" reset -q --hard
+# B.1 point 6 (r5, W1-RT6-01): a worker that replaces a folder holding an owner path (the owner settings' folder, owner data's, the apply tool's state's) by a
+# symbolic link: refused (a merge of it would replace the live folder, whose owner file is untracked and ignored)
+RFT=/workspace/docs/hermes-local/roles.json; IXF=/workspace/$(jq -r .data_index "$RFT")
+for hd in "$(jq -r '.owner_settings[0]' "$RFT" | cut -d/ -f1)" "$(jq -r '.owner_data[0]' "$RFT" | cut -d/ -f1)" "$(jq -r .applied_state "$IXF" | cut -d/ -f1)"; do
+  mkdir -p "$W/$hd"; echo x >"$W/$hd/zz-held.txt"; git -C "$W" add -f "$hd/zz-held.txt"; git -C "$W" -c core.hooksPath=/dev/null commit -q -m "a file in $hd, as the owner committed it"
+  git -C "$W" rm -r -q --cached "$hd"; rm -rf "${W:?}/$hd"; ln -s /tmp "$W/$hd"; git -C "$W" add -f "$hd"
+  ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "B.1 (r5): a worker replacing the folder $hd (it holds an owner path) by a symbolic link: refused"
+  git -C "$W" reset -q; rm -f "$W/$hd"; git -C "$W" checkout -q -- "$hd"; git -C "$W" reset -q --hard
+done
 mkdir -p "$W/.stella"; echo x >"$W/$SETP"; echo x >"$W/.stella/capabilities.json"; echo x >"$W/.stella/test-map.json"
 git -C "$W" add -f "$SETP"
 ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "G1: a worker staging an owner_only index row (the settings row): refused"
