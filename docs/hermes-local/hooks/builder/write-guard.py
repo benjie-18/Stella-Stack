@@ -579,6 +579,11 @@ def owner_cmd_why(words, cwd, names):
             if owner_cmd_of(p):
                 return ob(owner_cmd_of(p))
     script = next((w for w in cmdw[1:] if not w.startswith("-")), None) if cmdw and norm(cmdw[0]) in INTERPRETERS else None
+    for wd in cmdw[:1] + ([script] if script else []):   # B.1 (r5): what runs, named like a copy of an owner command (its file name after any prefix)
+        b = wd.rsplit("/", 1)[-1].casefold()
+        rel = next((r for r in CMDS if re.fullmatch(r"(?:.*[^a-z0-9])?" + re.escape(os.path.basename(r).casefold()), b)), None)
+        if rel:
+            return ob(f"`{' '.join(words)[:120]}` runs {wd}, named like a copy of the owner command {rel}: {CMDS[rel]}")
     for wd in cmdw[:1] + ([script] if script else []):
         if words_of(wd, cwd, names)[1]:
             return ob(f"`{' '.join(words)[:120]}` runs a command or script built at run time, which this guard cannot check; owner commands are never run by a role")
