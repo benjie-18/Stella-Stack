@@ -187,6 +187,16 @@ dgood=1; for c in "${DIFF[@]}"; do
   [ "$(term $T/pre-sg.py "$c")" = 2 ] && [ "$(term $S "$c")" != 2 ] && { dgood=0; echo "     not as strict as pre-RT22-01: ${c//$OWN/<owner file>}"; }; done
 ok '[ "$dgood" = 1 ]' "RT24 differential: the secret guard refuses everything its pre-RT22-01 parse refuses (${#DIFF[@]} mixed commands)"
 ok '[ "$(term $T/pre-sg.py "echo a # n\\${NL}cat /workspace/$OB.e\"nv\"")" = 2 ]' "RT24 differential premise: the pre-RT22-01 copy refuses a tokenised read after a backslash comment"
+# B.2 point 9 (r5, W4-CV3-03): jq builds a file name from a NAMED folder and a module word (jq -L <dir> 'import ...'); the folder it searches is judged. A
+# state-path folder and a Hermes-home folder are both refused, by the whole `-L <dir>` and the attached `-L<dir>` form, through both read guards.
+EVD=/workspace/$(dirname "$(jq -r .event_log /workspace/.stella/data-files.json)")   # the folder holding the event log (a state path)
+for g in "$S" "$R"; do
+  for c in "jq -L $EVD -n 'import \"events\" as \$a; \$a'" "jq -L$EVD -n 'import \"events\" as \$a; \$a'" "jq --library-path $EVD -n 'include \"events\"; .'"; do
+    ok '[ "$(term $g "$c")" = 2 ] && grep -q "STL-CFG-312" "$T/out"' "B.2 point 9: $(basename $g) refuses jq searching the state-path folder: $c"
+  done
+  ok '[ "$(term $g "jq -L /home/node/.hermes -n '"'"'import \"auth\" as \$a; \$a'"'"'")" = 2 ]' "B.2 point 9: $(basename $g) refuses jq -L of a Hermes home folder (its auth.json is a secret)"
+  ok '[ "$(term $g "jq -n '"'"'.'"'"'")" = 0 ] && [ "$(term $g "jq -L /tmp -n 1")" = 0 ]' "B.2 point 9 control: $(basename $g) allows jq with no library path and jq -L of /tmp"
+done
 ok '[ "$(ROLES_FILE=$T/none run $S read_file "{\"path\": \"/workspace/SUPERVISOR.md\"}")" = 2 ] && [ "$(ROLES_FILE=$T/none term $R "ls")" = 2 ]' "K6: an unreadable role table refuses every read (fail closed)"
 ok '[ "$(tail -c +$((TREE_SIZE + 1)) "$TREE_ALERTS" 2>/dev/null | grep -c "^STL-CFG-31[0-9] \|^STL-CFG-303 ")" = 0 ]' "T7: the tree's alert log gained no line of the codes these guards write during this run"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
