@@ -21,7 +21,7 @@ UNREADABLE = ""   # set when the role table or the data index cannot be read: ev
 try:   # K6: the owner settings files (roles.json owner_settings) are read by no agent role; an unreadable table refuses all
     sys.path.insert(0, "/workspace/bin")
     import roles as _roles
-    _t = _roles.load(files=False)
+    _t = _roles.load()
     OWNER_FILES = {os.path.realpath(f).casefold() for f in _roles.owner_settings(_t)}   # B2V-01: /workspace is case-insensitive
     OWNER_TREES = [os.path.realpath(t).casefold() for t in _roles.state_trees(_t)]   # B1 (F1 W4): the apply tool's backups, applied state and event log hold owner values: no role reads them
     OWNER_TEXT = [p.casefold() for p in _roles.state_paths(_t)]   # ... however the path is spelled in a command (an interpreter's code included)
@@ -277,7 +277,7 @@ def _git_dir_why(here):
     .git (a short 8.3 or odd spelling of the path does not matter) is the stack's folder or the main checkout of a bound project, and its .git is a folder
     (a linked worktree has a file). Anything else, or a table that cannot be read, refuses."""
     try:
-        siblings = {x.casefold() for x in _roles.sandbox(_roles.load(files=False))["sibling_dirs"]}
+        siblings = {x.casefold() for x in _roles.sandbox(_roles.load())["sibling_dirs"]}
     except Exception:
         return "the sandbox table cannot be read, so git is not run in a card folder"
     rp = os.path.realpath(here)

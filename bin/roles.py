@@ -143,28 +143,29 @@ def _sound(doc, limit=64):
 _LOADED = {}   # T1: the validated table of this process, keyed by the file's identity and change time (a hook that asks twice reads it once)
 
 
-def load(files=True):
-    """The validated table. files=False (a guard judging one call): the hook files the table names are not looked up on disk (that a hook
-    file exists and lies inside the stack decides what gets installed, never the verdict on a call; `check`, `spec` and every CLI read keep it)."""
+def load():
+    """The validated table, the hook-file rule included (W4-CV3-01, r5: every reader of the table, the guards too, refuses a table that names a hook
+    file that is not there). The proof is cheap: one lstat per folder and file not seen yet in this process; a table read anew drops those."""
     try:
         with open(path(), encoding="utf-8") as f:
             st = os.fstat(f.fileno())
-            key = (files, path(), st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+            key = (path(), st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)   # W4-CV3-08: the change time too: putting an old mtime back changes it
             if key in _LOADED:
                 return copy.deepcopy(_LOADED[key])
+            _RF_MEMO.clear(); _bad_hook_path.cache_clear()   # W4-CV3-08: a table read anew looks its hook files up anew
             d = json.load(f, object_pairs_hook=_pairs, parse_constant=_const, parse_float=_float, parse_int=_bigint)
         _sound(d)
     except Exception as e:
         raise RolesError(f"{path()}: {type(e).__name__}: {e}")
-    errs = validate(d, files=files) + ([NOFOLDER + ": a scratch table needs a folder of its own for its alerts (set ESCALATE_SUP_DIR)"] if NOFOLDER else [])
+    errs = validate(d) + ([NOFOLDER + ": a scratch table needs a folder of its own for its alerts (set ESCALATE_SUP_DIR)"] if NOFOLDER else [])
     if errs:
         raise RolesError(f"{path()}: " + "; ".join(errs))
     _LOADED.clear(); _LOADED[key] = d
     return copy.deepcopy(d)
 
 
-def validate(d, root=ROOT, files=True):
-    """Problems with the table, as a list of strings (empty = valid). root: the stack tree the table belongs to (its hook files); files=False: see load()."""
+def validate(d, root=ROOT):
+    """Problems with the table, as a list of strings (empty = valid). root: the stack tree the table belongs to (its hook files)."""
     roles, profs = d.get("roles") if isinstance(d, dict) else None, d.get("profiles") if isinstance(d, dict) else None
     if not isinstance(roles, dict) or not isinstance(profs, dict) or not roles:
         return ["profiles and roles must be objects, roles not empty"]
@@ -221,7 +222,7 @@ def validate(d, root=ROOT, files=True):
             if "timeout" in h and not (_int(h["timeout"]) and h["timeout"] > 0):
                 errs.append(f"role {n}: a hook's timeout must be a positive integer")
             src = h.get("file") or h["command"]
-            if files and _bad_hook_path(src, "command" in h, root):
+            if _bad_hook_path(src, "command" in h, root):
                 errs.append(f"role {n}: hook {src} does not exist")
             if "workers" in h and not (_set(h["workers"]) and h["workers"]):
                 errs.append(f"role {n}: hook {src}: workers must be a non-empty list of worker kinds, each once")
@@ -763,7 +764,7 @@ def hook_refusal(code, problem, payload, card=None):
     """B.1 (r5), the one way a hook refuses: '[CODE] <the catalog's plain message>' with exactly one alert line per refused call (the first hook of the call
     to refuse with this code writes it), naming the role of the payload's profile and, where the caller knows it, the card."""
     try:
-        role = role_of(load(files=False), json.loads(payload).get("profile"))[0]
+        role = role_of(load(), json.loads(payload).get("profile"))[0]
     except Exception:
         role = "unknown"
     return plain(code, once=call_key(payload), problem=f"{problem} (role {role}{', card ' + card if card else ''})")

@@ -711,7 +711,7 @@ def merge_exec(top, wt, branch, card, script):
     writable, the rest read-only, the owner settings files and the state paths not mounted, the worker markers set. The profile is the first
     of sandbox.boxed_profiles whose role has a writable card worktree (one without broker variables first): from the table, never named here.
     The box is the only way: there is no unboxed run. Raises BoxError when the box cannot start. Returns the script's exit code."""
-    d = roles.load(files=False)
+    d = roles.load()
     sb = roles.sandbox(d)
     ps = sorted((p for p in (sb or {}).get("boxed_profiles", []) if p in d["profiles"] and d["roles"][d["profiles"][p]["role"]]["workspace"] == "git-worktree"),
                 key=lambda p: (bool(sb["profile_overrides"].get(p, {}).get("broker_env")), p))

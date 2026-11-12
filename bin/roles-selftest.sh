@@ -484,5 +484,14 @@ t = time.time(); a = roles.braces(\"{a,b}\" * 60 + \"x\"); b = roles.braces(\"{\
 assert len(a) > 64 and len(b) > 64 and len(c) > 64 and time.time() - t < 2, time.time() - t
 assert roles.braces(\"a{b,c}d\") == [\"abd\", \"acd\"]
 " "$S"' "K5: brace expansion past 64 words is cut off at once, in time, whatever the word's length; a small expansion is unchanged"
+# B.2 point 8 (r5, W4-CV3-01): every guard that reads the table refuses every call, STL-CFG-303, when the table names a hook file that is not there (as before
+# the phase); control: the intact table allows the same calls
+jq '.roles.builder.hooks += [{"matcher": "^zz-none$", "file": "docs/hermes-local/hooks/builder/zz-missing-hook.sh"}]' "$RF" >"$T/mh.json"
+gcall() { jq -nc --arg t "$2" --argjson i "$3" --arg p "$4" '{tool_name: $t, tool_input: $i, session_id: "s1", cwd: "/tmp", profile: $p, extra: {}}' | ROLES_FILE=$1 python3 -I "/workspace/docs/hermes-local/hooks/$5" >"$T/gc.out" 2>&1; echo $?; }
+for gc in "write_file|{\"path\":\"/tmp/zz-x\",\"content\":\"x\"}|builder-local|builder/write-guard.py" "read_file|{\"path\":\"/workspace/README.md\"}|builder-local|builder/secret-guard.py" \
+          "terminal|{\"command\":\"ls\"}|default|default/read-only-terminal.py" "read_file|{\"path\":\"/workspace/README.md\"}|default|builder/secret-guard.py"; do
+  IFS='|' read -r t i pr hk <<<"$gc"
+  ok '[ "$(gcall "$RF" "$t" "$i" "$pr" "$hk")" = 0 ] && [ "$(gcall "$T/mh.json" "$t" "$i" "$pr" "$hk")" = 2 ] && grep -q "STL-CFG-303" "$T/gc.out"' "B.2 point 8: ${hk##*/} ($pr $t): allowed with the intact table, refused with STL-CFG-303 when the table names a missing hook file"
+done
 exec {CW}>&- {CR}<&-; wait "$CPID"   # the check driver ends
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
