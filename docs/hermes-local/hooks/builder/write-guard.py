@@ -131,14 +131,14 @@ CD_MSG = ("the terminal stays inside your worktree: Hermes keeps its folder betw
 CMDS = {c[len(ROOT) + 1:]: f"{c[len(ROOT) + 1:]} is an owner command: no role runs it (the owner runs it from the owner's own path; merging a card into main is the owner's step, F31)"
         for c in OWNER_CMDS}
 CMD_CH = roles.chains([f"{b}/{c}" for b in [ROOT, *(WT_DIRS if RT else [])] for c in CMDS])
-NAME_RX = re.compile("|".join(r"(?<![\w-])" + re.escape(n) + r"(?![\w-])" for n in BY_NAME)) if BY_NAME else None
+NAME_RX = re.compile("|".join(re.escape(n) + r"(?![\w-])" for n in BY_NAME)) if BY_NAME else None   # T4: any prefix (a copy, /tmp/x-merge-card.sh), no suffix word (its -selftest)
 
 
 def owner_cmd_of(rp):
     """The refusal text when rp (a path) is an owner command of the stack, or its copy in a card worktree of the stack, by what the path IS (a short name
     or a case variant included); else None. A copy elsewhere is a different file: the name check (named_cmd) and the box and the merge cover it."""
     r = roles.overlap(rp, worktree_chains(rp, CMD_CH, list(CMDS), "cmd"))
-    if not r or r[0] not in ("equal", "unknown"):
+    if not r or r[0] != "equal":
         return None
     q = r[1]
     return CMDS.get(q.split("/.worktrees/", 1)[1].split("/", 1)[1] if "/.worktrees/" in q else q[len(ROOT) + 1:])
@@ -191,7 +191,7 @@ def owner_data_hit(rp):
     tool's state), in its main checkout or in a card worktree of it, decided by identity (roles.overlap): another spelling of it, a short name or a
     case variant, is the same path, and a name that cannot be classified counts. Reading owner data stays allowed; this is asked of writes only."""
     r = roles.overlap(rp, owner_chains(rp))
-    return bool(r) and r[0] in ("equal", "inside", "unknown")
+    return bool(r) and r[0] in ("equal", "inside")
 
 
 def words_of(w, cwd, names):
@@ -576,7 +576,8 @@ def target_why(t, cwd, names, kind):
     if not hit:
         return None
     msg = f"{kind} {hit}"
-    return ob(f"{msg} ({OWNER_DATA_MSG})") if owner_data_hit(hit) else msg + (f" ({CONFIG_MSG})" if config_hit(hit) else "")
+    r = roles.overlap(hit, owner_chains(hit))   # T4: owner data, inside it, or a folder that holds it (tar -C <folder>, cp x <folder>/ can make or replace it)
+    return ob(f"{msg} ({OWNER_DATA_MSG})") if r else msg + (f" ({CONFIG_MSG})" if config_hit(hit) else "")
 
 
 def note_names(words, names, cwd):
@@ -629,7 +630,7 @@ def named_path(texts, cwd, names, budget, ch=None):
                 MEMO.add((c, cwd, id(ch)))
             for rp in words_of(c, cwd, names)[0]:
                 r = roles.overlap(rp, (worktree_chains(rp, CMD_CH, list(CMDS), "cmd") if ch is CMD_CH else ch) or owner_chains(rp))
-                if ch is CMD_CH and r and r[0] not in ("equal", "unknown"):
+                if ch is CMD_CH and r and r[0] != "equal":
                     r = None   # an owner command is named by its file, not by a folder that holds it
                 if ch is HOLD_CH and r and r[0] == "contains":
                     r = None   # a folder above the holding folder (the stack folder itself) is no naming
@@ -665,7 +666,7 @@ def named_why(words, cwd, names, budget):
     found = named_path([w for w in words if not ASSIGN.fullmatch(w) or "/" in w], cwd, names, budget)
     if not found:   # the main checkout's folders that hold owner data (.stella, the state folders): no new file or folder is made in them by an unknown writer
         found = named_path([w for w in words if not ASSIGN.fullmatch(w) or "/" in w], cwd, names, budget, HOLD_CH)
-    if not found and (r := roles.overlap(cwd, owner_chains(cwd))) and r[0] in ("equal", "inside", "unknown"):
+    if not found and (r := roles.overlap(cwd, owner_chains(cwd))) and r[0] in ("equal", "inside"):
         found = cwd, r[0]
     if not found and re.sub(r"(?<=[A-Za-z])[0-9.]+$", "", (strip_prefixes(words)[0] or [""])[0].rsplit("/", 1)[-1]) in INTERPRETERS:   # code an interpreter is given may run an owner command
         found = named_path([w for w in words if not ASSIGN.fullmatch(w) or "/" in w], cwd, names, budget, CMD_CH)

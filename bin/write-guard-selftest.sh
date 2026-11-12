@@ -466,7 +466,44 @@ for p in $BUILDERS; do
   : >"$WGA"; ok '[ "$(wg "touch /workspace/$ODF")" = 2 ] && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ] && grep -q "role " "$WGA"' "K8 $p: the alert line names the role"
   ok '[ "$(wg "echo owner.env")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out"' "K8 $p: an older rule that catches a mention of the owner settings file first still says so with the code"
   ok '[ "$(wg "cp bin/merge-card.sh /tmp/mc; bash /tmp/merge-card x")" = 2 ] && [ "$(wg "bash /tmp/merge-card x")" = 2 ] && [ "$(wg "bash bin/merge-card-selftest.sh")" = 0 ]' "K9 $p: a copy of the merge script under another name (no extension) is refused as at 900d9b3; its selftest is not the script"
-  ok '[ "$(wg "tee /tmp/zz $(printf '{a,b}%.0s' $(seq 1 40))x")" = 2 ]' "K5 $p: a brace-bomb word is refused (more than 64 words), not expanded"
+  B40=$(printf '{a,b}%.0s' $(seq 1 40))   # T4: built outside the quoted case (its quotes ended the case's own string)
+  ok '[ "$(wg "tee /tmp/zz ${B40}x")" = 2 ]' "K5 $p: a brace-bomb word is refused (more than 64 words), not expanded"
+done
+# T4 (F1 W4 r4): the rule once, proven over a generated set. A verb that is not a known reader (the table's read_verbs) and names a path no role writes, or a
+# folder that holds one, in any argument position, as an attached option value or in a -C / --directory form, is refused with the code. The matrix (every verb
+# x every form x every target) judges through the guard's own reason() in one process (the same code from the parsed payload to the verdict; only the card
+# proof is given: the worktree a bound worker would prove); one command of each form also goes through a real hook process, end to end.
+cat >"$T/matrix.py" <<'PY'
+import json, sys
+G, own, prof = sys.argv[1:4]
+src = open(G).read().split("\nPAY = sys.stdin.read()")[0]   # the guard without its stdin read and exit: its functions, its table
+ns = {"__name__": "wg_matrix", "__file__": G}
+exec(compile(src, G, "exec"), ns)
+ns["own_worktree"] = lambda: (own, "")   # the proof a bound worker gives (the real hook runs below prove it from the process tree)
+bad = 0
+for line in sys.stdin:
+    want, cmd = line.rstrip("\n").split("\t", 1)
+    why = ns["reason"]({"tool_name": "terminal", "tool_input": {"command": cmd}, "cwd": own, "profile": prof})
+    got = "refused" if why and why.startswith("[STL-CFG-312]") else "allowed" if why is None else "other"
+    if got != want:
+        bad += 1; print(f"     {want} expected, {got}: {cmd} :: {(why or '')[:160]}")
+print(f"matrix-bad={bad}")
+PY
+MV=(cp mv install ln tar rsync unzip sort touch gzip perl sed tee dd truncate curl split cpio zip chmod)
+MF=("@V @P" "@V /tmp/x @P" "@V @P/" "@V -C @P" "@V -C@P" "@V --directory=@P" "@V -t @P" "@V -o @P" "@V -x /tmp/x -f @P")
+MT=("/workspace/$ODD" "/workspace/$ODF" "/workspace/$(printf '%s' "$ODD" | tr a-z A-Z)" "/workspace/$(jq -r .applied_state "/workspace/$(jq -r .data_index /workspace/docs/hermes-local/roles.json)" | cut -d/ -f1)")   # the folder, a file, a case variant, a folder above the state paths
+MR=(cat head wc grep jq ls stat cmp)
+for p in $BUILDERS; do
+  OWN=/workspace/.worktrees/$C
+  { for v in "${MV[@]}"; do for f in "${MF[@]}"; do for t in "${MT[@]}"; do c=${f//@V/$v}; printf 'refused\t%s\n' "${c//@P/$t}"; done; done; done
+    for v in "${MR[@]}"; do for t in "${MT[@]}"; do printf 'allowed\t%s %s\n' "$v" "$t"; printf 'allowed\t%s /tmp/x %s\n' "$v" "$t"; done; done; } >"$T/matrix.txt"
+  python3 -I "$T/matrix.py" "$G" "$OWN" "$p" <"$T/matrix.txt" >"$T/matrix.out" 2>&1
+  ok 'grep -q "^matrix-bad=0$" "$T/matrix.out"' "T4 $p: $(grep -c ^refused "$T/matrix.txt") generated non-reader commands (${#MV[@]} verbs x ${#MF[@]} forms x ${#MT[@]} targets) refused with the code, $(grep -c ^allowed "$T/matrix.txt") reader commands allowed"
+  grep "^     " "$T/matrix.out" | head -5
+  wg() { hookrun bind $C $p $OWN terminal "$(tjson "$1")" "${2:-$OWN}"; }
+  k=0; for f in "${MF[@]}"; do v=${MV[$((k % ${#MV[@]}))]}; t=${MT[$((k % ${#MT[@]}))]}; k=$((k+1)); c=${f//@V/$v}; c=${c//@P/$t}
+    ok '[ "$(wg "$c")" = 2 ] && grep -qF "STL-CFG-312" "$T/out"' "T4 $p: the real hook process agrees with the matrix: $c"
+  done
 done
 # K5: no input of any length makes the guard run longer than a fraction of its hook timeout
 BOMB=$(printf '{a,b}%.0s' $(seq 1 24))x; LONG=$(head -c 100000 /dev/zero | tr '\0' 'a')
