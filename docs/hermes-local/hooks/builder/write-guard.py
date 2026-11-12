@@ -586,6 +586,12 @@ def owner_cmd_why(words, cwd, names):
             if owner_cmd_of(p):
                 return ob(owner_cmd_of(p))
     script = next((w for w in cmdw[1:] if not w.startswith("-")), None) if cmdw and norm(cmdw[0]) in INTERPRETERS else None
+    if cmdw and norm(cmdw[0]) in ("cp", "install", "ln", "rsync"):   # r5: making a copy of an owner command (its source resolves to one) is refused: a copy is run outside the command's own gate
+        srcs = [w for w in cmdw[1:] if not w.startswith("-")][:-1]
+        for wd in srcs:
+            for p in words_of(wd, cwd, names)[0]:
+                if owner_cmd_of(p):
+                    return ob(f"`{' '.join(words)[:120]}` copies the owner command {p}: a copy would run outside the command's own gate")
     for wd in cmdw[:1] + ([script] if script else []):   # B.1 point 3 / W4-CV3-07 (r5): what runs, by what it IS: a file with the bytes of an owner command of the table (a copy under any name); not by its name (no false refusal of a like-named file with other bytes)
         for pth in words_of(wd, cwd, names)[0] if "/" in wd or (wd == cmdw[0] and shutil.which(wd)) else []:
             rp = pth if os.path.isfile(pth) else (shutil.which(wd) or "") if wd == cmdw[0] and "/" not in wd else ""

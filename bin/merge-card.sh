@@ -145,7 +145,7 @@ g show "$tip:package.json" 2>/dev/null | jq -e '.scripts.test' >/dev/null 2>&1 |
 intree() {   # intree <commit> <name>: npm test of <commit> in the box, in a throw-away worktree made here (owner-made git files; T6) and removed
   # after without running git in it; 125 the worktree cannot be made, 70 the box could not start (the box printed the coded line), else the tests' exit code (126 included)
   local pw="$top/.worktrees/$2-$card" pb="$2/$card" r
-  rm -rf "$pw"; rm -f "$common/worktrees/$2-$card/locked"; g worktree prune; g branch -D "$pb" >/dev/null 2>&1   # W4-VAL3-01: a lock a previous test wrote into the entry would keep it; clear it so this merge of the same card is not refused uncoded
+  rm -f "$common/worktrees/$2-$card/locked"; g worktree prune   # W4-VAL3-01: a lock a previous test wrote into the entry would keep it; a folder left at $pw is not ours to remove: the add below fails, coded
   g -c core.hooksPath=/dev/null -c core.fsmonitor= worktree add -q -b "$pb" "$pw" "$1" >/dev/null 2>&1 || return 125
   python3 -I "$here/box.py" exec "$top" "$pw" "$pb" "$card" 'timeout 1800 npm test' >&2; r=$?
   rm -rf "$pw"; rm -f "$common/worktrees/$2-$card/locked"; g worktree prune; g branch -D "$pb" >/dev/null 2>&1

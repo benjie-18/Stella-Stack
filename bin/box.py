@@ -665,7 +665,7 @@ def run(spec, cmd):
                     child[0].kill()
                     rc = child[0].wait()
                 break
-    if rc < 0:   # B.1 (r5): the box itself was ended by a signal: stated for the caller (merge_exec) next to the start marker, never read as the tests' verdict
+    if rc < 0 and spec.get("gd"):   # B.1 (r5): the box itself was ended by a signal: stated for the caller (merge_exec) next to the start marker, never read as the tests' verdict
         with contextlib.suppress(OSError):
             open(os.path.join(spec["gd"], "box-signal"), "w").write(str(-rc))
     rc = rc if rc >= 0 else 128 - rc
