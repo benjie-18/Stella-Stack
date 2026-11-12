@@ -57,7 +57,7 @@ whatever kanban_create was given, /workspace itself or another card's worktree i
     Hermes kanban workspace are allowed.
 Refusals on the owner boundary print STL-CFG-312 with the catalog's plain message and write one alert line (no owner value).
 Exit 2 = block; any error blocks, with a coded line."""
-import glob, json, os, pwd, re, shlex, shutil, sys, time
+import glob, hashlib, json, os, pwd, re, shlex, shutil, sys, time
 
 OB = "STL-CFG-312"   # the catalog code of a refusal on the owner boundary; the alert line is written once, where the refusal is printed
 try:
@@ -558,6 +558,32 @@ def git_hit(words, cwd, names, cmd):
     return ob(f"{msg} ({OWNER_DATA_MSG})") if owner_data_hit(why.split(" ")[0]) else msg
 
 
+NAMES_OWNER = [False]   # r6: whether the command line being judged names an owner command anywhere (set per call in command_reason)
+
+
+def copy_of(wd, cwd, names):
+    """The file the word wd resolves to (in cwd, or for a bare name on PATH or as a python module) that has the bytes of an owner command without being the
+    command's own file; "" when there is none; None when the look-ups of this call ran out of time (the caller refuses)."""
+    if time.monotonic() > COPY_T[0]:
+        return None
+    cand = list(words_of(wd, cwd, names)[0])
+    if "/" not in wd:   # a bare name: the shell and `bash name` look on PATH, python -m adds .py
+        cand += [os.path.join(d or ".", wd) for d in os.environ.get("PATH", "").split(":")] + [os.path.join(cwd or "/", wd.replace(".", "/") + ".py"), os.path.join(cwd or "/", wd + ".py")]
+    for rp in dict.fromkeys(cand):
+        if rp not in COPY_MEMO:
+            try:
+                n = os.path.getsize(rp) if os.path.isfile(rp) else -1
+                COPY_MEMO[rp] = n in CMD_BYTES and hashlib.sha256(open(rp, "rb").read()).hexdigest() in CMD_BYTES[n] and not owner_cmd_of(os.path.realpath(rp))
+            except OSError:
+                COPY_MEMO[rp] = False
+        if COPY_MEMO[rp]:
+            return rp
+    return ""
+
+
+COPY_T, COPY_MEMO = [0.0], {}   # the deadline of this call's copy look-ups (K5) and each file's answer
+
+
 def owner_hit_word(a, d, names):
     """True when the word a, read in folder d, is (or may be) an owner data or state path."""
     paths, unres = words_of(a, d, names)
@@ -594,17 +620,25 @@ def owner_cmd_why(words, cwd, names):
             for p in words_of(wd, cwd, names)[0]:
                 if owner_cmd_of(p):
                     return ob(f"`{' '.join(words)[:120]}` copies the owner command {p}: a copy would run outside the command's own gate")
-    for wd in cmdw[:1] + ([script] if script else []):   # B.1 point 3 / W4-CV3-07 (r5): what runs, by what it IS: a file with the bytes of an owner command of the table (a copy under any name); not by its name (no false refusal of a like-named file with other bytes)
-        for pth in words_of(wd, cwd, names)[0] if "/" in wd or (wd == cmdw[0] and shutil.which(wd)) else []:
-            rp = pth if os.path.isfile(pth) else (shutil.which(wd) or "") if wd == cmdw[0] and "/" not in wd else ""
-            try:
-                sz = os.path.getsize(rp) if rp else -1
-            except OSError:
-                sz = -1
-            if sz in CMD_BYTES:
-                import hashlib
-                if hashlib.sha256(open(rp, "rb").read()).hexdigest() in CMD_BYTES[sz]:
-                    return ob(f"`{' '.join(words)[:120]}` runs {rp}, a copy of an owner command (the same bytes): owner commands are the owner's to run, never a role's")
+    # r6 (R14, W4-CV3-07): a copy is judged by what it IS wherever the command names it, not by where the word stands or how it is spelled (bare name, ./name,
+    # an interpreter's script, a wrapper's or xargs's argument, a name inside quoted code, a function or alias body, python -m): every word and every
+    # name-like piece of a word that resolves, in the working folder or on PATH, to a file with the bytes of an owner command and that is not the command's
+    # own file. Only a known reader or rm may name such a file (a copy can be looked at and removed), and then nothing in that line runs an interpreter.
+    for wd in dict.fromkeys(x for w in words for x in [w] + re.findall(r"[\w.~+@%/-]+", w)) if CMD_BYTES else ():
+        rp = copy_of(wd, cwd, names)
+        if rp is None:
+            return ob(f"`{' '.join(words)[:120]}` names too many files to check in time; owner commands are never run by a role")
+        if rp and (reader_ok(words) or (cmdw and norm(cmdw[0]) == "rm")):
+            NAMES_OWNER[0] = True   # read or removed here; nothing later in the line may run (below)
+        elif rp:
+            return ob(f"`{' '.join(words)[:120]}` names {rp}, a copy of an owner command (the same bytes): owner commands are the owner's to run, never a role's; a copy may only be read or removed (rm)")
+    # r6: a copy made and run in ONE command line does not exist yet when this guard looks, so a line that names an owner command may not also run an
+    # interpreter, feed xargs, or run a file that is not there yet: the guard cannot tell what would run
+    if NAMES_OWNER[0] and cmdw:
+        c0 = words_of(cmdw[0], cwd, names)[0]
+        if norm(cmdw[0]) in INTERPRETERS or strip_prefixes(words)[1] or ("/" in cmdw[0] and not any(os.path.isfile(p) for p in c0)):
+            return ob(f"`{' '.join(words)[:120]}` runs an interpreter, xargs or a file that does not exist yet in a command line that also names an owner command: "
+                      "this guard cannot tell what would run; owner commands and their copies are never run by a role")
     for wd in cmdw[:1] + ([script] if script else []):
         if words_of(wd, cwd, names)[1]:
             return ob(f"`{' '.join(words)[:120]}` runs a command or script built at run time, which this guard cannot check; owner commands are never run by a role")
@@ -758,6 +792,11 @@ def command_reason(cmd, base):
         if r:
             return r
     budget, users = [time.monotonic() + BUDGET_S], []
+    # r6: does the line name an owner command: its repo path as text (git's <rev>:<path> too), or a piece that IS one (any spelling, a card worktree's file included)
+    pieces = list(dict.fromkeys(re.findall(r"[\w.~+@%/-]+", cmd)))
+    COPY_T[0] = time.monotonic() + BUDGET_S; COPY_MEMO.clear()
+    NAMES_OWNER[0] = any(rel.casefold() in low for rel in CMDS) or len(pieces) > 2000 or any(   # too many to look up: taken as naming one (fail closed)
+        owner_cmd_of(p) for x in pieces for p in words_of(x, base, {})[0]) or (bool(CMD_BYTES) and any(copy_of(x, base, {}) != "" for x in pieces))
     for toks in all_tokens(cmd):
         cwd, words, names, skip = base, [], {}, False
         for i, t in enumerate(toks + [";"]):

@@ -506,5 +506,14 @@ for gc in "builder-local|builder|write_file|{\"path\":\"/tmp/zz-x\",\"content\":
   IFS='|' read -r pr role t i <<<"$gc"; hk=$(guardfile "$role" "$t")
   ok '[ -n "$hk" ] && [ "$hk" != null ] && [ "$(gcall "$RF" "$t" "$i" "$pr" "$hk")" = 0 ] && [ "$(gcall "$T/mh.json" "$t" "$i" "$pr" "$hk")" = 2 ] && grep -q "STL-CFG-303" "$T/gc.out"' "B.2 point 8: the $role guard for $t ($pr): allowed with the intact table, refused with STL-CFG-303 when the table names a missing hook file"
 done
+# r6 T4 (R14, W4-CV3-01): the shell hooks join the rule. Every shell hook file the table names (from the table, none named here): with a missing hook file
+# it refuses with STL-CFG-303, also a call it allows with the intact table; with the intact table it never says 303
+scall() { jq -nc --arg p "$3" '{tool_name: "terminal", tool_input: {command: "npm test"}, session_id: "s1", cwd: "/tmp", profile: $p, extra: {}}' | ROLES_FILE=$1 bash "/workspace/$2" >"$T/gc.out" 2>&1; echo $?; }
+nsh=0; allowed=0
+while IFS='|' read -r role hk; do nsh=$((nsh+1)); pr=$(jq -r --arg r "$role" '[.profiles | to_entries[] | select(.value.role == $r) | .key][0] // "zz-none"' "$RF")
+  a=$(scall "$RF" "$hk" "$pr"); a303=$(grep -c "STL-CFG-303" "$T/gc.out"); [ "$a" = 0 ] && allowed=$((allowed+1))
+  ok '{ [ "$a" = 0 ] || [ "$a" = 2 ]; } && [ "$a303" = 0 ] && [ "$(scall "$T/mh.json" "$hk" "$pr")" = 2 ] && grep -q "STL-CFG-303" "$T/gc.out"' "r6 T4: the shell hook $hk ($role): its own verdict with the intact table (exit $a), refused with STL-CFG-303 when the table names a missing hook file"
+done < <(jq -r '[.roles | to_entries[] | .key as $r | .value.hooks[]? | select((.file // "") | endswith(".sh")) | "\($r)|\(.file)"] | unique[]' "$RF")
+ok '[ "$nsh" -ge 1 ] && [ "$allowed" -ge 1 ]' "r6 T4: the table names shell hooks ($nsh) and at least one allows the call with the intact table ($allowed), so the refusal above is the table's"
 exec {CW}>&- {CR}<&-; wait "$CPID"   # the check driver ends
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
