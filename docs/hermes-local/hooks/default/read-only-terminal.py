@@ -12,7 +12,7 @@ import json, re, shlex, sys
 # as the shell would), brace expansion ({a,b}), $'…' escapes, option values (--include=…) and command lines nested in
 # quotes. Recursing into a folder that holds secrets counts too. Not caught: a path the shell builds at run time (an
 # unknown variable, $(…), an encoder).
-import codecs, fnmatch, glob, os, pwd, re, shlex
+import codecs, fnmatch, glob, os, pwd, re, shlex, time
 SECRETS = (".env*", "*.pem", "*.key", "~/.hermes/.env", "~/.hermes/auth.json", "~/.claude/.credentials*",
            "~/.local/share/opencode/auth.json", "~/.hermes/broker", "~/.ssh", "~/.aws", "~/.config/gh")
 SECRET_OK = (".env.example", ".env.sample", ".env.template")
@@ -82,10 +82,15 @@ def _ansi(cmd):
     return _roles.ansi(cmd)
 
 
+DEADLINE = [0.0]   # K5: when the look-ups of one command must be done (monotonic); 0 = no limit (a single path from a tool call)
+
+
 def path_why(word, cwd, names=None, recursive=False):
     """Why reading `word` (a path as written, relative to `cwd`) reads a secret, or None."""
     if OWNER_FILES is None:
         return UNREADABLE
+    if DEADLINE[0] and time.monotonic() > DEADLINE[0]:
+        return "the command names too many paths to check in time"
     words = _braces(word)
     if len(words) > 64:
         return f"{word[:60]}… expands to more than 64 words, too many to check"
@@ -168,6 +173,7 @@ def _search_paths(name, words, base, names):
 def secret_why(cmd, cwd):
     """Why the shell command line `cmd`, run in `cwd`, reads a secret path, or None."""
     cmd = _ansi(cmd)
+    DEADLINE[0] = time.monotonic() + 4.0
     if OWNER_FILES is None:
         return UNREADABLE
     if any(os.path.basename(f) in cmd.casefold() for f in OWNER_FILES):
