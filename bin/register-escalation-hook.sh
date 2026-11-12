@@ -15,7 +15,7 @@
 # change: backed up first to ~/.hermes/backups/hooks-<UTC time>/, then replaced atomically (F25, S25). A registered hook
 # this script does not list is reported as UNLISTED (never removed: remove a stale one by hand).
 # usage: register-escalation-hook.sh           register
-#        register-escalation-hook.sh --check   change nothing; report missing hooks or approvals (exit 1 if any)
+#        register-escalation-hook.sh --check   change nothing; report missing hooks or approvals, and a guard registered without fail_closed (exit 1 if any)
 set -euo pipefail
 python3 - "${1:-apply}" <<'PY'
 import json, os, re, sys, time
@@ -83,6 +83,14 @@ for name, folder, role, listed in roles.profiles(R, H):
             else:
                 s = s[:ot.start(1)] + str(timeout) + s[ot.end(1):]
                 added.append(f"{event} timeout {ot.group(1)} -> {timeout}")
+        # K5: a guard Hermes may run past its timeout must be registered fail_closed (a timeout then blocks the call); an entry without it is reported, and added on apply
+        fo = re.search(r'command: "' + re.escape(cmd) + r'"\n((?:      [a-z_]+: [^\n]*\n)*)', s)
+        if closed and fo and "fail_closed: true" not in fo.group(1):
+            if check:
+                print(f"{name}: FAIL-OPEN {cmd}: registered without fail_closed (a hook timeout would let the call through)"); drift += 1
+            else:
+                s = s[:fo.end()] + "      fail_closed: true\n" + s[fo.end():]
+                added.append(f"{event} fail_closed for {os.path.basename(cmd)}")
         if cmd not in s and check:
             print(f"{name}: MISSING {event} {matcher or ''} {cmd}"); drift += 1
         elif cmd not in s:

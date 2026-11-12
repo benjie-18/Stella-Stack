@@ -28,7 +28,7 @@ except roles.RolesError as e: print("INVALID", e)' "$S"; }
 mkrf ".sandbox = $SB"
 ok '[ "$(val)" = VALID ]' "1.1 a complete sandbox block is valid"
 mkrf 'del(.sandbox)'
-ok '[ "$(val)" = VALID ]' "1.2 no sandbox block is valid (boxed profiles are refused at run time, not here)"
+ok '[ "$(val)" = VALID ]' "1.2 a table with no sandbox block is valid once every profile's role refuses every write (the fixture gives each unboxed role the fallback role's refusing hooks and toolsets; without that roles.py refuses the table: roles-selftest W4 B2)"
 bad() { mkrf ".sandbox = $SB | $1"; val >"$T/out"; grep -q "^INVALID.*$2" "$T/out"; }
 ok 'bad "del(.sandbox.schema_version)" schema_version' "1.3 missing schema_version"
 ok 'bad ".sandbox.schema_version = 2" schema_version' "1.4 unknown schema_version"

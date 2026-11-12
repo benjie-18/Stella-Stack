@@ -21,7 +21,7 @@ case "$1 $2" in
 esac
 S
 chmod +x "$T/bin/hermes"
-export PATH="$T/bin:$PATH"
+export PATH="$T/bin:$PATH" BOX_HERMES_ROOT=$T/hermes; jq -r '.sandbox.boxed_profiles[] as $p | .profiles[$p].dir // ("profiles/" + $p)' "${ROLES_FILE:-/workspace/docs/hermes-local/roles.json}" | while read -r d; do mkdir -p "$T/hermes/$d/home"; done   # K2: the card tests run in the OS box; its profile homes are scratch
 unset HERMES_KANBAN_TASK HERMES_KANBAN_WORKSPACE HERMES_DELEGATED_CHILD_CONTEXT
 export HERMES_HOME=/home/node/.hermes GIT_AUTHOR_NAME=selftest GIT_AUTHOR_EMAIL=selftest@example.invalid GIT_COMMITTER_NAME=selftest GIT_COMMITTER_EMAIL=selftest@example.invalid
 g() { git -C "$T/repo" "$@"; }
@@ -101,7 +101,7 @@ printf 'dirty\n' >> "$T/repo/.worktrees/t_00000001/b.txt"
 ok '[ "$(FAKE_APPROVED=t_00000001 mc t_00000001)" = 3 ] && grep -q "worktree" "$T/out"' "dirty card worktree refused"
 git -C "$T/repo/.worktrees/t_00000001" checkout -q b.txt
 ok '[ "$(FAKE_APPROVED=t_00000004 mc t_00000004)" = 3 ] && grep -q "test" "$T/out" && [ "$(head_of "$T/repo")" = "$h0" ]' "failing tests in the card worktree refused"
-ok '[ "$(grep -c "merge-card.sh: running this branch'"'"'s own test command in your shell; review the diff first" "$T/out")" = 1 ] && [ "$(grep -n "running this branch" "$T/out" | cut -d: -f1)" -lt "$(grep -n "tests failed" "$T/out" | cut -d: -f1)" ]' "D42: one warning line, printed before the branch's tests run"
+ok '[ "$(grep -c "merge-card.sh: running this branch'"'"'s own test command in the OS box (the card worktree writable, the rest read-only); review the diff first" "$T/out")" = 1 ] && [ "$(grep -n "running this branch" "$T/out" | cut -d: -f1)" -lt "$(grep -n "tests failed" "$T/out" | cut -d: -f1)" ]' "D42: one warning line, printed before the branch's tests run"
 ok '[ "$(FAKE_APPROVED=t_00000001 mc t_00000001)" = 0 ] && [ "$(g rev-list --parents -n1 HEAD | wc -w)" = 3 ] && [ "$(head_of "$T/remote.git" main)" = "$h0" ]' "clean merge: --no-ff merge commit on main; without --push the remote is untouched"
 ok '[ "$(grep -c "running this branch" "$T/out")" = 1 ] && [ "$(grep -n "running this branch" "$T/out" | cut -d: -f1)" -lt "$(grep -n "^merged " "$T/out" | cut -d: -f1)" ]' "D42: a clean merge prints the warning once, before the merge"
 ok 'g rev-parse -q --verify stella/t_00000001-x >/dev/null && [ -d "$T/repo/.worktrees/t_00000001" ]' "the card branch and worktree are kept"
@@ -264,4 +264,56 @@ card t_0000b006 b6.txt b6 'exit 0'; h=$(head_of "$T/repo")
 blob=$(g rev-parse "stella/t_0000b006-x:b6.txt"); of="$T/repo/.git/objects/${blob:0:2}/${blob:2}"
 chmod u+w "$of"; python3 -c 'import sys,zlib; open(sys.argv[1],"wb").write(zlib.compress(b"blob 5\0EVIL\n"))' "$of"
 ok '[ "$(FAKE_APPROVED=t_0000b006 mc t_0000b006)" = 3 ] && grep -q "fsck" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "VH-02: an object whose content does not match its id (written through a shared objects folder): refused, main untouched"
+# F1 W4 round 3 (K1, K2, K8): the merge judges the tree the merge will produce, the card's tests run in the box, every refusal is coded once.
+RF=${ROLES_FILE:-/workspace/docs/hermes-local/roles.json}; IDX=/workspace/$(jq -r .data_index "$RF")
+mapfile -t STATE < <(jq -r '.backup_dir + "/planted-by-card", .applied_state, .event_log' "$IDX")   # the apply tool's state paths, from the index
+cat /workspace/.gitignore >>"$T/repo/.gitignore"; g add .gitignore; g -c core.hooksPath=/dev/null commit -qm "the stack's ignore rules"   # the state paths are ignored in a real main checkout
+for s in "${STATE[@]}"; do mkdir -p "$T/repo/${s%/*}"; printf 'OWNER-STATE\n' >"$T/repo/$s"; done
+nal() { wc -l <"$T/sup/logs/alerts.log"; }
+k=0
+for s in "${STATE[@]}"; do   # K1: a state path force-added by a card (the parent folder, the form no hook refuses) is refused like owner data
+  k=$((k+1)); c=t_0000d00$k; wcard $c; mkdir -p "$T/repo/.worktrees/$c/${s%/*}"; printf 'WORKER\n' >"$T/repo/.worktrees/$c/$s"
+  git -C "$T/repo/.worktrees/$c" add -f -- "${s%%/*}"; wcommit $c; h=$(head_of "$T/repo")
+  ok '[ "$(FAKE_APPROVED='$c' mc '$c')" = 3 ] && grep -q "STL-CFG-312" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ] && [ "$(cat "$T/repo/'$s'")" = OWNER-STATE ]' "K1: a branch that commits the state path $s is refused, the owner's file is kept"
+done
+# K1: two merge bases (a criss-cross): a branch that rolls an owner-data file back to an older version is refused like any other change of it
+mkdir -p "$T/repo/${SETP%/*}"; printf '{"v": "old"}\n' >"$T/repo/$SETP"; g add -f "$SETP"; g -c core.hooksPath=/dev/null commit -qm "owner data baseline"
+wt_() { git -C "$T/repo/.worktrees/$1" "${@:2}"; }
+wcard t_0000d0a1; printf 'a\n' >"$T/repo/.worktrees/t_0000d0a1/a-card.txt"; wt_ t_0000d0a1 add a-card.txt; GIT_COMMITTER_DATE="2030-01-01T00:00:00Z" wt_ t_0000d0a1 -c core.hooksPath=/dev/null commit -qm "card A"
+C1=$(wt_ t_0000d0a1 rev-parse HEAD)
+printf '{"v": "new"}\n' >"$T/repo/$SETP"; g -c core.hooksPath=/dev/null commit -qam "owner: a new value"; P=$(head_of "$T/repo")
+ok '[ "$(FAKE_APPROVED=t_0000d0a1 mc t_0000d0a1)" = 0 ]' "K1 setup: card A merges"
+g worktree add -q -b stella/t_0000d0b2-x "$T/repo/.worktrees/t_0000d0b2" "$C1"; wt_ t_0000d0b2 -c core.hooksPath=/dev/null merge -q --no-edit "$P" >/dev/null
+printf '{"v": "old"}\n' >"$T/repo/.worktrees/t_0000d0b2/$SETP"; printf 'b\n' >"$T/repo/.worktrees/t_0000d0b2/b-card.txt"; wt_ t_0000d0b2 add b-card.txt; wt_ t_0000d0b2 -c core.hooksPath=/dev/null commit -qam "card B"
+h=$(head_of "$T/repo")
+ok '[ "$(g merge-base --all main stella/t_0000d0b2-x | wc -l)" = 2 ] && [ "$(FAKE_APPROVED=t_0000d0b2 mc t_0000d0b2)" = 3 ] && [ "$(head_of "$T/repo")" = "$h" ] && grep -q "\"new\"" "$T/repo/$SETP"' "K1: a branch with two merge bases that rolls owner data back is refused, main keeps the owner's value"
+# K1: main renames a plain file into owner data; a branch that edits the old name would carry its edit into owner data
+OD=$(jq -r '.owner_data[0]' "$RF"); seq 1 40 | sed 's/^/line /' >"$T/repo/rn.txt"; g add rn.txt; g -c core.hooksPath=/dev/null commit -qm "plain file"
+wcard t_0000d0c3; sed -i 's/^line 20$/line 20 edited by a card/' "$T/repo/.worktrees/t_0000d0c3/rn.txt"; git -C "$T/repo/.worktrees/t_0000d0c3" add -A; wcommit t_0000d0c3
+mkdir -p "$T/repo/$OD"; g mv rn.txt "$OD/rn.txt"; g add -f "$OD"; g -c core.hooksPath=/dev/null commit -qm "owner: the file moves into owner data"; h=$(head_of "$T/repo")
+ok '[ "$(FAKE_APPROVED=t_0000d0c3 mc t_0000d0c3)" = 3 ] && grep -qF "$OD/rn.txt" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "K1: a main-side rename into owner data cannot carry a branch edit of the old name in (the merged tree is compared)"
+# K1b: a protected folder is the same folder under any spelling (case, and the 8.3 short name where this mount has one)
+wcard t_0000d0d4; mkdir -p "$T/repo/.worktrees/t_0000d0d4/${OD%%/*}"; mkdir -p "$T/repo/.worktrees/t_0000d0d4/$(echo "$OD" | tr a-z A-Z)"; printf 'x\n' >"$T/repo/.worktrees/t_0000d0d4/$(echo "$OD" | tr a-z A-Z)/new.json"
+git -C "$T/repo/.worktrees/t_0000d0d4" add -f -A; wcommit t_0000d0d4; h=$(head_of "$T/repo")
+ok '[ "$(FAKE_APPROVED=t_0000d0d4 mc t_0000d0d4)" = 3 ] && [ "$(head_of "$T/repo")" = "$h" ]' "K1b: a new file in an upper-case spelling of an owner data folder is refused"
+# K2: the card's test command runs in the OS box: it cannot write the owner settings file, owner data of the main checkout or a state path, and no owner command works
+OSF=/workspace/$(jq -r '.owner_settings[0]' "$RF"); osum=$(cksum <"$OSF" 2>/dev/null); ssum=$(cksum <"$T/repo/$SETP"); stsum=$(cksum <"$T/repo/${STATE[1]}")
+body=$(cat <<B
+printf x >>$OSF; printf x >>"$T/repo/$SETP"; printf x >>"$T/repo/${STATE[1]}"; python3 /workspace/bin/settings.py set zz yy; /workspace/bin/merge-card.sh t_00000000; true
+B
+)
+card t_0000d0e5 e5.txt e5 "$body"; h=$(head_of "$T/repo")
+mc t_0000d0e5 --owner-approved >/dev/null
+ok '[ "$(cksum <"$OSF" 2>/dev/null)" = "$osum" ] && [ "$(cksum <"$T/repo/$SETP")" = "$ssum" ] && [ "$(cksum <"$T/repo/${STATE[1]}")" = "$stsum" ]' "K2: a test command that writes the owner settings file, owner data and a state path, and runs owner commands, changes none of them"
+bad=$(printf 'echo $HERMES_KANBAN_TASK $HERMES_KANBAN_WORKSPACE >/tmp/marked; test -n "$(cat /tmp/marked | cut -d" " -f1)"; ls /workspace/%s >/dev/null 2>&1 && exit 1; exit 0' "$(jq -r '.owner_settings[0]' "$RF")")
+card t_0000d0f6 f6.txt f6 "$bad"
+ok '[ "$(mc t_0000d0f6 --owner-approved)" = 0 ]' "K2: in the box the worker markers are set and the owner settings file is not mounted"
+# K2: where the box cannot start the merge is refused, coded, and the tests do not run unboxed
+card t_0000d0f7 f7.txt f7 "touch $T/ran-unboxed"; h=$(head_of "$T/repo")
+ok '[ "$(BOX_HERMES_ROOT=$T/nohermes mc t_0000d0f7 --owner-approved)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -q "could not start" "$T/out" && [ ! -e "$T/ran-unboxed" ] && [ "$(head_of "$T/repo")" = "$h" ]' "K2: the box cannot start: refused with a coded line, nothing ran outside it, main untouched"
+# K8: the boundary refusal and an unreadable list are coded, with one alert line each
+HOOK=$(jq -r '[.roles[].hooks[]? | .file // empty] | first' "$RF"); mkdir -p "$T/repo/${HOOK%/*}"; printf '#!/bin/sh\n' >"$T/repo/$HOOK"; g add -f "$HOOK"; g -c core.hooksPath=/dev/null commit -qm "a hook file"
+wcard t_0000d0a8; printf '#!/bin/sh\nexit 0\n' >"$T/repo/.worktrees/t_0000d0a8/$HOOK"; git -C "$T/repo/.worktrees/t_0000d0a8" add -f -A; wcommit t_0000d0a8
+a0=$(nal); ok '[ "$(FAKE_APPROVED=t_0000d0a8 mc t_0000d0a8)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && [ "$(nal)" = $((a0+1)) ]' "K8: the boundary refusal carries a catalog code and writes one alert line"
+a0=$(nal); ok '[ "$(ROLES_FILE=$T/garbage.json FAKE_APPROVED=t_0000d0a8 mc t_0000d0a8)" = 3 ] && grep -q "STL-CFG-303" "$T/out" && [ "$(nal)" -le $((a0+2)) ]' "K8: the lists unreadable: a coded refusal"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

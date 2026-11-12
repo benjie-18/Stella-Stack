@@ -1,19 +1,25 @@
 #!/usr/bin/env bash
 # Merge a reviewed card branch into main (F31, Stage 6 T7): the owner's step, never a worker's.
 # usage: merge-card.sh <card-id> [--push] [--repo <dir>] [--owner-approved] [--i-have-read-the-boundary-changes]
-# Refuses (exit 3) unless: no worker environment (HERMES_KANBAN_TASK, HERMES_KANBAN_WORKSPACE, a delegated child, or a
-# worker profile's HERMES_HOME); the repo's main checkout is clean and on main; exactly one card branch
+# Refuses (exit 3) unless: no worker environment (a worker marker of the role table's worker_markers, or a worker profile's HERMES_HOME); the repo's main checkout is clean and on main; exactly one card branch
 # <project>/<id>-* exists and is ahead of main; the card's worktree is clean; the reviewer approved (its latest kanban run
 # on the card is completed with metadata.review "approved", see docs/hermes-local/board.md) or --owner-approved is
 # given; the card worktree's tests pass (npm test, package.json scripts.test).
-# F1 W4 (B3, the merge is the single place every card change passes, however it was made: a Hermes terminal, plumbing, another agent
-# CLI's git, a patch): the paths the branch changes against its merge base (git diff --name-only -z --no-renames, both sides of a
-# rename) must hold no owner settings or owner data path (bin/roles.py owner-data): owner data changes only through the apply tool;
-# nothing is merged. A path that defines the boundary itself (bin/roles.py boundary: the role table, the hook files, the guard scripts the
-# table names, the box) is listed, and refused unless --i-have-read-the-boundary-changes is given.
+# F1 W4 (B3/K1, the merge is the single place every card change passes, however it was made: a Hermes terminal, plumbing, another agent
+# CLI's git, a patch): git computes the tree the merge would produce (git merge-tree: every merge base, nothing written to the checkout), and the
+# paths that tree changes in main (-z, no rename detection in the compare) must hold no path a role may not write: owner data, the owner
+# settings files and the apply tool's state paths (bin/roles.py owner_paths, one list), compared by identity, not spelling (roles.py hits: a
+# short 8.3 name or a case variant of a protected folder is that folder); nothing is merged and every offending path is listed. If the merged
+# tree cannot be computed the merge is refused, never guessed. The merge is then made in the index (--no-commit) and its tree must equal the
+# tree that was checked. A path that defines the boundary itself (roles.py boundary: the role table, the hooks, the guards, the box and every file
+# they load, and a new module in bin/ named like a standard-library module) is listed, and refused unless --i-have-read-the-boundary-changes.
+# K2: the card's test command is the card's code: it runs in the OS box (bin/box.py exec: the card worktree writable, the rest read-only, the
+# owner settings files and state paths not mounted, the worker markers set); where the box cannot start the merge is refused (STL-CFG-312, coded),
+# there is no unboxed run. What the box does not stop: the test code still decides its own exit code (a reviewer reads the diff), and it can read
+# whatever the box shows read-only. Every refusal here prints a catalog code with its plain message and writes one alert line.
 # Then: git merge --no-ff into main; on any failure git merge --abort (main is left as it was, exit 1). Never forces,
 # never rewrites history, never deletes the branch or the worktree. --push: npm test on the merged main first, then
-# git push of main to its upstream, no force.
+# git push of main to its upstream, no force. --push: the merged main's tests run in the box too (a throw-away worktree).
 # Exit 0 merged (and pushed), 1 merge, test run or push failed, 2 usage, 3 refused.
 set -uo pipefail
 export LC_ALL=C.UTF-8
@@ -34,8 +40,15 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-[ -z "${HERMES_KANBAN_TASK:-}${HERMES_KANBAN_WORKSPACE:-}${HERMES_DELEGATED_CHILD_CONTEXT:-}" ] \
-  || refuse "worker environment (a kanban worker or delegated child); merging is the owner's step"
+here=$(dirname "$(readlink -f "$0")"); tbl=${ROLES_FILE:-$here/../docs/hermes-local/roles.json}
+coded() {   # coded <code> <problem> <message>: the catalog code and plain message, one alert line, then the refusal; the problem is cleaned (it may hold worker text)
+  local m; m=$(python3 -I "$here/roles.py" refusal "$1" "$(printf '%s' "$2" | tr -c 'A-Za-z0-9_./ ,:~+=@()-' '?' | cut -c1-240)" 2>/dev/null)
+  refuse "${m:-$1} $3"; }
+marks=$(jq -r '.worker_markers[]?' "$tbl" 2>/dev/null); [ -n "$marks" ] || coded STL-CFG-303 "the worker marker list in the role table cannot be read" "so it is not known whether this is a worker's environment; nothing was merged"
+while IFS= read -r m; do   # the marker names are the table's (worker_markers), never typed here; ${!m} must see nothing but a variable name
+  [[ $m =~ ^[A-Z][A-Z0-9_]*$ ]] || refuse "the worker marker list in the role table holds a name that is not a variable name"
+  [ -z "${!m:-}" ] || refuse "worker environment (a kanban worker or delegated child: $m is set); merging is the owner's step"
+done <<<"$marks"
 [[ "${HERMES_HOME:-}" != */profiles/* && "${HOME:-}" != */.hermes/profiles/* ]] || refuse "worker profile environment (HERMES_HOME or HOME of a profile)"
 # shortcut: like the commit guard, this runs in the caller's own environment: a re-parented process (setsid, a double
 # fork) or a PATH that shadows python3/hermes escapes the worker proof, and --owner-approved is a flag any caller can pass
@@ -66,28 +79,34 @@ st=$(GIT_COMMON_DIR=$common git --git-dir="$wtg" --work-tree="$wt" -c core.fsmon
 tip=$(g rev-parse --verify "refs/heads/$branch^{commit}") || refuse "cannot read the tip of $branch"   # read first: the commit checked and tested below is the commit merged
 # VH-02: a box writes the shared objects folder, so a commit can keep its id while its content changes; fsck compares every object with its id
 g fsck --no-dangling --no-progress >/dev/null 2>&1 || refuse "git fsck reports a damaged or altered object in $top; nothing was merged"
-# B3 (F1 W4): what the branch changes against its merge base, read whole (-z, no rename detection)
-here=$(dirname "$(readlink -f "$0")")
-mbase=$(g merge-base main "$tip") || refuse "cannot find where $branch left main"
+# K1 (F1 W4): the check judges what the merge will do. git computes the tree the merge would produce (merge-tree: every merge base, the
+# merge's own rename handling, nothing written to the checkout), and the paths compared are the ones that tree changes in main (-z, no
+# rename detection in the compare). After the merge below, its tree must be that tree. Names are compared with the lists by identity
+# (roles.py hits), not by spelling: 8.3 short names and case variants of a protected folder are that folder.
+before=$(g rev-parse --verify "HEAD^{commit}") || refuse "cannot read main"
 zf=$(mktemp) || refuse "cannot list what $branch changes"; trap 'rm -f "$zf"' EXIT
-g diff --name-only -z --no-renames "$mbase" "$tip" >"$zf" || refuse "cannot list what $branch changes"
-mapfile -d '' -t changed <"$zf"
-odata=$(python3 -I "$here/roles.py" owner-data "$here/.." 2>/dev/null | jq -r '.[]?' 2>/dev/null)
-[ -n "$odata" ] || refuse "the owner data list cannot be read (role table or data index), so what $branch changes cannot be checked; nothing was merged"
-bnd=$(python3 -I "$here/roles.py" boundary 2>/dev/null | jq -r '.[]?' 2>/dev/null)
-[ -n "$bnd" ] || refuse "the boundary path list cannot be read from the role table; nothing was merged"
-under() { local f=${1,,} p; while IFS= read -r p; do [[ $f == "${p,,}" || $f == "${p,,}/"* ]] && return 0; done <<<"$2"; return 1; }   # lower-cased: the stack mount is case-insensitive
-hits=; bhits=
-for f in "${changed[@]}"; do
-  if under "$f" "$odata"; then hits+="${hits:+, }$f"; elif under "$f" "$bnd"; then bhits+="${bhits:+, }$f"; fi
-done
-if [ -n "$hits" ]; then
-  msg=$(python3 -I "$here/roles.py" refusal STL-CFG-312 "$branch changes owner data or an owner settings file" 2>/dev/null)
-  refuse "${msg:-STL-CFG-312} Owner data changes only through the apply tool (bin/stella-apply.py), never through a card. $branch changes: $hits; nothing was merged"
+mt=$(g merge-tree --write-tree --no-messages "$before" "$tip" 2>/dev/null); mrc=$?
+mtree=
+if [ "$mrc" = 0 ] && [[ "${mt%%$'\n'*}" =~ ^[0-9a-f]{40,64}$ ]]; then
+  mtree=${mt%%$'\n'*}
+  g diff-tree -r --name-only -z --no-renames "$before" "$mtree" >"$zf" || coded STL-CFG-303 "git cannot list what merging $branch changes" "so what $branch changes cannot be checked; nothing was merged"
+elif [ "$mrc" != 1 ]; then   # 1 = a conflict: the merge below fails and is aborted, so there is nothing to judge
+  coded STL-CFG-303 "git cannot compute the tree merging $branch would produce" "so what the merge changes cannot be checked; nothing was merged"
 fi
-if [ -n "$bhits" ]; then
-  echo "merge-card.sh: $branch changes paths that define the boundary itself (the role table, hook files, guard scripts, the box): $bhits" >&2
-  [ -n "$readb" ] || refuse "read those changes, then rerun with --i-have-read-the-boundary-changes; nothing was merged"
+if [ -n "$mtree" ]; then
+  hits=$(python3 -I "$here/roles.py" hits "$top" refused "$here/.." <"$zf" 2>/dev/null | tr '\0' '\n'; exit "${PIPESTATUS[0]}") \
+    || coded STL-CFG-303 "the owner data list (role table or data index) cannot be read" "so what $branch changes cannot be checked; nothing was merged"
+  bhits=$(python3 -I "$here/roles.py" hits "$top" boundary "$here/.." <"$zf" 2>/dev/null | tr '\0' '\n'; exit "${PIPESTATUS[0]}") \
+    || coded STL-CFG-303 "the boundary path list cannot be read from the role table" "so what $branch changes cannot be checked; nothing was merged"
+  hits=$(printf '%s' "$hits" | tr '\n' ',' | sed 's/,$//; s/,/, /g'); bhits=$(printf '%s' "$bhits" | tr '\n' ',' | sed 's/,$//; s/,/, /g')
+  if [ -n "$hits" ]; then
+    coded STL-CFG-312 "$branch changes owner data, an owner settings file or an apply-tool state path" "Owner data changes only through the apply tool (bin/stella-apply.py), never through a card. $branch changes: $(printf '%s' "$hits" | tr -c '[:print:]' '?'); nothing was merged"
+  fi
+  if [ -n "$bhits" ] && [ -z "$readb" ]; then
+    echo "merge-card.sh: $branch changes paths that define the boundary itself (the role table, hook files, guard scripts, the box): $(printf '%s' "$bhits" | tr -c '[:print:]' '?')" >&2
+    coded STL-CFG-312 "$branch changes paths that define the boundary itself" "Read those changes, then rerun with --i-have-read-the-boundary-changes; nothing was merged"
+  fi
+  [ -z "$bhits" ] || echo "merge-card.sh: $branch changes paths that define the boundary itself: $(printf '%s' "$bhits" | tr -c '[:print:]' '?')" >&2
 fi
 if [ -z "$owner" ]; then
   read -r verdict started < <(kanban show "$card" --json 2>/dev/null \
@@ -102,24 +121,40 @@ if [ -z "$owner" ]; then
   [ "$moved" -lt "$started" ] || refuse "$branch moved after the review started (branch ${moved}, review ${started}): the approval does not cover its tip; review it again"
 fi
 jq -e '.scripts.test' "$wt/package.json" >/dev/null 2>&1 || refuse "no test command in $wt/package.json (scripts.test)"
-echo "merge-card.sh: running this branch's own test command in your shell; review the diff first" >&2
-(cd "$wt" && timeout 1800 npm test) || refuse "tests failed in $wt (npm test)"
+# K2: the card's test command is the card's code: it runs in the OS box (bin/box.py exec) with the plan a worker gets, never in this shell
+boxed() {   # boxed <worktree> <branch> <script>: exit 3 when the box cannot start (it printed the coded line); the script's own exit code otherwise
+  python3 -I "$here/box.py" exec "$top" "$1" "$2" "$card" "$3" >&2; local r=$?
+  [ "$r" != 126 ] || refuse "the box for the tests could not start, and the tests never run outside it; nothing was merged"
+  return "$r"; }
+echo "merge-card.sh: running this branch's own test command in the OS box (the card worktree writable, the rest read-only); review the diff first" >&2
+boxed "$wt" "$branch" 'timeout 1800 npm test' || refuse "tests failed in $wt (npm test)"
 [ "$(g rev-parse --verify "refs/heads/$branch^{commit}")" = "$tip" ] || refuse "$branch moved while its tests ran; nothing was merged"
 # N1: the tests ran for up to 30 minutes with the shared objects folder writable by a box; check the objects again before the merge
 g fsck --no-dangling --no-progress >/dev/null 2>&1 || refuse "git fsck reports a damaged or altered object in $top after the tests; nothing was merged"
 
-before=$(g rev-parse HEAD)
-if ! g merge --no-ff --no-edit -m "Merge $branch (card $card)" "$tip"; then
+[ "$(g rev-parse HEAD)" = "$before" ] || refuse "main moved while the tests ran; nothing was merged"
+# --no-commit: the merge is made in the index first and its tree compared with the tree that was checked (K1); only then committed
+if ! g merge --no-ff --no-commit "$tip" >/dev/null; then
   g rev-parse -q --verify MERGE_HEAD >/dev/null && g merge --abort
   [ "$(g rev-parse HEAD)" = "$before" ] || echo "merge-card.sh: main moved during a failed merge: check $top by hand" >&2
   echo "merge-card.sh: merge of $branch failed (conflict or hook); aborted, main left at ${before:0:12}" >&2
   exit 1
 fi
+if [ -z "$mtree" ] || [ "$(g write-tree)" != "$mtree" ]; then
+  g merge --abort; coded STL-CFG-312 "the merge of $branch did not produce the tree that was checked" "nothing was merged"
+fi
+if ! g commit --no-verify -q --no-edit -m "Merge $branch (card $card)"; then
+  g merge --abort 2>/dev/null; echo "merge-card.sh: merge of $branch failed (commit); aborted, main left at ${before:0:12}" >&2; exit 1
+fi
 echo "merged $branch into main: $(g rev-parse --short HEAD)"
 [ -n "$push" ] || exit 0
 # AGENTS.md: never push to main with a failing check, so the merged tree is tested again first (review H4). History is
 # never rewritten here: on failure the merge stays local for the owner to inspect or undo.
-(cd "$top" && timeout 1800 npm test) \
+pw="$top/.worktrees/merge-test-$card"; pb="merge-test/$card"   # K2: main's tests run in the box too, from a throw-away worktree of the merged commit
+g worktree add -q -b "$pb" "$pw" HEAD >/dev/null 2>&1 || refuse "cannot make a worktree to test the merged main in the box; merged locally, NOT pushed (undo: git -C $top reset --hard $before)"
+boxed "$pw" "$pb" 'timeout 1800 npm test'; trc=$?
+g worktree remove --force "$pw" >/dev/null 2>&1; g branch -D "$pb" >/dev/null 2>&1
+[ "$trc" = 0 ] \
   || { echo "merge-card.sh: tests fail on the merged main: merged locally, NOT pushed (undo: git -C $top reset --hard $before)" >&2; exit 1; }
 g rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1 || { echo "merge-card.sh: main has no upstream; merged, not pushed" >&2; exit 1; }
 g push || { echo "merge-card.sh: push failed; merged locally, not pushed" >&2; exit 1; }

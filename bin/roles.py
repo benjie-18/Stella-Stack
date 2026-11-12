@@ -14,12 +14,15 @@ CLI: roles.py check [hermes-root]     validate the table and its coverage of the
      roles.py reviewers               JSON list of the profiles whose role may review (K8)
      roles.py owner-data [root]       JSON list: the owner data paths relative to the stack (owner_paths; exit 1 when the index cannot be read)
      roles.py refusal <code> <problem>  logs one alert line, prints "[code] <the catalog's plain message>" (for scripts that refuse)
+     roles.py hits <top> refused|boundary [root]   NUL-separated names on stdin (relative to <top>): the ones on stdout that are, lie in or hold a path of
+                                       the list, by identity not spelling (K1b); refused = owner_paths, boundary = boundary()
+     roles.py root                    the stack folder (ROOT)
      roles.py boundary                JSON list: the paths that define the boundary itself, relative (boundary)
      roles.py prove [--profile P] [--task T]   the card whose own worker run this process belongs to (prove_card): JSON
                                        {card, workspace, branch} and exit 0; else the failed proof on stderr, exit 1
                                        (exit 3: the board could not be read)
 """
-import codecs, glob, json, os, pwd, re, sqlite3, subprocess, sys
+import codecs, glob, hashlib, itertools, json, os, pwd, re, sqlite3, subprocess, sys, time
 
 ROOT = "/workspace"   # the stack repo: roles.json, the protected repo paths and the hook sources live here
 PERMS = ("assignable", "may_answer_for_owner", "may_complete", "may_unblock", "may_claim", "may_delegate", "may_create_cards", "may_review")
@@ -49,7 +52,8 @@ HOOK_KEYS = {"matcher", "file", "command", "timeout", "workers", "writes"}   # w
 WRITES = ("refused", "judged")
 PROFILE_KEYS = {"role", "worker", "dir", "soul", "display_name", "approval_evidence", "review_callers", "capability_fallback"}
 TOP_KEYS = {"_comment", "schema_version", "fallback_role", "protected", "owner_settings", "owner_data", "owner_commands", "data_index",
-            "worker_markers", "self_config_kinds", "profiles", "roles", "sandbox", "owner_commands_by_name", "boundary_paths", "write_tools", "worker_pins"}
+            "worker_markers", "self_config_kinds", "profiles", "roles", "sandbox", "owner_commands_by_name", "boundary_paths", "write_tools", "worker_pins",
+            "main_branch", "judged_hooks", "read_verbs"}
 ROOT_PROFILE = "default"   # Hermes's own name for the profile that lives in the root of ~/.hermes
 
 
@@ -266,6 +270,14 @@ def validate(d, root=ROOT):
     wp = d.get("worker_pins")   # the variables the box sets to a worker's workspace and branch (the commit guard checks a marked commit against them)
     if not (isinstance(wp, dict) and set(wp) == {"workspace", "branch"} and all(isinstance(v, str) and KEY.fullmatch(v) for v in wp.values())):
         errs.append("worker_pins needs {workspace, branch}, each an environment variable name (A-Z, digits, _)")
+    if not (isinstance(d.get("main_branch"), str) and NAME.fullmatch(d["main_branch"])):   # the stack's main branch (the commit guard refuses a worker on it)
+        errs.append("main_branch needs the name of the stack's main branch")
+    jh = d.get("judged_hooks")   # K6: the guards every role outside the box that no profile serves carries (defined once, here)
+    if not (isinstance(jh, list) and jh and _set(jh) and all(_rel(x) for x in jh)):
+        errs.append("judged_hooks needs a non-empty list of hook files (paths relative to the stack repo), no file twice")
+    rv = d.get("read_verbs")   # K7: the verbs that may name an owner path (a command word, or "git <subcommand>")
+    if not (isinstance(rv, list) and rv and _set(rv) and all(re.fullmatch(r"[A-Za-z0-9_.\[\]+-]+(?: [a-z0-9-]+)?", x) for x in rv)):
+        errs.append("read_verbs needs a non-empty list of command words (or \"git <subcommand>\") that only read files, no entry twice")
     wm = d.get("worker_markers")   # the environment variables that mark a worker's process (commit guard, apply tool, settings tool)
     if not (isinstance(wm, list) and wm and _set(wm) and all(KEY.fullmatch(x) for x in wm)):
         errs.append("worker_markers needs a non-empty list of environment variable names (A-Z, digits, _), no name twice")
@@ -286,16 +298,23 @@ def _hooks(r, judged=True):
 
 
 def unboxed_problems(d):
-    """B2 (F1 W4): a text guard cannot decide what a shell will do, so a role that runs outside the OS box must refuse every write by
+    """B2/K6 (F1 W4): a text guard cannot decide what a shell will do, so a role that runs outside the OS box must refuse every write by
     its hooks: every profile outside sandbox.boxed_profiles and the fallback role have runs_unboxed true; such a role has explicit
-    toolsets, a hook that refuses (writes: refused) and no hook that only judges (writes: judged) on each tool of write_tools, and
-    the fallback also has a hook for any tool name no other matcher names. Run on a table whose rows are already well formed."""
+    toolsets, a hook that refuses (writes: refused) and no hook that only judges (writes: judged) on each tool of write_tools, and a hook
+    that refuses any tool name no other matcher names. A role a profile serves has explicit toolsets. A role in the box that no profile
+    serves carries every guard of judged_hooks (the full judged set, defined once). A hook with a workers filter covers a profile only
+    when the profile names that worker kind, so it is never counted for a role as a whole. Run on a table whose rows are already well formed."""
     roles, boxed, tools = d["roles"], set((d.get("sandbox") or {}).get("boxed_profiles") or []), d["write_tools"]
     need = {d["fallback_role"]} | {row["role"] for p, row in d["profiles"].items() if p not in boxed}
+    served = {row["role"] for row in d["profiles"].values()}
     errs = [f"role {n} must have runs_unboxed true: a profile or the fallback uses it outside the OS box" for n in sorted(need) if not roles[n]["runs_unboxed"]]
-    cover = lambda r, t: [h for h in r.get("hooks", []) if re.fullmatch(h["matcher"], t)]
+    errs += [f"role {n} is served by a profile and has no explicit platform_toolsets (a default toolset is not judged)" for n in sorted(served) if not any(roles[n].get("platform_toolsets", {}).values())]
+    cover = lambda r, t: [h for h in r.get("hooks", []) if "workers" not in h and re.fullmatch(h["matcher"], t)]
     for n, r in roles.items():
         if not r["runs_unboxed"]:
+            if n not in served:
+                have = {h.get("file") or h["command"] for h in r.get("hooks", [])}
+                errs += [f"role {n} is in the box and served by no profile: it lacks the guard {j} of judged_hooks" for j in d["judged_hooks"] if j not in have]
             continue
         if not any(r.get("platform_toolsets", {}).values()):
             errs.append(f"role {n} runs outside the box: it needs explicit platform_toolsets")
@@ -303,8 +322,8 @@ def unboxed_problems(d):
             errs.append(f"role {n} runs outside the box: it lists a hook that only judges writes (writes: judged)")
         errs += [f"role {n} runs outside the box: write tool {t} has no hook that refuses every write (writes: refused)"
                  for t in tools if not any(h.get("writes") == "refused" for h in cover(r, t))]
-    if not cover(roles[d["fallback_role"]], "\0no-such-tool"):
-        errs.append(f"fallback_role {d['fallback_role']} needs a hook for any tool name no other matcher names")
+        if not any(h.get("writes") == "refused" for h in cover(r, "\0no-such-tool")):
+            errs.append(f"role {n} runs outside the box: it needs a hook that refuses any tool name no other matcher names (writes: refused)")
     return errs
 
 
@@ -458,8 +477,11 @@ def index(d, root=None):
 def owner_paths(d, root=None):
     """G1 (F1 W4): the one definition of owner data, as paths relative to the stack: the index itself, every path of an index row with
     owner_only true, and the table's own owner_data list (what the index cannot name, for example its schemas folder). The write guard,
-    the commit guard and the merge check all use this; a new owner-only row is protected with no other edit. Raises RolesError."""
-    return sorted({d["data_index"], *d["owner_data"], *d["owner_settings"], *(x["path"] for x in index(d, root)["files"] if x["owner_only"])})
+    the commit guard and the merge check all use this; a new owner-only row is protected with no other edit. It holds the owner settings and the
+    apply tool's state paths too: every path no role may write. Raises RolesError."""
+    ix = index(d, root)
+    return sorted({d["data_index"], *d["owner_data"], *d["owner_settings"], *(x["path"] for x in ix["files"] if x["owner_only"]),
+                   ix["backup_dir"], ix["applied_state"], ix["event_log"]})   # K1: the apply tool's state is a path no role writes either, the same list
 
 
 def owner_data(d):
@@ -480,10 +502,80 @@ def state_trees(d):
 
 
 def boundary(d):
-    """B3 (F1 W4): the paths that define the boundary itself, relative: the table's boundary_paths and every hook file or command it
-    names. A card branch that changes one meets a flag at the merge."""
+    """B3/K3 (F1 W4): the paths that define the boundary itself, relative: the table's boundary_paths (a list of data: every file the boundary's own
+    code loads, kept complete by a selftest that walks the import and source graph) and every hook file or command the table names. A card
+    branch that changes one meets a flag at the merge."""
     hooks = {(h.get("file") or h["command"]) for r in d["roles"].values() for h in r.get("hooks", [])}
     return sorted(set(d["boundary_paths"]) | {h[len(ROOT) + 1:] if h.startswith(ROOT + "/") else h for h in hooks})
+
+
+def _chain(p):
+    """K1b: (the names of a path's components, the (device, inode) of the root and of each existing prefix): a path is known by what it is."""
+    comps = [c for c in os.path.realpath(p).split("/") if c]
+    ids, cur = [], "/"
+    for i in range(len(comps) + 1):
+        try:
+            st = os.lstat(cur)
+        except OSError:
+            break
+        ids.append((st.st_dev, st.st_ino))
+        if i < len(comps):
+            cur = os.path.join(cur, comps[i])
+    return comps, ids
+
+
+ALIAS = re.compile(r"~\d")   # an 8.3 short name (NTFS): STELLA~1 is .stella on this mount
+
+
+def chains(paths):
+    """The protected paths (absolute), ready for overlap()."""
+    return [(p, _chain(p)) for p in paths]
+
+
+def overlap(p, prot):
+    """K1b, the one way every guard asks "is this path one of those": (relation, protected path) or None. The relation is "equal", "inside" (p lies
+    in a protected path) or "contains" (p is a folder that holds one). It is decided by IDENTITY where p or a parent of it exists (the device and
+    inode of each existing component, so STELLA~1, .STELLA and a symlink name the same folder), and by the casefolded names below the deepest
+    folder both paths share. A name that does not exist yet and looks like a short alias, in a folder that holds a protected path, cannot be
+    classified: relation "unknown" (the caller refuses it)."""
+    pc, pi = _chain(p)
+    fold = [c.casefold() for c in pc]
+    for q, (qc, qi) in prot:
+        pos = {i: k for k, i in enumerate(qi)}
+        qf = [c.casefold() for c in qc]
+        for j in range(len(pi) - 1, -1, -1):
+            k = pos.get(pi[j])
+            if k is None:
+                continue
+            pr, qr = fold[j:], qf[k:]
+            n = min(len(pr), len(qr))
+            if pr[:n] == qr[:n]:
+                return ("equal" if len(pr) == len(qr) else "inside" if len(pr) > len(qr) else "contains"), q
+        e = len(pi) - 1   # the existing components of p; the next one, if any, does not exist
+        if e < len(pc) and ALIAS.search(pc[e]) and pi[-1] in pos:
+            return "unknown", q
+    return None
+
+
+def hits(d, top, names, kind, root=None):
+    """K1/K3: the names (relative to the tree `top`) that are, lie in or hold a path of the list `kind`: "refused" = every path no role may
+    write (owner_paths: owner data, the owner settings, the apply tool's state), "boundary" = boundary(d) and any new file in a folder of
+    modules whose name shadows a standard-library module (the hooks import from that folder ahead of the standard library). Raises RolesError."""
+    rel = owner_paths(d, root or top) if kind == "refused" else boundary(d)
+    prot = chains(os.path.join(top, x) for x in rel)
+    out = []
+    for n in names:
+        if n.startswith("/") or ".." in n.split("/"):
+            out.append(n); continue
+        r = overlap(os.path.join(top, n), prot)
+        if r:
+            out.append(n)
+        elif kind == "boundary":
+            dirs = {os.path.dirname(x) for x in d["boundary_paths"] if x.endswith(".py")}
+            base, ext = os.path.splitext(os.path.basename(n))
+            if os.path.dirname(n) in dirs and ext == ".py" and base in sys.stdlib_module_names:
+                out.append(n)
+    return out
 
 
 def owner_commands(d):
@@ -502,10 +594,35 @@ def ansi(cmd):
     return re.sub(r"\$'((?:[^'\\]|\\.)*)'", dec, cmd).replace('$"', '"')
 
 
-def braces(word):
-    """bash brace expansion of {a,b} (innermost first; not {1..3}); more than 64 words is for the caller to refuse."""
-    m = re.search(r"(?<!\$)\{([^{}]*,[^{}]*)\}", word)
-    return [word] if not m else [w for alt in m[1].split(",") for w in braces(word[:m.start()] + alt + word[m.end():])][:65]
+BRACE = re.compile(r"(?<!\$)\{([^{}]*,[^{}]*)\}")
+
+
+def braces(word, limit=64):
+    """bash brace expansion of {a,b} (innermost first; not {1..3}). K5: the work is bounded, not only the output: every step that splits a
+    word adds at least one to the count of words held, and the first time the count passes `limit` the caller gets limit+1 words back
+    (it refuses the word), so no word of any length or depth costs more than about `limit` passes over it."""
+    work, out = [word], []
+    while work:
+        w = work.pop()
+        m = BRACE.search(w)
+        if not m:
+            out.append(w)
+        else:
+            alts = m[1].split(",")
+            if len(out) + len(work) + len(alts) > limit:
+                return [w] * (limit + 1)
+            work += [w[:m.start()] + a + w[m.end():] for a in reversed(alts)]
+        if len(out) + len(work) > limit:
+            return (out + work)[:limit + 1]
+    return out
+
+
+def globs(p, limit=500, depth=3):
+    """K5: the matches of a glob pattern, with the work bounded: at most `limit` matches are taken, and a pattern with more than `depth` wildcard
+    path components is too wide to scan (None: the caller refuses it)."""
+    if sum(1 for c in p.split("/") if glob.has_magic(c)) > depth:
+        return None
+    return list(itertools.islice(glob.iglob(p), limit))
 
 
 def expand_word(word, cwd, names=None):
@@ -521,18 +638,42 @@ def expand_word(word, cwd, names=None):
         e = os.path.join(cwd or "/", os.path.expanduser(w))
         out.append(os.path.realpath(e))
         if glob.has_magic(e):
-            out += [os.path.realpath(g) for g in sorted(glob.glob(e))[:500]]
+            g = globs(e)
+            if g is None:
+                unres = True   # too many wildcard parts to scan: the caller treats it as a word only the shell can compute
+            else:
+                out += [os.path.realpath(x) for x in sorted(g)]
     return out, unres
 
 
-def plain(code, **kv):
-    """'[CODE] <the catalog's plain message>' for a refusal, with the alert line logged: one call per refusal (G4). kv holds no owner value."""
-    log_alert(code, **kv)
+def plain(code, once=None, **kv):
+    """'[CODE] <the catalog's plain message>' for a refusal, with the alert line logged: one call per refusal (G4). kv holds no owner value. once: a key for
+    the call (its payload); the hooks of one role that refuse the same call each print the message, but only the first writes the alert line (K8)."""
+    log_alert(code, once=once, **kv)
     try:
         import alert_catalog
         return f"[{code}] " + alert_catalog.render(code, kv)[0].split("\n")[1]
     except Exception:
         return f"[{code}]"
+
+
+def _first(code, key):
+    """True for the first caller with this (code, key, parent process) in 30 s: a marker file made with O_EXCL in the alert folder (hooks run as separate
+    processes under one parent, so a marker is how they tell they refuse the same call)."""
+    d = os.path.join(os.environ.get("ESCALATE_SUP_DIR") or f"{ROOT}/.supervisor", "once")
+    os.makedirs(d, exist_ok=True)
+    for old in glob.glob(d + "/*"):   # markers older than an hour go
+        if time.time() - os.stat(old).st_mtime > 3600:
+            os.unlink(old)
+    f = os.path.join(d, hashlib.sha1(f"{code}|{key}|{os.getppid()}".encode()).hexdigest()[:24])
+    try:
+        os.close(os.open(f, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        return True
+    except FileExistsError:
+        if time.time() - os.stat(f).st_mtime > 30:
+            os.utime(f)
+            return True
+        return False
 
 
 def protected(d):
@@ -766,7 +907,7 @@ def streak(j):
                    default=""))
 
 
-def log_alert(code, streak="", **kv):
+def log_alert(code, streak="", once=None, **kv):
     """One line in .supervisor/logs/alerts.log (bin/alert_catalog.py), and the rendered message's first line. K11: when
     the code's catalog "page" policy says so (once per card per streak, or once an hour), the message also goes to #alerts
     as bin/alert.sh sends it (`hermes send` to $ALERT_TARGET, with the root profile's home, which owns the Discord bot:
@@ -778,6 +919,8 @@ def log_alert(code, streak="", **kv):
     try:
         import alert_catalog
         body, tag, kv2 = alert_catalog.render(code, kv)
+        if once and not _first(code, once):   # another hook of this call wrote the line
+            return body.split("\n", 1)[0]
         alert_catalog.log(tag, kv2)
         due, f = alert_catalog.page_due(tag, str(kv.get("card") or ""), streak)
         if due and not scratch():   # a scratch table never pages the owner
@@ -845,6 +988,14 @@ def main():
             print(json.dumps(owner_paths(d, args[0] if args else None) if cmd == "owner-data" else boundary(d)))
         except RolesError as e:
             fail("STL-CFG-303", problem=str(e)[:300])
+    elif cmd == "hits" and len(args) in (2, 3) and args[1] in ("refused", "boundary"):   # <top> <kind> [<stack folder holding the data index>]: NUL-separated names on stdin, the ones that hit on stdout (K1)
+        try:
+            names = [os.fsdecode(x) for x in sys.stdin.buffer.read().split(b"\0") if x]
+            sys.stdout.buffer.write(b"".join(os.fsencode(x) + b"\0" for x in hits(d, args[0], names, args[1], args[2] if len(args) > 2 else None)))
+        except RolesError as e:
+            fail("STL-CFG-303", problem=str(e)[:300])
+    elif cmd == "root" and not args:
+        print(ROOT)
     elif cmd == "field" and len(args) == 2:
         print(json.dumps(role_of(d, args[0])[1].get(args[1])))
     else:

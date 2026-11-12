@@ -43,7 +43,7 @@ neg = os.environ.get("AUDIT_NEG")   # a negative control mutates the loaded tabl
 if neg == "catchall":
     R["roles"][R["fallback_role"]]["hooks"] = [h for h in R["roles"][R["fallback_role"]]["hooks"] if not re.fullmatch(h["matcher"], "zz-no-such-tool")]
 if neg == "denywrite":
-    R["roles"][R["fallback_role"]]["hooks"] = [h for h in R["roles"][R["fallback_role"]]["hooks"] if "deny-write" not in h["file"]]
+    R["roles"][R["fallback_role"]]["hooks"] = [h for h in R["roles"][R["fallback_role"]]["hooks"] if not (h.get("writes") == "refused" and re.fullmatch(h["matcher"], "write_file"))]
 dirs = {n: (f + "/", role) for n, f, role, listed in roles.profiles(R, H) if listed}
 known = set(toolsets.BUILTIN_TOOL_NAMES) if hasattr(toolsets, "BUILTIN_TOOL_NAMES") else set()
 fails, rows = 0, []

@@ -12,10 +12,19 @@ so the owner-only write path is three layers, each holding on its own for the ro
 This guard is the mistake guard in front of them. It reads a command the way the shell will: $'..' decoded, an unquoted newline is a
 `;`, every redirect operator (> >> >| &> &>> >&word <>) is judged, and every word it judges (a redirect target, an argument of a write
 verb, a git path, the command word, each argument of an interpreter) is expanded first (quotes, braces, globs, ~, the variables the
-hook can know) with the code the read guard shares (roles.expand_word) and compared as a real path without regard to case. A judged
-word that still holds an expansion only the shell can compute ($(..), an unknown variable) is refused when the command could write or
-run. Not seen: an interpreter that loads a file by import or reads code from stdin, code run inside another agent CLI (its own git and
-file tools): layers 1 and 3.
+hook can know) with the code the read guard shares (roles.expand_word, bounded in work) and compared as a real path BY IDENTITY
+(roles.overlap: the device and inode of each existing component, so a short 8.3 name, a case variant or a link is the same path).
+The rule is turned around for the paths no role may write (owner data, the owner settings, the apply tool's state): a command that
+NAMES one (as a word, inside interpreter code or a quoted command line, in a here-document body, or as a folder that holds one) runs
+only when its verb is a known reader (roles.json read_verbs); an unknown writer needs no entry to be refused. Here-document bodies
+are also judged by the text checks they had before round 2 (an owner command by name, the worker markers). A judged word that still
+holds an expansion only the shell can compute ($(..), an unknown variable) is refused when the command could write or run.
+What it cannot see, each with the layer that covers it (the contract's list a to g): a path the shell builds at run time in a command
+that is neither a reader nor a listed write verb (the box, the merge); an interpreter that loads code from a file this guard does not
+name, by import, -m or a pipe (the box, the merge); code run inside another agent CLI and that CLI's own git and file tools (the box,
+the merge); a name that is the same path only across a mount this hook does not see (the box mounts none of the protected paths); git
+routes it does not classify, plumbing built in a script or a patch from stdin (the commit guard, the merge); a hook that times out or
+crashes (Hermes's policy; the stack registers every guard fail_closed and bounds the work of every expansion, K5).
 The protected paths are the one list in roles.json (shared with the card guard, bin/role-guard.py). Only a role whose workspace is
 git-worktree has a card worktree; any other role writes only to its profile's own cache/scratch.
  1. write_file / patch (also V4A patch text, its headers parsed with Hermes's own grammar, tools/patch_parser.py: both
@@ -48,7 +57,7 @@ whatever kanban_create was given, /workspace itself or another card's worktree i
     Hermes kanban workspace are allowed.
 Refusals on the owner boundary print STL-CFG-312 with the catalog's plain message and write one alert line (no owner value).
 Exit 2 = block; any error blocks, with a coded line."""
-import glob, json, os, pwd, re, shlex, shutil, sys
+import glob, json, os, pwd, re, shlex, shutil, sys, time
 
 OB = "STL-CFG-312"   # the catalog code of a refusal on the owner boundary; the alert line is written once, where the refusal is printed
 try:
@@ -61,9 +70,16 @@ try:
         OWNER_FILES = roles.owner_settings(RT)
         OWNER_REL = [p for p in roles.owner_paths(RT) if p not in RT["owner_settings"]] + roles.state_paths(RT)   # G1/B1: owner data and the apply tool's state, from the index and the table, never named here (the owner settings keep their older refusals)
         OWNER_CMDS = roles.owner_commands(RT)
-        BY_NAME = [os.path.basename(c).casefold() for c in OWNER_CMDS if c[len(ROOT) + 1:] in RT["owner_commands_by_name"]]
+        BY_NAME = [os.path.splitext(os.path.basename(c))[0].casefold() for c in OWNER_CMDS if c[len(ROOT) + 1:] in RT["owner_commands_by_name"]]   # K9: the stem, so a copy without its extension is the same name
+        WT_DIRS = glob.glob(f"{ROOT}/.worktrees/*")   # K1b: a path is protected by what it is, in the main checkout and in every card worktree of the stack
+        OWNER_CH = roles.chains([f"{b}/{d}" for b in [ROOT, *WT_DIRS] for d in OWNER_REL])
+        HOLD_CH = roles.chains(sorted({f"{ROOT}/{os.path.dirname(d)}" for d in OWNER_REL if os.path.dirname(d)}))   # the folders of the main checkout that hold owner data or state: nothing new is made in them
+        MARKERS, PINS = RT["worker_markers"], RT["worker_pins"]   # K9: the worker markers and pins are the table's, named nowhere else
+        MARK_PFX = [m[:max(10, len(m) * 2 // 5)] for m in MARKERS]   # a marker's front part: ${!HERMES_DELEG*} and a quote-split name name it too
+        READERS = {v for v in RT["read_verbs"] if " " not in v}   # K7: the verbs that may name an owner path (data: the role table)
+        GIT_READS = {v.split(" ", 1)[1] for v in RT["read_verbs"] if v.startswith("git ")}
     except Exception as e:   # every call is refused below until the table (and the index it names) can be read
-        RT, PROTECTED, CONFIG, OWNER_FILES, OWNER_REL, OWNER_CMDS, BY_NAME, RT_ERROR = None, [], [], [], [], [], [], str(e)[:200]
+        RT, PROTECTED, CONFIG, OWNER_FILES, OWNER_REL, OWNER_CMDS, BY_NAME, OWNER_CH, HOLD_CH, READERS, GIT_READS, WT_DIRS, MARKERS, PINS, MARK_PFX, RT_ERROR = None, [], [], [], [], [], [], [], [], set(), set(), [], [], {}, [], str(e)[:200]
     HOMES = roles.homes()
 except Exception as e:   # not even the role module loads: refuse, with a coded line
     print(json.dumps({"action": "block", "message": f"write guard: [{OB}] the role module cannot be loaded ({type(e).__name__}); every write is refused until it is fixed"}))
@@ -95,7 +111,7 @@ V4A_OPS = (re.compile(r"\*\*\*\s*Move\s+File:\s*(.+?)\s*->\s*(.+)"), re.compile(
            re.compile(r"\*\*\*\s*Move\s+to:\s*(.+)"))
 OWNER_ENV = ("commands may not mention owner.env: it holds the owner config. If it must change, call kanban_block with "
              "kind needs_input and say what should change")
-KANBAN_CLI = ("builders never run `hermes kanban` or touch HERMES_DELEGATED_CHILD_CONTEXT: change your card with the "
+KANBAN_CLI = ("builders never run `hermes kanban` or touch " + ", ".join(MARKERS or ["the worker markers"]) + ": change your card with the "
               "kanban tools (kanban_comment, kanban_block, kanban_complete, ...)")
 OWNER_DATA_MSG = ("owner data: only the owner's apply path writes it. If it must change, call kanban_block with kind needs_input "
                   "and say what should change")
@@ -114,21 +130,27 @@ CD_MSG = ("the terminal stays inside your worktree: Hermes keeps its folder betw
 # STELLA_ROOT names); a project's own file with the same base name is no mention.
 CMDS = {c[len(ROOT) + 1:]: f"{c[len(ROOT) + 1:]} is an owner command: no role runs it (the owner runs it from the owner's own path; merging a card into main is the owner's step, F31)"
         for c in OWNER_CMDS}
-CMD_RX = {rel: re.compile(re.escape(ROOT.casefold()) + r"(?:/\.worktrees/[^/]+)?/" + re.escape(rel.casefold())) for rel in CMDS}
+CMD_CH = roles.chains([f"{b}/{c}" for b in [ROOT, *(WT_DIRS if RT else [])] for c in CMDS])
+NAME_RX = re.compile("|".join(r"(?<![\w-])" + re.escape(n) + r"(?![\w-])" for n in BY_NAME)) if BY_NAME else None
 
 
 def owner_cmd_of(rp):
-    """The refusal text when rp (a resolved path) is an owner command of the stack, or its copy in a card worktree of the stack; else None."""
-    low = rp.casefold()
-    return next((CMDS[rel] for rel, rx in CMD_RX.items() if rx.fullmatch(low)), None)
+    """The refusal text when rp (a path) is an owner command of the stack, or its copy in a card worktree of the stack, by what the path IS (a short name
+    or a case variant included); else None. A copy elsewhere is a different file: the name check (named_cmd) and the box and the merge cover it."""
+    r = roles.overlap(rp, worktree_chains(rp, CMD_CH, list(CMDS), "cmd"))
+    if not r or r[0] not in ("equal", "unknown"):
+        return None
+    q = r[1]
+    return CMDS.get(q.split("/.worktrees/", 1)[1].split("/", 1)[1] if "/.worktrees/" in q else q[len(ROOT) + 1:])
 
 
 def named_cmd(text):
-    """The refusal text of the first owner_commands_by_name command whose name appears in text (already lower-cased), else None."""
-    return next((m for rel, m in CMDS.items() if os.path.basename(rel).casefold() in text and os.path.basename(rel).casefold() in BY_NAME), None)
+    """The refusal text of the first owner_commands_by_name command whose name (without its extension) appears in text (already lower-cased), else None."""
+    m = NAME_RX.search(text) if NAME_RX else None
+    return next((msg for rel, msg in CMDS.items() if m and os.path.splitext(os.path.basename(rel))[0].casefold() == m[0]), None)
 
 
-FINAL = {OWNER_ENV, KANBAN_CLI}
+FINAL = {KANBAN_CLI}
 
 
 def ob(detail):
@@ -145,13 +167,31 @@ def resolve(path, base):
     return os.path.realpath(os.path.join(base, os.path.expanduser(os.path.expandvars(path))))
 
 
+WTC = {}   # chains of the protected paths of a card worktree that does not exist yet (or was made after this hook started), by (folder, kind)
+
+
+def worktree_chains(rp, base, rels, kind):
+    """`base`, and the protected paths `rels` of the card worktree rp lies in when that worktree is not one of WT_DIRS (a path under <stack>/.worktrees/<card> is
+    judged as that card's own copy whether or not the folder exists yet)."""
+    m = re.match(re.escape(ROOT.casefold()) + r"/\.worktrees/[^/]+", rp.casefold())
+    wt = rp[:m.end()] if m else None
+    if not wt or wt in WT_DIRS:
+        return base
+    if (wt, kind) not in WTC:
+        WTC[wt, kind] = roles.chains([f"{wt}/{d}" for d in rels])
+    return base + WTC[wt, kind]
+
+
+def owner_chains(rp):
+    return worktree_chains(rp, OWNER_CH, OWNER_REL, "data")
+
+
 def owner_data_hit(rp):
-    """F1 W4: rp (resolved) is, or is inside, an owner data path of the stack (bin/roles.py owner_paths) or a state path of the apply tool:
-    in its main checkout or in a card worktree of it. Case-insensitive, as /workspace is (B2V-01). Reading owner data stays allowed; this is
-    asked of writes only (the state paths no role reads either: the read guards refuse them)."""
-    low = rp.casefold()
-    return any(re.fullmatch(re.escape(ROOT.casefold()) + r"(?:/\.worktrees/[^/]+)?/" + re.escape(d.casefold()) + r"(?:/.*)?", low, re.S)
-               for d in OWNER_REL)
+    """F1 W4/K1b: rp (a path) is, or is inside, an owner data path of the stack (bin/roles.py owner_paths: owner data, the owner settings, the apply
+    tool's state), in its main checkout or in a card worktree of it, decided by identity (roles.overlap): another spelling of it, a short name or a
+    case variant, is the same path, and a name that cannot be classified counts. Reading owner data stays allowed; this is asked of writes only."""
+    r = roles.overlap(rp, owner_chains(rp))
+    return bool(r) and r[0] in ("equal", "inside", "unknown")
 
 
 def words_of(w, cwd, names):
@@ -170,9 +210,10 @@ def worktree(p):
             CALL["fault"] = ((j or {}).get("task") or {}).get("id") or "?", roles.streak(j), why
         return None, f"no card worktree known: {why}"
     card, ws = j["task"]["id"], os.path.realpath(j["task"].get("workspace_path") or "/")
-    env = os.environ.get("HERMES_KANBAN_WORKSPACE", "")
+    CALL["card"] = card
+    env = os.environ.get(PINS["workspace"], "")
     if env and os.path.realpath(env) != ws:
-        return None, f"no card worktree known: HERMES_KANBAN_WORKSPACE {env} is not card {card}'s workspace {ws}"
+        return None, f"no card worktree known: {PINS['workspace']} {env} is not card {card}'s workspace {ws}"
     for repo in sorted(repos() or [ROOT], key=len, reverse=True):   # RT6-01: the F8 rule in the deepest bound repo holding the workspace (S3A-01: a project repo inside the stack root)
         rr = os.path.realpath(repo)   # S3A-01b (RT15): never realpath `own`, a worktree swapped for a symlink to the repo root would resolve to itself
         if inside(ws, rr) or inside(rr, ws):   # / contains every repo too
@@ -217,6 +258,10 @@ def v4a_targets(text):
 HEREDOC = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|(\\?)([A-Za-z_][A-Za-z0-9_]*))")
 
 
+MEMO = set()   # (string, folder) pairs named_path has looked up in this call and found clean
+BODIES = []   # the here-document bodies of this call's command (K7: judged by the text checks, and when they name an owner path by the verb that reads them)
+
+
 def clean(cmd):
     """The command as the shell reads its lines: $'..' decoded; a backslash-newline joined; an unquoted newline outside a comment is a
     `;` (G2: a second line is a command of its own); a here-document's body is text, not commands (only the $(..) and backtick parts of an
@@ -254,6 +299,7 @@ def clean(cmd):
                     i = j if j >= 0 else n
                     if (line.lstrip("\t") if tabs else line) == delim:
                         break
+                    BODIES.append(line)
                     if not quoted:
                         out += [f" {x} ; " for x in re.findall(r"\$\([^)\n]*\)|`[^`\n]*`", line)]
             pending = []
@@ -554,14 +600,87 @@ def note_names(words, names, cwd):
                 names[m[1]] = m[2]
 
 
-def command_reason(cmd, base):
-    cmd = clean(cmd)
+PATHLIKE = re.compile(r"[\w.~$@+%/*?\[\]-]+")   # runs of path characters; those with a slash in them are paths, or the path inside a quoted word or interpreter code (linear: K5)
+BUDGET_S = 3.0   # K5: the path look-ups of one command take at most this long (the hook timeout is 20 s); past it the command is refused
+
+
+def cands(w):
+    """The strings of a shell word that may be a path: the word, and the path-like pieces of a word that holds code, an assignment or an option value."""
+    out = [w]
+    if re.fullmatch(r"-[A-Za-z][/~.].*", w):
+        out.append(w[2:])   # an option with its value attached: cp -t/dir, tar -C/dir
+    if re.search(r"[\s'\"(){};=,\[\]<>|&]", w) or len(w) > 80:
+        out += [x for x in PATHLIKE.findall(w) if "/" in x]
+    return out
+
+
+def named_path(texts, cwd, names, budget, ch=None):
+    """K7: the first owner path the strings name, as (path, relation), or None; budget is a one-item list holding the time (monotonic) by which the look-ups
+    must be done (K5). The tree-wide form (the card's own worktree root, `.`) is not a naming: the merge check judges what comes out of it."""
+    for t in texts:
+        for c in dict.fromkeys(cands(t)):
+            if time.monotonic() > budget[0]:
+                return "(too many paths in this command to check in time)", "unknown"
+            if not c or (c.startswith("-") and "/" not in c):
+                continue
+            if (c, cwd, id(ch)) in MEMO:   # the same string in the same folder was looked up already (not one with a variable: the variables change)
+                continue
+            if "$" not in c:
+                MEMO.add((c, cwd, id(ch)))
+            for rp in words_of(c, cwd, names)[0]:
+                r = roles.overlap(rp, (worktree_chains(rp, CMD_CH, list(CMDS), "cmd") if ch is CMD_CH else ch) or owner_chains(rp))
+                if ch is CMD_CH and r and r[0] not in ("equal", "unknown"):
+                    r = None   # an owner command is named by its file, not by a folder that holds it
+                if ch is HOLD_CH and r and r[0] == "contains":
+                    r = None   # a folder above the holding folder (the stack folder itself) is no naming
+                if r and r[0] == "contains" and (wt := own_worktree()[0]) and os.path.realpath(rp) == os.path.realpath(wt):
+                    continue   # the proven worktree is looked up only when a folder that holds owner data is named
+                if r:
+                    return rp, r[0]
+    return None
+
+
+def reader_ok(words):
+    """K7: the verb of the simple command is a known reader (the role table's read_verbs; `git show|diff|log ...` by subcommand), and not a reader that writes by an option."""
+    w = strip_prefixes(words)[0]
+    if not w:
+        return True
+    v = w[0].rsplit("/", 1)[-1]
+    if v == "git":
+        i = 1
+        while i < len(w) and w[i].startswith("-"):
+            i += 2 if w[i] in ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path") else 1
+        return i < len(w) and w[i] in GIT_READS and not any(a.startswith(("--output", "-o")) for a in w[i + 1:])
+    if v == "find" and any(a in ("-delete", "-exec", "-execdir", "-ok", "-okdir") or a.startswith(("-fprint", "-fls")) for a in w[1:]):
+        return False
+    return v in READERS
+
+
+def named_why(words, cwd, names, budget):
+    """K7, the rule turned around: a command that names a path no role may write (owner data, the owner settings, an apply-tool state path), as a word, inside
+    interpreter code or a quoted command line, or as a folder that holds one, runs only when its verb is a known reader. An unknown writer (sort -o, perl -pi,
+    touch, gzip, curl -o, tar -C, cp x <folder>/) needs no entry to be refused. A command run with an owner folder as its folder counts the same."""
+    if reader_ok(words):
+        return None
+    found = named_path([w for w in words if not ASSIGN.fullmatch(w) or "/" in w], cwd, names, budget)
+    if not found:   # the main checkout's folders that hold owner data (.stella, the state folders): no new file or folder is made in them by an unknown writer
+        found = named_path([w for w in words if not ASSIGN.fullmatch(w) or "/" in w], cwd, names, budget, HOLD_CH)
+    if not found and (r := roles.overlap(cwd, owner_chains(cwd))) and r[0] in ("equal", "inside", "unknown"):
+        found = cwd, r[0]
+    if not found and re.sub(r"(?<=[A-Za-z])[0-9.]+$", "", (strip_prefixes(words)[0] or [""])[0].rsplit("/", 1)[-1]) in INTERPRETERS:   # code an interpreter is given may run an owner command
+        found = named_path([w for w in words if not ASSIGN.fullmatch(w) or "/" in w], cwd, names, budget, CMD_CH)
+    if not found:
+        return None
+    return ob(f"`{' '.join(words)[:120]}` names {found[0]}, which is owner data or an apply-tool state path ({found[1]}); only a known reader of files (cat, grep, jq, diff, git show ...) may name it. {OWNER_DATA_MSG}")
+
+
+def marker_reason(cmd):
+    """The per-command text checks a here-document body is judged by too (they are run on the command and on each body line): `hermes kanban`, `hermes send`,
+    HERMES_DELEGATED_CHILD_CONTEXT set, unset or exported, an owner command by name."""
     low = cmd.casefold()
-    if any(os.path.basename(f).casefold() in low for f in OWNER_FILES):   # K6: the owner settings files, from roles.json
-        return OWNER_ENV
-    if any(b in low for b in BY_NAME):   # owner_commands_by_name: any command text naming it (the breadth it had at 900d9b3)
+    if NAME_RX and NAME_RX.search(low):
         return ob(named_cmd(low))
-    for toks in all_tokens(cmd):   # K1b/K1c: per simple command, on the command word (a quoted message or a read is not a run)
+    for toks in all_tokens(cmd):
         simple, cur = [], []
         for t in toks + [";"]:
             if t in SEP:
@@ -569,9 +688,9 @@ def command_reason(cmd, base):
             else:
                 cur.append(t)
         for raw in simple:
-            if any(b in w.casefold() for w in raw for b in BY_NAME):   # a spelling the text match missed (merge''-card.sh): the shell's word is the name
+            if any(NAME_RX and NAME_RX.search(w.casefold()) for w in raw):   # a spelling the text match missed (merge''-card.sh): the shell's word is the name
                 return ob(named_cmd(" ".join(raw).casefold()))
-            if any("HERMES_DELEG" in w for w in raw) and (any(re.fullmatch(r"HERMES_DELEG\w*=.*", w) for w in raw) or
+            if any(m in w for w in raw for m in MARK_PFX) and (any(re.fullmatch("(?:" + "|".join(map(re.escape, MARK_PFX)) + r")\w*=.*", w) for w in raw) or
                     {w.rsplit("/", 1)[-1] for w in raw} & {"unset", "export", "env", "declare", "typeset", "readonly", "local"}):
                 return KANBAN_CLI
             words = strip_prefixes(raw)[0]
@@ -580,6 +699,24 @@ def command_reason(cmd, base):
                 return "builders never post with `hermes send`: report through your card (kanban_comment, kanban_block)"
             if name == "kanban" or words[1:2] == ["kanban"]:
                 return KANBAN_CLI
+    return None
+
+
+def command_reason(cmd, base):
+    BODIES.clear()
+    MEMO.clear()
+    whole = roles.ansi(cmd)   # K7: the text checks see the whole command, here-document bodies included
+    cmd = clean(cmd)
+    low = whole.casefold()
+    if any(os.path.basename(f).casefold() in low for f in OWNER_FILES):   # K6: the owner settings files, from roles.json
+        return ob(OWNER_ENV)   # K8: an older rule that catches it first still says so with the code
+    if NAME_RX and NAME_RX.search(low):   # owner_commands_by_name: any command text naming it (the breadth it had at 900d9b3)
+        return ob(named_cmd(low))
+    for part in [cmd, *BODIES]:   # the command, then each here-document line: judged by the text checks they had before round 2 (VER2-08)
+        r = marker_reason(part)
+        if r:
+            return r
+    budget, users = [time.monotonic() + BUDGET_S], []
     for toks in all_tokens(cmd):
         cwd, words, names, skip = base, [], {}, False
         for i, t in enumerate(toks + [";"]):
@@ -599,9 +736,11 @@ def command_reason(cmd, base):
                 continue
             note_names(words, names, cwd)
             hit = next(filter(None, (target_why(w, cwd, names, f"`{' '.join(words)[:120]}` changes") for w in write_targets(words))), None) \
-                or git_hit(words, cwd, names, cmd) or owner_cmd_why(words, cwd, names)
+                or git_hit(words, cwd, names, cmd) or owner_cmd_why(words, cwd, names) or named_why(words, cwd, names, budget)
             if hit:
                 return hit
+            if "<<" in words or "<<-" in words:
+                users.append(list(words))
             src = next((rp for w in link_sources(words) if outside_worktree(rp := resolve(w, cwd))), None)
             if src:
                 return f"`{' '.join(words)[:120]}` hard-links {src}, a file outside your worktree"
@@ -621,12 +760,14 @@ def command_reason(cmd, base):
                 if not in_worktree(cwd):   # K1c: Hermes keeps this folder for later relative paths, so it never leaves the card
                     return f"`{' '.join(words)[:120]}` moves the terminal to {cwd}: {CD_MSG}"
             words = []
+    if any(named_path([b], base, {}, budget) for b in BODIES) and not (users and all(reader_ok(u) for u in users)):   # K7: a body that names an owner path, read by a verb that is no reader
+        return ob(f"a here-document body names an owner data or apply-tool state path, and the command that reads it is no known reader of files. {OWNER_DATA_MSG}")
     return None
 
 
 def reason(p):
     if RT is None:
-        return f"the role table cannot be read ({RT_ERROR}) [STL-CFG-303]; every write is refused until it is fixed"
+        return f"the role table cannot be read ({RT_ERROR}); every write is refused until it is fixed [STL-CFG-303]"
     name, a = p.get("tool_name"), p.get("tool_input") or {}
     base = p.get("cwd") or os.getcwd()
     CALL.clear()
@@ -672,14 +813,30 @@ def reason(p):
     return None
 
 
+PAY = sys.stdin.read()
 try:
-    why = reason(json.load(sys.stdin))
+    P = json.loads(PAY)
+    why = reason(P)
 except Exception as e:  # fail closed: a call we cannot judge is refused, with a coded line
-    why = ob(f"the write guard could not judge this call ({type(e).__name__})")
+    P, why = {}, ob(f"the write guard could not judge this call ({type(e).__name__})")
 if why is None:
     sys.exit(0)
+
+
+def coded(code, problem):   # K8: the catalog code, its plain message, one alert line for the call (the role's other hook that refuses it writes none); the role and the card named
+    try:
+        role = roles.role_of(RT, P.get("profile"))[0]
+    except Exception:
+        role = "unknown"
+    card = CALL.get("card")
+    return roles.plain(code, once=PAY, problem=f"{problem} (role {role}{', card ' + card if card else ''})")
+
+
+if why.endswith("[STL-CFG-303]"):
+    print(json.dumps({"action": "block", "message": "write guard: " + coded("STL-CFG-303", "the role table or the data index cannot be read by the write guard") + " Every write is refused until it is fixed."}))
+    sys.exit(2)
 if why.startswith(f"[{OB}] "):   # one alert line per refusal, the catalog's plain message, no value from any owner file
-    why = roles.plain(OB, problem="a role's attempt on owner data, an owner state path or an owner command") + " " + why[len(OB) + 3:]
+    why = coded(OB, "a role's attempt on owner data, an owner state path or an owner command") + " " + why[len(OB) + 3:]
 tail = "" if why.startswith("[STL-GRD-603]") else " (D40). This refusal is final for this attempt."
 print(json.dumps({"action": "block", "message": f"write guard: {why}{tail}"}))
 sys.exit(2)

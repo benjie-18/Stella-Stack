@@ -16,21 +16,23 @@ email=$(git var GIT_AUTHOR_IDENT 2>/dev/null | sed -n 's/.*<\(.*\)>.*/\1/p')
 [ "$email" != test@test.com ] || refuse "author email test@test.com refused"
 # K6: the owner settings files (roles.json owner_settings) are never committed, by anyone (D39: they hold values). G3 (F1 W4): the staged
 # names are read whole (-z, no rename detection): a name with a non-ASCII or special character, a rename out of an owner folder (old and
-# new path both listed) and a deletion are all seen.
+# new path both listed) and a deletion are all seen. K1b: a name is compared with the lists by identity (roles.py hits), not by spelling.
 here=$(dirname "$(readlink -f "$0")"); tbl="$here/../docs/hermes-local/roles.json"
+coded() {   # coded <problem> <message>: STL-CFG-312 with its plain message and one alert line, then the refusal
+  local m; m=$(ROLES_FILE=$tbl python3 -I "$here/roles.py" refusal STL-CFG-312 "$1" 2>/dev/null); refuse "${m:-STL-CFG-312} $2"; }
 owner=$(jq -r '.owner_settings[]?' "$tbl" 2>/dev/null)
 [ -n "$owner" ] || refuse "the owner settings list in roles.json cannot be read"
 zf=$(mktemp) || refuse "cannot list the staged files"; trap 'rm -f "$zf"' EXIT
 git diff --cached --name-only -z --no-renames >"$zf" || refuse "cannot list the staged files"   # not piped: a reader that stops early must not SIGPIPE git (RT7-05)
 mapfile -d '' -t staged <"$zf"
 while IFS= read -r o; do
-  for f in "${staged[@]}"; do [[ ${f,,} == "${o,,}" ]] && refuse "a staged file is an owner settings file; unstage it"; done   # lower-cased: /workspace is case-insensitive (B2V-01)
+  for f in "${staged[@]}"; do [[ ${f,,} == "${o,,}" ]] && coded "a commit holds an owner settings file" "a staged file is an owner settings file; unstage it"; done   # lower-cased: /workspace is case-insensitive (B2V-01)
 done <<<"$owner"
 # F1 W4: the worker markers come from the table's list only; owner data is one definition in bin/roles.py (G1: the index, its owner_only
 # rows, the table's own list), read for this tree. Without either list no commit is allowed (fail closed).
 marks=$(jq -r '.worker_markers[]?' "$tbl" 2>/dev/null)
-odata=$(ROLES_FILE=$tbl python3 -I "$here/roles.py" owner-data "$here/.." 2>/dev/null | jq -r '.[]?' 2>/dev/null)
-[ -n "$marks" ] && [ -n "$odata" ] || refuse "the worker marker or owner data list in roles.json (or the data index it needs) cannot be read"
+[ -n "$marks" ] && [ -n "$(ROLES_FILE=$tbl python3 -I "$here/roles.py" owner-data "$here/.." 2>/dev/null | jq -r '.[]?' 2>/dev/null)" ] \
+  || refuse "the worker marker or owner data list in roles.json (or the data index it needs) cannot be read"
 wsv=$(jq -r '.worker_pins.workspace // empty' "$tbl" 2>/dev/null); brv=$(jq -r '.worker_pins.branch // empty' "$tbl" 2>/dev/null)   # the box's workspace and branch pins: names from the table too
 [[ $wsv =~ ^[A-Z][A-Z0-9_]*$ && $brv =~ ^[A-Z][A-Z0-9_]*$ ]] || refuse "the worker pin names in roles.json cannot be read"
 marked=
@@ -45,14 +47,15 @@ if [ -n "$proof" ] || [ -n "$marked" ]; then
   [ -n "$proof" ] || [ -n "${!wsv:-}" ] \
     || refuse "a kanban worker's commit, but its card cannot be proven (the board could not be read or no run is bound to this process)"
   # a worker never commits owner data (the owner and the build do); exact path or inside it, case-insensitive like the owner list above
-  for f in "${staged[@]}"; do
-    while IFS= read -r p; do
-      [[ ${f,,} == "${p,,}" || ${f,,} == "${p,,}/"* ]] && refuse "a staged file is owner data ($p); a worker never commits it (a deletion or a rename out of it counts), unstage it"
-    done <<<"$odata"
-  done
   top=$(git rev-parse --show-toplevel) && branch=$(git branch --show-current) || refuse "cannot read toplevel or branch"
-  [ "$top" != /workspace ] || refuse "worker commit in /workspace refused: commit only in your card worktree"
-  [ "$branch" != main ] || refuse "worker commit on main refused"
+  # the refused set is owner data, the owner settings and the apply tool's state paths (roles.py owner_paths), one list; K8: coded, one alert line
+  oh=$(ROLES_FILE=$tbl python3 -I "$here/roles.py" hits "$top" refused "$here/.." <"$zf" 2>/dev/null | tr '\0' '\n'; exit "${PIPESTATUS[0]}") \
+    || refuse "the owner data list (role table or data index) cannot be read, so the staged files cannot be checked"
+  [ -z "$oh" ] || coded "a worker's commit holds owner data, an owner settings file or an apply-tool state path" "a staged file is owner data or an apply-tool state path ($(printf '%s' "$oh" | head -3 | tr -c '[:print:]' '?' | tr '\n' ' ')); a worker never commits it (a deletion or a rename out of it counts), unstage it"
+  stack=$(python3 -I "$here/roles.py" root 2>/dev/null); mainb=$(jq -r '.main_branch // empty' "$tbl" 2>/dev/null)   # the stack's main checkout and its main branch: from the table's reader, not typed here
+  [ -n "$stack" ] && [ -n "$mainb" ] || refuse "the stack folder or main_branch cannot be read from roles.json"
+  [ "$top" != "$stack" ] || refuse "worker commit in $stack refused: commit only in your card worktree"
+  [ "$branch" != "$mainb" ] || refuse "worker commit on $mainb refused"
   if [ -n "$proof" ]; then
     ws=$(jq -r '.workspace // empty' <<<"$proof") cb=$(jq -r '.branch // empty' <<<"$proof") card=$(jq -r .card <<<"$proof")
     [ -n "$ws" ] && [ "$top" = "$(realpath -m -- "$ws")" ] || refuse "toplevel $top is not card $card's workspace ${ws:-(none recorded)}"
