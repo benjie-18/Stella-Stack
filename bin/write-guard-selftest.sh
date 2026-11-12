@@ -498,7 +498,7 @@ MT=("/workspace/$ODD" "/workspace/$ODF" "/workspace/$(printf '%s' "$ODD" | tr a-
 MR=(cat head wc grep jq ls stat cmp)
 { for v in "${MV[@]}"; do for f in "${MF[@]}"; do for t in "${MT[@]}"; do c=${f//@V/$v}; printf 'refused\t%s\n' "${c//@P/$t}"; done; done; done
   for v in "${MR[@]}"; do for t in "${MT[@]}"; do printf 'allowed\t%s %s\n' "$v" "$t"; printf 'allowed\t%s /tmp/x %s\n' "$v" "$t"; done; done; } >"$T/matrix.txt"
-for p in $BUILDERS; do python3 -I "$T/matrix.py" "$G" "/workspace/.worktrees/$C" "$p" <"$T/matrix.txt" >"$T/matrix-$p.out" 2>&1 & done; wait   # the builders' matrices side by side
+MXP=(); for p in $BUILDERS; do python3 -I "$T/matrix.py" "$G" "/workspace/.worktrees/$C" "$p" <"$T/matrix.txt" >"$T/matrix-$p.out" 2>&1 & MXP+=($!); done; wait "${MXP[@]}"   # the builders' matrices side by side (only these: the stranger sleep is a job too)
 for p in $BUILDERS; do
   OWN=/workspace/.worktrees/$C
   ok 'grep -q "^matrix-bad=0$" "$T/matrix-$p.out"' "T4 $p: $(grep -c ^refused "$T/matrix.txt") generated non-reader commands (${#MV[@]} verbs x ${#MF[@]} forms x ${#MT[@]} targets) refused with the code, $(grep -c ^allowed "$T/matrix.txt") reader commands allowed"
