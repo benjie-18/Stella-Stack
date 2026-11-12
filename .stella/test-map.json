@@ -1724,6 +1724,76 @@
         "owner-config"
       ],
       "why": "owner-config-selftest.sh reads every selftest"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/hooks/default/deny-unknown-tool.sh",
+        "docs/hermes-local/hooks/default/deny-unlisted.sh"
+      ],
+      "targets": [
+        "profile-hooks",
+        "reviewer-claude",
+        "roles",
+        "secret-read",
+        "stella-data"
+      ],
+      "why": "unsure: the folder's tests (the targets of the other rows of docs/hermes-local/hooks/default); added with F1 W4 round 3"
+    },
+    {
+      "globs": [
+        "bin/box.py"
+      ],
+      "targets": [
+        "alert-page",
+        "approval-evidence",
+        "complete-gate",
+        "delegation",
+        "merge-card",
+        "roles",
+        "routing",
+        "write-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py check after F1 W4 round 3)"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/hooks/builder/secret-guard.py"
+      ],
+      "targets": [
+        "alert-page",
+        "approval-evidence",
+        "complete-gate",
+        "delegation",
+        "merge-card",
+        "routing"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py check after F1 W4 round 3)"
+    },
+    {
+      "globs": [
+        ".claude/settings.json",
+        ".stella/settings.json",
+        "bin/settings.py"
+      ],
+      "targets": [
+        "merge-card"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py check after F1 W4 round 3)"
+    },
+    {
+      "globs": [
+        ".stella/capabilities.json",
+        ".stella/test-map.json",
+        "bench/tasks/deploy-recovery/repo/deploy.conf",
+        "bench/tasks/deploy-recovery/repo/deploy.sh",
+        "bench/tasks/deploy-recovery/repo/test.sh",
+        "bench/tasks/deploy-recovery/solution/deploy.conf",
+        "bin/merge-card-selftest.sh"
+      ],
+      "targets": [
+        "write-guard"
+      ],
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py check after F1 W4 round 3)"
     }
   ]
 }
