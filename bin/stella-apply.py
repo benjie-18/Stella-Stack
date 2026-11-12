@@ -855,8 +855,22 @@ def state_of(key, tgt):
             "lines": safe(lambda: len([e for e in el.read_log()[0] if e.get("what") == key]))}
 
 def begin(key, tgt, want):
-    """The state at the start of a writing command, which a failure is compared with; want: the sha256 of what it writes."""
-    SNAP.update(key=key, tgt=tgt, want=want, state=state_of(key, tgt))
+    """The state at the start of a writing command, which a failure is compared with; want: the sha256 of what it writes. The
+    applied state's bytes are kept too: the undo of the first record puts them back (its counter and its very existence)."""
+    SNAP.update(key=key, tgt=tgt, want=want, state=state_of(key, tgt), raw=read(state_path(), "STL-CFG-310"))
+
+def unrecord(key, name):
+    """The undo of a backup's record: the record goes, and when the applied state then holds what it held at the start, its
+    bytes are put back as they were (a counter moved on, a file this run created)."""
+    unregister(key, name)
+    p, raw = state_path(), SNAP.get("raw")
+    now = read(p, "STL-CFG-310")
+    if now == raw:
+        return
+    rec = lambda b: None if b is None else (lambda d: (d.get("applied"), d.get("backups", {})))(json.loads(b))
+    if rec(now) == rec(raw) or (raw is None and rec(now) == ({}, {})):
+        with el.locked(p + ".lock"):
+            restore(p, raw, 0o600)
 
 def described(s0, s1, want):
     """What is on disk now against the start, in the owner's words (file, backups, applied state, event line)."""
@@ -1103,7 +1117,7 @@ def apply_locked(row, key, tgt, rel, cand):
         drop_backup(bd)
     saved = {k: meta[k] for k in ("token", "sha256", "existed", "mode", "new_sha256", "prev_applied")}
     judged(tgt, cur)
-    did(key, f"backup {name}: recorded", lambda: unregister(key, name), back, lambda: register(key, name, saved, seq))   # known before the file is touched
+    did(key, f"backup {name}: recorded", lambda: unrecord(key, name), back, lambda: register(key, name, saved, seq))   # known before the file is touched
     did(key, "its folder made", drop_if_old, back, lambda: mkdir_p(bd))
     if cur is not None:
         did(key, "its saved copy written", lambda: None, back, lambda: atomic_write(os.path.join(bd, "file"), cur, 0o600))
