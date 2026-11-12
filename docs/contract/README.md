@@ -296,11 +296,13 @@ write; where a path is longer, the message takes a shorter form that still print
   refuses it (rows are compared, not the text of their lines). **A rollback restores saved bytes the row's reader cannot parse
   as they are** (they were in use so; the apply replaced them without asking them to parse); saved bytes that parse are checked
   like a candidate (registry, whole set), and a refusal says the reason and the one way out.
-- **What a row is.** Whether a row is one file or a folder of entries comes from the applied record where the row was applied
-  (keys `<id>/<entry>` or `<id>`), else from the index row (a json row with no `list_key` whose path does not end in `.json`;
-  the index has no field that says it: a `kind` field would be clearer). Never from the disk: the disk is compared with it, and
-  a file that became a folder, a folder that became a file or a missing folder is drift in `check` (314) and refuses apply and
-  rollback; a committed or applied entry that became a folder is drift too.
+- **What a row is.** Whether a row is one file or a folder of entries is the data tool's one rule, `stella_data.folder_row`
+  (a json row whose path does not end in `.json` is a folder of entries; every other row is one file): not the list key, not the
+  disk, not the applied record. The disk and the record are compared with it: a folder row whose folder is missing or is a file,
+  a one-file row whose path is a folder, or an applied record of the other kind (the index path changed after an apply) refuses
+  that row first, with the way out, and is one 310 line in `check` (the data tool refuses the same row and does not open it); a
+  committed or applied entry that became a folder is drift (314). A row whose file's folder does not exist is refused before any
+  write, naming the `mkdir` to run.
 - **Folders the tool may not write.** Before any write the folders an apply or rollback writes in (the file's, the applied
   state's, the backups') must be writable for the user; a read-only one is refused (313) with the folder named and the two
   commands (`chmod u+w <folder>`, then back to its mode); a folder whose mode allows the write and that still cannot be written
@@ -404,9 +406,8 @@ write; where a path is longer, the message takes a shorter form that still print
   replaced while a run waits is detected. Rollback of a key whose adopt line is still missing (a kill, then a rollback before
   the next apply) leaves that adopt without its line. The staging copy in the temp folder (the json rows and the candidate) can
   be read and written, while a check runs or after a kill until the next command, by an unboxed process of the same user (boxed
-  roles have their own /tmp; unboxed roles write nothing); before round 4 it lived in the backup folder W4 hides. What a row is
-  and how it is read are inferred from fields that mean something else (the path's suffix, the role table's owner_settings)
-  until the data tool's one rule is used (item W1).
+  roles have their own /tmp; unboxed roles write nothing); before round 4 it lived in the backup folder W4 hides. How an env row
+  is read is inferred from the role table's `owner_settings` (the files the stack's own parser reads), not from a field of the row.
 
 ## The owner-only write path (item W4)
 
