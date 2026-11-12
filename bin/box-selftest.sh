@@ -20,9 +20,50 @@ SB='{"schema_version":1,"backend":"os_box","unboxed_backend":"local","boxed_prof
 NORM='def norm: . as $d | (($d.sandbox.boxed_profiles // []) as $b | [$d.profiles | to_entries[] | select(.key as $k | $b | index($k) | not) | .value.role]) as $rs
   | reduce ($rs | unique)[] as $x (.; if $d.roles[$x].runs_unboxed == true then . else .roles[$x] |= (.runs_unboxed = true | .hooks = $d.roles[$d.fallback_role].hooks | .platform_toolsets = $d.roles[$d.fallback_role].platform_toolsets) end);'
 mkrf() { jq --arg p "$P" --arg r "$R" "$NORM $1 | norm" "$RF" >"$T/roles.json"; }   # scratch table: the real one with a sandbox edit
-val() { ROLES_FILE=$T/roles.json python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import roles
+# T1 (F1 W4 r5): the table verdict (roles.load on the scratch table) runs in ONE driver process that executes the same script a process would
+# (its argv, the table in ROLES_FILE, its output and exit code); stack modules are imported fresh each time. The first case of each verdict
+# (VALID, INVALID) also runs as a real process and both must agree; an agreement case with a planted-difference control follows section 1.
+cat >"$T/val.py" <<'PY'
+import sys; sys.path.insert(0, sys.argv[1])
+for m in [m for m in sys.modules if m in ("roles", "alert_catalog")]:
+    del sys.modules[m]
+import roles
 try: d = roles.load(); print("VALID")
-except roles.RolesError as e: print("INVALID", e)' "$S"; }
+except roles.RolesError as e: print("INVALID", e)
+PY
+cat >"$T/cli.py" <<'PY'
+import base64, io, json, os, sys, traceback
+codes, keep = {}, (sys.stdout, sys.stderr, sys.stdin, sys.argv)
+for line in keep[2]:
+    r = json.loads(base64.b64decode(line))
+    if r["script"] not in codes:
+        codes[r["script"]] = compile(open(r["script"], encoding="utf-8").read(), r["script"], "exec")
+    old = {k: os.environ.get(k) for k in r["env"]}; os.environ.update(r["env"])
+    out = io.StringIO(); sys.stdout = sys.stderr = out; sys.stdin = io.StringIO(""); sys.argv = [r["script"], *r["argv"]]
+    try:
+        exec(codes[r["script"]], {"__name__": "__main__", "__file__": r["script"]}); rc = 0
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else 0 if e.code is None else 1
+        if isinstance(e.code, str):
+            print(e.code, file=out)
+    except BaseException:
+        traceback.print_exc(file=out); rc = 1
+    finally:
+        sys.stdout, sys.stderr, sys.stdin, sys.argv = keep
+        for k, v in old.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+    keep[0].write(f"{rc}\t{base64.b64encode(out.getvalue().encode()).decode()}\n"); keep[0].flush()
+PY
+
+mkfifo "$T/cin" "$T/cout"; python3 -I "$T/cli.py" <"$T/cin" >"$T/cout" 2>"$T/cerr" & CPID=$!; exec {CW}>"$T/cin" {CR}<"$T/cout"; : >"$T/vseen"; : >"$T/vrows"
+dval() {   # dval <script> <table>: the script's output in the driver
+  local rc b; printf '%s\n' "$(jq -nc --arg s "$1" --arg t "$2" --arg a "$S" '{script: $s, argv: [$a], env: {ROLES_FILE: $t}}' | base64 -w0)" >&"$CW"
+  IFS=$'\t' read -r rc b <&"$CR"; printf '%s' "$b" | base64 -d; }
+val() { local o k; o=$(dval "$T/val.py" "$T/roles.json"); k=${o%% *}; cp "$T/roles.json" "$T/vrow.$(wc -l <"$T/vrows").json"; echo x >>"$T/vrows"
+  if ! grep -qxF -- "$k" "$T/vseen"; then echo "$k" >>"$T/vseen"
+    [ "$o" = "$(ROLES_FILE=$T/roles.json python3 "$T/val.py" "$S")" ] || { echo "ROUTE-DISAGREE"; return; }
+  fi
+  printf '%s\n' "$o"; }
 
 # ---- 1. validator
 mkrf ".sandbox = $SB"
@@ -86,6 +127,14 @@ ok 'bad ".sandbox.hide = [\"./.scratch\"]" hide' "1.34 hide entry with a . segme
 ok 'bad ".sandbox.env = {\"LD_PRELOAD\": \"/x\"}" env' "1.35 env cannot set the dynamic loader (LD_PRELOAD)"
 ok 'bad ".sandbox.env = {\"PATH\": \"/x\"}" env' "1.36 env cannot set PATH"
 ok 'bad ".sandbox.home_protect = [\"a/../b\"]" home_protect' "1.37 home_protect entry with .."
+# T1 (r5): the two routes agree on every 3rd table judged above (the driver and a real process), and a planted difference (a driver copy of the
+# validator script whose verdict word reads otherwise) is caught
+vagree() { local n=0 i; for ((i = 0; i < $(wc -l <"$T/vrows"); i += 3)); do
+    [ "$(dval "$1" "$T/vrow.$i.json")" = "$(ROLES_FILE=$T/vrow.$i.json python3 "$T/val.py" "$S")" ] || n=$((n+1)); done; echo "$n"; }
+sed 's/print("VALID")/print("FINE")/' "$T/val.py" >"$T/val-planted.py"
+VN=$(wc -l <"$T/vrows"); VD=$(vagree "$T/val.py"); VX=$(vagree "$T/val-planted.py")
+ok '[ "$VN" -ge 40 ] && [ "$VD" = 0 ]' "T1 route agreement: every 3rd of $VN tables gives the same verdict in the driver as in a real process ($VD differ)"
+ok '[ "$VX" -gt 0 ]' "T1 route agreement, negative control: a planted difference in the driver's validator is caught ($VX differ)"
 # ---- 1b. spec(): what register-toolsets applies per profile
 mkrf ".sandbox = $SB"
 spec() { ROLES_FILE=$T/roles.json python3 "$S/roles.py" spec "$HOME/.hermes" 2>/dev/null; }
@@ -889,5 +938,6 @@ ok 'cmp -s "$W/docs/hermes-local/plugins/os-box/__init__.py" "$H5/profiles/$P/pl
 ok 'grep -qx -- "-p $R config set terminal.backend local" "$A5/calls" && ! grep -q -- "-p $R plugins enable" "$A5/calls" && [ ! -e "$H5/profiles/$R/plugins" ]' "5.5 an unboxed profile is pinned to the unboxed backend and gets no plugin"
 n1=$(grep -c ' set \| enable ' "$A5/calls"); ok '[ "$(reg --check)" = 1 ] && grep -q "plugin os-box DRIFT" "$T/out" && [ "$(grep -c " set \| enable " "$A5/calls")" = "$n1" ]' "5.6 --check reports the plugin drift and changes nothing"
 
+exec {CW}>&- {CR}<&-; wait "$CPID"   # the validator driver ends
 [ -n "${KEEP:-}" ] && echo "KEPT $T"
 [ "$fails" = 0 ] && echo "box selftest PASS" || { echo "box selftest FAIL ($fails)"; exit 1; }
