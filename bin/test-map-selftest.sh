@@ -359,6 +359,19 @@ ok '[ -x "$TM" ] && [ "$(cd "$T/py" && STELLA_ROOT=$T/good PYTHONPATH=$T/py "$TM
 put s-fifo; mkfifo "$T/s-fifo/.stella/test-map.json"
 ok '[ "$(STELLA_ROOT=$T/s-fifo timeout 10 python3 -I "$TM" select src/a1.py 2>"$T/e")" = full ] && grep -q "not a regular file" "$T/e" && ! STELLA_ROOT=$T/s-fifo timeout 10 python3 -I "$TM" check >"$T/out" 2>&1 && grep -q "not a regular file" "$T/out"' \
    "34d a map that is a FIFO does not hang: select answers full, check refuses"
+# the answer goes to stdout first and alone; a diagnostic that cannot be written is dropped
+ok '[ "$(STELLA_ROOT=$T/broken python3 -I "$TM" select x 2>&-)" = full ] && [ "$(STELLA_ROOT=$T/wide python3 -I "$TM" select src/a1.py 2>&-)" = full ] && [ "$(STELLA_ROOT=$T/good python3 -I "$TM" select src/a1.py 2>&-)" = a ] \
+ && [ "$(STELLA_ROOT=$T/good python3 -I "$TM" select --json src/a1.py 2>&- | jq -c .targets)" = "[\"a\"]" ]' "35a with stderr closed the answer is still exactly the answer (full for a broken map, the targets for a good one)"
+ok '[ "$(STELLA_ROOT=$T/broken python3 -I "$TM" select x 2> >(:))" = full ] && [ "$(STELLA_ROOT=$T/wide python3 -I "$TM" select src/a1.py 2> >(:))" = full ] && [ "$(STELLA_ROOT=$T/good python3 -I "$TM" select src/a1.py 2> >(:))" = a ]' \
+   "35b with stderr a pipe nobody reads the answer still comes"
+# a schema file that cannot be used is reported under its own name, not as a map problem
+ok 'full good "$T/t-bad/bin/test-map.py" && grep -q "schema .*test-map.schema.json: JSONDecodeError" "$T/e" && ! grep -qF ".stella/test-map.json:" "$T/e" \
+ && full good "$T/t-gone/bin/test-map.py" && grep -q "schema .*test-map.schema.json: FileNotFoundError" "$T/e" && ! grep -qF ".stella/test-map.json:" "$T/e" \
+ && ! STELLA_ROOT=$T/good python3 -I "$T/t-bad/bin/test-map.py" check >"$T/out" 2>&1 && grep -q "schema .*test-map.schema.json: JSONDecodeError" "$T/out" && ! grep -qF ".stella/test-map.json:" "$T/out" \
+ && ! chk broken && grep -qF ".stella/test-map.json: JSONDecodeError" "$T/out"' "35c a schema that is not JSON or missing is named as the schema, in select and in check; a broken map stays a map problem"
+# the root is made absolute once: a relative STELLA_ROOT answers as the absolute one (git was sent to the root and resolved it twice)
+ok '( cd "$T" && STELLA_ROOT=rowless python3 -I "$TM" check >"$T/out" 2>&1 ) && grep -qF "test map ok (root $T/rowless, from STELLA_ROOT)" "$T/out" \
+ && [ "$(cd "$T" && STELLA_ROOT=good python3 -I "$TM" select --json src/a1.py 2>/dev/null | jq -r .root)" = "$T/good" ]' "35d a relative STELLA_ROOT: check passes on a git root as with the absolute path, and the root is named absolute"
 
 # git answers for the tree: the tree's own untracked settings (info/exclude, a local excludesFile or worktree) hide nothing
 # and run nothing (core.fsmonitor).

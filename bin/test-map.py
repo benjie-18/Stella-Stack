@@ -5,11 +5,14 @@ CLI: test-map.py check                           lint: exit 1 and one STL-CFG-31
                                                  from stdin, one per line); prints "full" (exit 0) when the whole suite
                                                  must run, else one target per line. Only the first argument may be an
                                                  option; "--" ends the options.
-The stack root is the parent of this file's folder, or STELLA_ROOT (a scratch root in tests). Under STELLA_ROOT every
+The stack root is the parent of this file's folder, or STELLA_ROOT (a scratch root in tests; made absolute once, so
+a relative one means the same to git as to this tool). Under STELLA_ROOT every
 `check` line ends with the root (a root too long for that is named once, first), a narrow `select` names it on stderr,
 and `select --json` has a `root` key. A problem longer than the catalog keeps is split into numbered parts, and a long
 list of selftests into whole lines: nothing is cut. git runs with no global, system or XDG config, no ignore list but
 the tree's .gitignore files, the work tree given and no fsmonitor program (only the caller's safe.directory is kept).
+shortcut: an untracked .gitignore, or an untracked folder that is a repository of its own, still hides untracked files
+from check (a tracked file is always listed); upgrade when check may not trust the working tree it runs in.
 check fails when: the map is unreadable, repeats a key or breaks its schema; a selftest is not a target of any row; a
 target or an always gate has no selftest file; a selftest is missing from the suite list of the runner (or the list
 cannot be read); a suite selftest is not executable, on disk or in the mode git records; a file that looks like a test
@@ -19,10 +22,12 @@ path component (see loose: such a glob matches paths under names the map does no
 matches, adds no target beyond the always gates and the scan rows matching that file, matches more than prose (see
 prose); a file a row matches has a name select never narrows; or a tracked file is matched by no row (and is not on
 the full list, which the stack ships empty).
-select: full is the answer for an input or a map that cannot be trusted, never for a file of a checked tree. A file on
-the full list (matched without regard to case), or matched by no row, selects the full suite; so does no file name at
-all. The map, its schema and this tool select their rows' targets like any other file: safe, because this tool's
-selftest is an always gate and runs `check`, which refuses a map whose rows leave out a selftest that reaches a file. `scan` rows add targets (a selftest that reads a whole folder) but do not count as a match. Pass
+select: full is the answer for an input or a map that cannot be trusted; for a tracked file of a checked tree only when
+the stack put it on the full list (shipped empty; matched without regard to case). A file matched by no row selects
+the full suite (check refuses a tracked one, and a file with a row whose name select never narrows); so does no file
+name at all. The map, its schema and this tool select their rows' targets like any other file: safe, because select
+itself adds this tool's selftest to every narrow answer (below), and that selftest runs `check`, which refuses a map
+whose rows leave out a selftest that reaches a file. `scan` rows add targets (a selftest that reads a whole folder) but do not count as a match. Pass
 both sides of a rename (`git diff --name-only --no-renames`): the new path alone can narrow the selection. A name with
 white space (at either end too, on stdin as well), a control character (U+0000 to U+001F, U+007F to U+009F), a leading
 dash or bytes that are not UTF-8 selects the full suite. A narrow answer always holds this tool's own selftest (named
@@ -30,11 +35,13 @@ from this file's name and test_file) when the root has it, whatever the map says
 runs `check`; in the tool's own tree a missing selftest of the tool is the answer full. select checks itself the shape
 of what it reads (always, full, globs and targets are lists of names), whatever the schema file accepts. Whatever stops select before it has an answer IS the answer full (exit 0 like every full answer,
 so a caller that pipes the answer into a runner runs everything; the plain reason on stderr; with --json `full` true,
-the reason and no targets): names on stdin that cannot be read, a map or a schema that is missing, unreadable, a
+the reason and no targets): names on stdin that cannot be read, a map or a schema (each named as itself) that is missing, unreadable, a
 folder or other non-regular file, empty, not JSON, no object or against its schema, a module of this tool that is missing
 or broken, a root that does not exist, any other error. select also
-answers full when the map breaks the rule that needs no file list (loose), and when the selection would be empty. Only
-a missing python3 prints nothing and exits non-zero: a caller treats a non-zero exit or an empty answer as full. Run
+answers full when the map breaks the rule that needs no file list (loose), and when the selection would be empty. The
+answer is written to stdout first and alone; the diagnostics follow on stderr and are dropped when stderr is closed or
+cannot be written. Only a missing python3, or a stdout that cannot be written, gives no answer (and a non-zero exit): a
+caller treats a non-zero exit or an empty answer as full. Run
 directly (no -I), the tool restarts itself under `python3 -I`, so PYTHONPATH and the current folder do not decide what
 it imports. shortcut: a file planted in this tool's own folder under a standard module's name is still imported;
 upgrade with the boundary rule for that folder. shortcut: the rules that need the file list (prose, reach, selftests, suite list, modes) are
@@ -51,7 +58,7 @@ if __name__ == "__main__" and not sys.flags.isolated:   # run directly: PYTHONPA
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder; this tool's modules are imported where they are used
 
-ROOT = os.environ.get("STELLA_ROOT") or os.path.dirname(BIN)
+ROOT = os.path.abspath(os.environ.get("STELLA_ROOT") or os.path.dirname(BIN))   # absolute once: git is sent to the root and would resolve a relative one again
 MAP = ".stella/test-map.json"
 SCHEMA = os.path.join(os.path.dirname(BIN), ".stella", "schemas", "test-map.schema.json")   # ships with this tool, so a scratch root needs none
 
@@ -63,20 +70,28 @@ def no_repeats(pairs):
     return d
 
 
+class Unusable(Exception):
+    """Something this tool reads cannot be used; the message starts with its own name (the map, the schema, a module)."""
+
+
 def read():
-    """(map, schema problems)."""
-    try:   # here, not at the top: select owes its answer even when a module of this tool is missing or broken
-        import stella_data
+    """(map, schema problems); what cannot be used raises Unusable under its own name."""
+    name = "a module of this tool (stella_data)"
+    try:
+        import stella_data   # here, not at the top: select owes its answer even when a module of this tool is missing or broken
+        name = MAP
+        if os.path.exists(os.path.join(ROOT, MAP)) and not os.path.isfile(os.path.join(ROOT, MAP)):
+            raise ValueError("not a regular file")   # a FIFO would hang the open
+        with open(os.path.join(ROOT, MAP), encoding="utf-8") as f:
+            m = json.load(f, object_pairs_hook=no_repeats)
+        name = f"schema {SCHEMA}"
+        with open(SCHEMA, encoding="utf-8") as f:
+            errs = stella_data.validate_doc(m, json.load(f))
+        name = MAP
+        if not errs and type(m["schema_version"]) is not int:
+            errs = ["$.schema_version: must be the integer 1"]   # true and 1.0 equal 1 in Python
     except Exception as e:
-        raise RuntimeError(f"a module of this tool cannot be loaded ({type(e).__name__}: {e}), so the map cannot be checked") from None
-    if os.path.exists(os.path.join(ROOT, MAP)) and not os.path.isfile(os.path.join(ROOT, MAP)):
-        raise ValueError("not a regular file")   # a FIFO would hang the open
-    with open(os.path.join(ROOT, MAP), encoding="utf-8") as f:
-        m = json.load(f, object_pairs_hook=no_repeats)
-    with open(SCHEMA, encoding="utf-8") as f:
-        errs = stella_data.validate_doc(m, json.load(f))
-    if not errs and type(m["schema_version"]) is not int:
-        errs = ["$.schema_version: must be the integer 1"]   # true and 1.0 equal 1 in Python
+        raise Unusable(f"{name}: {type(e).__name__}: {e}") from None
     return m, errs
 
 
@@ -288,8 +303,8 @@ def select(files, m=None):
 def check():
     try:
         m, errs = read()
-    except Exception as e:
-        return [f"{MAP}: {type(e).__name__}: {e}"]
+    except Unusable as e:
+        return [str(e)]
     if errs:
         return [f"{MAP}: ValueError: {e}" for e in errs]   # one line per problem
     probs = wide(m)
@@ -378,7 +393,7 @@ def main(argv):
         files = files[as_json:]
         ended = files[:1] == ["--"]
         files = files[ended:]   # "--" ends the options; every later argument is a name, "-" too
-        what = "the file names on stdin cannot be read"   # what was being done, for the reason
+        what, notes = "the file names on stdin cannot be read", []   # what was being done, for the reason; the diagnostics
         try:   # the one rule: whatever stops select before it has an answer IS the answer full, never an empty selection
             if files == ["-"] and not ended:   # bytes: no CR translation, no strip (white space at either end selects full); a non-UTF-8 byte stays visible
                 files = [f for f in sys.stdin.buffer.read().decode("utf-8", "surrogateescape").split("\n") if f]
@@ -390,7 +405,7 @@ def main(argv):
             sel = select(files, m) if files else {"full": True, "reason": ["no file name given"], "targets": sorted(m["always"])}
             broken = wide(m)
             if broken:   # a map that fails check cannot narrow anything
-                complain(broken, sys.stderr)
+                notes += broken
                 sel["full"], sel["reason"] = True, sel["reason"] + [f"the map fails check: {p}" for p in broken]
             if not sel["full"]:   # a narrow answer holds this tool's own selftest, which runs check: no map can drop its gate
                 gate = os.path.splitext(os.path.basename(__file__))[0]
@@ -400,13 +415,20 @@ def main(argv):
                 elif os.path.realpath(ROOT) == os.path.realpath(os.path.dirname(BIN)):   # a scratch root has no selftest of this tool
                     raise ValueError(f"{mine}, the selftest of this tool, is missing from its own tree, so nothing would check the map")
         except Exception as e:
-            sel = {"full": True, "reason": [f"{what}: {type(e).__name__}: {e}"], "targets": []}
-            complain(sel["reason"], sys.stderr)
+            sel = {"full": True, "reason": [str(e) if isinstance(e, Unusable) else f"{what}: {type(e).__name__}: {e}"], "targets": []}
+            notes += sel["reason"]
         if os.environ.get("STELLA_ROOT"):
             sel["root"] = ROOT
-            if not sel["full"]:   # a narrow answer from another tree must say so; "full" runs everything whatever the tree
-                print(f"selected from the test map of {esc(ROOT)}, from STELLA_ROOT", file=sys.stderr)
         print(json.dumps(sel) if as_json else "full" if sel["full"] else "\n".join(sel["targets"]))
+        sys.stdout.flush()   # the answer first and alone; a diagnostic that cannot be written is dropped
+        try:
+            if sys.stderr:   # closed (2>&-): print would fall back to stdout and spoil the answer
+                complain(notes, sys.stderr)
+                if "root" in sel and not sel["full"]:   # a narrow answer from another tree must say so; "full" runs everything whatever the tree
+                    print(f"selected from the test map of {esc(ROOT)}, from STELLA_ROOT", file=sys.stderr)
+                sys.stderr.flush()
+        except Exception:
+            pass
         return 0
     print(__doc__, file=sys.stderr)
     return 2
