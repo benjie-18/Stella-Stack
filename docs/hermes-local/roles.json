@@ -25,7 +25,7 @@
   "owner_data": [".stella/schemas"],
   "owner_commands": ["bin/merge-card.sh", "bin/stella-apply.py", "bin/settings.py", "bin/event_log.py"],
   "owner_commands_by_name": ["bin/merge-card.sh"],
-  "boundary_paths": ["docs/hermes-local/roles.json", "docs/hermes-local/hooks", "docs/hermes-local/plugins/os-box", ".pre-commit-config.yaml",
+  "boundary_paths": ["docs/hermes-local/alert-catalog.json", "docs/alert-codes.md", "docs/hermes-local/board.md", "docs/hermes-local/soul", "docs/hermes-local/roles.json", "docs/hermes-local/hooks", "docs/hermes-local/plugins/os-box", ".pre-commit-config.yaml",
                      "bin/alert.sh", "bin/alert_catalog.py", "bin/apply-hermes-local.sh", "bin/box.py", "bin/check-guard.py", "bin/commit-guard.sh",
                      "bin/complete-gate.py", "bin/escalation-discord.sh", "bin/escalation-on-block.sh", "bin/escalation-on-claim.sh",
                      "bin/escalation-on-complete.sh", "bin/event_log.py", "bin/false-close-guard.py", "bin/kanban-board.sh", "bin/kanban-guard.sh",

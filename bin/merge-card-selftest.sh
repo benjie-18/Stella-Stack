@@ -321,4 +321,11 @@ HOOK=$(jq -r '[.roles[].hooks[]? | .file // empty] | first' "$RF"); mkdir -p "$T
 wcard t_0000d0a8; printf '#!/bin/sh\nexit 0\n' >"$T/repo/.worktrees/t_0000d0a8/$HOOK"; git -C "$T/repo/.worktrees/t_0000d0a8" add -f -A; wcommit t_0000d0a8
 a0=$(nal); ok '[ "$(FAKE_APPROVED=t_0000d0a8 mc t_0000d0a8)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && [ "$(nal)" = $((a0+1)) ]' "K8: the boundary refusal carries a catalog code and writes one alert line"
 a0=$(nal); ok '[ "$(ROLES_FILE=$T/garbage.json FAKE_APPROVED=t_0000d0a8 mc t_0000d0a8)" = 3 ] && grep -q "STL-CFG-303" "$T/out" && [ "$(nal)" -le $((a0+2)) ]' "K8: the lists unreadable: a coded refusal"
+# T9 (F1 W4 r4): a data file the boundary code loads by a fixed path (the alert catalog, and the alert-code page made from it) is a boundary path: a card that
+# changes it is refused without the owner's flag, with the boundary code, and lands with it (the owner path)
+CAT=$(jq -r '[.boundary_paths[] | select(endswith(".json")) | select(. != "docs/hermes-local/roles.json")][0]' "$RF"); ACD=$(jq -r '[.boundary_paths[] | select(endswith(".md"))][0]' "$RF")
+for f in "$CAT" "$ACD"; do mkdir -p "$T/repo/${f%/*}"; printf 'owner version\n' >"$T/repo/$f"; g add -f "$f"; done; g -c core.hooksPath=/dev/null commit -qm "catalog and code page, as the owner has them"
+wcard t_0000d0a9; for f in "$CAT" "$ACD"; do printf 'a card adds a code\n' >"$T/repo/.worktrees/t_0000d0a9/$f"; done; git -C "$T/repo/.worktrees/t_0000d0a9" add -f -A; wcommit t_0000d0a9; h=$(head_of "$T/repo")
+a0=$(nal); ok '[ "$(FAKE_APPROVED=t_0000d0a9 mc t_0000d0a9)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -q "define the boundary" "$T/out" && grep -qF "$CAT" "$T/out" && grep -qF "$ACD" "$T/out" && [ "$(nal)" = $((a0+1)) ] && [ "$(head_of "$T/repo")" = "$h" ]' "T9: a card that changes the alert catalog ($CAT) and its code page is refused without the flag (boundary code, one alert line, both listed), main untouched"
+ok '[ "$(FAKE_APPROVED=t_0000d0a9 mc t_0000d0a9 --i-have-read-the-boundary-changes)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ] && grep -q "a card adds a code" "$T/repo/$CAT"' "T9: the same card lands by the owner path (--i-have-read-the-boundary-changes)"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

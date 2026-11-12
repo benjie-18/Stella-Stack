@@ -391,6 +391,33 @@ while todo:
 bnd = set(d["boundary_paths"]) | {(h.get("file") or h["command"]).replace("/workspace/", "") for r in d["roles"].values() for h in r.get("hooks", [])}
 under = lambda f: any(f == b or f.startswith(b + "/") for b in bnd)
 missing = sorted(f for f in seen if not under(f))
+# T9 (F1 W4 r4): the data files the boundary code opens by a fixed path count too (the alert catalog, the board text, the SOUL rules). Every path-like
+# word on a code line (not a comment line) of a boundary code file that names a tracked file or folder of the tree is a load; owner data is
+# protected on its own and is left out. It cannot see a path built at run time (from data, a variable, a glob) or one split into parts.
+import subprocess
+sys.path.insert(0, f"{top}/bin"); import roles
+r = subprocess.run(["git", "-C", top, "ls-files", "-z"], capture_output=True)
+files = {x.decode() for x in r.stdout.split(b"\0") if x} if r.returncode == 0 else \
+    {os.path.relpath(os.path.join(a, f), top) for a, ds, fs in os.walk(top) for f in fs if ".git" not in a.split(os.sep)}
+data = {f for f in files if not f.endswith((".py", ".sh"))}
+try:
+    own = roles.owner_paths(d, top)
+except roles.RolesError:
+    own = []
+inn = lambda f, x: f == x or f.startswith(x + "/")
+dirs = {x for x in {os.path.dirname(f) for f in data} - {""}   # a folder of data only: no code file and no owner path in it (bin, .supervisor are not)
+        if not any(inn(f, x) for f in files if f.endswith((".py", ".sh"))) and not any(inn(o, x) for o in own)}
+mine = lambda f: any(f == o or f.startswith(o + "/") for o in own)
+code = sorted(seen | {f for f in files if f.endswith((".py", ".sh")) and under(f)})
+for p in code:
+    for line in open(f"{top}/{p}", encoding="utf-8", errors="replace"):
+        if line.lstrip().startswith("#"):
+            continue
+        for m in re.finditer(r"[\w.~-]+(?:/[\w.~-]+)+", line):
+            x = re.sub(r"^(?:workspace/|\.\./)+", "", m[0].rstrip("/."))
+            if (x in data or x in dirs) and not under(x) and not mine(x):
+                missing.append(f"{x} (named on a code line of {p})")
+missing = sorted(set(missing))
 print("\n".join(missing))
 sys.exit(1 if missing else 0)
 PY
@@ -398,6 +425,8 @@ ok 'python3 -I "$T/graph.py" /workspace >"$T/out" 2>&1' "K3: every file the boun
 # the check fails when a reached file is missing from the list (a negative control on a scratch tree)
 mkdir -p "$T/gt/bin" "$T/gt/docs/hermes-local"; cp /workspace/bin/*.py /workspace/bin/*.sh "$T/gt/bin/" 2>/dev/null; jq '.boundary_paths -= ["bin/event_log.py"]' "$RF" >"$T/gt/docs/hermes-local/roles.json"
 ok 'python3 -I "$T/graph.py" "$T/gt" 2>&1 | grep -q event_log.py' "K3: a file reached from an owner command and missing from the list is reported (negative control)"
+mkdir -p "$T/gt/docs/hermes-local"; cp /workspace/docs/hermes-local/alert-catalog.json "$T/gt/docs/hermes-local/"; jq '.boundary_paths -= ["docs/hermes-local/alert-catalog.json"]' "$RF" >"$T/gt/docs/hermes-local/roles.json"
+ok 'python3 -I "$T/graph.py" "$T/gt" 2>&1 | grep -q "docs/hermes-local/alert-catalog.json (named on a code line of bin/alert_catalog.py)"' "T9: a data file a boundary file opens by a fixed path and missing from the list is reported (negative control: the alert catalog)"
 ok '[ "$(printf "bin/json.py\0bin/zz-not-stdlib.py\0" | ROLES_FILE=$RF python3 -I $S/roles.py hits /workspace boundary | tr "\0" "\n")" = "bin/json.py" ]' "K3: a new file in bin/ that shadows a standard-library module is a boundary change; another new file is not"
 # K1b: identity, not spelling
 mkdir -p "$T/ov/.Own/sub" "$T/ov/other"; ln -s "$T/ov/.Own" "$T/ov/link"
