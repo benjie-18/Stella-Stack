@@ -47,7 +47,7 @@ SCHEMA_VERSION = 1
 # hold them, and roles-selftest checks they are equal. A key a reader starts to use is added in both in the same change.
 ROLE_KEYS = set(PERMS) | {"workspace", "allowed_overrides", "requirements", "background_review", "complete_metadata",
                           "complete_needs_review", "workers", "skills_disabled", "platform_toolsets", "config", "git_identity", "hooks",
-                          "runs_unboxed"}
+                          "runs_unboxed", "catch_all_tools"}
 HOOK_KEYS = {"matcher", "file", "command", "timeout", "workers", "writes", "catch_all"}   # writes: "refused" = the hook refuses every write; "judged" = a text guard that lets some through
 CATCH_ALL = "^(?!(?:{tools})$).+$"   # T5: the matcher of a catch_all hook; {tools} is filled at render time with the profile's other matchers and the tools of its role's toolsets
 WRITES = ("refused", "judged")
@@ -204,6 +204,9 @@ def validate(d, root=ROOT):
         if gi is not None and not (isinstance(gi, dict) and set(gi) == {"name", "email"}
                                    and all(isinstance(v, str) and KEY.fullmatch(v) for v in gi.values())):
             errs.append(f"role {n}: git_identity must be {{name, email}}, each the name of an owner config key")
+        ct = r.get("catch_all_tools")
+        if ct is not None and not (_set(ct) and ct and all(re.fullmatch(r"[A-Za-z0-9_]+", t) for t in ct)):
+            errs.append(f"role {n}: catch_all_tools must be a non-empty list of plain tool names (A-Z, digits, _), each once")
         if not isinstance(r.get("hooks", []), list):
             errs.append(f"role {n}: hooks must be a list"); continue
         for h in r.get("hooks", []):
@@ -369,8 +372,11 @@ def unboxed_problems(d):
             errs.append(f"role {n} runs outside the box: it lists a hook that only judges writes (writes: judged)")
         errs += [f"role {n} runs outside the box: write tool {t} has no hook that refuses every write (writes: refused)"
                  for t in tools if not any(h.get("writes") == "refused" for h in cover(r, t))]
-        if not any(h.get("writes") == "refused" and h.get("catch_all") and "workers" not in h for h in r.get("hooks", [])):
+        cah = [h for h in r.get("hooks", []) if h.get("writes") == "refused" and h.get("catch_all") and "workers" not in h]
+        if not cah:
             errs.append(f"role {n} runs outside the box: it needs a hook that refuses any tool name no other matcher names (writes: refused)")
+        elif not r.get("catch_all_tools"):   # T5 ruling (W4-VER3-04): the catch-all's allowed tools are named in the table (data), default-deny: a tool not named is refused
+            errs.append(f"role {n} runs outside the box: its catch-all needs catch_all_tools in the table (the tools it lets through; a tool not listed is refused)")
     return errs
 
 
@@ -862,11 +868,11 @@ def hooks_for(d, H, name, folder, role, tools=None):
     role; without tools it stays the template (callers that only want the files)."""
     worker = (d["profiles"].get(name) or {}).get("worker")
     mine = [h for h in d["roles"][role].get("hooks", []) if "workers" not in h or worker in h["workers"]]
-    names = "|".join([h["matcher"] for h in mine if not h.get("catch_all")] + list(tools or []))   # what a catch-all leaves alone: every other matcher, every tool of the role
+    names = "|".join([h["matcher"] for h in mine if not h.get("catch_all")] + d["roles"][role].get("catch_all_tools", []))   # T5: what a catch-all leaves alone: every other matcher and the role's catch_all_tools (data, default-deny)
     out = []
     for h in mine:
         cmd = hook_command(h.get("command") or f"{folder}/hooks/{os.path.basename(h['file'])}")
-        m = h["matcher"].replace("{tools}", names) if h.get("catch_all") and tools is not None else h["matcher"]
+        m = h["matcher"].replace("{tools}", names) if h.get("catch_all") else h["matcher"]
         out.append((m, cmd, int(h.get("timeout", 10)), h.get("file")))
     return out
 

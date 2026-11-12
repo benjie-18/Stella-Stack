@@ -361,6 +361,15 @@ ok 'has profiles/builder-local/ git-guard.py && has profiles/builder-claude/ git
 ok 'has profiles/builder-local/ write-guard.py && has profiles/builder-claude/ write-guard.py && ! grep -q write-guard "$H/config.yaml" "$H/profiles/reviewer/config.yaml"' "write guard registered fail-closed in both builders only (D40)"
 ok '( for g in secret-guard.py model-guard.py; do has profiles/builder-local/ $g && has profiles/builder-claude/ $g || exit 1; done ) && ! grep -q model-guard.py "$H/config.yaml" "$H/profiles/reviewer/config.yaml"' "secret guard (F12) and model guard (F14) registered fail-closed in both builders; the model guard in no other profile (the secret guard also guards Stella's and the reviewer's file reads, D42)"
 ok 'HOME="$T/home" "$REG" --check >/dev/null' "registration --check: in sync after apply"
+# T5 ruling (W4-VER3-04, r5): a tool Hermes resolves for an unboxed role that its catch_all_tools does not name is reported (default-deny); the catch-all keeps refusing it
+MKT=$(python3 -I -c "import sys,json; sys.path.insert(0,'/workspace/bin'); import roles; d=roles.load(); print(next(n for n,r in d['roles'].items() if r.get('catch_all_tools')))")
+RFD=$(HOME="$T/home" python3 -I -c "import os; print(os.path.expanduser('~/.hermes'))")
+jq --arg n "$MKT" 'del(.roles[$n].catch_all_tools[-1])' /workspace/docs/hermes-local/roles.json >"$T/drop.json"
+DROPPED=$(jq -r --arg n "$MKT" '.roles[$n].catch_all_tools[-1]' /workspace/docs/hermes-local/roles.json)
+ok '[ -n "$DROPPED" ] && HOME="$T/home" ROLES_FILE=$T/drop.json "$REG" --check 2>&1 | grep -q "UNNAMED TOOL $DROPPED" && [ "$(HOME="$T/home" ROLES_FILE=$T/drop.json "$REG" --check >/dev/null 2>&1; echo $?)" = 1 ]' "T5: registration --check reports a tool ($DROPPED) Hermes resolves for role $MKT that catch_all_tools does not name, drift"
+HOOK=$(jq -r --arg n "$MKT" '[.roles[$n].hooks[] | select(.catch_all) | .file][0]' /workspace/docs/hermes-local/roles.json)
+RENDERED=$(HOME="$T/home" ROLES_FILE=$T/drop.json python3 -I -c "import sys,json; sys.path.insert(0,'/workspace/bin'); import roles; d=roles.load(); print(next(m for m,c,_,_ in roles.hooks_for(d,sys.argv[2],'p','',sys.argv[1]) if '(?!' in m))" "$MKT" "$RFD")
+ok 'python3 -I -c "import re,sys; sys.exit(0 if re.fullmatch(sys.argv[1], sys.argv[2]) else 1)" "$RENDERED" "$DROPPED"' "T5: the rendered catch-all of role $MKT matches the unnamed tool $DROPPED (it stays refused)"
 sed -i '/deny-kanban-block/,+2d' "$H/config.yaml"
 ok '! HOME="$T/home" "$REG" --check >/dev/null' "registration --check: a missing hook is drift"
 # Matchers, checked the way Hermes checks them (re.fullmatch, agent/shell_hooks.py) against the real tool names, so a

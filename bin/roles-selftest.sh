@@ -392,6 +392,9 @@ for r in $(jq -r --argjson named "$(jq -c '[.profiles[].role]' "$RF")" '.roles |
   done
 done
 bad ".roles[\"$COORD\"].hooks |= map(select(.matcher | test(\"\\\\(\\\\?!\") | not))" 'any tool name' "K6: the coordinator (runs_unboxed) without the catch-all"
+# T5 ruling (W4-VER3-04, r5): a role with a catch-all needs catch_all_tools; registration reports a tool Hermes resolves that it does not name (default-deny)
+bad "del(.roles[\"$COORD\"].catch_all_tools)" 'catch_all_tools' "T5: an unboxed role whose catch-all has no catch_all_tools"
+
 bad ".roles[\"$FB\"].hooks |= map(if (.matcher | test(\"\\\\(\\\\?!\")) then . + {workers: [\"w\"]} else . end) | .roles[\"$FB\"].workers = [\"w\"]" 'any tool name' "K6: a catch-all that has a workers filter does not count for the role as a whole"
 SERVED=$(jq -r '.profiles | to_entries[] | select(.value.role != "x") | .value.role' "$RF" | head -1)
 bad "del(.roles[\"$SERVED\"].platform_toolsets)" 'explicit platform_toolsets' "K6: a role a profile serves, without explicit toolsets"
