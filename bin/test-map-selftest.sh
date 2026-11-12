@@ -241,6 +241,124 @@ tool t-odd; echo '[]' >"$T/t-odd/.stella/schemas/test-map.schema.json"; ok 'full
 tool t-ok; ok '[ "$(STELLA_ROOT=$T/good python3 -I "$T/t-ok/bin/test-map.py" select src/a1.py 2>/dev/null)" = a ]' "30p control: the copied tool with its schema whole gives the narrow answer"
 ok 'o=$(STELLA_ROOT=$T/good python3 -I "$TM" select --json - <&- 2>"$T/e") && [ "$(jq -c "[.full, .targets]" <<<"$o")" = "[true,[]]" ] && grep -q "^STL-CFG-310 .*stdin" "$T/e"' \
    "30q stdin that cannot be read: full in --json too"
+# Round 9: each rule is one statement about the structure of the map, proved over generated maps. gen imports the tool once
+# and runs check and select in-process through main(), so a few hundred maps cost a few seconds.
+gen() {  # <root> <python that defines variants()>: prints "<variants> <accepted by check> <bad> <first bad ones>"
+  STELLA_ROOT=$T/$1 python3 -I - "$TM" "$T/$1" "$me" <<EOF
+import contextlib, importlib.util, io, itertools, json, os, sys
+spec = importlib.util.spec_from_file_location("tm", sys.argv[1]); tm = importlib.util.module_from_spec(spec); spec.loader.exec_module(tm)
+path, me = os.path.join(sys.argv[2], ".stella/test-map.json"), sys.argv[3]
+base = json.load(open(path))
+def run(*argv):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+        rc = tm.main(list(argv))
+    return rc, out.getvalue().split()
+$2
+n = accepted = 0; bad = []
+for label, m, must_pass in variants():
+    n += 1
+    with open(path, "w") as f:
+        json.dump(m, f)
+    if must_pass or not tm.check():   # check() gives the problems; main() would print them
+        accepted += 1
+        bad += [f"{label}: {name} -> {' '.join(got)}" for name in names for got in [run("select", "--", name)[1]] if not safe(got)]
+print(n, accepted, len(bad), "; ".join(bad[:3]) or "-", sep="\t")
+EOF
+}
+# X1 a row that is not a scan row says where it applies: each of its globs starts with a literal first path component. So no
+# map that check accepts narrows a path under a name the map does not spell (a new folder, a new top-level file, a dot file).
+root x1 '.map += [{"globs": ["bin/c-selftest.sh"], "targets": ["c"]}]' "a b c"; st "$T/x1/bin/c-selftest.sh"; mkdir -p "$T/x1/src/hooks" "$T/x1/docs"
+st "$T/x1/bin/b-selftest.sh" 'for h in $(jq -r ".hooks[]" "$(dirname "$0")/../src/hooks.json"); do bash "$h"; done'
+echo '{"hooks": ["src/hooks/x"]}' >"$T/x1/src/hooks.json"; echo 'exit 0' >"$T/x1/src/hooks/x"; cp "$T/x1/.stella/test-map.json" "$T/x1.json"
+IFS=$'\t' read -r x_n x_ok x_bad x_first < <(gen x1 '
+lits = ["src", "src/hooks", "docs", ".cfg", "x.y", "b"]
+wild = ["*", "**", "?", "?*", "????*", "[a-z]*", "[!.]*", "*[!zq9]*", ".*", "*.*", "*/*", "[.]*", "[!/]*", "?[!x]*"]
+names = ["zz-new/f.sh", "zz-new/deep/f.sh", "zz-new/.f", "zznew", "zz.new", ".zznew", ".zz-new/f.sh", "/abs/zz.sh", "../zz/f.sh"]
+safe = lambda got: got == ["full"]
+def variants():
+    one = (lits + wild + [l + "/" + w for l in lits for w in wild] + [l + w for l in lits for w in wild] + [w + "/" + l for l in lits for w in wild]
+           + [w + l for l in lits for w in wild] + [p + w for p in ("/", "./", "../", "*/../") for w in wild])
+    pairs = list(itertools.product(wild, wild))
+    for rows in [[[g]] for g in one] + [[[a, b]] for a, b in pairs] + [[[a], [b]] for a, b in pairs]:
+        for extra in ({}, {"scan": False}):
+            yield json.dumps(rows), dict(base, map=base["map"] + [dict({"globs": g, "targets": ["c"]}, **extra) for g in rows]), False
+')
+ok '[ "${x_n:-0}" -ge 300 ] && [ "${x_ok:-0}" -ge 50 ] && [ "$x_bad" = 0 ]' \
+   "31 of ${x_n:-?} generated maps (literal parts and wildcard forms, alone, combined, in one row and split over two) check accepts ${x_ok:-?}, and in none of those a path under a new name narrows (narrow: ${x_bad:-?} ${x_first:-})"
+wrow() { jq "$2" "$T/x1.json" >"$T/x1/.stella/test-map.json"; bad x1 "matches every path"; }
+ok 'cp "$T/x1.json" "$T/x1/.stella/test-map.json"; chk x1 && [ "$(STELLA_ROOT=$T/x1 python3 -I "$TM" select src/hooks/x 2>/dev/null)" = full ]' "31a control: the root of case 31 passes check, and its hook, which no row names, selects full"
+ok 'wrow w1 ".map += [{globs: [\"????*\"], targets: [\"c\"]}]" && wrow w2 ".map += [{globs: [\"*[!zq9]*\"], targets: [\"c\"]}]" && wrow w3 ".map += [{globs: [\"*/*\", \"*.*\"], targets: [\"c\"]}]" \
+ && wrow w4 ".map += [{globs: [\"[!.]*\", \".*\"], targets: [\"c\"]}]" && wrow w5 ".map += [{globs: [\"[!.]*\"], targets: [\"c\"]}, {globs: [\".*\"], targets: [\"c\"]}]"' \
+   "31b the catch-all forms the probe names missed (four or more characters, a negated class, two globs, two rows) are refused"
+jq '.map += [{globs: ["*/*", "*.*"], targets: [.map[0].targets[0]]}]' "$BIN/../.stella/test-map.json" >"$T/ship/.stella/test-map.json"
+ok 'bad ship "matches every path"' "31c the shipped map plus a row */*, *.* -> a selftest that is no gate is refused"
+# a row is judged, file by file, by what it adds beyond the always gates AND the scan rows that match the file
+for sg in '*' '**' 'src/*' 'src/hooks/*' '[!.]*'; do
+  jq --arg sg "$sg" '.map += [{globs: [$sg], targets: ["c"], scan: true}, {globs: ["src/hooks/*"], targets: ["c"]}]' "$T/x1.json" >"$T/x1/.stella/test-map.json"
+  ok 'bad x1 "matches src/hooks/x: named by src/hooks.json"' "31d a scan row $sg -> c puts c in the hook's selection, so a row src/hooks/* -> c adds nothing and may match only prose"
+done
+jq '.map += [{globs: ["docs/*"], targets: ["c"], scan: true}, {globs: ["src/hooks/*"], targets: ["c"]}]' "$T/x1.json" >"$T/x1/.stella/test-map.json"
+ok 'chk x1' "31e control: a scan row over another folder leaves the row its target, and the map passes"
+# the gate's own files are its test file and the tool that test names, named like the gate: not any bin/<gate>.*
+echo '{"hooks": ["bin/a.hook", "bin/a.sh"]}' >"$T/x1/src/hooks.json"; echo 'exit 0' >"$T/x1/bin/a.hook"; echo 'exit 0' >"$T/x1/bin/a.sh"
+jq '.map += [{globs: ["bin/a.hook"], targets: ["a"]}]' "$T/x1.json" >"$T/x1/.stella/test-map.json"
+ok 'bad x1 "matches bin/a.hook: named by src/hooks.json"' "31f a hook another selftest runs, named like the gate (bin/a.hook), is not the gate's own file"
+jq '.map += [{globs: ["bin/a.sh"], targets: ["a"]}]' "$T/x1.json" >"$T/x1/.stella/test-map.json"; rm "$T/x1/bin/a.hook"; echo '{"hooks": ["bin/a.sh"]}' >"$T/x1/src/hooks.json"
+ok 'bad x1 "matches bin/a.sh: code"' "31g nor is a script named like the gate that the gate's selftest does not name"
+st "$T/x1/bin/a-selftest.sh" 'bash "$(dirname "$0")/a.sh"'
+ok 'chk x1' "31h control: the tool the gate's own selftest names (bin/a.sh) is its own file, and the map passes"
+# X2 a narrow answer always holds this tool's own selftest, and select checks the shape of what it reads itself
+mkdir -p "$T/x2/.stella" "$T/x2/bin"; cp "$BIN/../.stella/test-map.json" "$T/x2/.stella/"; : >"$T/x2/bin/$me-selftest.sh"
+IFS=$'\t' read -r g_n g_ok g_bad g_first < <(gen x2 '
+names = [tm.MAP]
+safe = lambda got: got == ["full"] or me in got
+def variants():
+    own = [i for i, r in enumerate(base["map"]) if tm.MAP in r["globs"]]
+    edits = [("always", v) for v in [[t for t in base["always"] if t != d] for d in base["always"]] + [[], me, None, {}, 0, [me + "x"], [[me]]]]
+    for i in own:
+        r = base["map"][i]
+        edits += [(i, dict(r, targets=v)) for v in [[t for t in r["targets"] if t != d] for d in r["targets"]] + [[], me, None]]
+        edits += [(i, dict(r, globs=v)) for v in [[g for g in r["globs"] if g != d] for d in r["globs"]] + [tm.MAP]]
+        edits += [(i, dict(r, scan=True)), (i, None)]
+    assert own and len(edits) > 20
+    def apply(m, key, v):
+        if key == "always":
+            return dict(m, always=v)
+        return dict(m, map=[x for j, x in enumerate(m["map"]) if j != key] + ([v] if v is not None else []))
+    for key, v in edits:   # every single-key edit, alone and on top of the map that already dropped the gate from always
+        yield f"{key}={json.dumps(v)[:60]}", apply(base, key, v), True
+        yield f"no gate in always, {key}={json.dumps(v)[:60]}", apply(dict(base, always=[t for t in base["always"] if t != me]), key, v) if key != "always" else dict(base, always=v), True
+')
+ok '[ "${g_n:-0}" -ge 40 ] && [ "$g_bad" = 0 ]' "32 of ${g_n:-?} edits of the shipped map (every single-key edit of always and of the map's own row, with and without the gate in always), each answers full or holds $me for the map file (neither: ${g_bad:-?} ${g_first:-})"
+jq --arg me "$me" '.always -= [$me] | .map |= map(if (.globs | index(".stella/test-map.json")) then .targets -= [$me] else . end)' "$BIN/../.stella/test-map.json" >"$T/x2/.stella/test-map.json"
+ok 'out=$(STELLA_ROOT=$T/x2 python3 -I "$TM" select .stella/test-map.json 2>/dev/null) && [ "$out" != full ] && grep -qx "$me" <<<"$out"' "32a a map that drops its gate from always and from its own row still selects $me (the red team's g1)"
+tool t-any; echo '{}' >"$T/t-any/.stella/schemas/test-map.schema.json"
+ok 'full s-always "$T/t-any/bin/test-map.py"' "32b a schema that accepts everything does not turn always = \"a\" into letters: full (g2)"
+tool t-home; mkdir -p "$T/t-home/src"; jq . <<<"$MAP" >"$T/t-home/.stella/test-map.json"
+ok '[ "$(env -u STELLA_ROOT python3 -I "$T/t-home/bin/test-map.py" select src/a1.py 2>"$T/e")" = full ] && grep -q "$me-selftest.sh" "$T/e" && : >"$T/t-home/bin/$me-selftest.sh" \
+ && [ "$(env -u STELLA_ROOT python3 -I "$T/t-home/bin/test-map.py" select src/a1.py 2>/dev/null | tr "\n" " ")" = "a $me " ]' \
+   "32c in the tool's own tree a missing selftest of the tool is the answer full; with it, it joins the narrow answer"
+# X3 a module of the tool that is missing or broken is the answer full, not an empty answer
+tool t-m1; rm "$T/t-m1/bin/alert_catalog.py"; ok 'full good "$T/t-m1/bin/test-map.py" && grep -q "alert_catalog" "$T/e"' "33a alert_catalog.py missing: full, the module named on stderr"
+tool t-m2; echo 'raise SyntaxError("a slip")' >>"$T/t-m2/bin/stella_data.py"; ok 'full good "$T/t-m2/bin/test-map.py" && grep -q "a slip" "$T/e"' "33b stella_data.py raises on import: full, the reason on stderr"
+ok '! STELLA_ROOT=$T/good python3 -I "$T/t-m1/bin/test-map.py" check >"$T/out" 2>&1 && grep -q "^STL-CFG-310 " "$T/out" && ! grep -q Traceback "$T/out"' "33c check with a module missing refuses, with the code and no traceback"
+# X4 names, the launch line, a map that is no regular file
+root x4 '.map[2].globs += ["docs/*"]'; mkdir -p "$T/x4/docs"; echo prose >"$T/x4/docs/a b.md"; echo prose >"$T/x4/docs/plain.md"
+ok 'bad x4 "docs/a b.md: a row matches this file, but select never narrows" && rm "$T/x4/docs/a b.md" && chk x4' "34a check refuses a file with a row whose name select never narrows (so no file of a checked tree selects full)"
+IFS=$'\t' read -r c_n c_ok c_bad c_first < <(gen x4 '
+names = ["docs/a%sb.md" % chr(c) for c in range(0x80, 0xa0)]
+safe = lambda got: got == ["full"]
+def variants():
+    yield "the map of case 34a", base, True
+')
+ok '[ "$c_bad" = 0 ] && [ "$(STELLA_ROOT=$T/x4 python3 -I "$TM" select docs/ab.md 2>/dev/null)" = a ]' "34b a name holding any C1 control character (U+0080 to U+009F, 32 names) selects full, a plain name its row (narrow: ${c_bad:-?} ${c_first:-})"
+mkdir -p "$T/py"; printf 'def fnmatchcase(name, pat):\n    return True\n' >"$T/py/fnmatch.py"
+ok '[ -x "$TM" ] && [ "$(cd "$T/py" && STELLA_ROOT=$T/good PYTHONPATH=$T/py "$TM" select other/z 2>/dev/null)" = full ] && [ "$(cd "$T/py" && STELLA_ROOT=$T/good PYTHONPATH=$T/py "$TM" select src/a1.py 2>/dev/null)" = a ]' \
+   "34c run directly, a module planted through PYTHONPATH or the current folder does not change the answer"
+put s-fifo; mkfifo "$T/s-fifo/.stella/test-map.json"
+ok '[ "$(STELLA_ROOT=$T/s-fifo timeout 10 python3 -I "$TM" select src/a1.py 2>"$T/e")" = full ] && grep -q "not a regular file" "$T/e" && ! STELLA_ROOT=$T/s-fifo timeout 10 python3 -I "$TM" check >"$T/out" 2>&1 && grep -q "not a regular file" "$T/out"' \
+   "34d a map that is a FIFO does not hang: select answers full, check refuses"
 
 # git answers for the tree: the tree's own untracked settings (info/exclude, a local excludesFile or worktree) hide nothing
 # and run nothing (core.fsmonitor).
