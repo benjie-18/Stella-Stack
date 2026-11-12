@@ -731,11 +731,12 @@
         ".stella/schemas/connections.schema.json"
       ],
       "targets": [
+        "escalate",
         "hardcode-lint",
         "stella-apply",
         "stella-data"
       ],
-      "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
+      "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field); bin/escalate.sh reads its settings through the data tool, whose every read opens the connections catalog for the masking patterns (bin/stella_data.py CATALOG)"
     },
     {
       "globs": [
