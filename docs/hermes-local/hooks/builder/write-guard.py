@@ -587,8 +587,10 @@ def owner_cmd_why(words, cwd, names):
                 return ob(owner_cmd_of(p))
     script = next((w for w in cmdw[1:] if not w.startswith("-")), None) if cmdw and norm(cmdw[0]) in INTERPRETERS else None
     if cmdw and norm(cmdw[0]) in ("cp", "install", "ln", "rsync"):   # r5: making a copy of an owner command (its source resolves to one) is refused: a copy is run outside the command's own gate
-        srcs = [w for w in cmdw[1:] if not w.startswith("-")][:-1]
+        srcs, t0 = list(dict.fromkeys(w for w in cmdw[1:-1] if not w.startswith("-"))), time.monotonic()   # each source once; the guard's deadline (K5, W4-CV3-09)
         for wd in srcs:
+            if time.monotonic() - t0 > BUDGET_S:
+                return ob(f"`{' '.join(words)[:120]}` names too many sources to check in time; owner commands are never copied by a role")
             for p in words_of(wd, cwd, names)[0]:
                 if owner_cmd_of(p):
                     return ob(f"`{' '.join(words)[:120]}` copies the owner command {p}: a copy would run outside the command's own gate")
