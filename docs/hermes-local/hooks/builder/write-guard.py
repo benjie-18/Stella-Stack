@@ -70,6 +70,13 @@ try:
         OWNER_FILES = roles.owner_settings(RT)
         OWNER_REL = [p for p in roles.owner_paths(RT) if p not in RT["owner_settings"]] + roles.state_paths(RT)   # G1/B1: owner data and the apply tool's state, from the index and the table, never named here (the owner settings keep their older refusals)
         OWNER_CMDS = roles.owner_commands(RT)
+        import hashlib
+        CMD_BYTES = {}   # W4-CV3-07: a copy is known by what it IS: (size -> {sha256}) of the owner command files; a run word that resolves to a file with these bytes is one
+        for _c in OWNER_CMDS:
+            try:
+                _b = open(_c, "rb").read(); CMD_BYTES.setdefault(len(_b), set()).add(hashlib.sha256(_b).hexdigest())
+            except OSError:
+                pass
         BY_NAME = [os.path.splitext(os.path.basename(c))[0].casefold() for c in OWNER_CMDS if c[len(ROOT) + 1:] in RT["owner_commands_by_name"]]   # K9: the stem, so a copy without its extension is the same name
         LM = {}   # one memo for the lists built when the guard starts (T1, r5)
         OWNER_CH = roles.chains([f"{ROOT}/{d}" for d in OWNER_REL], LM)   # K1b: the main checkout's; a card worktree's own copies are added when a path lies in it (worktree_chains, T1)
@@ -79,7 +86,7 @@ try:
         READERS = {v for v in RT["read_verbs"] if " " not in v}   # K7: the verbs that may name an owner path (data: the role table)
         GIT_READS = {v.split(" ", 1)[1] for v in RT["read_verbs"] if v.startswith("git ")}
     except Exception as e:   # every call is refused below until the table (and the index it names) can be read
-        RT, PROTECTED, CONFIG, OWNER_FILES, OWNER_REL, OWNER_CMDS, BY_NAME, OWNER_CH, HOLD_CH, READERS, GIT_READS, MARKERS, PINS, MARK_PFX, RT_ERROR = None, [], [], [], [], [], [], [], [], set(), set(), [], {}, [], str(e)[:200]
+        RT, PROTECTED, CONFIG, OWNER_FILES, OWNER_REL, OWNER_CMDS, BY_NAME, OWNER_CH, HOLD_CH, READERS, GIT_READS, MARKERS, PINS, MARK_PFX, CMD_BYTES, RT_ERROR = None, [], [], [], [], [], [], [], [], set(), set(), [], {}, [], {}, str(e)[:200]
     HOMES = roles.homes()
 except Exception as e:   # not even the role module loads: refuse, with a coded line
     print(json.dumps({"action": "block", "message": f"write guard: [{OB}] the role module cannot be loaded ({type(e).__name__}); every write is refused until it is fixed"}))
@@ -579,11 +586,17 @@ def owner_cmd_why(words, cwd, names):
             if owner_cmd_of(p):
                 return ob(owner_cmd_of(p))
     script = next((w for w in cmdw[1:] if not w.startswith("-")), None) if cmdw and norm(cmdw[0]) in INTERPRETERS else None
-    for wd in cmdw[:1] + ([script] if script else []):   # B.1 (r5): what runs, named like a copy of an owner command (its file name after any prefix)
-        b = wd.rsplit("/", 1)[-1].casefold()
-        rel = next((r for r in CMDS if re.fullmatch(r"(?:.*[^a-z0-9])?" + re.escape(os.path.basename(r).casefold()), b)), None)
-        if rel:
-            return ob(f"`{' '.join(words)[:120]}` runs {wd}, named like a copy of the owner command {rel}: {CMDS[rel]}")
+    for wd in cmdw[:1] + ([script] if script else []):   # B.1 point 3 / W4-CV3-07 (r5): what runs, by what it IS: a file with the bytes of an owner command of the table (a copy under any name); not by its name (no false refusal of a like-named file with other bytes)
+        for pth in words_of(wd, cwd, names)[0] if "/" in wd or (wd == cmdw[0] and shutil.which(wd)) else []:
+            rp = pth if os.path.isfile(pth) else (shutil.which(wd) or "") if wd == cmdw[0] and "/" not in wd else ""
+            try:
+                sz = os.path.getsize(rp) if rp else -1
+            except OSError:
+                sz = -1
+            if sz in CMD_BYTES:
+                import hashlib
+                if hashlib.sha256(open(rp, "rb").read()).hexdigest() in CMD_BYTES[sz]:
+                    return ob(f"`{' '.join(words)[:120]}` runs {rp}, a copy of an owner command (the same bytes): owner commands are the owner's to run, never a role's")
     for wd in cmdw[:1] + ([script] if script else []):
         if words_of(wd, cwd, names)[1]:
             return ob(f"`{' '.join(words)[:120]}` runs a command or script built at run time, which this guard cannot check; owner commands are never run by a role")

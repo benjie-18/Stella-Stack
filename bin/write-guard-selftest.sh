@@ -536,6 +536,9 @@ for p in $BUILDERS; do
   : >"$WGA"; ok '[ "$(wg "touch /workspace/$ODF")" = 2 ] && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ] && grep -q "role " "$WGA"' "K8 $p: the alert line names the role"
   ok '[ "$(wg "echo owner.env")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out"' "K8 $p: an older rule that catches a mention of the owner settings file first still says so with the code"
   ok '[ "$(wg "cp bin/merge-card.sh /tmp/mc; bash /tmp/merge-card x")" = 2 ] && [ "$(wg "bash /tmp/merge-card x")" = 2 ] && [ "$(wg "bash bin/merge-card-selftest.sh")" = 0 ]' "K9 $p: a copy of the merge script under another name (no extension) is refused as at 900d9b3; its selftest is not the script"
+  # B.2 point 14 (r5, W4-CV3-07): a copy of any owner command is refused by its BYTES (a renamed copy); a like-named file with other bytes is not
+  cp /workspace/bin/settings.py "$T/x-settings.py"; cp /workspace/bin/event_log.py "$T/qa-copy.py"; printf 'print(1)\n' >"$T/mine-settings.py"
+  ok '[ "$(wg "python3 $T/x-settings.py get X")" = 2 ] && grep -qF "STL-CFG-312" "$T/out" && [ "$(wg "python3 $T/qa-copy.py append")" = 2 ] && [ "$(wg "python3 $T/mine-settings.py")" = 0 ] && [ "$(wg "cat $T/x-settings.py")" = 0 ]' "B.2 point 14 $p: a renamed copy of an owner command (settings.py, event_log.py) is refused by its bytes; a like-named file with other bytes, and a read of the copy, are allowed"
   B40=$(printf '{a,b}%.0s' $(seq 1 40))   # T4: built outside the quoted case (its quotes ended the case's own string)
   ok '[ "$(wg "tee /tmp/zz ${B40}x")" = 2 ]' "K5 $p: a brace-bomb word is refused (more than 64 words), not expanded"
 done
