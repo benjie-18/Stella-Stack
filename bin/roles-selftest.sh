@@ -459,7 +459,7 @@ for p in code:
     for line in open(f"{top}/{p}", encoding="utf-8", errors="replace"):
         if line.lstrip().startswith("#"):
             continue
-        for m in re.finditer(r"[\w.~-]+(?:/[\w.~-]+)+", line):
+        for m in list(re.finditer(r"[\w.~-]+(?:/[\w.~-]+)+", line)) + [m for m in re.finditer(r"(?<![\w./-])[\w-]+\.(?:json|ya?ml|toml)\b", line) if "/" not in m[0]]:   # r5: a data file at the root of the tree (package.json) too
             x = re.sub(r"^(?:workspace/|\.\./)+", "", m[0].rstrip("/."))
             if (x in data or x in dirs) and not under(x) and not mine(x):
                 missing.append(f"{x} (named on a code line of {p})")
@@ -473,7 +473,13 @@ mkdir -p "$T/gt/bin" "$T/gt/docs/hermes-local"; cp /workspace/bin/*.py /workspac
 ok 'python3 -I "$T/graph.py" "$T/gt" 2>&1 | grep -q event_log.py' "K3: a file reached from an owner command and missing from the list is reported (negative control)"
 mkdir -p "$T/gt/docs/hermes-local"; cp /workspace/docs/hermes-local/alert-catalog.json "$T/gt/docs/hermes-local/"; jq '.boundary_paths -= ["docs/hermes-local/alert-catalog.json"]' "$RF" >"$T/gt/docs/hermes-local/roles.json"
 ok 'python3 -I "$T/graph.py" "$T/gt" 2>&1 | grep -q "docs/hermes-local/alert-catalog.json (named on a code line of bin/alert_catalog.py)"' "T9: a data file a boundary file opens by a fixed path and missing from the list is reported (negative control: the alert catalog)"
+cp /workspace/package.json "$T/gt/"; jq '.boundary_paths -= ["package.json"]' "$RF" >"$T/gt/docs/hermes-local/roles.json"
+ok 'python3 -I "$T/graph.py" "$T/gt" 2>&1 | grep -q "^package.json (named on a code line of bin/merge-card.sh)"' "B.2 point 10: the package manifest the merge reads its test command from is a boundary path, and missing from the list it is reported"
 ok '[ "$(printf "bin/json.py\0bin/zz-not-stdlib.py\0" | ROLES_FILE=$RF python3 -I $S/roles.py hits /workspace boundary | tr "\0" "\n")" = "bin/json.py" ]' "K3: a new file in bin/ that shadows a standard-library module is a boundary change; another new file is not"
+ok '[ "$(printf "bin/json/__init__.py\0bin/sqlite3/__init__.py\0bin/re.cpython-311-x86_64-linux-gnu.so\0bin/zz-not-stdlib/__init__.py\0bin/roles.py\0" | ROLES_FILE=$RF python3 -I $S/roles.py hits /workspace boundary | tr "\0" " ")" = "bin/json/__init__.py bin/sqlite3/__init__.py bin/re.cpython-311-x86_64-linux-gnu.so bin/roles.py " ]' "B.3 point 18: a package or a compiled module in bin/ named like a module the boundary imports from outside the repo (json, sqlite3, re) is a boundary change; another name is not"
+RNF=$(git -C /workspace ls-files bin | grep -v -e selftest -e "\.py$" | while read -r f; do printf '%s\0' "$f" | ROLES_FILE=$RF python3 -I $S/roles.py hits /workspace boundary | grep -q . || { echo "$f"; break; }; done)
+jq --arg f "/workspace/$RNF" '.sandbox.profile_overrides[(.sandbox.profile_overrides | keys[0])].review_prompt = ($f | ltrimstr("/workspace/"))' "$RF" >"$T/tn.json"
+ok '[ -n "$RNF" ] && [ "$(printf "%s\0" "$RNF" | ROLES_FILE=$T/tn.json python3 -I $S/roles.py hits /workspace boundary | tr -d "\0")" = "$RNF" ]' "B.2 point 10: a file the table names as a prompt (here $RNF, not on the list before) is a boundary path from the table alone (negative control: the same file with the intact table is not)"
 # K1b: identity, not spelling
 mkdir -p "$T/ov/.Own/sub" "$T/ov/other"; ln -s "$T/ov/.Own" "$T/ov/link"
 ok '[ "$(python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import roles; p = roles.chains([sys.argv[2] + \"/.Own/sub\", sys.argv[2] + \"/.Own/future.json\"]); print(*[ (roles.overlap(sys.argv[2] + x, p) or [None])[0] for x in (\"/.OWN/sub/x\", \"/link/sub/x\", \"/.Own\", \"/other/x\", \"/.Own/FUTURE.JSON\", \"/.Own/ZZZZZZ~1/y\")])" "$S" "$T/ov")" = "inside inside contains None equal None" ]' "K1b: a case variant and a link are the protected folder, a folder that holds it is \"contains\", a name that names nothing on disk is judged by its names, never by its look (T3: was \"unknown\")"

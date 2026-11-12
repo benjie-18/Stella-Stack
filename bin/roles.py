@@ -553,7 +553,41 @@ def boundary(d):
     code loads, kept complete by a selftest that walks the import and source graph) and every hook file or command the table names. A card
     branch that changes one meets a flag at the merge."""
     hooks = {(h.get("file") or h["command"]) for r in d["roles"].values() for h in r.get("hooks", [])}
-    return sorted(set(d["boundary_paths"]) | {h[len(ROOT) + 1:] if h.startswith(ROOT + "/") else h for h in hooks})
+    return sorted(set(d["boundary_paths"]) | {h[len(ROOT) + 1:] if h.startswith(ROOT + "/") else h for h in hooks} | table_named(d))
+
+
+def table_named(d, root=None):
+    """B.2 point 10 (W4-CV3-04): the repo files the table itself names as a command, a prompt or a hook (every value under a key "command",
+    "broker_when", "review_prompt" or "file", a regex unescaped): what the boundary code runs or reads on the table's word decides it too."""
+    out, todo = set(), [d]
+    while todo:
+        x = todo.pop()
+        if isinstance(x, dict):
+            for k, v in x.items():
+                if isinstance(v, str) and k in ("command", "broker_when", "review_prompt", "file"):
+                    for m in re.finditer(r"[\w.~-]+(?:/[\w.~-]+)+", re.sub(r"\\(.)", r"\1", v)):
+                        rel = m[0].removeprefix(ROOT.lstrip("/") + "/")   # an absolute path of the stack, or a repo path
+                        if _rel(rel) and os.path.isfile(os.path.join(root or ROOT, rel)):
+                            out.add(rel)
+                else:
+                    todo.append(v)
+        elif isinstance(x, list):
+            todo += x
+    return out
+
+
+def _outside_imports(d, top):
+    """B.3 point 18 (W4-VER3-02, W4-VAL3-10): the module names the boundary's python code imports that are not a module of its own folders (the standard
+    library's and any installed one), plus every standard-library name: a new path in a folder the hooks import from that starts with one shadows it."""
+    dirs = {os.path.dirname(x) for x in d["boundary_paths"] if x.endswith(".py")}
+    local = {os.path.splitext(f)[0] for dd in dirs if os.path.isdir(os.path.join(top, dd)) for f in os.listdir(os.path.join(top, dd))}
+    names = set(sys.stdlib_module_names)
+    for x in boundary(d):
+        if x.endswith(".py") and os.path.isfile(os.path.join(top, x)):
+            for m in re.finditer(r"^\s*(?:import|from)\s+([A-Za-z_]\w*)", open(os.path.join(top, x), encoding="utf-8", errors="replace").read(), re.M):
+                if m[1] not in local:
+                    names.add(m[1])
+    return dirs, names
 
 
 def _lstat(path, memo):
@@ -635,18 +669,18 @@ def hits(d, top, names, kind, root=None):
     modules whose name shadows a standard-library module (the hooks import from that folder ahead of the standard library). Raises RolesError."""
     rel = owner_paths(d, root or top) if kind == "refused" else boundary(d)
     prot = chains(os.path.join(top, x) for x in rel)
-    out = []
+    out, shadow = [], None
     for n in names:
         if n.startswith("/") or ".." in n.split("/"):
             out.append(n); continue
         r = overlap(os.path.join(top, n), prot)
         if r:
             out.append(n)
-        elif kind == "boundary":
-            dirs = {os.path.dirname(x) for x in d["boundary_paths"] if x.endswith(".py")}
-            base, ext = os.path.splitext(os.path.basename(n))
-            if os.path.dirname(n) in dirs and ext == ".py" and base in sys.stdlib_module_names:
-                out.append(n)
+        elif kind == "boundary":   # any path whose first component under such a folder, its suffix stripped (json.py, json/__init__.py, json.cpython-311.so), shadows an import
+            dirs, ext = shadow if shadow else (shadow := _outside_imports(d, top))
+            for dd in dirs:
+                if n.startswith(dd + "/") and n[len(dd) + 1:].split("/")[0].split(".")[0] in ext:
+                    out.append(n); break
     return out
 
 
