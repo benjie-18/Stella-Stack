@@ -635,7 +635,7 @@ def run(spec, cmd):
     old = _git(spec, "rev-parse", "--verify", "-q", ref + "^{commit}").stdout.strip()
     if not old:
         print(f"box: cannot read the card branch {spec['branch']}; nothing was run", file=sys.stderr)
-        return 126
+        return 70   # W4-VAL3-01: a reserved "box could not start" code; a card test may legitimately exit 126
     os.makedirs(priv + "/refs"); os.makedirs(priv + "/logs")
     with open(f"{priv}/refs/{name}", "w") as f:
         f.write(old + "\n")
@@ -715,8 +715,9 @@ def merge_exec(top, wt, branch, card, script):
     sb = roles.sandbox(d)
     ps = sorted((p for p in (sb or {}).get("boxed_profiles", []) if p in d["profiles"] and d["roles"][d["profiles"][p]["role"]]["workspace"] == "git-worktree"),
                 key=lambda p: (bool(sb["profile_overrides"].get(p, {}).get("broker_env")), p))
+    ps = [p for p in ps if not sb["profile_overrides"].get(p, {}).get("broker_env")]   # W4-VAL3-12: the card's tests never carry a broker token
     if not ps:
-        raise BoxError("no boxed profile gets a writable card worktree, so the card's tests have no box to run in")
+        raise BoxError("no boxed profile without broker variables has a writable card worktree, so the card's tests have no box to run in")
     home = pwd.getpwuid(os.getuid()).pw_dir
     root = os.environ.get("BOX_HERMES_ROOT") or f"{home}/.hermes"
     argv, over = box_argv(d, ps[0], {"card": card, "workspace": wt, "branch": branch}, hermes_root=root, home=home, roots=[top])
@@ -740,12 +741,13 @@ def merge_exec(top, wt, branch, card, script):
     return rc
 
 
-if __name__ == "__main__" and sys.argv[1:2] == ["exec"]:   # exec <top> <worktree> <branch> <card> <script>: exit 126 and a coded line when the box cannot start
+if __name__ == "__main__" and sys.argv[1:2] == ["exec"]:   # exec <top> <worktree> <branch> <card> <script>: exit 70 and a coded line when the box could not start (a test's own exit code otherwise, 126 included)
     try:
-        sys.exit(merge_exec(*sys.argv[2:6], sys.argv[6]))
+        rc = merge_exec(*sys.argv[2:6], sys.argv[6])
+        sys.exit(70 if rc == 70 else rc)   # run() could not read the branch: the same could-not-start code
     except (BoxError, roles.RolesError, OSError) as e:
         print(roles.plain("STL-CFG-312", problem=f"the box for the card's tests could not start: {str(e)[:200]}"), file=sys.stderr)
-        sys.exit(126)
+        sys.exit(70)
 if __name__ == "__main__" and sys.argv[1:2] == ["run"]:
     sys.exit(run(json.loads(sys.argv[2]), sys.argv[4:]))
 if __name__ == "__main__" and sys.argv[1:2] == ["sweep"]:
