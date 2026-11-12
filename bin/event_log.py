@@ -230,11 +230,18 @@ def why(e):
     return e.strerror or type(e).__name__ if isinstance(e, OSError) else str(e)   # never the path an OSError carries
 
 def preflight():
-    """Raises EventError(318) when the log cannot be appended to now; creates the log folder and an empty log if there are none."""
+    """Raises EventError(318) when the log cannot be appended to now. It makes nothing: an existing log is opened for appending, a
+    missing one needs its nearest existing folder writable (append makes the folder and the log)."""
     try:
         p = log_path()
-        mkdirs(os.path.dirname(p))
-        os.close(open_file(p, os.O_WRONLY | os.O_APPEND | os.O_CREAT))
+        if os.path.lexists(p):
+            os.close(open_file(p, os.O_WRONLY | os.O_APPEND))
+        else:
+            d = os.path.dirname(p)
+            while not os.path.isdir(d):
+                d = os.path.dirname(d)
+            if not os.access(d, os.W_OK | os.X_OK):
+                raise PermissionError(13, "Permission denied")
     except (OSError, ValueError) as e:
         raise EventError("STL-CFG-318", why(e))
 
