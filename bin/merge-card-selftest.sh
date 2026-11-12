@@ -5,7 +5,7 @@
 # (its roles.py must sit next to it); FAKE_REVIEWER names the profile of the stub's reviewer run.
 set -u
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
-mkdir -p "$T/bin"
+mkdir -p "$T/bin"; export ESCALATE_SUP_DIR=$T/sup; mkdir -p "$T/sup/logs"   # T7: a refusal the box or roles.py codes logs here from the first case on (one line: qa harnesses take lines 1..81)
 cat > "$T/bin/hermes" <<'S'
 #!/usr/bin/env bash
 [ "$1 $2" = "kanban --board" ] && [ "$3" != ai-stack ] && { echo "board $3 not found" >&2; exit 1; }
@@ -76,7 +76,7 @@ bound() {  # bound <fixture> <card> <assignee> <workspace> <branch> <payload> --
   [ "$fx" = none ] || mk "$fx" "$c" "$a" "$ws" "$br" "$(cat "$d/pid")"
   touch "$d/go"; wait "$w"; cp "$d/out" "$T/out"; cat "$d/rc"; }
 M=${MC:-/workspace/bin/merge-card.sh} fails=0
-ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
+ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); [ -s "$T/out" ] && sed 's/^/     /' "$T/out" | tail -4; fi; }   # a failing case shows the last lines the merge printed
 mc() { (cd "$T/repo" && "$M" "$@") >"$T/out" 2>&1; echo $?; }
 head_of() { git -C "$1" rev-parse "${2:-HEAD}"; }
 
@@ -218,12 +218,15 @@ ok '[ "$(FAKE_APPROVED=t_0000a002 mc t_0000a002)" = 0 ] && [ ! -e "$T/fsm" ] && 
 # config.worktree sits in the writable worktree entry and counts once the repo sets extensions.worktreeConfig (git sparse-checkout does)
 g config core.repositoryformatversion 1; g config extensions.worktreeConfig true; rm -f "$T/fsm"
 printf '[core]\n\tfsmonitor = touch %s #\n' "$T/fsm" > "$T/repo/.git/worktrees/t_0000a005/config.worktree"; h=$(head_of "$T/repo")
-ok '[ "$(FAKE_APPROVED=t_0000a005 mc t_0000a005)" = 0 ] && [ ! -e "$T/fsm" ] && [ "$(head_of "$T/repo")" != "$h" ]' "RT-A-02: a worktree config.worktree with core.fsmonitor: not run (-c core.fsmonitor=)"
+# T6 (F1 W4 r4): the card's tests run only in the OS box (K2), and the box refuses a repository whose worktrees read a config of their own
+# (extensions.worktreeConfig: that file is builder-writable): such a card is refused, and nothing of its config runs (was: merged)
+ok '[ "$(FAKE_APPROVED=t_0000a005 mc t_0000a005)" = 3 ] && grep -q "worktreeConfig" "$T/out" && [ ! -e "$T/fsm" ] && [ "$(head_of "$T/repo")" = "$h" ]' "RT-A-02: a worktree config.worktree with core.fsmonitor: not run (-c core.fsmonitor=)"
 mkdir -p "$T/evilhooks"; printf '#!/bin/sh\ntouch %s\n' "$T/fsm" > "$T/evilhooks/post-index-change"; chmod +x "$T/evilhooks/post-index-change"
 printf '[core]\n\thooksPath = %s\n' "$T/evilhooks" > "$T/repo/.git/worktrees/t_0000a006/config.worktree"; touch "$T/repo/.worktrees/t_0000a006/g6.txt"
 git -C "$T/repo/.worktrees/t_0000a006" status --porcelain >/dev/null 2>&1; ok '[ -e "$T/fsm" ]' "RT-A-02 premise: a plain status that refreshes the index runs the post-index-change hook of a worktree config.worktree"
 rm -f "$T/fsm"; touch "$T/repo/.worktrees/t_0000a006/g6.txt"; h=$(head_of "$T/repo")
-ok '[ "$(FAKE_APPROVED=t_0000a006 mc t_0000a006)" = 0 ] && [ ! -e "$T/fsm" ] && [ "$(head_of "$T/repo")" != "$h" ]' "RT-A-02: a worktree config.worktree with core.hooksPath: its index hook is not run (-c core.hooksPath=/dev/null)"
+ok '[ "$(FAKE_APPROVED=t_0000a006 mc t_0000a006)" = 3 ] && grep -q "worktreeConfig" "$T/out" && [ ! -e "$T/fsm" ] && [ "$(head_of "$T/repo")" = "$h" ]' "RT-A-02: a worktree config.worktree with core.hooksPath: its index hook is not run (-c core.hooksPath=/dev/null)"
+g config --unset extensions.worktreeConfig; g config core.repositoryformatversion 0   # the cases below are not about worktree configs
 printf 'dirty\n' >> "$T/repo/.worktrees/t_0000a007/g7.txt"; printf 'garbage\n' > "$T/repo/.worktrees/t_0000a007/.git"; h=$(head_of "$T/repo")
 ok '[ "$(FAKE_APPROVED=t_0000a007 mc t_0000a007)" = 3 ] && grep -q "is not clean" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "RT-A-02: a dirty worktree whose .git file was overwritten is read through the main checkout's entry: refused as not clean"
 # a submodule's git dir lives inside the writable worktree entry (worktrees/<id>/modules/<name>): its config is worker-controlled too, and
@@ -264,6 +267,7 @@ card t_0000b006 b6.txt b6 'exit 0'; h=$(head_of "$T/repo")
 blob=$(g rev-parse "stella/t_0000b006-x:b6.txt"); of="$T/repo/.git/objects/${blob:0:2}/${blob:2}"
 chmod u+w "$of"; python3 -c 'import sys,zlib; open(sys.argv[1],"wb").write(zlib.compress(b"blob 5\0EVIL\n"))' "$of"
 ok '[ "$(FAKE_APPROVED=t_0000b006 mc t_0000b006)" = 3 ] && grep -q "fsck" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "VH-02: an object whose content does not match its id (written through a shared objects folder): refused, main untouched"
+rm -f "$of"; printf 'b6\n' | g hash-object -w --stdin >/dev/null   # put the blob back: the cases below must fail (or merge) on their own merits, not on this damage
 # F1 W4 round 3 (K1, K2, K8): the merge judges the tree the merge will produce, the card's tests run in the box, every refusal is coded once.
 RF=${ROLES_FILE:-/workspace/docs/hermes-local/roles.json}; IDX=/workspace/$(jq -r .data_index "$RF")
 mapfile -t STATE < <(jq -r '.backup_dir + "/planted-by-card", .applied_state, .event_log' "$IDX")   # the apply tool's state paths, from the index
@@ -316,4 +320,11 @@ HOOK=$(jq -r '[.roles[].hooks[]? | .file // empty] | first' "$RF"); mkdir -p "$T
 wcard t_0000d0a8; printf '#!/bin/sh\nexit 0\n' >"$T/repo/.worktrees/t_0000d0a8/$HOOK"; git -C "$T/repo/.worktrees/t_0000d0a8" add -f -A; wcommit t_0000d0a8
 a0=$(nal); ok '[ "$(FAKE_APPROVED=t_0000d0a8 mc t_0000d0a8)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && [ "$(nal)" = $((a0+1)) ]' "K8: the boundary refusal carries a catalog code and writes one alert line"
 a0=$(nal); ok '[ "$(ROLES_FILE=$T/garbage.json FAKE_APPROVED=t_0000d0a8 mc t_0000d0a8)" = 3 ] && grep -q "STL-CFG-303" "$T/out" && [ "$(nal)" -le $((a0+2)) ]' "K8: the lists unreadable: a coded refusal"
+# T9 (F1 W4 r4): a data file the boundary code loads by a fixed path (the alert catalog, and the alert-code page made from it) is a boundary path: a card that
+# changes it is refused without the owner's flag, with the boundary code, and lands with it (the owner path)
+CAT=$(jq -r '[.boundary_paths[] | select(endswith(".json")) | select(. != "docs/hermes-local/roles.json")][0]' "$RF"); ACD=$(jq -r '[.boundary_paths[] | select(endswith(".md"))][0]' "$RF")
+for f in "$CAT" "$ACD"; do mkdir -p "$T/repo/${f%/*}"; printf 'owner version\n' >"$T/repo/$f"; g add -f "$f"; done; g -c core.hooksPath=/dev/null commit -qm "catalog and code page, as the owner has them"
+wcard t_0000d0a9; for f in "$CAT" "$ACD"; do printf 'a card adds a code\n' >"$T/repo/.worktrees/t_0000d0a9/$f"; done; git -C "$T/repo/.worktrees/t_0000d0a9" add -f -A; wcommit t_0000d0a9; h=$(head_of "$T/repo")
+a0=$(nal); ok '[ "$(FAKE_APPROVED=t_0000d0a9 mc t_0000d0a9)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -q "define the boundary" "$T/out" && grep -qF "$CAT" "$T/out" && grep -qF "$ACD" "$T/out" && [ "$(nal)" = $((a0+1)) ] && [ "$(head_of "$T/repo")" = "$h" ]' "T9: a card that changes the alert catalog ($CAT) and its code page is refused without the flag (boundary code, one alert line, both listed), main untouched"
+ok '[ "$(FAKE_APPROVED=t_0000d0a9 mc t_0000d0a9 --i-have-read-the-boundary-changes)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ] && grep -q "a card adds a code" "$T/repo/$CAT"' "T9: the same card lands by the owner path (--i-have-read-the-boundary-changes)"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

@@ -125,7 +125,7 @@ def problems(e, value):
 def current(e):
     """(value or None, where it came from) of an entry; the default when nothing is stored."""
     row, k = store(e)
-    _, cfg = read_store(row, "STL-CFG-310")   # a read of a store that does not parse is a data file that is invalid, not a change that failed
+    _, cfg = read_store(row)   # T2: a store that does not parse is refused with the one code set uses too (G5: "refused the same way")
     if k in cfg:
         return typed_stored(e, cfg[k]), "store"
     if e["default"] is not None and problems(e, e["default"]):   # the registry's own default is refused by its own rules: no value is served
