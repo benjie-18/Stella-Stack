@@ -496,13 +496,13 @@ MV=(cp mv install ln tar rsync unzip sort touch gzip perl sed tee dd truncate cu
 MF=("@V @P" "@V /tmp/x @P" "@V @P/" "@V -C @P" "@V -C@P" "@V --directory=@P" "@V -t @P" "@V -o @P" "@V -x /tmp/x -f @P")
 MT=("/workspace/$ODD" "/workspace/$ODF" "/workspace/$(printf '%s' "$ODD" | tr a-z A-Z)" "/workspace/$(jq -r .applied_state "/workspace/$(jq -r .data_index /workspace/docs/hermes-local/roles.json)" | cut -d/ -f1)")   # the folder, a file, a case variant, a folder above the state paths
 MR=(cat head wc grep jq ls stat cmp)
+{ for v in "${MV[@]}"; do for f in "${MF[@]}"; do for t in "${MT[@]}"; do c=${f//@V/$v}; printf 'refused\t%s\n' "${c//@P/$t}"; done; done; done
+  for v in "${MR[@]}"; do for t in "${MT[@]}"; do printf 'allowed\t%s %s\n' "$v" "$t"; printf 'allowed\t%s /tmp/x %s\n' "$v" "$t"; done; done; } >"$T/matrix.txt"
+for p in $BUILDERS; do python3 -I "$T/matrix.py" "$G" "/workspace/.worktrees/$C" "$p" <"$T/matrix.txt" >"$T/matrix-$p.out" 2>&1 & done; wait   # the builders' matrices side by side
 for p in $BUILDERS; do
   OWN=/workspace/.worktrees/$C
-  { for v in "${MV[@]}"; do for f in "${MF[@]}"; do for t in "${MT[@]}"; do c=${f//@V/$v}; printf 'refused\t%s\n' "${c//@P/$t}"; done; done; done
-    for v in "${MR[@]}"; do for t in "${MT[@]}"; do printf 'allowed\t%s %s\n' "$v" "$t"; printf 'allowed\t%s /tmp/x %s\n' "$v" "$t"; done; done; } >"$T/matrix.txt"
-  python3 -I "$T/matrix.py" "$G" "$OWN" "$p" <"$T/matrix.txt" >"$T/matrix.out" 2>&1
-  ok 'grep -q "^matrix-bad=0$" "$T/matrix.out"' "T4 $p: $(grep -c ^refused "$T/matrix.txt") generated non-reader commands (${#MV[@]} verbs x ${#MF[@]} forms x ${#MT[@]} targets) refused with the code, $(grep -c ^allowed "$T/matrix.txt") reader commands allowed"
-  grep "^     " "$T/matrix.out" | head -5
+  ok 'grep -q "^matrix-bad=0$" "$T/matrix-$p.out"' "T4 $p: $(grep -c ^refused "$T/matrix.txt") generated non-reader commands (${#MV[@]} verbs x ${#MF[@]} forms x ${#MT[@]} targets) refused with the code, $(grep -c ^allowed "$T/matrix.txt") reader commands allowed"
+  grep "^     " "$T/matrix-$p.out" | head -5
   wg() { hookrun bind $C $p $OWN terminal "$(tjson "$1")" "${2:-$OWN}"; }
   k=0; for f in "${MF[@]}"; do v=${MV[$((k % ${#MV[@]}))]}; t=${MT[$((k % ${#MT[@]}))]}; k=$((k+1)); c=${f//@V/$v}; c=${c//@P/$t}
     ok '[ "$(wg "$c")" = 2 ] && grep -qF "STL-CFG-312" "$T/out"' "T4 $p: the real hook process agrees with the matrix: $c"
