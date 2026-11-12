@@ -752,14 +752,18 @@
         "complete-gate",
         "delegation",
         "escalate",
+        "escalation-reply-poll",
         "event-log",
         "hardcode-lint",
         "kanban-board",
+        "kanban-guard",
         "merge-card",
+        "model-watch",
         "omniroute-run",
         "owner-settings",
         "profile-hooks",
         "reviewer-claude",
+        "role-guard",
         "roles",
         "routing",
         "settings",
@@ -769,7 +773,7 @@
         "watchdog",
         "write-guard"
       ],
-      "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
+      "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field); reach after item W5 round 4 (the lint imports the model watch's reader and the role tool)"
     },
     {
       "globs": [
@@ -1204,9 +1208,13 @@
         "bin/hardcode-lint.sh"
       ],
       "targets": [
-        "hardcode-lint"
+        "escalation-reply-poll",
+        "hardcode-lint",
+        "kanban-guard",
+        "model-watch",
+        "role-guard"
       ],
-      "why": "from reach: the always gate's own selftest and tool"
+      "why": "from reach: the always gate's own selftest and tool; reach after item W5 round 4 (the lint imports the model watch's reader and the role tool)"
     },
     {
       "globs": [
@@ -1345,13 +1353,17 @@
         "complete-gate",
         "delegation",
         "escalate",
+        "escalation-reply-poll",
         "event-log",
         "hardcode-lint",
         "kanban-board",
+        "kanban-guard",
         "merge-card",
+        "model-watch",
         "omniroute-run",
         "profile-hooks",
         "reviewer-claude",
+        "role-guard",
         "roles",
         "routing",
         "settings",
@@ -1361,7 +1373,7 @@
         "watchdog",
         "write-guard"
       ],
-      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach); reach after item W5 round 4 (the lint imports the model watch's reader and the role tool)"
     },
     {
       "globs": [
@@ -1430,10 +1442,16 @@
       "targets": [
         "check-guard",
         "complete-gate",
+        "escalation-reply-poll",
         "hardcode-lint",
-        "role-guard"
+        "kanban-board",
+        "kanban-guard",
+        "model-watch",
+        "profile-hooks",
+        "role-guard",
+        "watchdog"
       ],
-      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
+      "why": "from reach: the selftests that run or name these files (bin/test-map.py reach); reach after item W5 round 4 (the lint imports the model watch's reader and the role tool)"
     },
     {
       "globs": [
