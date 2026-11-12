@@ -32,19 +32,35 @@ problem). Read with `list`, `get <id> [<entry>]` and `search <words>`; every rea
 
 ## The index and the schemas
 
-`.stella/data-files.json` lists every data file: `id`, `path` (a file, or a folder of `*.json`), `schema` (a plain name
+`.stella/data-files.json` lists every data file: `id`, `path` (a file, or a folder of `*.json`: **a row is a folder of entries
+when its format is `json` and its path does not end in `.json`; every other row is one file**, and nothing else decides it, not
+the list key and not the disk; `stella_data.folder_row(row)` is that rule for this tool and the apply tool), `schema` (a plain name
 such as `settings`, lower case letters, digits and `-`, read as `.stella/schemas/<schema>.schema.json`; null for an env file), `format` (`json` or `env`), `owner_only` (only the
 owner's path writes it), `redact_keys` (key names whose values are masked in logs), `list_key` (the array or map that
 holds the entries) and `id_field` (several fields, comma separated, make an id joined with `:`; approved hosts use `host,port`).
 It also names the event log, the backup folder, the applied-state file and the role table. Every path in the index is
 relative, has no `..` part and must resolve (symlinks followed) inside the stack root; `check` refuses one that does not,
 and `get`, `list` and `search` never read it. The index row of the index is `owner_only`: it decides which files are.
-Two rows that resolve to one file (`./x` and `x`, a folder row and a row on one of its files) are refused, and neither is
-opened; each of them is refused with that reason, naming every row. A row whose file is one of the role table's
-`owner_settings` must be format `env` and `owner_only`; `check`, `validate` and the read commands never open that file,
-whatever the row or the path says: before a byte is read, the identity of the file (device and inode, from `stat` and again
-from the opened file) is compared with the owner settings files' and every env row's file, so a hard link, a symlink or a
-link swapped during the run is refused unread. A folder row lists the `*.json` names of its folder (by name: `[`, `*`, `?` in
+**A row is charged for its own fault only**, also for where its path points. A JSON row whose path, a folder in that path below
+the stack root, or an entry file of its folder is a symbolic link is refused, that row alone ("must not be a symbolic link",
+naming the row and the path): it is compared with no other row, so the row whose file the link points to (the settings
+registry, the index, the catalog) gets no line and stays served. A link that leaves the stack root is refused as leaving it.
+Two rows that spell the same file (`./x` and `x`, a folder row and a row on one of its files) are refused, and neither is
+opened; each of them is refused with that reason, naming every row. A JSON row whose disk disagrees with its kind is a problem
+of that row and is not opened: a path ending in `.json` that is a folder, a path not ending in `.json` that is a file (the line
+says to rename the path in the index so it does not, or does, end in `.json`), or a folder row whose folder does not exist. A
+row id that is a name this tool uses for something that is no row (`role-table`, the index's `data-files` on a row that is not
+the index, anything starting with `schema:`) is refused. A row whose file is one of the role table's
+`owner_settings` must be format `env` and `owner_only`; `check`, `validate` and the read commands never open an owner settings
+file of the stack root they run on (`STELLA_ROOT`, else the tool's own parent folder), whatever the row or the path says:
+before a byte is read, the identity of the file (device and inode, from `stat` and again from the opened file) is compared
+with that root's owner settings files and every env row's file, so a hard link, a symlink or a link swapped during the run is
+refused unread; when the index of that root cannot be read or is not valid, `validate` opens no file at all and says so
+(`STL-CFG-310`). Limit: the list of closed files comes from the root the tool runs on, so a caller who points `STELLA_ROOT` at
+another root can have `validate` open a file that is an owner setting of the first root (the secret guard, not this tool, is
+the control for a command that names such a path). Env rows and owner settings keep the identity rule only (no link rule here;
+the apply tool has its own), so an env row that resolves to a JSON row's file still closes both rows. A folder row lists the
+`*.json` names of its folder (by name: `[`, `*`, `?` in
 the row path or the stack root are plain characters, never a glob). When the role table cannot be read, `check` says so, only
 the files of env rows stay closed, and the rules that read the table do not run: the rows they judge (role assignments,
 capabilities, extensions, connections) are refused, the others are still judged and served.
@@ -71,7 +87,9 @@ length. A key name taken from the file (an unknown key, a repeated key, a key of
 no value pattern of the connections catalog (`redaction_patterns`) matches it; else it is "a masked key" at its path. An entry
 id (an assignment, a provider, a feature, a host, a setting key; a role name only when the role table holds it) is printed the
 same way: "a masked id" when a value pattern matches it. A key name or id longer than 1024 characters, or any of them while
-the catalog's patterns cannot be read, counts as matched. File paths
+the catalog's patterns cannot be read, counts as matched; the lines about the catalog's own fault then still say where: a
+pattern that does not compile names its entry by position ("entry 4 of its file"), a repeated key by position ("key 3 of its
+object"), a wrong `redaction_patterns` by its path (`$.entries[3]`). File paths
 from the index are printed: they locate the file. Lines that bin/roles.py writes about the role table are passed through as it
 writes them (item W2). Numbers must fit a float (a number too large, or a non-zero number so small it would read as 0, is refused), strings must be valid Unicode text, and nesting is limited to 64 levels
 (one limit for `check` and the read commands). Every data file needs `schema_version`. `check` also runs the
@@ -129,9 +147,11 @@ a free-form object such as `parameters`, `cost` or `limits` is masked), the defa
 value pattern of the connections catalog (`redaction_patterns`, from every entry) matches, inside lists too; a key name the
 schema does not fix (a key of a free-form object such as `parameters`, a project name, an entry id used as a key) and an entry
 id in `list` and `search` are masked (`***`, then `***2`, ...) the same way. No pattern runs on a string longer than 1024
-characters: it is masked whole (`MASK_LIMIT`), so a read takes bounded time per string. The catalog is a dependency of every
+characters: it is masked whole (`MASK_LIMIT`), so a read takes bounded time per string. The two entry lists a card branch may
+write are bounded by their schemas (`maxItems`: 128 capability entries, 16 version pins; data, the owner may change them), so a
+read of them is bounded too; the number of files in a folder row and the size of owner-only files are not bounded. The catalog is a dependency of every
 read through its patterns only: when they cannot be read (no JSON row of the connections schema, a row of it that is not
-opened, a file of it that does not load, a `redaction_patterns` that is not a list of strings, a pattern that does not
+opened, a file of it that does not load, a `redaction_patterns` that is not a list of strings (null, false, 0, "" and {} included: never "no patterns"), a pattern that does not
 compile; a file check refuses for another field still gives its patterns, since one more pattern never prints a value), every read that is otherwise
 served masks every string, id and free-form key name instead of refusing (numbers, booleans and the key names the schema fixes
 stay), so the settings read keeps its numbers and nothing unmasked is printed; `check` names what is wrong with the catalog.
@@ -139,7 +159,8 @@ stay), so the settings read keeps its numbers and nothing unmasked is printed; `
 expression. The patterns are the owner's picks: a name pattern also hides a non-secret field whose name it matches (the
 shipped one ends in `token`, so `usd_per_input_token` would be shown as `***`), and a value no pattern matches is shown;
 change the pattern, not the code. `validate <schema> <file>` prints each problem as a `STL-CFG-310` line, for every schema;
-it refuses, unread, a file that is an owner setting (the identity test above); `validate roles` finds the data policy through
+it refuses, unread, a file that is an owner setting of the root it runs on (the identity test above), and opens no file when
+that root's index cannot be read; `validate roles` finds the data policy through
 the rows whose schema is `data-policy`. `validate` answers about any other JSON file the caller names, against a schema of the
 stack root it runs on. A command that fails in a way not listed here ends in exit 1 and one
 `STL-CFG-310` line naming only the exception type. `search` matches values, not key names, ignoring case (also non-ASCII text).
