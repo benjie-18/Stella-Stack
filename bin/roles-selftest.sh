@@ -151,7 +151,44 @@ ok '[ "$(python3 $S/roles.py requirements no-such-role >"$T/out" 2>&1; echo $?)"
 jq --argjson q "$RQ" '.roles["fake-role"] = (.roles.unlisted + {requirements: $q})' "$RF" >"$T/fr.json"
 H2="$T/h2"; mkdir -p "$H2"; echo x >"$H2/config.yaml"; for p in $(jq -r '.profiles | keys[] | select(. != "default")' "$RF"); do mkdir -p "$H2/profiles/$p"; echo x >"$H2/profiles/$p/config.yaml"; done
 ok '[ "$(ROLES_FILE=$RF python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?)" = 0 ] && [ "$(ROLES_FILE=$T/fr.json python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?)" = 0 ] && [ "$(ROLES_FILE=$T/fr.json python3 $S/roles.py requirements fake-role | jq -S -c .)" = "$(jq -Sc . <<<"$RQ")" ]' "W2: a fake role with requirements passes check and answers, no code change"
-chk() { ROLES_FILE=$T/b.json python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?; }
+# T1 (F1 W4 r5): `check` on a generated table goes through ONE driver process that runs roles.py's whole script (argv, the table in ROLES_FILE,
+# stdout and stderr as one stream, its exit code). The first case of each exit code also runs as a real roles.py process and must agree (lines
+# as sets); an agreement case with a planted-difference control follows the table cases. The cases about the CLI itself stay process runs.
+cat >"$T/cli.py" <<'PY'
+import base64, io, json, os, sys, traceback
+codes, keep = {}, (sys.stdout, sys.stderr, sys.stdin, sys.argv)
+for line in keep[2]:
+    r = json.loads(base64.b64decode(line))
+    if r["script"] not in codes:
+        codes[r["script"]] = compile(open(r["script"], encoding="utf-8").read(), r["script"], "exec")
+    old = {k: os.environ.get(k) for k in r["env"]}; os.environ.update(r["env"])
+    out = io.StringIO(); sys.stdout = sys.stderr = out; sys.stdin = io.StringIO(""); sys.argv = [r["script"], *r["argv"]]
+    try:
+        exec(codes[r["script"]], {"__name__": "__main__", "__file__": r["script"]}); rc = 0
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else 0 if e.code is None else 1
+        if isinstance(e.code, str):
+            print(e.code, file=out)
+    except BaseException:
+        traceback.print_exc(file=out); rc = 1
+    finally:
+        sys.stdout, sys.stderr, sys.stdin, sys.argv = keep
+        for k, v in old.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+    keep[0].write(f"{rc}\t{base64.b64encode(out.getvalue().encode()).decode()}\n"); keep[0].flush()
+PY
+
+mkfifo "$T/cin" "$T/cout"; python3 -I "$T/cli.py" <"$T/cin" >"$T/cout" 2>"$T/cerr" & CPID=$!; exec {CW}>"$T/cin" {CR}<"$T/cout"; : >"$T/cseen"; : >"$T/crows"
+dchk() {   # dchk <roles.py folder> <table>: check in the driver; exit code echoed, output in $T/out
+  local rc b; printf '%s\n' "$(jq -nc --arg s "$1/roles.py" --arg t "$2" --arg h "$H2" '{script: $s, argv: ["check", $h], env: {ROLES_FILE: $t}}' | base64 -w0)" >&"$CW"
+  IFS=$'\t' read -r rc b <&"$CR"; printf '%s' "$b" | base64 -d >"$T/out"; echo "$rc"; }
+chk() {
+  local rc rrc; rc=$(dchk "$S" "$T/b.json"); cp "$T/b.json" "$T/crow.$(wc -l <"$T/crows").json"; echo x >>"$T/crows"
+  if ! grep -qxF -- "$rc" "$T/cseen"; then
+    echo "$rc" >>"$T/cseen"; ROLES_FILE=$T/b.json python3 $S/roles.py check "$H2" >"$T/out.real" 2>&1; rrc=$?
+    if [ "$rrc" != "$rc" ] || [ "$(sort "$T/out")" != "$(sort "$T/out.real")" ]; then echo "     route agreement: exit $rc differs (driver $rc, process $rrc)" >&2; echo 99; return; fi
+  fi
+  echo "$rc"; }
 for r in $(jq -r '.roles | keys[]' "$RF"); do
   jq --arg r "$r" 'del(.roles[$r].requirements)' "$RF" >"$T/b.json"
   ok '[ "$(chk)" = 1 ] && grep -q "role $r: requirements" "$T/out"' "W2: role $r without requirements: check fails"
@@ -361,6 +398,14 @@ bad "del(.roles[\"$SERVED\"].platform_toolsets)" 'explicit platform_toolsets' "K
 bad 'del(.judged_hooks)' 'judged_hooks' "K6: the judged set missing"
 bad 'del(.read_verbs)' 'read_verbs' "K7: the list of readers missing"
 bad 'del(.main_branch)' 'main_branch' "K9: the main branch missing"
+# T1: the two routes agree on every 5th generated table above, and a planted difference (a driver copy of roles.py whose INVALID line reads otherwise) is caught
+cagree() { local n=0 i rc rrc; for ((i = 0; i < $(wc -l <"$T/crows"); i += 5)); do
+    rc=$(dchk "$1" "$T/crow.$i.json"); ROLES_FILE=$T/crow.$i.json python3 $S/roles.py check "$H2" >"$T/ag.real" 2>&1; rrc=$?
+    { [ "$rc" = "$rrc" ] && [ "$(sort "$T/out")" = "$(sort "$T/ag.real")" ]; } || n=$((n+1)); done; echo "$n"; }
+mkdir -p "$T/px"; sed 's/roles: INVALID/roles: NOT VALID/' "$S/roles.py" >"$T/px/roles.py"; cp "$S"/alert_catalog.py "$T/px/"
+CN=$(wc -l <"$T/crows"); CD=$(cagree "$S"); CX=$(cagree "$T/px")
+ok '[ "$CN" -ge 50 ] && [ "$CD" = 0 ]' "T1 route agreement: every 5th of $CN generated tables gives the same exit code and output in the driver as a real roles.py check ($CD differ)"
+ok '[ "$CX" -gt 0 ]' "T1 route agreement, negative control: a planted difference in the driver's roles.py is caught ($CX differ)"
 # every hook entry that says writes: refused refuses a write of every tool its matcher names (the marker is tied to what the hook does)
 for h in $(jq -r '[.roles[].hooks[]? | select(.writes == "refused") | (.file // .command)] | unique[]' "$RF"); do
   for t in $(jq -r --arg h "$h" '[.roles[].hooks[]? | select((.file // .command) == $h and .writes == "refused") | .matcher] | unique[]' "$RF" | while read -r m; do jq -r '.write_tools[]' "$RF" | while read -r w; do python3 -I -c 'import re,sys; print(sys.argv[2]) if re.fullmatch(sys.argv[1], sys.argv[2]) else None' "$m" "$w"; done; done | grep -v '^None$' | sort -u); do
@@ -438,4 +483,5 @@ t = time.time(); a = roles.braces(\"{a,b}\" * 60 + \"x\"); b = roles.braces(\"{\
 assert len(a) > 64 and len(b) > 64 and len(c) > 64 and time.time() - t < 2, time.time() - t
 assert roles.braces(\"a{b,c}d\") == [\"abd\", \"acd\"]
 " "$S"' "K5: brace expansion past 64 words is cut off at once, in time, whatever the word's length; a small expansion is unchanged"
+exec {CW}>&- {CR}<&-; wait "$CPID"   # the check driver ends
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
