@@ -9,6 +9,7 @@
     },
     "pins": {
       "type": "array",
+      "maxItems": 24,
       "items": {
         "type": "object",
         "properties": {
