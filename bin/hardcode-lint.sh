@@ -75,7 +75,7 @@ def rx(p, cap=False):  # a whole path; ** crosses folders, * and ? stop at a bor
 try:
     with open(root / "docs/hermes-local/roles.json", encoding="utf-8") as fh: rt = json.load(fh, object_pairs_hook=roles._pairs)
 except (OSError, ValueError) as e: err(f"the role table (docs/hermes-local/roles.json) cannot be read ({type(e).__name__})")
-bad = roles.validate(rt, str(root), files=False)   # as the role tool refuses it (an empty owner_settings list among the rest)
+bad = roles.validate(rt, str(root))   # as the role tool refuses it (the hook-file rule included, B.2 point 8) (an empty owner_settings list among the rest)
 if bad: err("the role table (docs/hermes-local/roles.json) is refused by bin/roles.py: " + "; ".join(bad)[:400])
 try:
     idx = roles.index(rt, str(root))
