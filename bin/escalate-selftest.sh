@@ -232,18 +232,18 @@ ok 'grep -q "^STL-CFG-310 " "$T/err"' "E2: ... and the refusal prints STL-CFG-31
 cp "$T/limits.keep" "$T/sup/limits.env"; rm -rf "$R"
 
 # W5 r3 (F4, F5, F6): a refusal or a lost call is never silent; a queue file is never trusted blindly and never lied about
-cp "$T/limits.keep" "$T/sup/limits.env"; : >"$T/sup/sends"; R="$T/reg2"; mkdir -p "$R"; cp -r /workspace/.stella "$R/.stella"; echo '{' >"$R/$REG"
+cp "$T/limits.keep" "$T/sup/limits.env"; : >"$T/sup/sends"; rm -f "$T/sup/state/alert-"*.stamp; R="$T/reg2"; mkdir -p "$R"; cp -r /workspace/.stella "$R/.stella"; echo '{' >"$R/$REG"
 check 2 "F4: unreadable registry: refused" env STELLA_ROOT=$R sh -c "echo hi | $E t_aaaa0301 haiku judge why"
 ok '[ "$(nalerts "\\[STL-CFG-310\\]\\*\\*\$")" = 1 ] && grep -q "t_aaaa0301" "$T/sup/sends" && grep -q "^STL-CFG-310\|STL-CFG-310" "$T/err"' "F4: ... the refusal raises one #alerts line (STL-CFG-310, the card named) beside the coded stderr line; nothing is queued (the queue bound is what could not be read)"
 rm -rf "$R"; cp "$T/limits.keep" "$T/sup/limits.env"; setlimit HAIKU_MAX_PER_DAY 0; setlimit QUEUE_MAX 2
 qline() { printf '{"id":"q_%s","card":"t_aaaa0000","model":"haiku","purpose":"judge","reason":"LIMIT","created":"2026-01-01T00:00:00Z","state":"queued","prompt_file":"/nonexistent"}\n' "$1"; }
-{ qline c1; qline c2; printf '{"id":"q_cut","card":"t_aaaa0000","sta\n'; } >"$Q"; : >"$T/sup/sends"; : >"$T/sup/comments"
+{ qline c1; qline c2; printf '{"id":"q_cut","card":"t_aaaa0000","sta\n'; } >"$Q"; : >"$T/sup/sends"; rm -f "$T/sup/state/alert-"*.stamp; : >"$T/sup/comments"
 check 3 "F5: one cut line in the queue file, two entries, QUEUE_MAX=2: refused" sh -c "echo hi | $E t_aaaa0302 haiku judge why 2>$T/err1"
 ok '[ "$(wc -l <"$Q")" = 3 ] && grep -q "queue.jsonl" "$T/err1" && grep -q "NOT queued" "$T/err1" && ! grep -q "recorded in the queue" "$T/err1" "$T/sup/comments" && [ "$(nalerts "\\[STL-CFG-310\\]\\*\\*\$")" = 1 ] && grep -q "NOT queued" "$T/sup/comments"' "F5/RT2-03: ... the file is not read as empty: nothing is added, one warning names the file, the card note and the #alerts line say it was not queued"
 qline c1 >"$Q"; printf '{"id":"q_cut' >>"$Q"; chmod 444 "$Q"; : >"$T/sup/sends"
 check 3 "F5/RT2-04: queue file that cannot be written (read-only): refused" sh -c "echo hi | $E t_aaaa0303 haiku judge why 2>$T/err1"
 ok '! grep -q "recorded in the queue" "$T/err1" && grep -q "NOT queued" "$T/err1"' "F5/RT2-04: ... no 'recorded in the queue' claim"
-rm -f "$Q"; touch "$Q"; chmod 000 "$Q"; : >"$T/sup/sends"
+rm -f "$Q"; touch "$Q"; chmod 000 "$Q"; : >"$T/sup/sends"; rm -f "$T/sup/state/alert-"*.stamp
 check 3 "F5/RT2-04: queue file that cannot be read or written (mode 000): refused" sh -c "echo hi | $E t_aaaa0304 haiku judge why 2>$T/err1"
 chmod 600 "$Q"; ok '! grep -q "recorded in the queue" "$T/err1" && grep -q "NOT queued" "$T/err1" && [ "$(nalerts "\\[STL-CFG-310\\]\\*\\*\$")" = 1 ]' "F5/RT2-04: ... no 'recorded' claim, one #alerts line"
 { qline d1 | tr -d '\n'; } >"$Q"; setlimit QUEUE_MAX 5
@@ -257,5 +257,28 @@ ok '[ "$(jq -sc "length" "$Q")" = 1 ]' "F5/VER2-04: ... exactly one entry"
 ok '[ "$($D --list 2>"$T/err1" | cut -f1 | tr "\n" ,)" = "q_e1,q_e2," ] && grep -q "1 line(s)" "$T/err1"' "F6/RT2-03: --list shows the entries before and after an unparsable line, and warns once"
 ok '$D --drop q_e2 | grep -q dropped && [ "$(sed -n 2p "$Q")" = "not json at all" ] && [ "$(sed -n 3p "$Q" | jq -r .state)" = dropped ]' "F6/RT2-03: --drop of an entry after the line works and leaves the line as it was"
 rm -f "$Q"
+
+# W5 r4 (V4): a standing condition (bad registry, bad queue file) alerts once an hour; every lost or refused call keeps its own log line;
+# the registry is read after the usage checks and never alerts for a replay. Written before the fix.
+nlog() { jq -r --arg e "$1" 'select(.event == $e) | .card' "$T/sup/escalations.log" | grep -c -- "$2" || true; }
+stamps() { rm -f "$T/sup/state/alert-"*.stamp; : >"$T/sup/sends"; }
+cp "$T/limits.keep" "$T/sup/limits.env"; R="$T/reg4"; mkdir -p "$R"; cp -r /workspace/.stella "$R/.stella"; echo '{' >"$R/$REG"; stamps
+check 2 "V4: unreadable registry, a replayed call: refused" env STELLA_ROOT=$R ESCALATE_REPLAY=q_zz sh -c "echo hi | $E t_aaaa0401 haiku judge why"
+ok '[ "$(nalerts t_aaaa0401)" = 0 ]' "V4: ... no #alerts line for a replay"
+check 2 "V4: unreadable registry, a call with an unknown card: refused as a usage error" env STELLA_ROOT=$R sh -c "echo hi | $E t_00000000 haiku judge why"
+ok 'grep -q "not found" "$T/err" && ! grep -q STL-CFG-310 "$T/err" && [ ! -s "$T/sup/sends" ]' "V4: ... the usage check comes first: no registry refusal, no alert"
+check 2 "V4: unreadable registry, first call" env STELLA_ROOT=$R sh -c "echo hi | $E t_aaaa0402 haiku judge why"
+check 2 "V4: unreadable registry, second call" env STELLA_ROOT=$R sh -c "echo hi | $E t_aaaa0403 haiku judge why"
+ok '[ "$(nalerts "\\[STL-CFG-310\\]\\*\\*\$")" = 1 ] && [ "$(nlog SETTING_UNREADABLE t_aaaa040[23])" = 2 ]' "V4: ... two refusals, one #alerts line (once an hour), one log line each"
+rm -rf "$R"; cp "$T/limits.keep" "$T/sup/limits.env"; setlimit HAIKU_MAX_PER_DAY 0; setlimit QUEUE_MAX 5
+{ qline f1; printf '{"id":"q_cut","card":"t_aaaa0000","sta\n'; } >"$Q"; stamps; : >"$T/sup/comments"
+check 3 "V4: a bad queue line, first call" sh -c "echo hi | $E t_aaaa0404 haiku judge why"
+check 3 "V4: a bad queue line, second call" sh -c "echo hi | $E t_aaaa0405 haiku judge why"
+ok '[ "$(nalerts "\\[STL-LIM-405\\]\\*\\*\$")" = 1 ] && [ "$(nalerts "\\[STL-CFG-310\\]")" = 0 ] && [ "$(nlog NOT_QUEUED t_aaaa040[45])" = 2 ] && [ "$(grep -c "NOT queued" "$T/sup/comments")" = 2 ]' "V4: ... two lost calls, one STL-LIM-405 #alerts line (once an hour), a NOT_QUEUED log line and a card note each"
+ok 'python3 -I /workspace/bin/alert_catalog.py explain STL-LIM-405 | grep -qi "lost"' "V4: STL-LIM-405 is in the catalog and says the call was lost"
+for i in 1 2 3 4 5; do qline "g$i"; done >"$Q"; stamps
+check 3 "V4: the queue is full" sh -c "echo hi | $E t_aaaa0406 haiku judge why"
+ok '[ "$(nlog NOT_QUEUED t_aaaa0406)" = 1 ]' "V4: ... the lost call has its own NOT_QUEUED log line"
+rm -f "$Q"; cp "$T/limits.keep" "$T/sup/limits.env"
 
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

@@ -183,4 +183,52 @@ fresh; mkdir -p "$H/.hermes/profiles/zzp"; chmod 000 "$H/.hermes/profiles/zzp"; 
 # F7: a source the data tool refuses makes the lint exit 2, naming what the tool names
 fresh; withcat; jq '.entries[-1].locality = "local"' "$S/.stella/connections.json" >"$T/x" && cp "$T/x" "$S/.stella/connections.json"
 ok 'refused && grep -q "connections" <<<"$out"' "F7: a catalog the data tool refuses (a local provider on a host not in the local list) is refused, the source is named"
+# ---- round 4 (QA W5 r3): the cases below were written before the fix ----
+# V1: an owner or state path is never listed, read or copied, judged by what an entry resolves to (fake owner file, scratch root only)
+gitroot() {  # a git scratch root, and an untracked fake owner file in it that holds a data literal
+  fresh; withcat; git -C "$S" init -q && git -C "$S" add -A; mkdir -p "$S/$(dirname "$ow")"; printf 'FAKE=%s\n' "$fp" >"$S/$ow"; }
+track() { git -C "$S" add -- "$@"; }
+listed() { STELLA_ROOT=$S HARDCODE_ALLOW= "$S/bin/hardcode-lint.sh" --list 2>&1; }
+copied() { rm -rf "$T/dst"; mkdir "$T/dst"; cp_listed "$S" "$T/dst"; }
+gone() { local f; out=$(listed); for f; do ! grep -qxF -- "$f" <<<"$out" && [ ! -e "$T/dst/$f" ] && [ ! -L "$T/dst/$f" ] || return 1; done; [ ! -e "$T/dst/$ow" ]; }
+gitroot; ln -s "$S/$ow" "$S/bin/zz-owner"; track bin/zz-owner
+ok 'lint >/dev/null && copied && gone bin/zz-owner' "V1: a tracked link to the owner file under a scanned name: not listed, not read (its data literal is not counted), not copied"
+gitroot; ln -s "$S/$(dirname "$ow")" "$S/bin/zz-cfg"; ln -s "$S/bin/zz-cfg/$(basename "$ow")" "$S/bin/zz-via"; track bin/zz-cfg bin/zz-via
+ok 'lint >/dev/null && copied && gone bin/zz-cfg bin/zz-via' "V1: the same through a linked parent folder (and the folder link itself, which holds the owner file)"
+gitroot; ln "$S/$ow" "$S/bin/zz-hard"; track bin/zz-hard
+ok 'lint >/dev/null && copied && gone bin/zz-hard' "V1: a hard link to the owner file: not listed, not read, not copied"
+gitroot; printf '#x\n' >"$S/-h"; printf '#x\n' >"$S/--dereference"; ln -s alert.sh "$S/bin/zz-ln"; ln -s "$S/$ow" "$S/bin/zz-owner"; track -h --dereference bin/zz-ln bin/zz-owner
+ok 'copied && [ -f "$T/dst/-h" ] && [ -f "$T/dst/--dereference" ] && [ -L "$T/dst/bin/zz-ln" ] && gone bin/zz-owner' "V1: the copy takes every list line as a file name, never as an option (files named -h and --dereference are copied, a link stays a link)"
+fresh; jq '.owner_settings = []' "$S/docs/hermes-local/roles.json" >"$T/x" && cp "$T/x" "$S/docs/hermes-local/roles.json"
+ok 'refused && grep -q owner_settings <<<"$out" && out=$(listed); [ $? = 2 ]' "V1: owner_settings [] is refused as the role tool refuses it (check and list)"
+fresh; withcat; jq '.event_log = "docs/zz-state.log"' "$S/$idx" >"$T/x" && cp "$T/x" "$S/$idx"; printf '%s\n' "$fp" >"$S/docs/zz-state.log"
+ok 'lint >/dev/null && ! listed | grep -qxF docs/zz-state.log' "V1: a state path the index names is filtered with no code change (not listed, not read)"
+fresh; ln -s zz-loop "$S/bin/zz-loop"; ok 'lint >/dev/null && ! listed | grep -qxF bin/zz-loop' "V1: a link that cannot be resolved (a loop) is dropped before anything opens it"
+fresh; ln -s zz-none "$S/bin/zz-dang"; ok 'refused && grep -q zz-dang <<<"$out"' "V1: a dangling link is refused (exit 2), naming it"
+fresh; withcat; plant bin/alert.sh "$fp"; ln -s alert.sh "$S/bin/zz-ln"
+ok 'out=$(lint --dump); [ "$(grep -c "	$fp	" <<<"$out")" = 1 ] && grep -qx "bin/alert.sh	$fp	1" <<<"$out"' "V1 control: an ordinary link to a scanned file is still scanned, once (under the file's own name)"
+# V2: an input that is there but cannot be read is exit 2 with STL-CFG-310 and its name, never a pass
+cat_path=$(jq -r '.files[] | select(.id == "connections") | .path' "$W/$idx")
+unread() {  # unread <path> <name the message must hold>: mode 000, then refused naming it
+  chmod 000 "$1"; refused && grep -q "cannot be read" <<<"$out" && grep -qF -- "$2" <<<"$out"; local r=$?; chmod 755 "$1"; return $r; }
+fresh; ok 'unread "$S/$AL" "$AL"' "V2: the allow file (and so its watch list) present but unreadable"
+fresh; ok 'unread "$S/docs/hermes-local/roles.json" roles.json' "V2: the role table present but unreadable"
+fresh; ok 'unread "$S/$idx" "$idx"' "V2: the data index present but unreadable"
+fresh; ok 'unread "$S/$cat_path" connections' "V2: the connections catalog present but unreadable"
+fresh; ok 'unread "$H" "home folder"' "V2: the home folder present but unreadable"
+fresh; ok 'unread "$H/.hermes" ".hermes"' "V2: the Hermes root home present but unreadable"
+fresh; ok 'unread "$H/.hermes/projects.db" projects.db' "V2: the projects database present but unreadable"
+fresh; mkdir -p "$H/.hermes/profiles/zzp"; printf 'model:\n  default: zzm-x\n' >"$H/.hermes/profiles/zzp/config.yaml"
+printf '#!/bin/sh\nprintf "default: zzmodel:stub-1b\\n"\n' >"$T/stub/hermes"
+ok 'unread "$H/.hermes/profiles/zzp/config.yaml" "zzp/config.yaml"' "V2: a profile config.yaml present but unreadable, with a hermes that exits 0 and prints a default: refused, never that default"
+printf '#!/bin/sh\nexit 1\n' >"$T/stub/hermes"
+fresh; withcat; mkdir "$S/zzdir"; printf '%s\n' "$fp" >"$S/zzdir/x.sh"; ok 'unread "$S/zzdir" zzdir' "V2: a folder of a tree without git present but unreadable (the walk does not skip it)"
+fresh; withcat; git -C "$S" init -q && git -C "$S" add -A; mkdir "$S/zzdir"; printf '%s\n' "$fp" >"$S/zzdir/x.sh"; track zzdir/x.sh
+ok 'unread "$S/zzdir" zzdir' "V2: a folder that holds a tracked file present but unreadable"
+# V3: run_by means the runner's list: a selftest stem the runner does not run is scanned, even when its word is in the runner's text
+for f in bin/hermes-selftest.sh bin/grep-selftest.sh; do fresh; withcat; printf '# x\n' >"$S/$f"; plant "$f" "$fp"
+  ok 'fails_on "\"$fp\"" && grep -qF -- "$f" <<<"$out"' "V3: a provider id in $f (its stem is a word of the runner, not in its list) is counted"; done
+# V6: the labels and the about text say what is true
+ok 'jq -r ".baseline[] | select(.phase | test(\"build-team preset\")) | .file" "$A" | sort -u | while read -r f; do grep -q "build-team preset" "$W/$f" || exit 1; done' "V6: a baseline row that says its file is generated from the build-team preset names a file that says so"
+ok 'jq -e ".about | test(\"joined\") and test(\"for <name> in\")" "$A" >/dev/null' "V6: the about text states the joined-literal rule of own_names and that run_by reads the runner's list"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
