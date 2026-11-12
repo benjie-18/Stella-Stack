@@ -23,8 +23,13 @@ all. The map, its schema and this tool select their rows' targets like any other
 selftest is an always gate and runs `check`, which refuses a map whose rows leave out a selftest that reaches a file. `scan` rows add targets (a selftest that reads a whole folder) but do not count as a match. Pass
 both sides of a rename (`git diff --name-only --no-renames`): the new path alone can narrow the selection. A name with
 white space (at either end too, on stdin as well), a control character, a leading dash or bytes that are not UTF-8
-selects the full suite. select also answers full when the map breaks a rule that needs no file list (the schema, a glob over every path; the reason goes to stderr), and when the
-selection would be empty. shortcut: the rules that need the file list (prose, reach, selftests, suite list, modes) are
+selects the full suite. Whatever stops select before it has an answer IS the answer full (exit 0 like every full answer,
+so a caller that pipes the answer into a runner runs everything; the plain reason on stderr; with --json `full` true,
+the reason and no targets): names on stdin that cannot be read, a map or a schema that is missing, unreadable, a
+folder, empty, not JSON, no object or against its schema, a root that does not exist, any other error. select also
+answers full when the map breaks the rule that needs no file list (a glob over every path), and when the selection
+would be empty. Only a tool that cannot start (python3 or one of its own modules missing) prints nothing and exits
+non-zero: a caller treats a non-zero exit or an empty answer as full. shortcut: the rules that need the file list (prose, reach, selftests, suite list, modes) are
 left to `check` (about 1.7 s on the stack tree against 0.05 s for a select), which every selection runs through the
 always gate test-map; upgrade if a map may drop that gate."""
 import fnmatch, json, os, re, subprocess, sys, textwrap
@@ -324,23 +329,22 @@ def main(argv):
         files = files[as_json:]
         ended = files[:1] == ["--"]
         files = files[ended:]   # "--" ends the options; every later argument is a name, "-" too
-        if files == ["-"] and not ended:
-            try:   # bytes: no CR translation, no strip (white space at either end selects full); a non-UTF-8 byte stays visible
+        what = "the file names on stdin cannot be read"   # what was being done, for the reason
+        try:   # the one rule: whatever stops select before it has an answer IS the answer full, never an empty selection
+            if files == ["-"] and not ended:   # bytes: no CR translation, no strip (white space at either end selects full); a non-UTF-8 byte stays visible
                 files = [f for f in sys.stdin.buffer.read().decode("utf-8", "surrogateescape").split("\n") if f]
-            except Exception as e:
-                complain([f"the file names on stdin cannot be read: {type(e).__name__}: {e}"], sys.stderr)
-                return 1
-        try:
+            what = MAP
             m = load()
+            what = "the selection could not be made"
+            # no file name at all (an empty stdin, no argument) is a failed diff, not "nothing changed": the full suite
+            sel = select(files, m) if files else {"full": True, "reason": ["no file name given"], "targets": sorted(m["always"])}
+            broken = wide(m)
+            if broken:   # a map that fails check cannot narrow anything
+                complain(broken, sys.stderr)
+                sel["full"], sel["reason"] = True, sel["reason"] + [f"the map fails check: {p}" for p in broken]
         except Exception as e:
-            complain([f"{MAP}: {type(e).__name__}: {e}"], sys.stderr)
-            return 1
-        # no file name at all (an empty stdin, no argument) is a failed diff, not "nothing changed": the full suite
-        sel = select(files, m) if files else {"full": True, "reason": ["no file name given"], "targets": sorted(m["always"])}
-        broken = wide(m)
-        if broken:   # a map that fails check cannot narrow anything
-            complain(broken, sys.stderr)
-            sel["full"], sel["reason"] = True, sel["reason"] + [f"the map fails check: {p}" for p in broken]
+            sel = {"full": True, "reason": [f"{what}: {type(e).__name__}: {e}"], "targets": []}
+            complain(sel["reason"], sys.stderr)
         if os.environ.get("STELLA_ROOT"):
             sel["root"] = ROOT
             if not sel["full"]:   # a narrow answer from another tree must say so; "full" runs everything whatever the tree

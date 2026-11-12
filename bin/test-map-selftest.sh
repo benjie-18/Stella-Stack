@@ -89,7 +89,7 @@ ok '! chk nl && [ "$(grep -c "" "$T/out")" = 1 ] && grep -q "looks like a test" 
 root scan '.map += [{"scan": true, "globs": ["src/*", "new/*"], "targets": ["b"]}]'
 ok '[ "$(STELLA_ROOT=$T/scan python3 -I "$TM" select --json src/a1.py | jq -c "[.full, .targets]")" = "[false,[\"a\",\"b\"]]" ] && [ "$(STELLA_ROOT=$T/scan python3 -I "$TM" select new/x)" = full ]' \
    "20 a scan row adds its targets and does not count as a match (an unmapped file still selects the full suite)"
-ok '! STELLA_ROOT=$T/broken python3 -I "$TM" select x >"$T/o" 2>"$T/e" && [ ! -s "$T/o" ] && grep -q "^STL-CFG-310 " "$T/e" && ! grep -q Traceback "$T/e"' "21 select on an unreadable map exits 1 with the catalog code and prints no selection"
+ok 'STELLA_ROOT=$T/broken python3 -I "$TM" select x >"$T/o" 2>"$T/e" && [ "$(cat "$T/o")" = full ] && grep -q "^STL-CFG-310 " "$T/e" && ! grep -q Traceback "$T/e"' "21 select on an unreadable map answers full (exit 0), with the catalog code on stderr: never an empty selection"
 
 # A row with no targets (notes/*, map row 3) may match only prose: nothing that runs, nothing read as code or data names it.
 pr() { root "$1" "${2:-.}"; mkdir -p "$T/$1/notes"; }
@@ -143,8 +143,8 @@ root case '.full += ["*guard*"]'
 ok '[ "$(STELLA_ROOT=$T/case python3 -I "$TM" select src/aGuard.py 2>/dev/null)" = full ] && [ "$(STELLA_ROOT=$T/case python3 -I "$TM" select src/a1.py 2>/dev/null)" = a ]' "25c a full-list glob matches without regard to case"
 ok '[ "$(printf "src/a1.py\n" | sel -- - | jq -r .full)" = true ] && [ "$(printf "src/a1.py\n" | STELLA_ROOT=$T/good python3 -I "$TM" select -- - 2>/dev/null)" = full ]' "25d a name \"-\" after \"--\" is a name (leading dash: full), not a read of stdin"
 ok '[ "$(printf "src/a\xe9.py\n" | LC_ALL=C.UTF-8 sel - | jq -r .full)" = true ] && [ "$(sel "$(printf "src/a\xe9.py")" | jq -r .full)" = true ]' "25e a name that is not valid UTF-8 text (on stdin or as an argument) selects full"
-ok '! STELLA_ROOT=$T/good python3 -I "$TM" select - <&- >"$T/o" 2>"$T/e" && [ ! -s "$T/o" ] && grep -q "^STL-CFG-310 .*stdin" "$T/e" && ! grep -q "test-map.json" "$T/e" && ! grep -q Traceback "$T/e"' \
-   "25f stdin that cannot be read fails with its own message, which does not blame the map"
+ok 'STELLA_ROOT=$T/good python3 -I "$TM" select - <&- >"$T/o" 2>"$T/e" && [ "$(cat "$T/o")" = full ] && grep -q "^STL-CFG-310 .*stdin" "$T/e" && ! grep -q "test-map.json" "$T/e" && ! grep -q Traceback "$T/e"' \
+   "25f stdin that cannot be read answers full with its own message, which does not blame the map"
 
 # A row is judged by what it adds beyond the always gates (a is the gate here): adding none, it may match only prose.
 pr g1 '.map[2].targets = ["a"]'; echo x >"$T/g1/notes/x.sh"
@@ -207,6 +207,40 @@ ok '( for f in src/a1.py notes/x.md bin/a-selftest.sh; do [ "$(STELLA_ROOT=$T/wi
 root none '.always = []'
 ok '[ "$(STELLA_ROOT=$T/none python3 -I "$TM" select notes/x.md 2>/dev/null)" = full ] && [ "$(STELLA_ROOT=$T/none python3 -I "$TM" select --json notes/x.md 2>/dev/null | jq -r .full)" = true ]' \
    "27c an empty selection is never printed: full"
+# The one rule at the entry of select: whatever stops it before it has an answer IS the answer full (exit 0, as every full
+# answer), the plain reason on stderr. One case per way to stop; check keeps refusing the same roots.
+full() {  # <root> [tool]: the plain and the --json answer are exactly a full answer, the reason on stderr, no traceback
+  local o
+  o=$(STELLA_ROOT=$T/$1 python3 -I "${2:-$TM}" select src/a1.py 2>"$T/e") && [ "$o" = full ] && [ -s "$T/e" ] && ! grep -q Traceback "$T/e" &&
+    o=$(STELLA_ROOT=$T/$1 python3 -I "${2:-$TM}" select --json src/a1.py 2>"$T/e") && [ -s "$T/e" ] && ! grep -q Traceback "$T/e" &&
+    [ "$(jq -c "[.full, (.reason | length > 0), .targets, .root]" <<<"$o")" = "[true,true,[],\"$T/$1\"]" ]
+}
+put() { root "$1"; rm -f "$T/$1/.stella/test-map.json"; [ $# = 1 ] || printf '%s' "$2" >"$T/$1/.stella/test-map.json"; }   # <root> [the map's text]
+tool() {  # <name>: a copy of this tool with its schema, to break the schema (it ships with the tool, not with the root)
+  mkdir -p "$T/$1/bin" "$T/$1/.stella/schemas"; cp "$BIN/test-map.py" "$BIN/alert_catalog.py" "$BIN/stella_data.py" "$T/$1/bin/"
+  cp "$BIN/../.stella/schemas/test-map.schema.json" "$T/$1/.stella/schemas/"
+}
+ok '[ "$(STELLA_ROOT=$T/good python3 -I "$TM" select src/a1.py 2>/dev/null)" = a ] && out=$(env -u STELLA_ROOT python3 -I "$TM" select bin/test-map.py) && [ -n "$out" ] && [ "$out" != full ]' \
+   "30 control: a good map (the scratch one, and the shipped one) gives a narrow answer"
+put s-missing; ok 'full s-missing && ! chk s-missing' "30a the map is missing: full"
+put s-locked '{}'; chmod 000 "$T/s-locked/.stella/test-map.json"
+ok '[ -r "$T/s-locked/.stella/test-map.json" ] || full s-locked' "30b the map cannot be read (mode 000; not testable as root): full"
+put s-folder; mkdir "$T/s-folder/.stella/test-map.json"; ok 'full s-folder && ! chk s-folder' "30c the map is a folder: full"
+put s-empty ''; ok 'full s-empty && ! chk s-empty' "30d the map is empty: full"
+put s-notjson '{'; ok 'full s-notjson && ! chk s-notjson' "30e the map is not JSON: full"
+put s-utf8 "$(printf '{"a": "\377"}')"; ok 'full s-utf8 && ! chk s-utf8' "30f the map is not UTF-8: full"
+for doc in '[]' 'null' '0' '"x"'; do put s-noobj "$doc"; ok 'full s-noobj && ! chk s-noobj' "30g the map is JSON but no object ($doc): full"; done
+put s-twice '{"always": ["a"], "always": ["a"]}'; ok 'full s-twice && ! chk s-twice' "30h the map repeats a key: full"
+root s-always '.always = "a"'; ok 'full s-always && ! chk s-always' "30i the map breaks its schema (always is a string): full"
+root s-globs '.map += [{"globs": "src/a*", "targets": ["a"]}]'; ok 'full s-globs && ! chk s-globs' "30j the map breaks its schema (globs is a string): full"
+root s-version '.schema_version = true'; ok 'full s-version && ! chk s-version' "30k the map's schema_version is not the integer 1: full"
+ok '[ ! -e "$T/s-noroot" ] && full s-noroot && ! chk s-noroot' "30l the root does not exist: full"
+tool t-gone; rm "$T/t-gone/.stella/schemas/test-map.schema.json"; ok 'full good "$T/t-gone/bin/test-map.py"' "30m the schema file is missing: full"
+tool t-bad; echo '{' >"$T/t-bad/.stella/schemas/test-map.schema.json"; ok 'full good "$T/t-bad/bin/test-map.py"' "30n the schema file is not JSON: full"
+tool t-odd; echo '[]' >"$T/t-odd/.stella/schemas/test-map.schema.json"; ok 'full good "$T/t-odd/bin/test-map.py"' "30o the schema file is JSON but no schema: full"
+tool t-ok; ok '[ "$(STELLA_ROOT=$T/good python3 -I "$T/t-ok/bin/test-map.py" select src/a1.py 2>/dev/null)" = a ]' "30p control: the copied tool with its schema whole gives the narrow answer"
+ok 'o=$(STELLA_ROOT=$T/good python3 -I "$TM" select --json - <&- 2>"$T/e") && [ "$(jq -c "[.full, .targets]" <<<"$o")" = "[true,[]]" ] && grep -q "^STL-CFG-310 .*stdin" "$T/e"' \
+   "30q stdin that cannot be read: full in --json too"
 
 # git answers for the tree: the tree's own untracked settings (info/exclude, a local excludesFile or worktree) hide nothing
 # and run nothing (core.fsmonitor).
