@@ -5,8 +5,7 @@
 # (its roles.py must sit next to it); FAKE_REVIEWER names the profile of the stub's reviewer run.
 set -u
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
-mkdir -p "$T/bin"
-export ESCALATE_SUP_DIR=$T/sup; mkdir -p "$T/sup/logs"   # T7: a refusal the box or roles.py codes logs here from the first case on, never in the tree's log
+mkdir -p "$T/bin"; export ESCALATE_SUP_DIR=$T/sup; mkdir -p "$T/sup/logs"   # T7: a refusal the box or roles.py codes logs here from the first case on (one line: qa harnesses take lines 1..81)
 cat > "$T/bin/hermes" <<'S'
 #!/usr/bin/env bash
 [ "$1 $2" = "kanban --board" ] && [ "$3" != ai-stack ] && { echo "board $3 not found" >&2; exit 1; }
