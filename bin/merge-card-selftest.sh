@@ -323,6 +323,18 @@ card t_0000e126 e126.txt e126 'exit 126'; h=$(head_of "$T/repo")
 ok '[ "$(mc t_0000e126 --owner-approved)" = 3 ] && grep -q "tests failed" "$T/out" && ! grep -q "could not start" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "B.2 point 11: a card test that exits 126 is a test failure, not 'box could not start'"
 card t_0000e127 e127.txt e127 'mkdir -p "$(git rev-parse --git-dir)/worktrees"; d="$(git rev-parse --git-common-dir)/worktrees/merge-check-t_0000e127"; touch "$d/locked" 2>/dev/null || true; exit 0'; h=$(head_of "$T/repo")
 ok '[ "$(mc t_0000e127 --owner-approved)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ] && [ "$(mc t_0000e127 --owner-approved)" = 3 ]' "B.2 point 11: a test that locks its throw-away worktree entry still merges, and the entry is cleared (the next merge of the same card is not refused by a stale lock; second run refused because it is no longer ahead)"
+# r6 (R14): the verdict of the boxed run comes on a pipe the test never holds, so every exit code a test can choose is "tests failed" with that code
+for x in 1 70 124 125 137 255; do c=t_0000f$(printf %03x $x); card $c f$x.txt f$x "echo QA-RAN-$x; exit $x"; h=$(head_of "$T/repo")
+  ok '[ "$(mc $c --owner-approved)" = 3 ] && grep -q "QA-RAN-$x" "$T/out" && grep -q "tests failed.*exit $x)" "$T/out" && ! grep -q "could not" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "r6: a card test that ran and exited $x is 'tests failed' with that code, never a box or worktree fault"
+done
+card t_0000f301 f301.txt f301 'd=$(git rev-parse --absolute-git-dir); rm -f "$d/box-started"; echo 9 >"$d/box-signal"; exit 0'; h=$(head_of "$T/repo")
+ok '[ "$(mc t_0000f301 --owner-approved)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ]' "r6: files a test writes or removes in its git dir (the round-5 start marker and signal file) say nothing: a passing test merges"
+card t_0000f302 f302.txt f302 'd=$(git rev-parse --absolute-git-dir); rm -f "$d/box-started"; echo 9 >"$d/box-signal"; echo "ran 0" >&3; echo "ran 0"; exit 7'; h=$(head_of "$T/repo")
+ok '[ "$(mc t_0000f302 --owner-approved)" = 3 ] && grep -q "tests failed.*exit 7)" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "r6: a failing test that forges the old markers and prints a verdict line is still 'tests failed' with its own code"
+# B.2 point 11 (W4-VAL3-12), not run by tester R14: a table whose only boxed profiles with a card worktree carry broker variables has no box for a card's tests
+jq '. as $d | reduce (.sandbox.boxed_profiles[] | select($d.roles[$d.profiles[.].role].workspace == "git-worktree")) as $p (.; .sandbox.profile_overrides[$p].broker_env = {QA_TOKEN: "qa-broker"})' "$RF" >"$T/brokeronly.json"
+card t_0000f303 f303.txt f303 'echo QA-RAN-BROKER; exit 0'; h=$(head_of "$T/repo"); a0=$(nal)
+ok '[ "$(ROLES_FILE=$T/brokeronly.json mc t_0000f303 --owner-approved)" = 3 ] && grep -q "without broker variables" "$T/out" && grep -q "STL-CFG-312" "$T/out" && ! grep -q QA-RAN-BROKER "$T/out" && [ "$(nal)" = $((a0+1)) ] && [ "$(head_of "$T/repo")" = "$h" ]' "B.2 point 11: only broker-carrying profiles: refused with one coded line, the test never ran, main untouched"
 # K8: the boundary refusal and an unreadable list are coded, with one alert line each
 HOOK=$(jq -r '[.roles[].hooks[]? | .file // empty] | first' "$RF"); mkdir -p "$T/repo/${HOOK%/*}"; printf '#!/bin/sh\n' >"$T/repo/$HOOK"; g add -f "$HOOK"; g -c core.hooksPath=/dev/null commit -qm "a hook file"
 wcard t_0000d0a8; printf '#!/bin/sh\nexit 0\n' >"$T/repo/.worktrees/t_0000d0a8/$HOOK"; git -C "$T/repo/.worktrees/t_0000d0a8" add -f -A; wcommit t_0000d0a8
