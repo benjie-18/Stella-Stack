@@ -446,6 +446,9 @@ done
 # ---- F1 W4 round 3 (K7, K1b, K8, K9): the rule turned around. A command that names a path no role may write (owner data, the owner settings, the apply tool's
 # state) runs only when its verb is a known reader (the table's read_verbs); an unknown writer needs no list entry to be refused.
 ODF=$(jq -r '.files[] | select(.id == "settings") | .path' "/workspace/$(jq -r .data_index /workspace/docs/hermes-local/roles.json)"); ODD=${ODF%/*}; SCH=$(jq -r '.owner_data[0]' /workspace/docs/hermes-local/roles.json)
+# the 8.3 short name of the first owner command named by name, as this mount gives it (T3: a name is judged by what it resolves to; the short name is found with -ef)
+MCMD=/workspace/$(jq -r '.owner_commands_by_name[0]' /workspace/docs/hermes-local/roles.json); MST=$(basename "${MCMD%.*}" | tr a-z A-Z | cut -c1-6)
+MSN=$(for i in 1 2 3 4 5 6 7 8 9; do x="$(dirname "$MCMD")/$MST~$i.$(printf '%s' "${MCMD##*.}" | tr a-z A-Z | cut -c1-3)"; [ "$x" -ef "$MCMD" ] && echo "$x" && break; done)   # readdir lists no short name: each is tried
 for p in $BUILDERS; do
   OWN=/workspace/.worktrees/$C
   wg() { hookrun bind $C $p $OWN terminal "$(tjson "$1")" "${2:-$OWN}"; }
@@ -462,7 +465,7 @@ for p in $BUILDERS; do
     ok '[ "$(wg "$c")" = 0 ]' "K7 $p: allowed, a known reader names owner data: $c"
   done
   ok '[ "$(wg "git add .")" = 0 ] && [ "$(wg "git diff --output=/tmp/x -- $ODF")" = 2 ] && [ "$(wg "find . -name x -fprint /workspace/$ODF")" = 2 ]' "K7 $p: the tree-wide form in the worktree is allowed; a reader that writes by an option is not a reader"
-  ok '[ "$(wg "cp /tmp/x $(echo /workspace/STELLA~1)/schemas/x")" = 2 ] && [ "$(wg "cp /tmp/x /workspace/STELLA~1/schemas/x")" = 2 ] && [ "$(wg "cp /tmp/x /workspace/.STELLA/schemas/x")" = 2 ] && [ "$(wg "bash /workspace/MERGE-~1.SH x")" = 2 ]' "K1b $p: a short name and a case variant are the same folder and the same owner command"
+  ok '[ "$(wg "cp /tmp/x $(echo /workspace/STELLA~1)/schemas/x")" = 2 ] && [ "$(wg "cp /tmp/x /workspace/STELLA~1/schemas/x")" = 2 ] && [ "$(wg "cp /tmp/x /workspace/.STELLA/schemas/x")" = 2 ] && [ -n "$MSN" ] && [ "$(wg "bash $MSN x")" = 2 ]' "K1b $p: a short name and a case variant are the same folder and the same owner command ($MSN)"
   : >"$WGA"; ok '[ "$(wg "touch /workspace/$ODF")" = 2 ] && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ] && grep -q "role " "$WGA"' "K8 $p: the alert line names the role"
   ok '[ "$(wg "echo owner.env")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out"' "K8 $p: an older rule that catches a mention of the owner settings file first still says so with the code"
   ok '[ "$(wg "cp bin/merge-card.sh /tmp/mc; bash /tmp/merge-card x")" = 2 ] && [ "$(wg "bash /tmp/merge-card x")" = 2 ] && [ "$(wg "bash bin/merge-card-selftest.sh")" = 0 ]' "K9 $p: a copy of the merge script under another name (no extension) is refused as at 900d9b3; its selftest is not the script"
