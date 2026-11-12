@@ -483,22 +483,41 @@ done
 quiet() { grep -v -e '^d ' -e '\.lock$'; }   # the documented exception: folders made on the way and lock files are not a change
 nlines() { grep -c '^STL-CFG-' "$1"; }
 cat >"$T/step.py" <<'PY'
-# <tool> <fail|term|int|count> <n> <args...>: the tool's main in-process; the n-th write (an atomic write, an unlink, a folder
-# made or removed, an event line) fails before it is done (fail) or is followed by SIGTERM / SIGINT (term / int)
-import importlib.util, os, signal, sys
+# <tool> <before|after|term|int|count> <n> <args...>: the tool's main in-process. Every write it makes under the root is counted
+# at the system call (a replace or rename, an unlink, a folder made, a tree removed, a write to a file), found by running the
+# command, not from a list; the n-th fails BEFORE its effect (before), fails AFTER it (after: the call is done, then raises, as a
+# failed folder fsync would), or is followed by SIGTERM / SIGINT (term / int). count: no fault, the number goes to $COUNT_FILE.
+import errno, importlib.util, os, shutil, signal, sys
 spec = importlib.util.spec_from_file_location("sa", sys.argv[1]); sa = importlib.util.module_from_spec(spec); spec.loader.exec_module(sa)
-mode, n, cnt = sys.argv[2], int(sys.argv[3]), [0]
-def hit(f):
+mode, n, cnt, busy, root = sys.argv[2], int(sys.argv[3]), [0], [], sa.el.ROOT + os.sep
+def where(p, fd):
+    try:
+        return os.path.join(os.readlink(f"/proc/self/fd/{fd}") if fd is not None else os.getcwd(), os.fsdecode(p))
+    except (OSError, TypeError):
+        return ""
+def hit(f, path_of):
     def w(*a, **k):
+        if busy or not path_of(a, k).startswith(root):
+            return f(*a, **k)
         cnt[0] += 1
-        if cnt[0] == n and mode == "fail":
-            raise PermissionError(13, "Permission denied")
-        r = f(*a, **k)
+        if cnt[0] == n and mode == "before":
+            raise OSError(errno.EIO, "qa: the write failed")
+        busy.append(1)
+        try:
+            r = f(*a, **k)
+        finally:
+            busy.pop()
+        if cnt[0] == n and mode == "after":
+            raise OSError(errno.EIO, "qa: failed after the write")
         if cnt[0] == n and mode in ("term", "int"):
             os.kill(os.getpid(), signal.SIGTERM if mode == "term" else signal.SIGINT)
         return r
     return w
-sa.atomic_write, sa.unlink, sa.drop_backup, sa.el.append, os.mkdir = (hit(f) for f in (sa.atomic_write, sa.unlink, sa.drop_backup, sa.el.append, os.mkdir))
+first = lambda a, k: where(a[0], k.get("dir_fd", k.get("src_dir_fd")))
+os.replace, os.rename = hit(os.replace, lambda a, k: where(a[1], k.get("dst_dir_fd"))), hit(os.rename, lambda a, k: where(a[1], k.get("dst_dir_fd")))
+os.unlink, os.mkdir = hit(os.unlink, first), hit(os.mkdir, first)
+os.write = hit(os.write, lambda a, k: where("", a[0]))
+shutil.rmtree = hit(shutil.rmtree, lambda a, k: os.path.abspath(a[0]))
 try:
     rc = sa.main(sys.argv[4:])
 finally:
@@ -508,44 +527,59 @@ sys.exit(rc)
 PY
 step() { PATH=$PB:$OWNER python3 -I "$T/step.py" "$H/bin/stella-apply.py" "$@"; }
 
-# P1: every write of every path, failed or interrupted: one coded line; "Nothing was changed" only when nothing was; else what is
-# left and the one command, and that command settles it (check clean)
+# P1 / Q1: every write of every writing command, found by a counting run, fails before its effect, fails after it, or is
+# interrupted: one coded line; "nothing was changed" and "it was undone" only when the whole root is as it was; else what is
+# there and the one command, which settles it (check clean) with no event line twice
 printf "CALL_TIMEOUT=650\nPLANTED_SETTING='sekrit-hand-1'\n" >"$C/p1hand.env"
 mkr p1a; BASE_A=$R
 mkr p1f; kill_at event apply limits --from "$C/limits.env" >/dev/null 2>&1; BASE_F=$R
 mkr p1d; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; cp "$C/p1hand.env" "$R/.supervisor/limits.env"; BASE_D=$R
-mkr p1b; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; BASE_B=$R
-mkr p1j; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; mkdir "$(BK)/limits/00000009-stray"; BASE_J=$R
-p1bad=""
-for spec in "A:apply limits --from $C/limits.env" "F:apply limits --from $C/limits.env" "D:apply limits --from $C/p1hand.env" "B:rollback limits" "J:rollback limits"; do
-  p=${spec%%:*}; cmd=${spec#*:}; eval "base=\$BASE_$p"
-  R=$T/p1run; rm -rf "$R"; cp -a "$base" "$R"; export STELLA_ROOT=$R; COUNT_FILE=$T/count step count 0 $cmd >/dev/null 2>&1; N=$(cat "$T/count")
-  [ "$N" -ge 2 ] || p1bad="$p1bad $p:count=$N"
-  for mode in fail term; do
+mkr p1b; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; printf 'x' >"$R/.supervisor/state/.stella-apply.left"; BASE_B=$R
+mkr p1j; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; kill_at applied apply limits --from "$C/g5ok.env" >/dev/null 2>&1
+  d=$(ls -d "$(BK)"/limits/* | tail -1); rm "$d/meta.json"; cp "$C/limits.env" "$R/.supervisor/limits.env"; BASE_J=$R   # an unfinished folder
+mkr p1c; BASE_CA=$R
+mkr p1cb; ap apply connections --from "$C/conn.json" >/dev/null 2>&1; BASE_CB=$R
+mkr p1ea; BASE_EA=$R
+mkr p1eb; ap apply extensions/fake-ext.json --from "$C/fake-ext.json" >/dev/null 2>&1; BASE_EB=$R
+p1bad=""; p1runs=0; p1t0=$(date +%s)
+p1() {  # <base> <key> <file> <modes> <command...>
+  local base=$1 key=$2 file=$3 modes=$4 n N mode w0 rc what; shift 4
+  R=$T/p1run; rm -rf "$R"; cp -a "$base" "$R"; export STELLA_ROOT=$R; COUNT_FILE=$T/count step count 0 "$@" >/dev/null 2>&1; N=$(cat "$T/count")
+  [ "$N" -ge 3 ] || p1bad="$p1bad [$key $1: only $N writes counted]"
+  for mode in $modes; do
     for n in $(seq 1 "$N"); do
-      R=$T/p1run; rm -rf "$R"; cp -a "$base" "$R"; export STELLA_ROOT=$R; LOG=$R/.supervisor/logs/events.jsonl
-      w0=$(whole | quiet); step $mode $n $cmd >"$T/o" 2>&1; rc=$?
-      what="$p $mode $n (exit $rc: $(grep -o 'STL-CFG-.*' "$T/o" | head -c 150))"
+      R=$T/p1run; rm -rf "$R"; cp -a "$base" "$R"; export STELLA_ROOT=$R; LOG=$R/.supervisor/logs/events.jsonl; p1runs=$((p1runs+1))
+      w0=$(whole | quiet); step $mode $n "$@" >"$T/o" 2>&1; rc=$?
+      what="$key $1 $mode $n (exit $rc: $(grep -o 'STL-CFG-.*' "$T/o" | head -c 150))"
       if grep -q Traceback "$T/o" || { [ $rc != 0 ] && [ "$(nlines "$T/o")" != 1 ]; }; then p1bad="$p1bad [not one coded line: $what]"; continue; fi
-      if grep -qi "nothing was changed" "$T/o"; then   # in the frame or, where the frame does not say it, in the problem
-        [ "$(whole | quiet)" = "$w0" ] || p1bad="$p1bad [said nothing was changed but something was: $what]"; continue
+      if grep -qiE "nothing was changed|was undone" "$T/o"; then   # the whole root as it was (not a re-run that hides it)
+        [ "$(whole | quiet)" = "$w0" ] || p1bad="$p1bad [said nothing was changed or undone but the root differs: $what]"; continue
       fi
       [ $rc = 0 ] && continue
-      grep -qE 'STL-CFG-3(21|18)' "$T/o" && grep -qE 'run `|nothing to run|was undone' "$T/o" || { p1bad="$p1bad [no state or way out: $what]"; continue; }
-      if grep -q 'run `rollback limits`' "$T/o"; then ap rollback limits >/dev/null 2>&1
-      elif grep -q 'was undone' "$T/o"; then ap $cmd >/dev/null 2>&1   # the way out of an undone change is to run it again
-      elif grep -q 'with the same file' "$T/o"; then ap $cmd >/dev/null 2>&1
-      elif grep -q 'with a copy of the file as it is' "$T/o"; then cp "$R/.supervisor/limits.env" "$T/cur.env"; ap apply limits --from "$T/cur.env" >/dev/null 2>&1
+      grep -qE 'STL-CFG-3(21|18|14)' "$T/o" && grep -qE 'run `|nothing to run' "$T/o" || { p1bad="$p1bad [no state or way out: $what]"; continue; }
+      if grep -q 'run `rollback' "$T/o"; then ap rollback "$key" >/dev/null 2>&1
+      elif grep -q 'with the same file' "$T/o"; then ap "$@" >/dev/null 2>&1
+      elif grep -q 'with a copy of the file as it is' "$T/o"; then cp "$R/$file" "$T/cur.json"; ap apply "$key" --from "$T/cur.json" >/dev/null 2>&1
       fi
-      ap check limits >"$T/o2" 2>&1 || p1bad="$p1bad [the way out did not settle it: $what; then: $(head -c 120 "$T/o2")]"
-      jq -c . "$LOG" >/dev/null 2>&1 || p1bad="$p1bad [an event line is not whole: $what]"
+      ap check "$key" >"$T/o2" 2>&1 || p1bad="$p1bad [the way out did not settle it: $what; then: $(head -c 120 "$T/o2")]"
+      [ -z "$(jq -r 'select(.detail? | type == "string") | .type + " " + ((.detail | capture("token (?<t>[0-9a-f]+)").t) // "")' "$LOG" 2>/dev/null | sort | uniq -d)" ] \
+        || p1bad="$p1bad [an event line twice: $what]"
     done
   done
+}
+for spec in "A:apply limits --from $C/limits.env" "F:apply limits --from $C/limits.env" "D:apply limits --from $C/p1hand.env" "B:rollback limits" "J:rollback limits"; do
+  p=${spec%%:*}; eval "base=\$BASE_$p"; modes="before after"; case $p in A|B) modes="before after term";; esac
+  p1 "$base" limits .supervisor/limits.env "$modes" ${spec#*:}
 done
-ok '[ -z "$p1bad" ]' "P1 every write of apply, finish, adopt, rollback and clean-up, failed or interrupted (SIGTERM): one coded line, 'Nothing was changed' only when true, else what is left and the one command that settles it:$p1bad"
-R=$T/p1run; rm -rf "$R"; cp -a "$BASE_B" "$R"; export STELLA_ROOT=$R; COUNT_FILE=$T/count step count 0 rollback limits >/dev/null 2>&1
-R=$T/p1run; rm -rf "$R"; cp -a "$BASE_B" "$R"; export STELLA_ROOT=$R; step int "$(cat "$T/count")" rollback limits >"$T/o" 2>&1; rc=$?   # SIGINT after the last write: a write that surely happens
-ok '[ $rc = 1 ] && [ "$(nlines "$T/o")" = 1 ] && ! grep -q Traceback "$T/o"' "P1 Ctrl-C (SIGINT) in a rollback: one coded line, no traceback (exit $rc)"
+p1 "$BASE_CA" connections .stella/connections.json after apply connections --from "$C/conn.json"
+p1 "$BASE_CB" connections .stella/connections.json after rollback connections
+p1 "$BASE_EA" extensions/fake-ext.json .stella/extensions/fake-ext.json after apply extensions/fake-ext.json --from "$C/fake-ext.json"
+p1 "$BASE_EB" extensions/fake-ext.json .stella/extensions/fake-ext.json after rollback extensions/fake-ext.json
+ok '[ -z "$p1bad" ]' "P1/Q1 every write found by a counting run (env row: apply, finish, adopt, rollback, clean-up; json row and folder entry: apply and rollback), failed before or after its effect or interrupted: one coded line, a claim of nothing changed or undone matches the whole root, else the one command settles it ($p1runs runs, $(( $(date +%s) - p1t0 )) s):$p1bad"
+R=$T/p1run; rm -rf "$R"; cp -a "$BASE_B" "$R"; export STELLA_ROOT=$R; w0=$(whole | quiet)
+COUNT_FILE=$T/count step count 0 rollback limits >/dev/null 2>&1; half=$(( $(cat "$T/count") / 2 ))
+R=$T/p1run; rm -rf "$R"; cp -a "$BASE_B" "$R"; export STELLA_ROOT=$R; step int "$half" rollback limits >"$T/o" 2>&1; rc=$?   # mid-way: a write the undo puts back
+ok '[ $rc = 1 ] && [ "$(nlines "$T/o")" = 1 ] && ! grep -q Traceback "$T/o" && { ! grep -q "was undone" "$T/o" || [ "$(whole | quiet)" = "$w0" ]; }' "P1 Ctrl-C (SIGINT) half-way through a rollback: one coded line, no traceback, an undone claim is true (exit $rc)"
 mkr p1e; head -c 1100000 /dev/zero | tr '\0' x >"$T/huge"; jq --rawfile l "$T/huge" '.entries[0].label = $l' "$T/conn.orig" >"$C/huge.json"; w0=$(whole | quiet)
 ap apply connections --from "$C/huge.json" >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 1 ] && grep -q "STL-CFG-313.*event line" "$T/o" && [ "$(whole | quiet)" = "$w0" ] && [ ! -e "$(ST)" ]' "P1 an event line too large is judged before the first write: 313, nothing written, no applied state (W3-CV3-07)"
@@ -555,11 +589,11 @@ cat >"$T/walk.py" <<'PY'
 import ast, json, sys
 # Every text the apply and log tools can put in a coded line, found in the code (not a hand list): each string expression outside
 # a docstring, a print(), an event line's detail or an argparse/regex call must fit the catalog's 200-character cut, a
-# placeholder taken as 40 characters and a slice [:n] as n; a message given to a code whose catalog action defers to the message
+# placeholder taken as 52 characters and a slice [:n] as n; a message given to a code whose catalog action defers to the message
 # must name a way out.
-LIM, NAME = 200, 40
+LIM, NAME = 200, 52   # a key is an id and an entry name of at most 40 characters (apply refuses a longer one)
 cat = {a["code"]: a for a in json.load(open(sys.argv[1]))["alerts"]}
-WAY = ("`", "by hand", "run ", "remove", "restore", "fix", "set ", "give ", "keep ", "apply", "move", "unmount", "find", "look at")
+WAY = ("`", "by hand", "where it is mounted")   # a way out is a command to run, a thing to do by hand, or a mount to change
 SKIP = {"print", "event", "build", "add_argument", "add_parser", "ArgumentParser", "compile", "fullmatch", "match", "search", "sub",
         "ArgumentTypeError", "join", "startswith", "endswith", "open", "replace", "split", "partition", "strftime", "encode", "decode"}
 bad = []
@@ -577,6 +611,8 @@ for f in sys.argv[2:]:
             return max(est(n.body, depth), est(n.orelse, depth))
         if isinstance(n, ast.Subscript) and isinstance(n.slice, ast.Slice) and n.slice.lower is None and isinstance(n.slice.upper, ast.Constant):
             return n.slice.upper.value   # a cut text is taken at its cut
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "fit":   # fit() prints the first form that fits
+            return min(est(x, depth) for x in n.args)
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in funcs and depth < 5:
             rets = [r.value for r in ast.walk(funcs[n.func.id]) if isinstance(r, ast.Return) and r.value is not None]
             return max([est(r, depth + 1) for r in rets if isinstance(r, (ast.JoinedStr, ast.BinOp, ast.Constant))] or [NAME])
@@ -591,6 +627,10 @@ for f in sys.argv[2:]:
             name = n.func.id if isinstance(n.func, ast.Name) else n.func.attr if isinstance(n.func, ast.Attribute) else ""
             if name in SKIP:
                 skip |= {id(x) for a in n.args + [k.value for k in n.keywords] for x in ast.walk(a)}
+            if name == "fit":   # the first form that fits is printed: the shortest must fit, the others are judged with it
+                skip |= {id(a) for a in n.args}
+                if est(n) > LIM:
+                    bad.append(f"{f}:{n.lineno} no form of fit() fits: {est(n)} characters")
             code = None
             if name == "bad":
                 code = n.args[1].value if len(n.args) > 1 and isinstance(n.args[1], ast.Constant) else "STL-CFG-313"
@@ -694,8 +734,9 @@ spec = importlib.util.spec_from_file_location("sa", sys.argv[1]); sa = importlib
 real = sa.shutil.rmtree
 sa.shutil.rmtree = lambda p, *a, **k: os.kill(os.getpid(), signal.SIGKILL) if sa.GONE in p and k.get("ignore_errors") else real(p, *a, **k)
 sys.exit(sa.main(sys.argv[2:]))' "$H/bin/stella-apply.py" rollback connections >/dev/null 2>&1
-ap check connections >"$T/o" 2>&1; rc=$?; ap rollback connections >"$T/o2" 2>&1
-ok '[ $rc = 0 ] && cmp -s "$T/conn.orig" "$R/.stella/connections.json" && ! grep -q "unfinished" "$T/o2" && [ "$(jq -r .type "$LOG" | tr "\n" " ")" = "apply apply rollback rollback " ]' "P6 a rollback killed inside its final removal: check is clean, no 'unfinished' text, the next rollback undoes only the change before (W3-VER3-03)"
+ap check connections >"$T/o" 2>&1; rc=$?; ap rollback connections >"$T/o2" 2>&1; cmp -s "$C/conn.json" "$R/.stella/connections.json"; still=$?
+ap rollback connections >"$T/o3" 2>&1
+ok '[ $rc = 0 ] && [ $still = 0 ] && grep -q "already complete" "$T/o2" && ! grep -q "unfinished" "$T/o2" && cmp -s "$T/conn.orig" "$R/.stella/connections.json" && [ "$(jq -r .type "$LOG" | tr "\n" " ")" = "apply apply rollback rollback " ]' "P6 a rollback killed inside its final removal: check is clean, the rerun says the rollback was already complete and undoes nothing more (W3-CV4-04), no 'unfinished' text; the rollback after it undoes the change before (W3-VER3-03)"
 ok 'ap --check connections >/dev/null 2>&1' "P6 --check is accepted for check (W3-VAL3-09)"
 mkr p6d; python3 -I "$T/step.py" "$H/bin/stella-apply.py" count 0 apply connections --from "$C/conn.json" >/dev/null 2>&1
 python3 -I -c '
@@ -708,6 +749,96 @@ n0=$(nev); ap rollback connections >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && [ "$(nev)" = "$n0" ] && ap check connections >/dev/null 2>&1' "P6 an apply killed before its replace, then rollback: no event line for a change that never took effect (L1)"
 mkr p6e; kill_at applied apply connections --from "$C/conn.json" >/dev/null 2>&1; ap rollback connections >/dev/null 2>&1
 ok '[ "$(jq -r .type "$LOG" | tr "\n" " ")" = "apply rollback " ] && cmp -s "$T/conn.orig" "$R/.stella/connections.json"' "P6 an apply killed after its replace, then rollback: the apply line first, then the rollback line (L2)"
+
+# ---- round 5 (rung 2, fix round 2): Q3 to Q7 of the brief ----
+inproc() {  # <python body> <args...>: the tool's main in-process, sa loaded, the body run first
+  PATH=$PB:$OWNER python3 -I -c "import importlib.util, os, signal, sys
+spec = importlib.util.spec_from_file_location('sa', sys.argv[1]); sa = importlib.util.module_from_spec(spec); spec.loader.exec_module(sa)
+$1
+sys.exit(sa.main(sys.argv[2:]))" "$H/bin/stella-apply.py" "${@:2}"
+}
+# Q3 an interrupt while waiting for a lock ends the run at once, one coded line; two signals are one stop
+for spec in "state:.supervisor/state/applied.json.lock:TERM" "log:.supervisor/logs/events.jsonl.lock:TERM INT"; do
+  IFS=: read -r what lk sigs <<<"$spec"
+  mkr q3$what; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; w0=$(whole | quiet)
+  flock -x "$R/$lk" sleep 12 & h=$!; sleep 0.5
+  PATH=$PB:$OWNER $AP apply limits --from "$C/g5ok.env" >"$T/o" 2>&1 & p=$!; sleep 2; t0=$(date +%s)   # $! is the tool itself
+  for s in $sigs; do kill -$s $p 2>/dev/null; sleep 0.3; done
+  wait $p; rc=$?; t=$(( $(date +%s) - t0 )); kill $h 2>/dev/null; wait $h 2>/dev/null
+  ok '[ $rc = 1 ] && [ $t -le 3 ] && [ "$(nlines "$T/o")" = 1 ] && ! grep -q Traceback "$T/o" && { ! grep -qiE "was undone|nothing was changed" "$T/o" || [ "$(whole | quiet)" = "$w0" ]; }' "Q3 $what lock held, $sigs: the run ends in $t s (no wait for the holder), exit $rc, one coded line, a claim of undone true"
+done
+mkr q3c; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; w0=$(whole | quiet)
+inproc 'real = sa.cause_of
+def c(*a):
+    os.kill(os.getpid(), signal.SIGINT); os.kill(os.getpid(), signal.SIGTERM)
+    return real(*a)
+sa.cause_of = c
+r0 = sa.set_applied
+def s(*a, **k):
+    r0(*a, **k); os.kill(os.getpid(), signal.SIGTERM)
+sa.set_applied = s' rollback limits >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && [ "$(nlines "$T/o")" = 1 ] && ! grep -q Traceback "$T/o" && { ! grep -q "was undone" "$T/o" || [ "$(whole | quiet)" = "$w0" ]; }' "Q3 a second and third interrupt inside the failure handler change nothing: one undo, one coded line (exit $rc)"
+
+# Q4 a saved state is believed only as far as the applied state binds it
+mkr q4a; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; m=$(find "$(BK)" -name meta.json)
+jq '.status = "rollback-pending" | .rb_token = "x" | .rb_same = true | .rb_logged = false' "$m" >"$T/m" && cat "$T/m" >"$m"
+ap rollback limits >"$T/o" 2>&1
+ok '[ $? = 0 ] && [ "$(jq -r .type "$LOG" | tr "\n" " ")" = "apply rollback " ] && ap check limits >/dev/null 2>&1' "Q4 a meta forged as rollback-pending is not believed: the rollback writes its own line (W3-CRT4-04 A)"
+mkr q4b; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; m=$(find "$(BK)" -name meta.json)
+jq '.prev_applied = {"sha256": "ab", "mode": 420, "time": "x"}' "$m" >"$T/m" && cat "$T/m" >"$m"; w0=$(whole | quiet)
+ap rollback limits >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-316 "$T/o" && [ "$(whole | quiet)" = "$w0" ]' "Q4 a forged prev_applied disagrees with the applied state: 316, nothing restored or deleted (W3-CRT4-04 B)"
+mkr q4c; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; mkdir "$(BK)/limits/00000009-planted"
+ap rollback limits >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-316.*00000009-planted" "$T/o" && [ -d "$(BK)/limits/00000009-planted" ]' "Q4 a folder the applied state does not record, with no meta, is named (316) and never deleted (W3-CRT4-05)"
+
+# Q5 "git could not say" is not "not in HEAD"
+mkr q5; cp "$C/conn2.json" "$R/.stella/connections.json"
+ap check connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-314 "$T/o"' "Q5 control: a hand edit of a committed, never-applied file is drift"
+mkdir -p "$T/nogit"; printf '#!/bin/sh\nexit 128\n' >"$T/nogit/git"; chmod +x "$T/nogit/git"
+PATH=$T/nogit:$PB:$OWNER $AP check connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-322.*baseline cannot be read" "$T/o"' "Q5 a git that exits 128: check exits 1 and says the baseline cannot be read (W3-CRT4-06)"
+obj=$(git -C "$R" rev-parse HEAD:.stella/connections.json); o=$R/.git/objects/${obj:0:2}/${obj:2}; chmod u+w "$o"; : >"$o"
+ap check connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "baseline cannot be read" "$T/o"' "Q5 a damaged committed blob: check exits 1, baseline cannot be read"
+cp "$R/.stella/connections.json" "$C/q5cur.json"; w0=$(whole | quiet); ap apply connections --from "$C/q5cur.json" >"$T/o" 2>&1
+ok '[ $? = 1 ] && grep -q "baseline cannot be read" "$T/o" && [ "$(whole | quiet)" = "$w0" ]' "Q5 an apply that needs the baseline refuses before any write"
+
+# Q6 the file is judged at the moment it is replaced
+mkr q6a; ap apply connections --from "$C/conn.json" >/dev/null 2>&1; jq '.entries[0].label = "Q6-HAND-EDIT"' "$T/conn.orig" >"$C/q6edit.json"
+edit_at() { printf '%s' "real, done = getattr(sa, '$1'), []
+def h(*a, **k):
+    if not done:
+        done.append(1); open(os.path.join(sa.el.ROOT, '$2'), 'wb').write(open('$3', 'rb').read())
+    return real(*a, **k)
+setattr(sa, '$1', h)"; }
+inproc "$(edit_at validate .stella/connections.json "$C/q6edit.json")" rollback connections >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-CFG-314 "$T/o" && grep -q Q6-HAND-EDIT "$R/.stella/connections.json" && [ "$(nbk)" = 1 ]' "Q6 a hand edit saved while the rollback validates: 314, nothing replaced, the edit and the backup kept (W3-CRT4-07 A)"
+mkr q6b; printf 'CALL_TIMEOUT=777\nPLANTED_SETTING=1\n' >"$C/q6edit.env"
+inproc "$(edit_at register .supervisor/limits.env "$C/q6edit.env")" apply limits --from "$C/limits.env" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q "CALL_TIMEOUT=777" "$R/.supervisor/limits.env" && [ "$(nlines "$T/o")" = 1 ]' "Q6 a hand edit saved between the apply's read and its replace is kept, the apply refused (W3-CRT4-07 B)"
+
+# Q7 the Low ones
+mkr q7a; chmod 2644 "$R/.stella/connections.json"; w0=$(whole)
+ap apply connections --from "$C/conn.json" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-313.*chmod 644" "$T/o" && [ "$(whole)" = "$w0" ]' "Q7 a file with a setgid bit is refused before any write, with the chmod that fixes it (W3-CRT4-08)"
+mkr q7b; printf 'export CALL_TIMEOUT=600\n' >"$R/.supervisor/limits.env"; cp "$R/.supervisor/limits.env" "$T/q7b.orig"
+ap apply limits --from "$C/limits.env" >/dev/null 2>&1; ap rollback limits >"$T/o" 2>&1
+ok '[ $? = 0 ] && cmp -s "$T/q7b.orig" "$R/.supervisor/limits.env"' "Q7 saved bytes the reader cannot parse (a shell form) were in use as they are: rollback restores them (W3-CRT4-10)"
+mkr q7c; printf "WORKER_GIT_NAME='Fake One'\nWORKER_GIT_EMAIL='fake@example.invalid'\nAPI_TOKEN='1'\n" >"$R/config/owner.env"
+mkdir -p "$(BK)/owner-settings/00000051-20260101T101010000000Z"; echo '{"token":"x"}' >"$(BK)/owner-settings/00000051-20260101T101010000000Z/meta.json"
+ap apply owner-settings --from "$C/owner.env" >"$T/o" 2>&1; ok 'grep -qF 00000051-20260101T101010000000Z "$T/o" && grep -q "remove it by hand" "$T/o"' "Q7 a short masked value garbles no folder name or command in the coded line (W3-CRT4-09)"
+mkr q7d; D=.supervisor/qa-a-folder-with-a-rather-long-name-for-this-test; mkdir -p "$R/$D"; git -C "$R" mv -f .supervisor/limits.env "$D/limits.env" 2>/dev/null || mv "$R/.supervisor/limits.env" "$R/$D/limits.env"
+jq --arg p "$D/limits.env" '(.files[] | select(.id == "limits") | .path) = $p' "$R/.stella/data-files.json" >"$T/x" && cp "$T/x" "$R/.stella/data-files.json"; chmod 555 "$R/$D"
+ap apply limits --from "$C/limits.env" >"$T/o" 2>&1; chmod 755 "$R/$D"; ok '[ $? = 1 ] && grep -qF "chmod u+w $D\`" "$T/o"' "Q7 a read-only folder with a long path: the chmod command names it whole (W3-CV4-06)"
+n41=$(head -c 36 /dev/zero | tr '\0' a).json; w0=$(whole)
+ap apply "extensions/$n41" --from "$C/fake-ext.json" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-313.*at most 40" "$T/o" && [ "$(whole)" = "$w0" ]' "Q7 an entry name too long for a whole message is refused before any write"
+mkr q7e; printf 'CALL_TIMEOUT=600\nQA_FREE=a\000b\n' >"$C/nul.env"; ap apply limits --from "$C/nul.env" >"$T/o" 2>&1
+ok '[ $? = 1 ] && grep -q "STL-CFG-313.*NUL" "$T/o"' "Q7 a NUL byte in a candidate a shell reads is refused (W3-RT4-10)"
+mkr q7f; w0=$(whole); inproc 'import tempfile; tempfile.tempdir = sa.el.ROOT' apply connections --from "$C/conn.json" --dry-run >"$T/o" 2>&1
+ok '[ $? = 1 ] && grep -q "set TMPDIR" "$T/o" && [ "$(whole)" = "$w0" ]' "Q7 a temp folder inside the stack root is refused, nothing staged there (W3-RT4-09)"
+PATH=$PB:$OWNER TMPDIR=/nonexistent-q7 python3 -I -c 'import tempfile; tempfile.tempdir = "/nonexistent-q7"; import runpy, sys; sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name="__main__")' "$H/bin/stella-apply.py" check connections >"$T/o" 2>&1
+ok '[ $? = 0 ]' "Q7 check needs no temp folder (W3-VER4-06)"
+mkr q7g; chmod 555 "$R/.stella"; ap apply connections --from "$C/conn.json" --dry-run >"$T/o" 2>&1; rc=$?; chmod 755 "$R/.stella"
+ok '[ $rc = 1 ] && grep -q "chmod u+w .stella" "$T/o"' "Q7 a dry run makes the refusals the apply makes before its first write (W3-CV4-09)"
+mkr q7h; ap apply connections --from "$C/conn.json" --dry-run >/dev/null 2>&1; w0=$(whole)
+inproc 'sa.text = lambda *a, **k: os.kill(os.getpid(), signal.SIGKILL)' apply connections --from "$C/conn2.json" --dry-run >/dev/null 2>&1
+ap check connections >/dev/null 2>&1; ok '[ "$(whole)" = "$w0" ] && [ -z "$(stages)" ]' "Q7 a dry run killed at its diff leaves the root as it was and no staging copy past the next command (W3-VAL4-07)"
 
 $AP bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "usage error exits 2"
 [ $fails = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
