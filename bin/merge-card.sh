@@ -15,7 +15,9 @@
 # they load, and a new module in bin/ named like a standard-library module) is listed, and refused unless --i-have-read-the-boundary-changes.
 # K2: the card's test command is the card's code: it runs in the OS box (bin/box.py exec: the card worktree writable, the rest read-only, the
 # owner settings files and state paths not mounted, the worker markers set); where the box cannot start the merge is refused (STL-CFG-312, coded),
-# there is no unboxed run. What the box does not stop: the test code still decides its own exit code (a reviewer reads the diff), and it can read
+# there is no unboxed run. The tests run in a throw-away worktree of the branch tip that this script makes (never the card's own worktree, whose
+# .git file and git dir entry a worker can rewrite: the box refuses those, T6). What the box does not stop: the test code still decides its own
+# exit code (the review reads the diff), and it can read
 # whatever the box shows read-only. Every refusal here prints a catalog code with its plain message and writes one alert line.
 # Then: git merge --no-ff into main; on any failure git merge --abort (main is left as it was, exit 1). Never forces,
 # never rewrites history, never deletes the branch or the worktree. --push: npm test on the merged main first, then
@@ -120,14 +122,19 @@ if [ -z "$owner" ]; then
   [ -n "$moved" ] || refuse "$branch has no reflog: cannot tell whether it moved after the review"
   [ "$moved" -lt "$started" ] || refuse "$branch moved after the review started (branch ${moved}, review ${started}): the approval does not cover its tip; review it again"
 fi
-jq -e '.scripts.test' "$wt/package.json" >/dev/null 2>&1 || refuse "no test command in $wt/package.json (scripts.test)"
+g show "$tip:package.json" 2>/dev/null | jq -e '.scripts.test' >/dev/null 2>&1 || refuse "no test command in $branch:package.json (scripts.test)"
 # K2: the card's test command is the card's code: it runs in the OS box (bin/box.py exec) with the plan a worker gets, never in this shell
-boxed() {   # boxed <worktree> <branch> <script>: exit 3 when the box cannot start (it printed the coded line); the script's own exit code otherwise
-  python3 -I "$here/box.py" exec "$top" "$1" "$2" "$card" "$3" >&2; local r=$?
-  [ "$r" != 126 ] || refuse "the box for the tests could not start, and the tests never run outside it; nothing was merged"
+intree() {   # intree <commit> <name>: npm test of <commit> in the box, in a throw-away worktree made here (owner-made git files; T6) and removed
+  # after without running git in it; 126 when the worktree or the box cannot start (the box printed the coded line), else the tests' exit code
+  local pw="$top/.worktrees/$2-$card" pb="$2/$card" r
+  g -c core.hooksPath=/dev/null -c core.fsmonitor= worktree add -q -b "$pb" "$pw" "$1" >/dev/null 2>&1 || return 126
+  python3 -I "$here/box.py" exec "$top" "$pw" "$pb" "$card" 'timeout 1800 npm test' >&2; r=$?
+  rm -rf "$pw"; g worktree prune; g branch -D "$pb" >/dev/null 2>&1
   return "$r"; }
 echo "merge-card.sh: running this branch's own test command in the OS box (the card worktree writable, the rest read-only); review the diff first" >&2
-boxed "$wt" "$branch" 'timeout 1800 npm test' || refuse "tests failed in $wt (npm test)"
+intree "$tip" merge-check; trc=$?
+[ "$trc" != 126 ] || refuse "the box for the tests could not start (or its throw-away worktree $top/.worktrees/merge-check-$card could not be made), and the tests never run outside it; nothing was merged"
+[ "$trc" = 0 ] || refuse "tests failed on $branch (npm test, in the box); nothing was merged"
 [ "$(g rev-parse --verify "refs/heads/$branch^{commit}")" = "$tip" ] || refuse "$branch moved while its tests ran; nothing was merged"
 # N1: the tests ran for up to 30 minutes with the shared objects folder writable by a box; check the objects again before the merge
 g fsck --no-dangling --no-progress >/dev/null 2>&1 || refuse "git fsck reports a damaged or altered object in $top after the tests; nothing was merged"
@@ -150,10 +157,8 @@ echo "merged $branch into main: $(g rev-parse --short HEAD)"
 [ -n "$push" ] || exit 0
 # AGENTS.md: never push to main with a failing check, so the merged tree is tested again first (review H4). History is
 # never rewritten here: on failure the merge stays local for the owner to inspect or undo.
-pw="$top/.worktrees/merge-test-$card"; pb="merge-test/$card"   # K2: main's tests run in the box too, from a throw-away worktree of the merged commit
-g worktree add -q -b "$pb" "$pw" HEAD >/dev/null 2>&1 || refuse "cannot make a worktree to test the merged main in the box; merged locally, NOT pushed (undo: git -C $top reset --hard $before)"
-boxed "$pw" "$pb" 'timeout 1800 npm test'; trc=$?
-g worktree remove --force "$pw" >/dev/null 2>&1; g branch -D "$pb" >/dev/null 2>&1
+intree "$(g rev-parse HEAD)" merge-test; trc=$?   # K2: main's tests run in the box too, from a throw-away worktree of the merged commit
+[ "$trc" != 126 ] || refuse "the box for the tests of the merged main could not start; merged locally, NOT pushed (undo: git -C $top reset --hard $before)"
 [ "$trc" = 0 ] \
   || { echo "merge-card.sh: tests fail on the merged main: merged locally, NOT pushed (undo: git -C $top reset --hard $before)" >&2; exit 1; }
 g rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1 || { echo "merge-card.sh: main has no upstream; merged, not pushed" >&2; exit 1; }
