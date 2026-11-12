@@ -480,7 +480,7 @@ for spec in 'CALL_TIMEOUT=900\r\nPLANTED_SETTING=1\r\n' '\xef\xbb\xbfCALL_TIMEOU
 done
 
 # ---- round 4 (rung 2, fix round 1): P1 to P6 of the brief. Each group starts from a fresh scratch root (mkr). ----
-quiet() { grep -v -e '^d ' -e '\.lock$'; }   # the documented exception: folders made on the way and lock files are not a change
+quiet() { grep -v -e '^d ' -e '\.lock$' -e '/\.stella-apply\.' -e '/\.gone-'; }   # the documented exceptions: folders made on the way, lock files, the tool's own swept leftovers
 nlines() { grep -c '^STL-CFG-' "$1"; }
 cat >"$T/step.py" <<'PY'
 # <tool> <before|after|term|int|count> <n> <args...>: the tool's main in-process. Every write it makes under the root is counted
@@ -815,8 +815,8 @@ inproc "$(edit_at register .supervisor/limits.env "$C/q6edit.env")" apply limits
 ok '[ $rc = 1 ] && grep -q "CALL_TIMEOUT=777" "$R/.supervisor/limits.env" && [ "$(nlines "$T/o")" = 1 ]' "Q6 a hand edit saved between the apply's read and its replace is kept, the apply refused (W3-CRT4-07 B)"
 
 # Q7 the Low ones
-mkr q7a; chmod 2644 "$R/.stella/connections.json"; w0=$(whole)
-ap apply connections --from "$C/conn.json" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-313.*chmod 644" "$T/o" && [ "$(whole)" = "$w0" ]' "Q7 a file with a setgid bit is refused before any write, with the chmod that fixes it (W3-CRT4-08)"
+mkr q7a; chmod 2644 "$R/.stella/connections.json"; w0=$(whole | quiet)
+ap apply connections --from "$C/conn.json" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-313.*chmod 644" "$T/o" && [ "$(whole | quiet)" = "$w0" ]' "Q7 a file with a setgid bit is refused before any write, with the chmod that fixes it (W3-CRT4-08)"
 mkr q7b; printf 'export CALL_TIMEOUT=600\n' >"$R/.supervisor/limits.env"; cp "$R/.supervisor/limits.env" "$T/q7b.orig"
 ap apply limits --from "$C/limits.env" >/dev/null 2>&1; ap rollback limits >"$T/o" 2>&1
 ok '[ $? = 0 ] && cmp -s "$T/q7b.orig" "$R/.supervisor/limits.env"' "Q7 saved bytes the reader cannot parse (a shell form) were in use as they are: rollback restores them (W3-CRT4-10)"
@@ -825,7 +825,7 @@ mkdir -p "$(BK)/owner-settings/00000051-20260101T101010000000Z"; echo '{"token":
 ap apply owner-settings --from "$C/owner.env" >"$T/o" 2>&1; ok 'grep -qF 00000051-20260101T101010000000Z "$T/o" && grep -q "remove it by hand" "$T/o"' "Q7 a short masked value garbles no folder name or command in the coded line (W3-CRT4-09)"
 mkr q7d; D=.supervisor/qa-a-folder-with-a-rather-long-name-for-this-test; mkdir -p "$R/$D"; git -C "$R" mv -f .supervisor/limits.env "$D/limits.env" 2>/dev/null || mv "$R/.supervisor/limits.env" "$R/$D/limits.env"
 jq --arg p "$D/limits.env" '(.files[] | select(.id == "limits") | .path) = $p' "$R/.stella/data-files.json" >"$T/x" && cp "$T/x" "$R/.stella/data-files.json"; chmod 555 "$R/$D"
-ap apply limits --from "$C/limits.env" >"$T/o" 2>&1; chmod 755 "$R/$D"; ok '[ $? = 1 ] && grep -qF "chmod u+w $D\`" "$T/o"' "Q7 a read-only folder with a long path: the chmod command names it whole (W3-CV4-06)"
+ap apply limits --from "$C/limits.env" >"$T/o" 2>&1; rc=$?; chmod 755 "$R/$D"; ok '[ $rc = 1 ] && grep -qF "chmod u+w $D\`" "$T/o"' "Q7 a read-only folder with a long path: the chmod command names it whole (W3-CV4-06)"
 n41=$(head -c 36 /dev/zero | tr '\0' a).json; w0=$(whole)
 ap apply "extensions/$n41" --from "$C/fake-ext.json" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-313.*at most 40" "$T/o" && [ "$(whole)" = "$w0" ]' "Q7 an entry name too long for a whole message is refused before any write"
 mkr q7e; printf 'CALL_TIMEOUT=600\nQA_FREE=a\000b\n' >"$C/nul.env"; ap apply limits --from "$C/nul.env" >"$T/o" 2>&1
