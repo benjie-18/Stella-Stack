@@ -131,9 +131,11 @@ def locked(p):
 SECRETS = set()   # values seen under masked keys; scrub() removes them from any text
 
 def scrub(text):
+    """Each value seen under a masked key, where it stands as a whole value (not inside a longer run of letters and digits), is
+    ***: the tool's own text (a folder name, a code, a command) is never garbled by a short value like 1 or on."""
     for x in sorted(SECRETS, key=len, reverse=True):
         if x:   # an empty value would match between every two characters
-            text = text.replace(x, MASK)
+            text = re.sub(r"(?<![A-Za-z0-9])" + re.escape(x) + r"(?![A-Za-z0-9])", MASK, text)
     return text
 
 def depth(v):
