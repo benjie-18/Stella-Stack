@@ -210,7 +210,7 @@ ok 'out=$(lint --dump); [ "$(grep -c "	$fp	" <<<"$out")" = 1 ] && grep -qx "bin/
 fakeowner() { mkdir -p "$S/$(dirname "$ow")"; printf 'ALERT_TARGET=discord:#zzown\nKANBAN_BOARD=zzown\n' >"$S/$ow"; }
 fresh; fakeowner; rm "$S/.supervisor/limits.env"; ln -s "$S/$ow" "$S/.supervisor/limits.env"
 ok 'refused && grep -q "owner or state path" <<<"$out" && grep -q limits.env <<<"$out"' "V1 sibling: a file the shell reads by name (the limits file) that is a link to the owner file is refused before the shell reads it"
-fresh; fakeowner; edit --arg o "$ow" '(.skip[] | select(.run_by) | .run_by) = $o'
+fresh; fakeowner; printf '# x\n' >"$S/bin/zz-selftest.sh"; edit --arg o "$ow" '(.skip[] | select(.run_by) | .run_by) = $o'
 ok 'refused && grep -q "runner is not a file of the root the lint may read" <<<"$out"' "V1 sibling: a skip row whose runner is the owner file is refused, the file is not read"
 # V2: an input that is there but cannot be read is exit 2 with STL-CFG-310 and its name, never a pass
 cat_path=$(jq -r '.files[] | select(.id == "connections") | .path' "$W/$idx")
