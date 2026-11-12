@@ -225,6 +225,7 @@ say "$(blocked "$(hk "$SGF" "$(pl read_file "$(js --arg p "$POWN" '{path: $p}')"
 say "$(blocked "$(hk "$SGF" "$(pl terminal "$(js --arg c "cat $PROBE" '{command: $c}')")")" && grep -q "owner settings file" "$T/out" && ! grep -q kanban_block "$T/out"; echo $?)" "1 B2V-16: a command naming the owner file gets the owner-settings message"
 
 # 2 a fixture that exists (a glob matches it, a recursive search would read it)
+mkdir -p /workspace/.scratch   # ignored by git: absent in a fresh copy
 FIX=$(mktemp -d -p /workspace/.scratch "$P.XXXXXX"); echo "dummy=1" >"$FIX/zz-owner-probe.env"
 FREL=${FIX#/workspace/}/zz-owner-probe.env; tbl "$T/fix.json" "[\"$FREL\"]"; MT=$T/fix.json; export ROLES_FILE=$MT
 matrix 2 "$FIX/zz-owner-probe.env" "$FIX" 1
