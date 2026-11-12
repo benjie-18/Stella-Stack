@@ -76,7 +76,7 @@ bound() {  # bound <fixture> <card> <assignee> <workspace> <branch> <payload> --
   [ "$fx" = none ] || mk "$fx" "$c" "$a" "$ws" "$br" "$(cat "$d/pid")"
   touch "$d/go"; wait "$w"; cp "$d/out" "$T/out"; cat "$d/rc"; }
 M=${MC:-/workspace/bin/merge-card.sh} fails=0
-ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
+ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); [ -s "$T/out" ] && sed 's/^/     /' "$T/out" | tail -4; fi; }   # a failing case shows the last lines the merge printed
 mc() { (cd "$T/repo" && "$M" "$@") >"$T/out" 2>&1; echo $?; }
 head_of() { git -C "$1" rev-parse "${2:-HEAD}"; }
 
