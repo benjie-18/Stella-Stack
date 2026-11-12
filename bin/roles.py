@@ -300,13 +300,15 @@ def validate(d, root=ROOT, files=True):
     return errs or fallback_problems(d) + unboxed_problems(d)   # both on a well-formed table, each names its own gap (one never hides the other)
 
 
-@functools.lru_cache(maxsize=None)   # T1: the table names ~16 hook files about 60 times; each is looked up once per process
 def _bad_hook_path(src, command, root):
     """A command is an absolute path, a file a repo path inside the root once symlinks are followed; True when it is not, or is no file."""
     if command:
         return not src.startswith("/") or ".." in src.split("/") or not os.path.isfile(src)
     rr = os.path.realpath(root)
     return not _rel(src) or not os.path.isfile(f"{root}/{src}") or not os.path.realpath(f"{root}/{src}").startswith(rr.rstrip("/") + "/")
+
+
+_bad_hook_path = functools.lru_cache(maxsize=None)(_bad_hook_path)   # T1: the table names ~16 hook files about 60 times; each is looked up once per process
 
 
 def _hooks(r, judged=True):
