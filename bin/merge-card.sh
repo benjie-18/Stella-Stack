@@ -142,13 +142,29 @@ if [ -z "$owner" ]; then
 fi
 g show "$tip:package.json" 2>/dev/null | jq -e '.scripts.test' >/dev/null 2>&1 || refuse "no test command in $branch:package.json (scripts.test)"
 # K2: the card's test command is the card's code: it runs in the OS box (bin/box.py exec) with the plan a worker gets, never in this shell
+# r6 B2 (owner decision 4 of 2026-11-12, W4-CV3-02): a card of the stack itself (the repository merged is the tree this script lies in: no name here)
+# merges with a reduced test set: the selftests the test map selects for the card's diff against the merge base plus the map's quick tier, through the
+# suite runner, all three read from and run in the tree under test (the throw-away worktree, never the main checkout's files), in the box. `full` from the
+# map, a map tool that fails or an empty answer runs the whole suite; a quick list that cannot be read, or a runner that cannot isolate, fails the tests.
+# The runner makes a namespace per selftest, so this box alone may nest namespaces (box.py merge_exec nest). The full suite still runs on the final hash.
+tscript='timeout 1800 npm test' nest=
+if [ "$(readlink -f "$top")" = "$(readlink -f "$here/..")" ]; then
+  mb=$(g merge-base "$before" "$tip") && fl=$(g diff --name-only --no-renames "$mb" "$tip" | base64 -w0) && [ -n "$fl" ] \
+    || coded STL-CFG-303 "git cannot list what $branch changed since it left main" "so its tests cannot be selected; nothing was merged"
+  nest=nest   # shortcut: one hour for the reduced set or the whole suite in the box, a limit in data when the suite's run time is settled
+  tscript='sel=$(printf %s '"$fl"' | base64 -d | python3 -I bin/test-map.py select -) && [ -n "$sel" ] || sel=full
+if [ "$sel" = full ]; then echo "merge test: the whole suite (the test map selects it)" >&2; exec timeout 3600 bash bin/selftests.sh; fi
+q=$(python3 -I bin/test-map.py quick) && [ -n "$q" ] || { echo "merge test: the quick list of the test map cannot be read" >&2; exit 1; }
+echo "merge test: the selected selftests and the quick tier:" $sel $q >&2
+exec timeout 3600 bash bin/selftests.sh $sel $q'
+fi
 intree() {   # intree <commit> <name>: npm test of <commit> in the box, in a throw-away worktree made here (owner-made git files; T6) and removed
   # after without running git in it. The verdict is $tres, never an exit code the test can choose (r6, R14): "wt" the worktree cannot be made, "ran <code>" the
   # test ran and exited with <code> (what bin/box.py exec states on descriptor 3, which the box never holds), anything else: the box did not run it (its coded line is printed)
   local pw="$top/.worktrees/$2-$card" pb="$2/$card"; tres=wt
   rm -f "$common/worktrees/$2-$card/locked"; g worktree prune   # W4-VAL3-01: a lock a previous test wrote into the entry would keep it; a folder left at $pw is not ours to remove: the add below fails, coded
   g -c core.hooksPath=/dev/null -c core.fsmonitor= worktree add -q -b "$pb" "$pw" "$1" >/dev/null 2>&1 || return 0
-  tres=$(python3 -I "$here/box.py" exec "$top" "$pw" "$pb" "$card" 'timeout 1800 npm test' 3>&1 >&2)
+  tres=$(python3 -I "$here/box.py" exec "$top" "$pw" "$pb" "$card" "$tscript" $nest 3>&1 >&2)
   rm -rf "$pw"; rm -f "$common/worktrees/$2-$card/locked"; g worktree prune; g branch -D "$pb" >/dev/null 2>&1; }
 echo "merge-card.sh: running this branch's own test command in the OS box (the card worktree writable, the rest read-only); review the diff first" >&2
 intree "$tip" merge-check

@@ -14,8 +14,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import roles
 
 HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs/hermes-local/hooks/builder/secret-guard.py")
+NO_NEST = "--disable-userns"   # no namespace inside a box; only the merge test of a stack card runs without it (merge_exec nest)
 BASE = ["bwrap", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup-try",
-        "--disable-userns", "--die-with-parent", "--new-session", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"]
+        NO_NEST, "--die-with-parent", "--new-session", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"]
 
 
 class BoxError(Exception):
@@ -708,10 +709,12 @@ def _sweep_after(spec, enc, pid):
         pass
 
 
-def merge_exec(top, wt, branch, card, script):
+def merge_exec(top, wt, branch, card, script, nest=False):
     """K2 (F1 W4): run `script` (the card's test command, in bash) in the OS box with the plan a builder's worker gets: the card worktree
     writable, the rest read-only, the owner settings files and the state paths not mounted, the worker markers set. The profile is the first
     of sandbox.boxed_profiles whose role has a writable card worktree (one without broker variables first): from the table, never named here.
+    nest (r6 B2, owner decision 4): the box of a STACK card's merge test may make namespaces of its own (the suite runner isolates each selftest in one); that
+    box alone drops the launcher's no-nested-namespaces switch, every mount and hidden path stays as planned, and no worker's box ever takes this route.
     The box is the only way: there is no unboxed run. Raises BoxError when the box cannot start. Returns the script's exit code."""
     d = roles.load()
     sb = roles.sandbox(d)
@@ -723,6 +726,8 @@ def merge_exec(top, wt, branch, card, script):
     home = pwd.getpwuid(os.getuid()).pw_dir
     root = os.environ.get("BOX_HERMES_ROOT") or f"{home}/.hermes"
     argv, over = box_argv(d, ps[0], {"card": card, "workspace": wt, "branch": branch}, hermes_root=root, home=home, roots=[top])
+    if nest:
+        argv = [a for a in argv if a != NO_NEST]
     env = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "LC_ALL", "LC_CTYPE")}
     env.update({m: card for m in roles.worker_markers(d)})
     env.update(over)
@@ -754,7 +759,7 @@ def merge_exec(top, wt, branch, card, script):
 if __name__ == "__main__" and sys.argv[1:2] == ["exec"]:   # exec <top> <worktree> <branch> <card> <script>: the verdict is ONE line on descriptor 3, which the box never holds:
     # "ran <the script's exit code>" or nothing (the box could not start: the coded line is on stderr). The exit code repeats it for a reader, it is not the verdict.
     try:
-        rc = merge_exec(*sys.argv[2:6], sys.argv[6])
+        rc = merge_exec(*sys.argv[2:6], sys.argv[6], nest=sys.argv[7:8] == ["nest"])
         with contextlib.suppress(OSError):
             os.write(3, f"ran {rc}\n".encode())
         sys.exit(rc)

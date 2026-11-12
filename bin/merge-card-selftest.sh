@@ -367,4 +367,45 @@ for f in "$CAT" "$ACD"; do mkdir -p "$T/repo/${f%/*}"; printf 'owner version\n' 
 wcard t_0000d0a9; for f in "$CAT" "$ACD"; do printf 'a card adds a code\n' >"$T/repo/.worktrees/t_0000d0a9/$f"; done; git -C "$T/repo/.worktrees/t_0000d0a9" add -f -A; wcommit t_0000d0a9; h=$(head_of "$T/repo")
 a0=$(nal); ok '[ "$(FAKE_APPROVED=t_0000d0a9 mc t_0000d0a9)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -q "define the boundary" "$T/out" && grep -qF "$CAT" "$T/out" && grep -qF "$ACD" "$T/out" && [ "$(nal)" = $((a0+1)) ] && [ "$(head_of "$T/repo")" = "$h" ]' "T9: a card that changes the alert catalog ($CAT) and its code page is refused without the flag (boundary code, one alert line, both listed), main untouched"
 ok '[ "$(FAKE_APPROVED=t_0000d0a9 mc t_0000d0a9 --i-have-read-the-boundary-changes)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ] && grep -q "a card adds a code" "$T/repo/$CAT"' "T9: the same card lands by the owner path (--i-have-read-the-boundary-changes)"
+# r6 B2 (owner decision 4, W4-CV3-02; phase finding ORCH-03): a card of the stack itself merges with the test map's selection for its diff plus the quick tier,
+# read from and run in the tree under test, through the real suite runner, in the box. The scratch stack is this tree's tracked files with a two-name suite and a
+# stub map tool (select: zz-mapped.txt -> zz-alpha, zz-red.txt -> zz-red, zz-full.txt -> full; quick: zz-beta, or an error once zz-noquick.txt is in the tree).
+SR=$T/srepo; mkdir -p "$SR"; git -C /workspace ls-files -z | tar -c -C /workspace --null -T - -f - | tar -x -C "$SR" -f -
+sed -i 's/^for t in alert .*; do$/for t in zz-alpha zz-beta; do/' "$SR/bin/selftests.sh"
+cat >"$SR/bin/test-map.py" <<'S'
+#!/usr/bin/env python3
+import os, sys
+a = sys.argv[1:]
+if a == ["quick"]:
+    sys.exit(1) if os.path.exists("zz-noquick.txt") else print("zz-beta")
+elif a[:1] == ["select"]:
+    f = sys.stdin.read().split("\n")
+    print("full" if "zz-full.txt" in f else "zz-red" if "zz-red.txt" in f else "zz-alpha" if "zz-mapped.txt" in f else "zz-alpha")
+S
+for n in alpha beta; do printf '#!/usr/bin/env bash\necho "ok   %s ran in $(pwd)"; echo "selftest PASS"\n' "$n" >"$SR/bin/zz-$n-selftest.sh"; done
+printf '#!/usr/bin/env bash\necho "FAIL zz-red case"; echo "selftest FAIL (1)"; exit 1\n' >"$SR/bin/zz-red-selftest.sh"; chmod +x "$SR"/bin/zz-*-selftest.sh "$SR/bin/test-map.py"
+git -C "$SR" init -q -b main; git -C "$SR" add -A; git -C "$SR" -c core.hooksPath=/dev/null commit -qm "a scratch stack"
+smc() { (cd "$SR" && "$SR/bin/merge-card.sh" "$@") >"$T/out" 2>&1; echo $?; }
+scard() {  # scard <id> <file> <content>...: a card of the scratch stack with one commit changing the files given as pairs
+  local c=$1 w="$SR/.worktrees/$1"; shift; git -C "$SR" worktree add -q -b "stella/$c-x" "$w" main
+  while [ $# -ge 2 ]; do mkdir -p "$w/$(dirname "$1")"; printf '%s\n' "$2" >"$w/$1"; shift 2; done
+  git -C "$w" add -f -A; git -C "$w" -c core.hooksPath=/dev/null commit -qm "card $c"; }
+ok 'grep -q "zz-alpha zz-beta" "$SR/bin/selftests.sh" && [ "$(readlink -f "$SR/bin/merge-card.sh")" != "$(readlink -f "$M")" ]' "B2 set-up: the scratch stack has its own merge script and a two-name suite"
+scard t_0000b201 zz-mapped.txt x; h=$(head_of "$SR")
+ok '[ "$(smc t_0000b201 --owner-approved)" = 0 ] && grep -q "^ok   zz-alpha-selftest" "$T/out" && grep -q "^ok   zz-beta-selftest" "$T/out" && ! grep -q "the whole suite" "$T/out" && [ "$(head_of "$SR")" != "$h" ]' "B2: a stack card touching one mapped file runs the selected selftest and the quick tier through the runner (isolated, in the box) and merges"
+scard t_0000b202 zz-red.txt x; h=$(head_of "$SR")
+ok '[ "$(smc t_0000b202 --owner-approved)" = 3 ] && grep -q "FAIL zz-red-selftest" "$T/out" && grep -q "^ok   zz-beta-selftest" "$T/out" && grep -q "tests failed" "$T/out" && [ "$(head_of "$SR")" = "$h" ]' "B2: a stack card whose selected selftest fails is refused (tests failed), main untouched"
+scard t_0000b203 zz-full.txt x; h=$(head_of "$SR")
+ok '[ "$(smc t_0000b203 --owner-approved)" = 0 ] && grep -q "the whole suite" "$T/out" && grep -q "^ok   zz-alpha-selftest" "$T/out" && grep -q "^ok   zz-beta-selftest" "$T/out" && [ "$(head_of "$SR")" != "$h" ]' "B2: select answers full: the whole suite of the tree under test runs"
+scard t_0000b204 zz-mapped.txt y bin/zz-alpha-selftest.sh 'echo "FAIL the card changed this selftest"; exit 1'; h=$(head_of "$SR")
+ok '[ "$(smc t_0000b204 --owner-approved)" = 3 ] && grep -q "FAIL zz-alpha-selftest" "$T/out" && grep -q "tests failed" "$T/out" && [ "$(head_of "$SR")" = "$h" ]' "B2 (ORCH-03): the selftest that runs is the one of the tree under test (the card's own version), never the main checkout's file"
+scard t_0000b205 zz-noquick.txt x; h=$(head_of "$SR")
+ok '[ "$(smc t_0000b205 --owner-approved)" = 3 ] && grep -q "quick list of the test map cannot be read" "$T/out" && grep -q "tests failed" "$T/out" && [ "$(head_of "$SR")" = "$h" ]' "B2: a quick list that cannot be read fails the tests (never a set without the quick tier)"
+k=5; for bp in bin/test-map.py bin/selftests.sh; do k=$((k+1)); c=t_0000b20$k; scard $c "$bp" '# a card edits it'; h=$(head_of "$SR")
+  ok '[ "$(smc $c --owner-approved)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -q "define the boundary" "$T/out" && grep -qF "$bp" "$T/out" && [ "$(head_of "$SR")" = "$h" ]' "B2: a card that changes $bp (what selects or runs its own tests) is behind the owner's flag"
+done
+TM=$(jq -r '.runner as $r | "ok"' "$SR/.stella/test-map.json" >/dev/null 2>&1 && echo .stella/test-map.json); scard t_0000b208 "$TM" '{}'; h=$(head_of "$SR")
+ok '[ -n "$TM" ] && [ "$(smc t_0000b208 --owner-approved --i-have-read-the-boundary-changes)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -q "owner data" "$T/out" && [ "$(head_of "$SR")" = "$h" ]' "B2: a card that changes the test map itself (owner data) is refused, with the flag too"
+card t_0000b209 b209.txt b209 'echo QA-NPM-RAN; unshare -Ur true 2>/dev/null && exit 1; exit 0'; h=$(head_of "$T/repo")
+ok '[ "$(mc t_0000b209 --owner-approved)" = 0 ] && grep -q QA-NPM-RAN "$T/out" && ! grep -q "merge test:" "$T/out" && [ "$(head_of "$T/repo")" != "$h" ]' "B2: a project card is unchanged: its own test command runs, in a box that still forbids nested namespaces"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
