@@ -322,6 +322,16 @@ HOOK=$(jq -r '[.roles[].hooks[]? | .file // empty] | first' "$RF"); mkdir -p "$T
 wcard t_0000d0a8; printf '#!/bin/sh\nexit 0\n' >"$T/repo/.worktrees/t_0000d0a8/$HOOK"; git -C "$T/repo/.worktrees/t_0000d0a8" add -f -A; wcommit t_0000d0a8
 a0=$(nal); ok '[ "$(FAKE_APPROVED=t_0000d0a8 mc t_0000d0a8)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && [ "$(nal)" = $((a0+1)) ]' "K8: the boundary refusal carries a catalog code and writes one alert line"
 a0=$(nal); ok '[ "$(ROLES_FILE=$T/garbage.json FAKE_APPROVED=t_0000d0a8 mc t_0000d0a8)" = 3 ] && grep -q "STL-CFG-303" "$T/out" && [ "$(nal)" -le $((a0+2)) ]' "K8: the lists unreadable: a coded refusal"
+# B.3 point 17 (r5, W4-VER3-01): the merge never replaces or removes a file of the main checkout that git does not track there. A card that force-adds a
+# path main's ignore rules ignore, or turns an ignored folder into a file, is refused before anything is written; main (its ignored file too) unchanged
+printf 'zz-ign.txt\nzz-idir/\n' >>"$T/repo/.gitignore"; g add .gitignore; g -c core.hooksPath=/dev/null commit -qm "ignore two local paths"
+printf 'OWNER-LOCAL\n' >"$T/repo/zz-ign.txt"; mkdir -p "$T/repo/zz-idir"; printf 'OWNER-LOCAL\n' >"$T/repo/zz-idir/f"
+k7=0; for sp in zz-ign.txt zz-idir; do k7=$((k7+1)); c=t_0000f0$(printf '%02x' "$k7"); wcard $c
+  printf 'CARD\n' >"$T/repo/.worktrees/$c/$sp"; git -C "$T/repo/.worktrees/$c" add -f -- "$sp"; wcommit $c; h=$(head_of "$T/repo")
+  ok '[ "$(FAKE_APPROVED='$c' mc '$c' --owner-approved)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -qF "'$sp'" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ] && [ "$(cat "$T/repo/zz-ign.txt")" = OWNER-LOCAL ] && [ "$(cat "$T/repo/zz-idir/f")" = OWNER-LOCAL ]' "B.3 point 17: a card whose merge would replace the untracked $sp of the main checkout is refused, the main checkout byte-identical"
+done
+c=t_0000f0a0; wcard $c; printf 'new\n' >"$T/repo/.worktrees/$c/zz-new-tracked.txt"; git -C "$T/repo/.worktrees/$c" add zz-new-tracked.txt; wcommit $c; h=$(head_of "$T/repo")
+ok '[ "$(FAKE_APPROVED='$c' mc '$c' --owner-approved)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ]' "B.3 point 17 control: a card adding a new tracked path where nothing exists merges"
 # B.1 point 6 (r5, W1-RT6-01): a card branch that replaces a folder holding an owner path (the owner settings' folder, owner data's, the apply tool's
 # state's) by a symbolic link is refused, and the main checkout's folder stays a folder
 for hd in "$(jq -r '.owner_settings[0]' "$RF" | cut -d/ -f1)" "$(jq -r '.owner_data[0]' "$RF" | cut -d/ -f1)" "$(jq -r .applied_state "$IDX" | cut -d/ -f1)"; do

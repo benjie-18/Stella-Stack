@@ -96,6 +96,24 @@ elif [ "$mrc" != 1 ]; then   # 1 = a conflict: the merge below fails and is abor
   coded STL-CFG-303 "git cannot compute the tree merging $branch would produce" "so what the merge changes cannot be checked; nothing was merged"
 fi
 if [ -n "$mtree" ]; then
+  # B.3 point 17 (W4-VER3-01): git's merge overwrites an ignored file without a word. Every path the merged tree changes, and each folder above it, that
+  # exists in the main checkout but is not tracked in main is refused before anything is written (ignored or not, any name)
+  tz=$(mktemp) && g ls-tree -r -z --name-only "$before" >"$tz" || coded STL-CFG-303 "git cannot list what main tracks" "nothing was merged"
+  over=$(python3 -I -c '
+import os, sys
+top, zf, tz = sys.argv[1:4]
+tracked = {x for x in open(tz, "rb").read().decode("utf-8", "surrogateescape").split("\0") if x}
+dirs = {os.path.dirname(x) for x in tracked}; dirs = {d for x in list(dirs) for d in [x] + [x.rsplit("/", i)[0] for i in range(1, x.count("/") + 1)]}
+out = []
+for n in (x for x in open(zf, "rb").read().decode("utf-8", "surrogateescape").split("\0") if x):
+    parts = n.split("/")
+    for i in range(1, len(parts) + 1):
+        p = "/".join(parts[:i])
+        if p not in tracked and p not in dirs and os.path.lexists(os.path.join(top, p)):
+            out.append(p); break
+print(", ".join(sorted(set(out)))[:240])' "$top" "$zf" "$tz") || coded STL-CFG-303 "the main checkout's untracked files cannot be compared with the merge" "nothing was merged"
+  rm -f "$tz"
+  [ -z "$over" ] || coded STL-CFG-312 "$branch would replace files of the main checkout that git does not track there: $over" "Those files (ignored local files, owner files) are never replaced by a merge; nothing was merged"
   hits=$(python3 -I "$here/roles.py" hits "$top" refused "$here/.." <"$zf" 2>/dev/null | tr '\0' '\n'; exit "${PIPESTATUS[0]}") \
     || coded STL-CFG-303 "the owner data list (role table or data index) cannot be read" "so what $branch changes cannot be checked; nothing was merged"
   bhits=$(python3 -I "$here/roles.py" hits "$top" boundary "$here/.." <"$zf" 2>/dev/null | tr '\0' '\n'; exit "${PIPESTATUS[0]}") \
