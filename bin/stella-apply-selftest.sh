@@ -8,7 +8,8 @@
 # (unwritable event log, an interrupted apply), two applies at once, a folder row, paths that leave the root.
 set -u
 H=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-T=$(mktemp -d -t stella-apply-selftest.XXXXXX); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d -t stella-apply-selftest.XXXXXX); trap 'chmod -R u+w "$T" 2>/dev/null; rm -rf "$T"' EXIT
+mkdir -p "$T/tmp"; export TMPDIR=$T/tmp   # the tool stages its whole-set check in the temp folder: keep it inside the scratch folder
 R=$T/root; C=$T/cand; mkdir -p "$R/docs/hermes-local" "$R/config" "$R/.supervisor/logs" "$C" "$T/sup/logs"
 cp -r "$H/.stella" "$R/"
 jq '(.files[] | select(.id == "connections" or .id == "extensions" or .id == "limits") | .owner_only) = false' "$R/.stella/data-files.json" >"$T/nx" && cp "$T/nx" "$R/.stella/data-files.json"   # the cases need these rows not owner-only, whatever the shipped flags say
@@ -31,6 +32,8 @@ fails=0
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 tree() { (cd "$R" && find . \( -path ./.git -o -path ./.supervisor/state -o -path ./.supervisor/logs \) -prune -o -printf '%y %m %p\n' | sort; \
   find . \( -path ./.git -o -path ./.supervisor/state -o -path ./.supervisor/logs \) -prune -o -type f -print0 | sort -z | xargs -0 sha256sum); }
+# whole: every folder and file under the root, the state and log folders included (type, mode, name; the bytes of each file)
+whole() { (cd "$R" && find . -path ./.git -prune -o -printf '%y %m %p\n' | sort; find . -path ./.git -prune -o -type f -print0 | sort -z | xargs -0 sha256sum); }
 nev() { [ -f "$LOG" ] && wc -l <"$LOG" || echo 0; }
 nbk() { find "$R/.supervisor/state/backups" -name meta.json 2>/dev/null | wc -l; }
 fp() { echo "$(cat /proc/sys/kernel/random/boot_id):$(sed 's/.*) //' /proc/1/stat | awk '{print $20}')|$(sed 's/.*) //' /proc/$1/stat | awk '{print $20}')"; }
@@ -66,14 +69,16 @@ ok '[ $rc = 1 ] && grep -q STL-CFG-314 "$T/o"' "A5d a hand edit is drift: exit 1
 git -C "$R" checkout -q -- .stella/connections.json
 
 # A5a dry runs
-B=$(tree)
+B=$(tree); W0=$(whole)
 ap apply connections --from "$C/conn.json" --dry-run >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && grep -q "Changed label" "$T/o" && [ "$(tree)" = "$B" ] && [ ! -e "$LOG" ]' "A5a dry run (json): diff shown, exit 0, no file changed, no event"
+ok '[ "$(whole)" = "$W0" ] && [ -z "$(ls -A "$TMPDIR")" ]' "A5a dry run (json) on a root where nothing was applied: every folder and file under the root as it was, the state folders included; no staging copy left"
 ap apply owner-settings --from "$C/owner.env" --dry-run >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && grep -q "API_TOKEN=.\*\*\*" "$T/o" && ! grep -q sekrit- "$T/o" && grep -q "Fake Two" "$T/o" && [ "$(tree)" = "$B" ]' "A5a dry run (env): masked diff, nothing changed"
 ap apply limits --from "$C/limits.env" --dry-run >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && grep -q "PLANTED_SETTING=.\*\*\*" "$T/o" && ! grep -q sekrit- "$T/o" && [ "$(tree)" = "$B" ]' "A5a dry run (secret setting): masked, nothing changed"
 ap apply connections --from "$C/bad.json" --dry-run >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-313 "$T/o" && [ "$(tree)" = "$B" ]' "A5a a dry run of an invalid candidate is refused"
+ok '[ "$(whole)" = "$W0" ]' "A5a every dry run (json, env, secret setting, refused) left the whole root as it was"
 
 # A5b/c/e for json, env, env with a secret setting
 for spec in connections:conn.json:.stella/connections.json owner-settings:owner.env:config/owner.env limits:limits.env:.supervisor/limits.env; do
@@ -137,10 +142,10 @@ B=$(tree)
 # failure paths: the event log cannot be written
 mv "$LOG" "$T/log.keep"; ln -s /dev/full "$LOG"
 ap apply connections --from "$C/conn.json" >"$T/o" 2>&1; rc=$?
-ok '[ $rc = 1 ] && grep -q STL-CFG-318 "$T/o" && [ "$(tree)" = "$B" ] && [ "$(nbk)" = 0 ] && [ "$(ap check connections --json | jq -r .files[0].baseline)" = git ]' "event log fails on write (/dev/full): file restored, backup and applied state gone, STL-CFG-318"
+ok '[ $rc = 1 ] && grep -q STL-CFG-318 "$T/o" && [ "$(tree)" = "$B" ] && [ "$(nbk)" = 0 ] && [ "$(ap check connections --json | jq -r .files[0].baseline)" = git ]' "an event log that is a link (to /dev/full): refused before anything is touched (the link is refused by the path check), STL-CFG-318"
 rm "$LOG"; mkdir "$LOG"
 ap apply connections --from "$C/conn.json" >"$T/o" 2>&1; rc=$?
-ok '[ $rc = 1 ] && grep -q STL-CFG-318 "$T/o" && [ "$(tree)" = "$B" ] && [ "$(nbk)" = 0 ]' "event log is not a file: refused before anything is touched"
+ok '[ $rc = 1 ] && grep -q STL-CFG-318 "$T/o" && [ "$(tree)" = "$B" ] && [ "$(nbk)" = 0 ]' "an event log that is a folder: refused before anything is touched"
 rmdir "$LOG"; mv "$T/log.keep" "$LOG"
 ap apply connections --from "$C/conn.json" >/dev/null 2>&1
 cp "$LOG" "$T/log.keep"; rm "$LOG"; ln -s /dev/full "$LOG"; B2=$(tree)
@@ -150,7 +155,7 @@ rm "$LOG"; mv "$T/log.keep" "$LOG"
 
 # an interrupted apply: the backup is still pending
 n=$(nev); bm=$(find "$R/.supervisor/state/backups" -name meta.json); jq '.status = "pending"' "$bm" >"$T/m" && cp "$T/m" "$bm"
-ap check connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-314 "$T/o"' "a pending backup is reported by check (STL-CFG-314)"
+ap check connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-323 "$T/o"' "a pending backup is reported by check as an unfinished step (STL-CFG-323)"
 ap apply connections --from "$C/conn2.json" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-313 "$T/o" && grep -q "rollback" "$T/o"' "apply refuses while a backup is pending and says what to do"
 ap rollback connections >"$T/o" 2>&1; ok '[ $? = 0 ] && [ "$(tree)" = "$B" ] && [ "$(nev)" = $((n+1)) ]' "rollback recovers an interrupted apply: file restored, one event line"
 
@@ -201,7 +206,7 @@ echo '{"schema_version":1,"id":"fake-ext2","kind":"mcp_server","summary":"fake e
 mkr g1; jq '.worker_markers = []' "$ROLES" >"$R/docs/hermes-local/roles.json"
 ap apply owner-settings --from "$C/owner.env" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-312 "$T/o"' "G1 an empty worker_markers list is refused like a missing one"
 cp "$ROLES" "$R/docs/hermes-local/roles.json"
-ap history connections/../owner-settings --json >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-313 "$T/o" && ! grep -q backups "$T/o"' "G1 history sends its id through the same target() as apply"
+ap history connections/../owner-settings --json >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-322 "$T/o" && ! grep -q backups "$T/o"' "G1 history sends its id through the same target() as apply (a read command's refusal: 322)"
 ok '! grep -qE "^ *assert " "$H/bin/stella-apply.py"' "G1 no assert is used as a check"
 
 # G2 one row, one real file
@@ -209,11 +214,12 @@ mkr g2; rm "$R/.supervisor/limits.env"; ln -s ../config/owner.env "$R/.superviso
 ap apply limits --from "$C/limits.env" --dry-run >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 1 ] && grep -q STL-CFG-313 "$T/o" && ! grep -q "API_TOKEN\|sekrit" "$T/o"' "G2 a row path that is a symbolic link to another file: a dry run is refused, nothing of the file is printed"
 ap apply limits --from "$C/limits.env" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-313 "$T/o" && [ "$(tree)" = "$B" ] && [ "$(nbk)" = 0 ] && [ ! -e "$LOG" ]' "G2 the apply is refused: the linked file, the backups and the log are untouched"
-ap check limits >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-313 "$T/o" && ! grep -q "API_TOKEN\|sekrit" "$T/o"' "G2 check reports the linked row and prints nothing from the file"
+ap check limits >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-322 "$T/o" && ! grep -q "API_TOKEN\|sekrit" "$T/o"' "G2 check reports the linked row (322) and prints nothing from the file"
 mkr g2b; mkdir "$R/elsewhere" "$R/.supervisor/state"; mkdir -p "$R/.supervisor/state/backups"; ln -s ../../../elsewhere "$R/.supervisor/state/backups/connections"
 ap apply connections --from "$C/conn.json" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-313 "$T/o" && [ -z "$(ls -A "$R/elsewhere")" ] && cmp -s "$T/conn.orig" "$R/.stella/connections.json"' "G2 a backup folder that is a symbolic link is refused, nothing written through it"
 mkr g2c; jq '(.files[] | select(.id == "capabilities") | .path) = ".stella/features.json"' "$R/.stella/data-files.json" >"$T/x" && cp "$T/x" "$R/.stella/data-files.json"
-ap check connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-313 "$T/o" && grep -qi "same file" "$T/o"' "G2 two index rows that name the same file are refused"
+ap check capabilities >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-322 "$T/o" && grep -qi "same file" "$T/o"' "G2 two index rows that name the same file are refused (each of the two rows)"
+ap check connections >"$T/o" 2>&1; ok '[ $? = 0 ]' "G2 a row that is not one of the two still works"
 mkr g2d; jq '.event_log = ".stella/connections.json"' "$R/.stella/data-files.json" >"$T/x" && cp "$T/x" "$R/.stella/data-files.json"
 ap apply connections --from "$C/conn.json" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-313 "$T/o" && cmp -s "$T/conn.orig" "$R/.stella/connections.json"' "G2 an index whose event_log is also a row's file is refused"
 
@@ -229,7 +235,7 @@ printf 'planted-bytes' >"$R/.stella/.stella-apply.dead"; printf keep >"$R/.stell
 ap apply connections --from "$C/conn2.json" >/dev/null 2>&1
 ok '[ ! -e "$R/.stella/.stella-apply.dead" ] && [ -e "$R/.stella/.stella-apply-keep" ]' "G3 the next run sweeps the tool's own stray temp file, only that name"
 mkdir "$(BK)/connections/00000001-unfinished"; printf 'copy' >"$(BK)/connections/00000001-unfinished/file"
-ap check connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-314 "$T/o"' "G3 check reports a backup folder without a readable meta file (314)"
+ap check connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-323 "$T/o"' "G3 check reports a backup folder without a readable meta file (323, an unfinished step)"
 ap apply connections --from "$C/conn.json" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "rollback" "$T/o"' "G3 apply refuses while such a folder is there"
 ap rollback connections >"$T/o" 2>&1; ok '[ ! -e "$(BK)/connections/00000001-unfinished" ]' "G3 rollback removes the folder without a meta file"
 
@@ -299,12 +305,19 @@ if bwrap --dev-bind / / --unshare-user --uid 4242 --gid 4242 -- true 2>/dev/null
 fi
 
 # G8 the whole set stays valid
-mkr g8; jq 'del(.entries[0].data_policy)' "$R/.stella/connections.json" >"$T/x" && cp "$T/x" "$R/.stella/connections.json"
+# (since W1 round 5 a broken file gives "not judged" lines, not "could not run"; a missing schema row still gives "could not run")
+mkr g8; cp "$R/.stella/data-files.json" "$C/idx-whole.json"; jq '.files |= map(select(.id != "data-policy"))' "$C/idx-whole.json" >"$T/x" && cp "$T/x" "$R/.stella/data-files.json"
 python3 -I "$H/bin/stella_data.py" check 2>&1 | grep -q "could not run" && base_broken=1 || base_broken=0
 jq '.pins[0].version = "9.9.9"' "$R/.stella/versions.json" >"$C/v.json"
 ap apply versions --from "$C/v.json" >"$T/o" 2>&1; rc=$?
 ok '[ $base_broken = 1 ] && [ $rc = 1 ] && grep -q STL-CFG-313 "$T/o" && grep -q "could not run" "$T/o"' "G8 a candidate is refused while the staged set still holds a could-not-run problem, also when the tree already had it (premise broken tree: $base_broken)"
-ap apply connections --from "$T/conn.orig" >"$T/o" 2>&1; ok '[ $? = 0 ]' "G8 a candidate that removes the cause is the way out"
+ap apply data-files --from "$C/idx-whole.json" >"$T/o" 2>&1; ok '[ $? = 0 ]' "G8 a candidate that removes the cause is the way out"
+mkr g8n; jq 'del(.entries[0].data_policy)' "$R/.stella/connections.json" >"$T/x" && cp "$T/x" "$R/.stella/connections.json"
+python3 -I "$H/bin/stella_data.py" check 2>&1 | grep -q "not judged.*connections" && nj=1 || nj=0
+ap apply versions --from "$C/v.json" >"$T/o1" 2>&1; r1=$?
+cp "$R/.stella/data-policy.json" "$C/dp.json"; printf '\n' >>"$C/dp.json"   # other bytes, the same document
+ap apply data-policy --from "$C/dp.json" >"$T/o2" 2>&1; r2=$?
+ok '[ $nj = 1 ] && [ $r1 = 0 ] && [ $r2 = 1 ] && grep -q "STL-CFG-313.*not judged" "$T/o2"' "G8 a 'not judged' line decides by what it means: an unrelated row left unjudged by a broken file does not block a row that was judged (versions applies); the candidate's own row left unjudged is refused (premise: $nj)"
 mkr g8b; ap apply connections --from "$C/conn.json" >/dev/null 2>&1
 for ch in '.backup_dir = ".supervisor/state/other"' '.event_log = ".supervisor/logs/other.jsonl"' '.applied_state = ".supervisor/state/other.json"' '.files |= map(select(.id != "connections"))' '.files |= map(select(.id != "data-files"))'; do
   jq "$ch" "$R/.stella/data-files.json" >"$C/idx.json"; B=$(tree)
@@ -378,8 +391,10 @@ mkr h2b; ap apply connections --from "$C/conn.json" >/dev/null 2>&1; ap apply co
 ap rollback connections >"$T/o" 2>&1
 ok '[ $? = 0 ] && grep -q "nothing was restored" "$T/o" && [ ! -e "$(BK)/connections/00000009-stray" ] && cmp -s "$C/conn2.json" "$R/.stella/connections.json" && [ "$(nbk)" = 2 ] && [ "$(nev)" = 2 ]' "H2 removing an unfinished folder is its own step: nothing else is restored"
 ap rollback connections >/dev/null 2>&1; ok 'cmp -s "$C/conn.json" "$R/.stella/connections.json"' "H2 the next rollback undoes the last apply"
-mkr h2c; ap apply connections --from "$C/conn.json" >/dev/null 2>&1; d=$(ls -d "$(BK)"/connections/*); rm "$d/meta.json"
-ap check connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "removes it" "$T/o"' "H2 the advice for an unfinished folder says what the command will do"
+mkr h2c; kill_at applied apply connections --from "$C/conn.json" >/dev/null 2>&1; d=$(ls -d "$(BK)"/connections/*); rm "$d/meta.json"; git -C "$R" checkout -q -- .stella/connections.json
+ap check connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "removes it" "$T/o"' "H2 the advice for an unfinished folder (no meta, the file holds the saved bytes) says what the command will do"
+mkr h2d; ap apply connections --from "$C/conn.json" >/dev/null 2>&1; d=$(ls -d "$(BK)"/connections/*); rm "$d/meta.json"
+ap check connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-316 "$T/o" && grep -q missing "$T/o"' "H2 a completed backup whose meta was removed by hand is damage (316), not unfinished"
 
 # H3 one row, one real file
 mkr h3a; B=$(tree); ln -f "$R/.stella/connections.json" "$R/.stella/capabilities.json"
@@ -389,7 +404,7 @@ ap apply data-files --from "$C/idx.json" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q
 jq '(.files[] | select(.id == "versions") | .path) = ".stella/Connections.json"' "$R/.stella/data-files.json" >"$C/idx.json"
 ap apply data-files --from "$C/idx.json" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-313 "$T/o" && [ "$(tree)" = "$B" ]' "H3 two index paths that differ only by case are one file (refused)"
 mkr h3c; jq '(.files[] | select(.id == "versions") | .path) = ".stella/extensions/x.json"' "$R/.stella/data-files.json" >"$T/x" && cp "$T/x" "$R/.stella/data-files.json"
-ap check connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-313 "$T/o"' "H3 a folder row whose folder holds another row's file is refused"
+ap check versions >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-322 "$T/o"' "H3 a folder row whose folder holds another row's file is refused (that row)"
 mkr h3d; ap apply extensions/fake-ext.json --from "$C/fake-ext.json" >/dev/null 2>&1; ap apply extensions/FAKE-EXT.json --from "$C/fake-ext.json" >"$T/o" 2>&1
 ok '[ $? = 1 ] && grep -q STL-CFG-313 "$T/o" && grep -qi "case" "$T/o"' "H3 folder entries that differ only by case are one name"
 
@@ -437,15 +452,15 @@ ap apply connections --from "$C/conn.json" --dry-run >"$T/o" 2>&1; ok '[ $? = 0 
 ap apply connections --from "$C/conn2.json" --dry-run >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "interrupted" "$T/o"' "H7 a dry run reports that an apply would be refused"
 mkr h7b; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; ap rollback limits >/dev/null 2>&1; printf 'HAND=1\n' >>"$R/.supervisor/limits.env"
 ap check limits >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-314 "$T/o"' "H7 a hand edit of an untracked file after apply then rollback is drift"
-ap check connections/x >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-313 "$T/o"' "H7 check <id>/<anything> on a single-file row is refused"
+ap check connections/x >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-322 "$T/o"' "H7 check <id>/<anything> on a single-file row is refused (322)"
 ok 'python3 -I -c "
 import importlib.util, sys
 sys.dont_write_bytecode = True; spec = importlib.util.spec_from_file_location(\"sa\", sys.argv[1]); sa = importlib.util.module_from_spec(spec); spec.loader.exec_module(sa)
 sys.exit(1 if [p for p in sa.problems(\".stella/connections.json\", None) if \"hook\" in p[1] or \"role\" in p[1]] else 0)" "$H/bin/stella-apply.py"' "H7 a staged check of an untouched tree reports no role-table problem"
 mkr h7c; ap apply connections --from "$C/conn.json" --dry-run >/dev/null 2>&1
-ok '[ -z "$(ls -A "$(BK)/.stage" 2>/dev/null)" ]' "H7 a dry run removes its staging folder"
-mkdir -p "$(BK)/.stage/99999999-dead"; printf x >"$(BK)/.stage/99999999-dead/f"; ap apply connections --from "$C/conn.json" >/dev/null 2>&1
-ok '[ ! -e "$(BK)/.stage/99999999-dead" ]' "H7 the next apply sweeps a staging folder a killed run left"
+ok '[ -z "$(ls -A "$TMPDIR")" ]' "H7 a dry run removes its staging folder (in the temp folder)"
+mkdir -p "$TMPDIR/stella-apply-stage-99999999-1-dead"; printf x >"$TMPDIR/stella-apply-stage-99999999-1-dead/f"; ap apply connections --from "$C/conn.json" >/dev/null 2>&1
+ok '[ ! -e "$TMPDIR/stella-apply-stage-99999999-1-dead" ]' "H7 the next apply sweeps a staging folder a killed run left"
 
 # H8 the red team's list
 mkr h8a; ap apply connections --from "$C/conn.json" >/dev/null 2>&1
@@ -462,6 +477,235 @@ for spec in 'CALL_TIMEOUT=900\r\nPLANTED_SETTING=1\r\n' '\xef\xbb\xbfCALL_TIMEOU
   mkr h8e$RANDOM; B=$(tree); printf "$spec" >"$C/h8.env"; ap apply limits --from "$C/h8.env" >"$T/o" 2>&1; rc=$?
   ok '[ $rc = 1 ] && grep -q "^STL-CFG-31" "$T/o" && [ "$(tree)" = "$B" ]' "H8 an env value the shell would read differently is refused: $(printf %q "$spec")"
 done
+
+# ---- round 4 (rung 2, fix round 1): P1 to P6 of the brief. Each group starts from a fresh scratch root (mkr). ----
+quiet() { grep -v -e '^d ' -e '\.lock$'; }   # the documented exception: folders made on the way and lock files are not a change
+nlines() { grep -c '^STL-CFG-' "$1"; }
+cat >"$T/step.py" <<'PY'
+# <tool> <fail|term|int|count> <n> <args...>: the tool's main in-process; the n-th write (an atomic write, an unlink, a folder
+# made or removed, an event line) fails before it is done (fail) or is followed by SIGTERM / SIGINT (term / int)
+import importlib.util, os, signal, sys
+spec = importlib.util.spec_from_file_location("sa", sys.argv[1]); sa = importlib.util.module_from_spec(spec); spec.loader.exec_module(sa)
+mode, n, cnt = sys.argv[2], int(sys.argv[3]), [0]
+def hit(f):
+    def w(*a, **k):
+        cnt[0] += 1
+        if cnt[0] == n and mode == "fail":
+            raise PermissionError(13, "Permission denied")
+        r = f(*a, **k)
+        if cnt[0] == n and mode in ("term", "int"):
+            os.kill(os.getpid(), signal.SIGTERM if mode == "term" else signal.SIGINT)
+        return r
+    return w
+sa.atomic_write, sa.unlink, sa.drop_backup, sa.el.append, os.mkdir = (hit(f) for f in (sa.atomic_write, sa.unlink, sa.drop_backup, sa.el.append, os.mkdir))
+try:
+    rc = sa.main(sys.argv[4:])
+finally:
+    if mode == "count":
+        print(cnt[0], file=open(os.environ["COUNT_FILE"], "w"))
+sys.exit(rc)
+PY
+step() { PATH=$PB:$OWNER python3 -I "$T/step.py" "$H/bin/stella-apply.py" "$@"; }
+
+# P1: every write of every path, failed or interrupted: one coded line; "Nothing was changed" only when nothing was; else what is
+# left and the one command, and that command settles it (check clean)
+printf "CALL_TIMEOUT=650\nPLANTED_SETTING='sekrit-hand-1'\n" >"$C/p1hand.env"
+mkr p1a; BASE_A=$R
+mkr p1f; kill_at event apply limits --from "$C/limits.env" >/dev/null 2>&1; BASE_F=$R
+mkr p1d; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; cp "$C/p1hand.env" "$R/.supervisor/limits.env"; BASE_D=$R
+mkr p1b; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; BASE_B=$R
+mkr p1j; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; mkdir "$(BK)/limits/00000009-stray"; BASE_J=$R
+p1bad=""
+for spec in "A:apply limits --from $C/limits.env" "F:apply limits --from $C/limits.env" "D:apply limits --from $C/p1hand.env" "B:rollback limits" "J:rollback limits"; do
+  p=${spec%%:*}; cmd=${spec#*:}; eval "base=\$BASE_$p"
+  R=$T/p1run; rm -rf "$R"; cp -a "$base" "$R"; export STELLA_ROOT=$R; COUNT_FILE=$T/count step count 0 $cmd >/dev/null 2>&1; N=$(cat "$T/count")
+  [ "$N" -ge 2 ] || p1bad="$p1bad $p:count=$N"
+  for mode in fail term; do
+    for n in $(seq 1 "$N"); do
+      R=$T/p1run; rm -rf "$R"; cp -a "$base" "$R"; export STELLA_ROOT=$R; LOG=$R/.supervisor/logs/events.jsonl
+      w0=$(whole | quiet); step $mode $n $cmd >"$T/o" 2>&1; rc=$?
+      what="$p $mode $n (exit $rc: $(grep -o 'STL-CFG-.*' "$T/o" | head -c 150))"
+      if grep -q Traceback "$T/o" || { [ $rc != 0 ] && [ "$(nlines "$T/o")" != 1 ]; }; then p1bad="$p1bad [not one coded line: $what]"; continue; fi
+      if grep -q "Nothing was changed" "$T/o"; then
+        [ "$(whole | quiet)" = "$w0" ] || p1bad="$p1bad [said nothing was changed but something was: $what]"; continue
+      fi
+      [ $rc = 0 ] && continue
+      grep -qE 'STL-CFG-3(21|18)' "$T/o" && grep -qE 'run `|nothing to run|was undone' "$T/o" || { p1bad="$p1bad [no state or way out: $what]"; continue; }
+      if grep -q 'run `rollback limits`' "$T/o"; then ap rollback limits >/dev/null 2>&1
+      elif grep -q 'with the same file' "$T/o"; then ap $cmd >/dev/null 2>&1
+      elif grep -q 'with a copy of the file as it is' "$T/o"; then cp "$R/.supervisor/limits.env" "$T/cur.env"; ap apply limits --from "$T/cur.env" >/dev/null 2>&1
+      fi
+      ap check limits >"$T/o2" 2>&1 || p1bad="$p1bad [the way out did not settle it: $what; then: $(head -c 120 "$T/o2")]"
+      jq -c . "$LOG" >/dev/null 2>&1 || p1bad="$p1bad [an event line is not whole: $what]"
+    done
+  done
+done
+ok '[ -z "$p1bad" ]' "P1 every write of apply, finish, adopt, rollback and clean-up, failed or interrupted (SIGTERM): one coded line, 'Nothing was changed' only when true, else what is left and the one command that settles it:$p1bad"
+R=$T/p1run; rm -rf "$R"; cp -a "$BASE_B" "$R"; export STELLA_ROOT=$R; step int 4 rollback limits >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && [ "$(nlines "$T/o")" = 1 ] && ! grep -q Traceback "$T/o"' "P1 Ctrl-C (SIGINT) in a rollback: one coded line, no traceback (exit $rc)"
+mkr p1e; jq --arg l "$(head -c 1100000 /dev/zero | tr '\0' x)" '.entries[0].label = $l' "$T/conn.orig" >"$C/huge.json"; w0=$(whole | quiet)
+ap apply connections --from "$C/huge.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q "STL-CFG-313.*event line" "$T/o" && [ "$(whole | quiet)" = "$w0" ] && [ ! -e "$(ST)" ]' "P1 an event line too large is judged before the first write: 313, nothing written, no applied state (W3-CV3-07)"
+
+# P2: every message the tool can print fits the catalog's cut, with a way out (walked from the code); the frames are true
+cat >"$T/walk.py" <<'PY'
+import ast, json, sys
+# Every text the apply and log tools can put in a coded line, found in the code (not a hand list): each string expression outside
+# a docstring, a print(), an event line's detail or an argparse/regex call must fit the catalog's 200-character cut, a
+# placeholder taken as 40 characters and a slice [:n] as n; a message given to a code whose catalog action defers to the message
+# must name a way out.
+LIM, NAME = 200, 40
+cat = {a["code"]: a for a in json.load(open(sys.argv[1]))["alerts"]}
+WAY = ("`", "by hand", "run ", "remove", "restore", "fix", "set ", "give ", "keep ", "apply", "move", "unmount", "find", "look at")
+SKIP = {"print", "event", "build", "add_argument", "add_parser", "ArgumentParser", "compile", "fullmatch", "match", "search", "sub",
+        "ArgumentTypeError", "join", "startswith", "endswith", "open", "replace", "split", "partition", "strftime", "encode", "decode"}
+bad = []
+for f in sys.argv[2:]:
+    tree = ast.parse(open(f).read())
+    funcs = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    def est(n, depth=0):
+        if isinstance(n, ast.Constant):
+            return len(n.value) if isinstance(n.value, str) else NAME
+        if isinstance(n, ast.JoinedStr):
+            return sum(len(v.value) if isinstance(v, ast.Constant) else est(v.value, depth) for v in n.values)
+        if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Add):
+            return est(n.left, depth) + est(n.right, depth)
+        if isinstance(n, ast.IfExp):
+            return max(est(n.body, depth), est(n.orelse, depth))
+        if isinstance(n, ast.Subscript) and isinstance(n.slice, ast.Slice) and n.slice.lower is None and isinstance(n.slice.upper, ast.Constant):
+            return n.slice.upper.value   # a cut text is taken at its cut
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in funcs and depth < 5:
+            rets = [r.value for r in ast.walk(funcs[n.func.id]) if isinstance(r, ast.Return) and r.value is not None]
+            return max([est(r, depth + 1) for r in rets if isinstance(r, (ast.JoinedStr, ast.BinOp, ast.Constant))] or [NAME])
+        return NAME
+    def consts(n):
+        return " ".join(c.value for c in ast.walk(n) if isinstance(c, ast.Constant) and isinstance(c.value, str))
+    skip = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.Module)) and n.body and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant):
+            skip.add(id(n.body[0].value))
+        if isinstance(n, ast.Call):
+            name = n.func.id if isinstance(n.func, ast.Name) else n.func.attr if isinstance(n.func, ast.Attribute) else ""
+            if name in SKIP:
+                skip |= {id(x) for a in n.args + [k.value for k in n.keywords] for x in ast.walk(a)}
+            code = None
+            if name == "bad":
+                code = n.args[1].value if len(n.args) > 1 and isinstance(n.args[1], ast.Constant) else "STL-CFG-313"
+                msg = n.args[0] if n.args else None
+            elif name in ("EventError", "fail", "say") and len(n.args) > 1:
+                code, msg = (n.args[0].value if isinstance(n.args[0], ast.Constant) else None), n.args[1]
+            if code and msg is not None and any(m in cat.get(code, {}).get("action", "") for m in ("message says", "command the message names", "row the message names")) \
+                    and isinstance(msg, (ast.JoinedStr, ast.BinOp, ast.Constant)) and not any(w in consts(msg) for w in WAY):
+                bad.append(f"{f}:{n.lineno} {code}: no way out in the message")
+    tops = set()
+    for n in ast.walk(tree):   # the outermost string expressions
+        for c in ast.iter_child_nodes(n):
+            if isinstance(c, (ast.JoinedStr, ast.BinOp, ast.IfExp, ast.Constant)) and not isinstance(n, (ast.JoinedStr, ast.BinOp, ast.IfExp, ast.FormattedValue)):
+                tops.add(c)
+    for t in tops:
+        if id(t) in skip or not any(isinstance(x, ast.JoinedStr) or (isinstance(x, ast.Constant) and isinstance(x.value, str)) for x in ast.walk(t)):
+            continue
+        if est(t) > LIM:
+            bad.append(f"{f}:{t.lineno} {est(t)} characters: {ast.unparse(t)[:90]}")
+print("\n".join(bad) or "every message fits")
+sys.exit(1 if bad else 0)
+PY
+python3 -I "$T/walk.py" "$H/docs/hermes-local/alert-catalog.json" "$H/bin/stella-apply.py" "$H/bin/event_log.py" >"$T/o" 2>&1
+ok '[ $? = 0 ]' "P2 every message the apply and log tools can print fits the catalog's 200-character cut and names a way out where its code defers to it: $(tr '\n' '|' <"$T/o" | head -c 300)"
+ok 'for c in STL-CFG-321 STL-CFG-322 STL-CFG-323; do python3 -I $H/bin/alert_catalog.py preview $c problem=x detail=y | grep -q "$c" || exit 1; done; ! python3 -I $H/bin/alert_catalog.py preview STL-CFG-316 problem=x | grep -q "rollback was asked" && ! python3 -I $H/bin/alert_catalog.py preview STL-CFG-318 problem=x | grep -q "A change was not made"' "P2 the half-way, read-refusal and unfinished frames are their own catalog rows; 316 and 318 say nothing untrue for apply, check or a reader"
+mkr p2a; ln -f "$R/.stella/connections.json" "$T/p2-second-link"; ap check >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && [ "$(grep -c "^STL-CFG-322.*connections.*hard link.*samefile" "$T/o")" = 1 ] && grep -q "^ok  *capabilities" "$T/o"' "P2 a hard link on one row: one 322 line naming where to look, the other rows are checked (W3-CV3-09)"
+ap apply versions --from "$R/.stella/versions.json" >"$T/o" 2>&1; ok '[ $? = 0 ]' "P2 another row still applies while one row is refused"
+rm -f "$T/p2-second-link"
+mkr p2b; mkdir -p "$(dirname "$(ST)")"; printf '{"schema_version":1,"applied":{},"counter":"7"}\n' >"$(ST)"
+ap check connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-310.*counter.*applied.json" "$T/o"' "P2 a counter of the wrong type names the field and the file"
+mkr p2c; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; m=$(find "$(BK)" -name meta.json); jq '.status = "pending"' "$m" >"$T/m" && cat "$T/m" >"$m"
+jq '(.entries[] | select(.key == "CALL_TIMEOUT") | .validation.maximum) = 500' "$R/.stella/settings.json" >"$T/x" && cp "$T/x" "$R/.stella/settings.json"
+ap rollback limits >"$T/o1" 2>&1; ap apply limits --from "$C/g5ok.env" >"$T/o2" 2>&1
+ok 'grep -qF "apply limits --from <file>\` with a copy of the file as it is" "$T/o1" && grep -qF "apply limits --from <file>\` with a copy of the file as it is" "$T/o2"' "P2 a pending backup whose saved copy no longer validates: apply and rollback print the same one way out (W3-CV3-08)"
+cp "$R/.supervisor/limits.env" "$C/p2cur.env"; jq '(.entries[] | select(.key == "CALL_TIMEOUT") | .validation.maximum) = 100000' "$R/.stella/settings.json" >"$T/x" && cp "$T/x" "$R/.stella/settings.json"
+ap apply limits --from "$C/p2cur.env" >/dev/null 2>&1; ok 'ap check limits >/dev/null 2>&1' "P2 and that way out works"
+
+# P3: what a row is comes from the record or the index row; the disk is compared with it
+mkr p3a; ok 'ap check >/dev/null 2>&1' "P3 control: an untouched root is clean"
+rm "$R/.stella/connections.json"; mkdir "$R/.stella/connections.json"
+ap check connections >"$T/o1" 2>&1; r1=$?; ap check >"$T/o2" 2>&1; r2=$?; ap apply connections --from "$C/conn.json" >"$T/o3" 2>&1; r3=$?
+ok '[ $r1 = 1 ] && [ $r2 = 1 ] && grep -q "STL-CFG-314.*folder" "$T/o1" && [ $r3 = 1 ] && grep -q STL-CFG-313 "$T/o3"' "P3 a single-file row whose file became a folder: drift in check (314, exit 1), apply refused (D2)"
+mkr p3b; rm "$R/config/owner.env"; mkdir "$R/config/owner.env"; ap check owner-settings >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-314 "$T/o"' "P3 an env row whose file became a folder is drift (W3-VAL3-05)"
+mkr p3c; rm -rf "$R/.stella/extensions"; printf '{}\n' >"$R/.stella/extensions"
+ap check extensions >"$T/o1" 2>&1; r1=$?; ap apply extensions/fake-ext.json --from "$C/fake-ext.json" >"$T/o2" 2>&1; r2=$?
+ok '[ $r1 = 1 ] && grep -q STL-CFG-314 "$T/o1" && [ $r2 = 1 ] && grep -q STL-CFG-313 "$T/o2" && [ "$(cat "$R/.stella/extensions")" = "{}" ]' "P3 a folder row whose folder became a file: drift, and apply refuses (never a new kind of target)"
+mkr p3d; rm -rf "$R/.stella/extensions"; ap check extensions >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-314.*missing" "$T/o"' "P3 a missing folder of a folder row is drift"
+mkr p3e; cp "$C/fake-ext.json" "$R/.stella/extensions/fake-ext.json"; git -C "$R" add -A >/dev/null 2>&1; git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qm ext
+rm "$R/.stella/extensions/fake-ext.json"; mkdir "$R/.stella/extensions/fake-ext.json"; ap check extensions >"$T/o" 2>&1
+ok '[ $? = 1 ] && grep -q "STL-CFG-314.*fake-ext.json" "$T/o"' "P3 a committed entry that became a folder is drift (314)"
+mkr p3f; printf "\xef\xbb\xbfWORKER_GIT_NAME='Fake One'\r\nWORKER_GIT_EMAIL='fake@example.invalid'\r\nAPI_TOKEN='sekrit-token-111'\r\n" >"$R/config/owner.env"; cp "$R/config/owner.env" "$T/crlf"
+ap apply owner-settings --from "$C/owner.env" >"$T/o1" 2>&1; r1=$?; ap rollback owner-settings >"$T/o2" 2>&1; r2=$?
+ok '[ $r1 = 0 ] && [ $r2 = 0 ] && cmp -s "$T/crlf" "$R/config/owner.env"' "P3 a row read by the stack's own parser (role table owner_settings): apply over a CRLF and BOM file, then rollback, byte-identical (W3-VAL3-01)"
+cp "$T/crlf" "$C/crlf.env"; ap apply owner-settings --from "$C/crlf.env" >"$T/o" 2>&1; ok '[ $? = 0 ]' "P3 such a row takes a candidate with CR line ends and a BOM; a shell-sourced row still refuses them (H8 above)"
+mkr p3g; jq '(.files[] | select(.id == "data-files") | .path) = "./.stella/data-files.json"' "$R/.stella/data-files.json" >"$T/x" && cp "$T/x" "$R/.stella/data-files.json"
+git -C "$R" commit -qam dot; jq '.backup_dir = ".supervisor/state/other"' "$R/.stella/data-files.json" >"$C/idx.json"; w0=$(whole)
+ap apply data-files --from "$C/idx.json" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q "STL-CFG-313.*backup_dir" "$T/o" && [ "$(whole)" = "$w0" ]' "P3 the index row spelled ./ is still the index: its guards hold (W3-CV3-04)"
+
+# P4: a dry run changes nothing, a killed one leaves nothing past the next command
+mkr p4a; w0=$(whole); ap apply extensions/fake-ext.json --from "$C/fake-ext.json" --dry-run >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && [ "$(whole)" = "$w0" ]' "P4 a dry run of a folder row on a root where nothing was applied leaves the whole root as it was"
+ap apply connections --from "$C/conn.json" >/dev/null 2>&1; ap apply limits --from "$C/limits.env" >/dev/null 2>&1; w0=$(whole)
+for spec in "connections:conn2.json" "limits:g5ok.env" "extensions/fake-ext.json:fake-ext.json" "owner-settings:owner.env"; do ap apply "${spec%%:*}" --from "$C/${spec#*:}" --dry-run >/dev/null 2>&1; done
+ok '[ "$(whole)" = "$w0" ]' "P4 dry runs of every kind of row on a used root leave the whole root as it was (folders, files, modes, bytes)"
+python3 -I -c '
+import importlib.util, os, signal, sys
+spec = importlib.util.spec_from_file_location("sa", sys.argv[1]); sa = importlib.util.module_from_spec(spec); spec.loader.exec_module(sa)
+sa.subprocess.run = lambda *a, **k: os.kill(os.getpid(), signal.SIGKILL)
+sys.exit(sa.main(sys.argv[2:]))' "$H/bin/stella-apply.py" apply connections --from "$C/conn2.json" --dry-run >/dev/null 2>&1
+left=$(ls "$TMPDIR"); lm=$(stat -c %a "$TMPDIR"/$left 2>/dev/null)
+ap check connections >/dev/null 2>&1
+ok '[ -n "$left" ] && [ "$lm" = 700 ] && [ -z "$(ls -A "$TMPDIR")" ] && [ "$(whole)" = "$w0" ]' "P4 a killed dry run leaves its staging copy in a 0700 folder outside the root, and the next command (here check) removes it"
+st=$(sed 's/.*) //' /proc/$$/stat | awk '{print $20}'); mkdir "$TMPDIR/stella-apply-stage-$$-1-reused" "$TMPDIR/stella-apply-stage-$$-$st-live" "$TMPDIR/stella-apply-stage-99999999999999999999-1-x" "$TMPDIR/stella-apply-stage-zz"
+ap check connections >/dev/null 2>&1
+ok '[ ! -e "$TMPDIR/stella-apply-stage-$$-1-reused" ] && [ -d "$TMPDIR/stella-apply-stage-$$-$st-live" ] && [ ! -e "$TMPDIR/stella-apply-stage-99999999999999999999-1-x" ] && [ -d "$TMPDIR/stella-apply-stage-zz" ]' "P4 a staging name is tied to its process id and start time: a reused id does not keep a leftover, a live run keeps its own, a name of any size or shape is no error (W3-CV3-03)"
+rm -rf "$TMPDIR"/stella-apply-stage-*
+
+# P5: the owner folder as it really is (folder 0555, file 0444)
+for spec in "owner-settings:config:owner.env:owner.env" "connections:.stella:connections.json:conn.json"; do
+  IFS=: read -r id dir f cand <<<"$spec"
+  mkr p5-$id; chmod 444 "$R/$dir/$f"; chmod 555 "$R/$dir"; w0=$(whole)
+  ap apply "$id" --from "$C/$cand" >"$T/o1" 2>&1; r1=$?; ap rollback "$id" >"$T/o2" 2>&1; r2=$?
+  ok '[ $r1 = 1 ] && grep -q "^STL-CFG-313.*chmod u+w $dir\`.*chmod 555 $dir\`.*read-only" "$T/o1" && [ $r2 = 1 ] && [ "$(whole)" = "$w0" ]' "P5 $id on a read-only folder: refused before any write, the folder named, read-only, the two commands; nothing left behind"
+  chmod 755 "$R/$dir"; ap apply "$id" --from "$C/$cand" >"$T/o" 2>&1; r1=$?; m1=$(stat -c %a "$R/$dir/$f"); ap rollback "$id" >/dev/null 2>&1; r2=$?
+  ok '[ $r1 = 0 ] && [ $m1 = 444 ] && [ $r2 = 0 ] && [ "$(stat -c %a "$R/$dir/$f")" = 444 ]' "P5 $id with the folder writable: applied and rolled back, the file keeps mode 0444 through both"
+done
+
+# P6: the Low ones
+mkr p6a; ap apply connections --from "$C/conn.json" >/dev/null 2>&1; tok=$(ap history connections --json | jq -r '.events[-1].detail' | grep -o 'token [0-9a-f]*')
+$EL append --type rollback --what connections --detail "restored backup x $tok" --user forger >/dev/null 2>&1
+kill_at applied rollback connections >/dev/null 2>&1; ap rollback connections >/dev/null 2>&1
+ok '[ "$(LAST | jq -r .type)" = rollback ] && [ "$(LAST | jq -r .who.user)" != forger ]' "P6 a forged rollback line carrying the apply's token does not suppress a resumed rollback's own line (W3-CV3-01)"
+for t in '.mode = 2541' '.existed = false | .sha256 = null'; do
+  mkr p6b$RANDOM; ap apply connections --from "$C/conn.json" >/dev/null 2>&1; m=$(find "$(BK)" -name meta.json); jq "$t" "$m" >"$T/m" && cat "$T/m" >"$m"; B=$(tree)
+  ap rollback connections >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-316 "$T/o" && [ "$(tree)" = "$B" ]' "P6 a recorded backup rewritten in place is refused against the applied state's record, the file kept: $t (W3-CV3-02)"
+done
+mkr p6c; ap apply connections --from "$C/conn.json" >/dev/null 2>&1; ap apply connections --from "$C/conn2.json" >/dev/null 2>&1
+python3 -I -c '
+import importlib.util, os, signal, sys
+spec = importlib.util.spec_from_file_location("sa", sys.argv[1]); sa = importlib.util.module_from_spec(spec); spec.loader.exec_module(sa)
+real = sa.shutil.rmtree
+sa.shutil.rmtree = lambda p, *a, **k: os.kill(os.getpid(), signal.SIGKILL) if sa.GONE in p and k.get("ignore_errors") else real(p, *a, **k)
+sys.exit(sa.main(sys.argv[2:]))' "$H/bin/stella-apply.py" rollback connections >/dev/null 2>&1
+ap check connections >"$T/o" 2>&1; rc=$?; ap rollback connections >"$T/o2" 2>&1
+ok '[ $rc = 0 ] && cmp -s "$T/conn.orig" "$R/.stella/connections.json" && ! grep -q "unfinished" "$T/o2" && [ "$(jq -r .type "$LOG" | tr "\n" " ")" = "apply apply rollback rollback " ]' "P6 a rollback killed inside its final removal: check is clean, no 'unfinished' text, the next rollback undoes only the change before (W3-VER3-03)"
+ok 'ap --check connections >/dev/null 2>&1' "P6 --check is accepted for check (W3-VAL3-09)"
+mkr p6d; python3 -I "$T/step.py" "$H/bin/stella-apply.py" count 0 apply connections --from "$C/conn.json" >/dev/null 2>&1
+python3 -I -c '
+import importlib.util, os, signal, sys
+spec = importlib.util.spec_from_file_location("sa", sys.argv[1]); sa = importlib.util.module_from_spec(spec); spec.loader.exec_module(sa)
+real, tgt = sa.atomic_write, os.path.join(sa.el.ROOT, ".stella/connections.json")
+sa.atomic_write = lambda p, *a: os.kill(os.getpid(), signal.SIGKILL) if p == tgt else real(p, *a)
+sys.exit(sa.main(sys.argv[2:]))' "$H/bin/stella-apply.py" apply connections --from "$C/conn2.json" >/dev/null 2>&1
+n0=$(nev); ap rollback connections >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && [ "$(nev)" = "$n0" ] && ap check connections >/dev/null 2>&1' "P6 an apply killed before its replace, then rollback: no event line for a change that never took effect (L1)"
+mkr p6e; kill_at applied apply connections --from "$C/conn.json" >/dev/null 2>&1; ap rollback connections >/dev/null 2>&1
+ok '[ "$(jq -r .type "$LOG" | tr "\n" " ")" = "apply rollback " ] && cmp -s "$T/conn.orig" "$R/.stella/connections.json"' "P6 an apply killed after its replace, then rollback: the apply line first, then the rollback line (L2)"
 
 $AP bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "usage error exits 2"
 [ $fails = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

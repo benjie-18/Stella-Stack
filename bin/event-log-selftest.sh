@@ -88,5 +88,30 @@ rm "$LOG"; mkdir "$LOG"
 $EL append --type t --what x >"$T/o" 2>&1; rc=$?
 ok '[ $rc != 0 ] && grep -q "STL-CFG-318" "$T/o"' "an unwritable log: non-zero, STL-CFG-318 and its plain message"
 $EL append --type t --what x >"$T/o" 2>&1; ok 'grep -qi "event log" "$T/o"' "the message is the catalog's plain text"
+# ---- round 4 (rung 2, fix round 1) ----
+rmdir "$LOG"; $EL append --type r4 --what x >/dev/null 2>&1; printf 'not an event line\n' >>"$LOG"
+$EL tail >"$T/o" 2>"$T/e"; rc=$?
+ok '[ $rc = 0 ] && grep -q STL-CFG-318 "$T/e" && ! grep -q "A change was not made" "$T/e"' "R4 a reader's 318 line does not say a change was not made (P2)"
+cp "$LOG" "$T/before"; ln "$LOG" "$T/second-link"; $EL append --type t --what x >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-CFG-318 "$T/o" && cmp -s "$LOG" "$T/before"' "R4 a log with a second hard link is not appended to (318), unchanged (W3-CV3-05 d)"
+rm "$T/second-link"
+mkdir -p "$T/cs/x/logs"; ln -s x "$T/cs/X"
+python3 -I -c "
+import os, sys; sys.path.insert(0, sys.argv[1]); import event_log as e
+os.close(e.open_dir(sys.argv[2] + '/x/logs'))
+try:
+    os.close(e.open_dir(sys.argv[2] + '/X/logs')); sys.exit(1)
+except ValueError:
+    sys.exit(0)" "$H/bin" "$T/cs"
+ok '[ $? = 0 ]' "R4 a folder on the way that is a link to a sibling differing only by case is refused at the open (W3-CV3-05 c)"
+cp "$LOG" "$T/before"
+python3 -I -c "
+import sys; sys.path.insert(0, sys.argv[1]); import event_log as e
+e.prepare(e.build('note', 'x'))
+try:
+    e.prepare(e.build('note', 'x', detail='y' * (e.WRITE_MAX + 1))); sys.exit(1)
+except e.EventError as x:
+    sys.exit(0 if x.code == 'STL-CFG-313' else 1)" "$H/bin"
+ok '[ $? = 0 ] && cmp -s "$LOG" "$T/before"' "R4 a line is judged (shape, size) without being written: prepare() writes nothing and refuses a line too large (W3-CV3-07)"
 $EL bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "usage error exits 2"
 [ $fails = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
