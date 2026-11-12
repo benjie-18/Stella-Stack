@@ -22,7 +22,7 @@ CLI: roles.py check [hermes-root]     validate the table and its coverage of the
                                        {card, workspace, branch} and exit 0; else the failed proof on stderr, exit 1
                                        (exit 3: the board could not be read)
 """
-import codecs, glob, hashlib, itertools, json, os, pwd, re, sqlite3, subprocess, sys, time
+import codecs, copy, functools, glob, hashlib, itertools, json, os, pwd, re, sqlite3, subprocess, sys, time
 
 ROOT = "/workspace"   # the stack repo: roles.json, the protected repo paths and the hook sources live here
 PERMS = ("assignable", "may_answer_for_owner", "may_complete", "may_unblock", "may_claim", "may_delegate", "may_create_cards", "may_review")
@@ -139,20 +139,31 @@ def _sound(doc, limit=64):
                 raise ValueError("a string is not valid Unicode text") from None
 
 
-def load():
+_LOADED = {}   # T1: the validated table of this process, keyed by the file's identity and change time (a hook that asks twice reads it once)
+
+
+def load(files=True):
+    """The validated table. files=False (a guard judging one call): the hook files the table names are not looked up on disk (that a hook
+    file exists and lies inside the stack decides what gets installed, never the verdict on a call; `check`, `spec` and every CLI read keep it)."""
     try:
-        d = json.load(open(path(), encoding="utf-8"), object_pairs_hook=_pairs, parse_constant=_const, parse_float=_float, parse_int=_bigint)
+        with open(path(), encoding="utf-8") as f:
+            st = os.fstat(f.fileno())
+            key = (files, path(), st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+            if key in _LOADED:
+                return copy.deepcopy(_LOADED[key])
+            d = json.load(f, object_pairs_hook=_pairs, parse_constant=_const, parse_float=_float, parse_int=_bigint)
         _sound(d)
     except Exception as e:
         raise RolesError(f"{path()}: {type(e).__name__}: {e}")
-    errs = validate(d) + ([NOFOLDER + ": a scratch table needs a folder of its own for its alerts (set ESCALATE_SUP_DIR)"] if NOFOLDER else [])
+    errs = validate(d, files=files) + ([NOFOLDER + ": a scratch table needs a folder of its own for its alerts (set ESCALATE_SUP_DIR)"] if NOFOLDER else [])
     if errs:
         raise RolesError(f"{path()}: " + "; ".join(errs))
-    return d
+    _LOADED.clear(); _LOADED[key] = d
+    return copy.deepcopy(d)
 
 
-def validate(d, root=ROOT):
-    """Problems with the table, as a list of strings (empty = valid). root: the stack tree the table belongs to (its hook files)."""
+def validate(d, root=ROOT, files=True):
+    """Problems with the table, as a list of strings (empty = valid). root: the stack tree the table belongs to (its hook files); files=False: see load()."""
     roles, profs = d.get("roles") if isinstance(d, dict) else None, d.get("profiles") if isinstance(d, dict) else None
     if not isinstance(roles, dict) or not isinstance(profs, dict) or not roles:
         return ["profiles and roles must be objects, roles not empty"]
@@ -207,12 +218,7 @@ def validate(d, root=ROOT):
             if "timeout" in h and not (_int(h["timeout"]) and h["timeout"] > 0):
                 errs.append(f"role {n}: a hook's timeout must be a positive integer")
             src = h.get("file") or h["command"]
-            if "command" in h:   # a command is an absolute path, a file a repo path inside the root once symlinks are followed
-                bad_path = not src.startswith("/") or ".." in src.split("/") or not os.path.isfile(src)
-            else:
-                rr = os.path.realpath(root)
-                bad_path = not _rel(src) or not os.path.isfile(f"{root}/{src}") or not os.path.realpath(f"{root}/{src}").startswith(rr.rstrip("/") + "/")
-            if bad_path:
+            if files and _bad_hook_path(src, "command" in h, root):
                 errs.append(f"role {n}: hook {src} does not exist")
             if "workers" in h and not (_set(h["workers"]) and h["workers"]):
                 errs.append(f"role {n}: hook {src}: workers must be a non-empty list of worker kinds, each once")
@@ -291,6 +297,15 @@ def validate(d, root=ROOT):
         errs.append("owner_commands_by_name must be a subset of owner_commands")
     errs += validate_sandbox(d)
     return errs + ([] if errs else unboxed_problems(d))
+
+
+@functools.lru_cache(maxsize=None)   # T1: the table names ~16 hook files about 60 times; each is looked up once per process
+def _bad_hook_path(src, command, root):
+    """A command is an absolute path, a file a repo path inside the root once symlinks are followed; True when it is not, or is no file."""
+    if command:
+        return not src.startswith("/") or ".." in src.split("/") or not os.path.isfile(src)
+    rr = os.path.realpath(root)
+    return not _rel(src) or not os.path.isfile(f"{root}/{src}") or not os.path.realpath(f"{root}/{src}").startswith(rr.rstrip("/") + "/")
 
 
 def _hooks(r, judged=True):

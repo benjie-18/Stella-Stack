@@ -65,7 +65,7 @@ try:
     import roles   # noqa: E402  (the role table: one protected list, the caller's role)
     ROOT = roles.ROOT
     try:
-        RT = roles.load()
+        RT = roles.load(files=False)
         PROTECTED, CONFIG = roles.protected(RT)
         OWNER_FILES = roles.owner_settings(RT)
         OWNER_REL = [p for p in roles.owner_paths(RT) if p not in RT["owner_settings"]] + roles.state_paths(RT)   # G1/B1: owner data and the apply tool's state, from the index and the table, never named here (the owner settings keep their older refusals)
