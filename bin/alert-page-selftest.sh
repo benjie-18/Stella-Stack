@@ -6,6 +6,8 @@
 # SWF = the selftests.sh that holds the send-refusing wrapper.
 set -u
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+# a colon in the temp path would split the PATH entry of the stub below: every page would reach the caller's hermes
+case $T in *:*) echo "FAIL the temp path $T holds a colon, so the stub hermes would be on no PATH entry: nothing run, no hermes called"; echo "selftest FAIL (1)"; exit 1 ;; esac
 AS=${AS:-/workspace/bin}; RG=${RG:-$AS/role-guard.py}; WG=${WG:-/workspace/docs/hermes-local/hooks/builder/write-guard.py}
 ACAT=${ACAT:-/workspace/docs/hermes-local/alert-catalog.json}; SWF=${SWF:-/workspace/bin/selftests.sh}
 ORIG_PATH=$PATH; fails=0
@@ -103,7 +105,7 @@ echo "## the selftests.sh wrapper: no selftest posts to Discord"
 WL=$(grep -m1 '^ *printf .*hermes send refused in a selftest.*>"\$q/\.bin/hermes"$' "$SWF")
 cat >"$T/wrap.sh" <<WRAP
 set -u
-q=$T/g; mkdir -p "\$q/.bin"; real_hermes=\$q/real
+q=$(printf %q "$T/g"); mkdir -p "\$q/.bin"; real_hermes=\$q/real
 printf '#!/usr/bin/env bash\nfor a; do [ "\$a" != send ] || exit 7; done\nexec %q "\$@"\n' "\$(command -v hermes || echo /bin/false)" >"\$real_hermes"
 $WL
 chmod +x "\$real_hermes" "\$q/.bin/hermes"; export PATH="\$q/.bin:\$PATH"
