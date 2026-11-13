@@ -1,0 +1,268 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "id": "stella-data",
+      "kind": "command",
+      "summary": "Check, list, get and search the contract data files (connections, role assignments, data policy, capabilities, features, versions, settings, extensions)",
+      "keywords": [
+        "data",
+        "schema",
+        "check",
+        "catalog",
+        "capability",
+        "search",
+        "contract"
+      ],
+      "inputs": "a data id, an entry id or search words",
+      "outputs": "JSON or text; exit 1 with a catalog code when a file is invalid or an id is unknown",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/stella_data.py",
+      "triage": {
+        "result": "shipped"
+      }
+    },
+    {
+      "id": "test-map",
+      "kind": "command",
+      "summary": "Lint the test map and select the selftests a change can affect",
+      "keywords": [
+        "test",
+        "map",
+        "select",
+        "lint"
+      ],
+      "inputs": "changed file names",
+      "outputs": "selftest names, or full",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/test-map.py",
+      "triage": {
+        "result": "shipped"
+      }
+    },
+    {
+      "id": "alert-catalog",
+      "kind": "command",
+      "summary": "Render, explain and validate alert codes; regenerate docs/alert-codes.md",
+      "keywords": [
+        "alert",
+        "code",
+        "catalog",
+        "explain"
+      ],
+      "inputs": "an alert code",
+      "outputs": "the plain alert text",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/alert_catalog.py",
+      "triage": {
+        "result": "shipped"
+      }
+    },
+    {
+      "id": "role-requirements",
+      "kind": "command",
+      "summary": "What a role needs from any model that serves it: tool calling, context size, vision and the data classes it may see",
+      "keywords": [
+        "role",
+        "requirements",
+        "model",
+        "context",
+        "vision",
+        "tool calling",
+        "data class"
+      ],
+      "inputs": "a role name",
+      "outputs": "JSON; exit 1 with STL-CFG-311 when the role is unknown",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/roles.py",
+      "triage": {
+        "result": "shipped"
+      }
+    },
+    {
+      "id": "hardcode-lint",
+      "kind": "command",
+      "summary": "Count literal provider, model, host, board, project and channel names in code against the baseline",
+      "keywords": [
+        "lint",
+        "hard-code",
+        "literal",
+        "baseline"
+      ],
+      "inputs": "none, or --dump for the counts",
+      "outputs": "exit 0 clean, 1 over the baseline, 2 with STL-CFG-310 when an input cannot be read",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/hardcode-lint.sh",
+      "triage": {
+        "result": "shipped"
+      }
+    },
+    {
+      "id": "event-log",
+      "kind": "command",
+      "summary": "Append one line to the event log with secrets masked, or read its last lines",
+      "keywords": [
+        "event",
+        "log",
+        "audit",
+        "history"
+      ],
+      "inputs": "an event (who, what, old, new) or a line count",
+      "outputs": "one JSON line per event; STL-CFG-318 when the log cannot be written",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/event_log.py",
+      "triage": {
+        "result": "shipped"
+      }
+    },
+    {
+      "id": "apply-check",
+      "kind": "command",
+      "summary": "Report drift of an applied data file and list its apply history",
+      "keywords": [
+        "apply",
+        "drift",
+        "check",
+        "history",
+        "rollback"
+      ],
+      "inputs": "a data file id",
+      "outputs": "drift lines or history; STL-CFG-314 on drift",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/stella-apply.py",
+      "triage": {
+        "result": "shipped"
+      }
+    },
+    {
+      "id": "apply",
+      "kind": "command",
+      "summary": "Apply or roll back a data file through the apply contract: dry run, backup, idempotent apply, one event line",
+      "keywords": [
+        "apply",
+        "rollback",
+        "backup",
+        "dry-run",
+        "settings"
+      ],
+      "inputs": "a data file id and a candidate file",
+      "outputs": "the change summary; STL-CFG-312 for a worker on an owner-only file, STL-CFG-313 when the candidate is invalid",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/stella-apply.py",
+      "triage": {
+        "result": "shipped"
+      }
+    },
+    {
+      "id": "settings",
+      "kind": "command",
+      "summary": "The owner's command to read or change one setting from the settings registry: validates the value, then writes through the apply contract",
+      "keywords": [
+        "settings",
+        "owner",
+        "set",
+        "get",
+        "rollback"
+      ],
+      "inputs": "a setting key and, to change it, a value",
+      "outputs": "the value or the change summary; STL-CFG-311 for an unknown key, STL-CFG-312 for a worker, STL-CFG-313 for a store file that holds a key twice, STL-CFG-315 for a bad value, STL-CFG-317 when an identity-critical setting is changed without a terminal",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/settings.py",
+      "triage": {
+        "result": "shipped"
+      }
+    },
+    {
+      "id": "owner-boundary",
+      "kind": "command",
+      "summary": "Which paths are owner settings and owner data, and which files define the owner boundary (a card that changes one needs the owner to say so at the merge)",
+      "keywords": [
+        "owner",
+        "owner data",
+        "boundary",
+        "merge",
+        "protected",
+        "owner-only"
+      ],
+      "inputs": "owner-data (optionally a root) or boundary",
+      "outputs": "a JSON list of paths; exit 1 when the role table or the data index cannot be read",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/roles.py",
+      "triage": {
+        "result": "shipped"
+      }
+    }
+  ]
+}

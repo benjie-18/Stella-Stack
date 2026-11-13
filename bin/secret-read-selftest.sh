@@ -5,6 +5,9 @@ set -u
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 # STACK=<tree> runs the hooks of another tree (a staged one, K6); default /workspace.
 STACK=${STACK:-/workspace}; D=$STACK/docs/hermes-local/hooks
+# T7 (F1 W4 r4): every alert this run's guards write goes to this run's own folder, never the tree's alert log (on the live tree each line may page)
+TREE_ALERTS=$STACK/.supervisor/logs/alerts.log; TREE_SIZE=$(stat -c %s "$TREE_ALERTS" 2>/dev/null || echo 0)
+export ESCALATE_SUP_DIR=$T/sup; mkdir -p "$T/sup/logs"
 R=$D/default/read-only-terminal.py S=$D/builder/secret-guard.py
 fails=0
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
@@ -184,5 +187,76 @@ dgood=1; for c in "${DIFF[@]}"; do
   [ "$(term $T/pre-sg.py "$c")" = 2 ] && [ "$(term $S "$c")" != 2 ] && { dgood=0; echo "     not as strict as pre-RT22-01: ${c//$OWN/<owner file>}"; }; done
 ok '[ "$dgood" = 1 ]' "RT24 differential: the secret guard refuses everything its pre-RT22-01 parse refuses (${#DIFF[@]} mixed commands)"
 ok '[ "$(term $T/pre-sg.py "echo a # n\\${NL}cat /workspace/$OB.e\"nv\"")" = 2 ]' "RT24 differential premise: the pre-RT22-01 copy refuses a tokenised read after a backslash comment"
+# B.2 point 9 (r5, W4-CV3-03): jq builds a file name from a NAMED folder and a module word (jq -L <dir> 'import ...'); the folder it searches is judged. A
+# state-path folder and a Hermes-home folder are both refused, by the whole `-L <dir>` and the attached `-L<dir>` form, through both read guards.
+EVD=/workspace/$(dirname "$(jq -r .event_log "/workspace/$(jq -r .data_index /workspace/docs/hermes-local/roles.json)")")   # the folder holding the event log (a state path), via the data index
+for g in "$S" "$R"; do
+  for c in "jq -L $EVD -n 'import \"events\" as \$a; \$a'" "jq -L$EVD -n 'import \"events\" as \$a; \$a'" "jq --library-path $EVD -n 'include \"events\"; .'"; do
+    ok '[ "$(term $g "$c")" = 2 ] && grep -q "STL-CFG-312" "$T/out"' "B.2 point 9: $(basename $g) refuses jq searching the state-path folder: $c"
+  done
+  ok '[ "$(term $g "jq -L /home/node/.hermes -n '"'"'import \"auth\" as \$a; \$a'"'"'")" = 2 ]' "B.2 point 9: $(basename $g) refuses jq -L of a Hermes home folder (its auth.json is a secret)"
+  ok '[ "$(term $g "jq -n '"'"'.'"'"'")" = 0 ] && [ "$(term $g "jq -L /tmp -n 1")" = 2 ]' "B.2 point 9 control (r6 C1: the library path rule replaced): $(basename $g) allows jq with no library path; jq -L of /tmp is refused, as any library path"
+  # r6 C1 (R14): jq resolves ../ in a module name outside its library folder, so a jq command that can load a module at all is refused (no everyday call
+  # uses modules); --files0-from in any prefix spelling is refused for every command; everyday jq and wc calls stay allowed
+  printf 'import "x" as $a; $a\n' >"$T/prog.jq"; printf '.a\n' >"$T/plain.jq"
+  for c in "jq -L /tmp -n 'import \"../workspace/README\" as \$a; \$a'" "jq -nL /tmp 1" "jq -L/usr -n 1" "jq --library-path=/tmp -n 1" "jq --lib /tmp -n 1" "jq -n 'import \"a\" as \$a; \$a'" \
+           "jq -n 'include \"a\"; .'" "jq -n '\"a\" | modulemeta'" "JQ_LIBRARY_PATH=/tmp jq -n 1" "jq -n -f $T/prog.jq" "jq -nf $T/prog.jq" "jq --from-file $T/prog.jq -n" \
+           "echo x | wc --files0-from=-" "wc --files0-from /tmp/list" "wc --files0=-" "sort --files0-from=-" "du --files0-from=-"; do
+    ok '[ "$(term $g "$c")" = 2 ] && grep -q "STL-GRD-604" "$T/out"' "r6 C1: $(basename $g) refuses, coded: $c"
+  done
+  for c in "jq -r .name /workspace/package.json" "jq -n -f $T/plain.jq" "jq -c '.scripts | keys' /workspace/package.json" "wc -l /workspace/package.json" "cat /workspace/package.json | jq ." "grep -c include /workspace/package.json"; do
+    ok '[ "$(term $g "$c")" = 0 ]' "r6 C1: $(basename $g) allows the everyday call: $c"
+  done
+  # r7 A3 (W4-CV4-02): a jq program read from a standard stream is not a file this guard can read: it counts as a program that imports
+  for c in "echo 'import \"a\" as \$a; \$a' | jq -n -f /dev/stdin" "echo 'import \"a\" as \$a; \$a' | jq -n -f /dev/fd/0" "jq -n -f /dev/fd/0"; do
+    ok '[ "$(term $g "$c")" = 2 ] && grep -q "STL-GRD-604" "$T/out"' "r7 A3: $(basename $g) refuses, coded, a jq program from a standard stream: $c"
+  done
+  for c in "jq -f $T/plain.jq /workspace/package.json" "echo '{}' | jq ."; do
+    ok '[ "$(term $g "$c")" = 0 ]' "r7 A3 control: $(basename $g) allows: $c"
+  done
+  # r7 A7 (W4-CV4-09): a short option with its value attached is judged as the path it is (a link to the event log, a state path)
+  ln -sfn "$EVD/$(basename "$(jq -r .event_log "/workspace/$(jq -r .data_index /workspace/docs/hermes-local/roles.json)")")" "$T/lnk"
+  ok '[ "$(term $g "grep -f $T/lnk /workspace/package.json")" = 2 ]' "r7 A7 premise: $(basename $g) refuses grep -f <a link to a state path>"
+  ok '[ "$(term $g "grep -f$T/lnk /workspace/package.json")" = 2 ] && grep -q "STL-CFG-312" "$T/out"' "r7 A7: $(basename $g) refuses grep -f<the same link> (the value attached to the option)"
+  ok '[ "$(term $g "grep -f$T/plain.jq /workspace/package.json")" = 0 ]' "r7 A7 control: $(basename $g) allows grep -f<an ordinary file>"
+done
+# r8 B (W4-CV5-02): the value attached to a short option is judged wherever it starts in the word (after an option cluster; a bare relative name)
+# r8 C (W4-CV5-03): a jq program file past the first 1 MiB, with = in its name, or written ~+/ or ~-/ is a program this guard cannot read whole
+ln -sfn "$EVD/$(basename "$(jq -r .event_log "/workspace/$(jq -r .data_index /workspace/docs/hermes-local/roles.json)")")" "$T/lnk"
+printf '.a\n' >"$T/plain.jq"; printf 'import "x" as $a; $a\n' >"$T/x=y.jq"; { head -c 1048576 /dev/zero | tr '\0' '#'; printf '\nimport "x" as $a; $a\n'; } >"$T/big.jq"
+there() { jq -nc --arg c "$2" --arg d "$T" '{tool_name: "terminal", tool_input: {command: $c}, cwd: $d}' | "$1" >"$T/out" 2>/dev/null; echo $?; }   # term, asked from the scratch folder (a bare name is looked up there)
+ok '[ "$(term $S "find bin -name '"'"'*.sh'"'"'")" = 0 ]' "r8 B control: the secret guard allows find bin -name '*.sh' (no suffix of an option word names a protected path)"
+for g in "$S" "$R"; do
+  for c in "grep -if$T/lnk /workspace/package.json" "grep -vf$T/lnk /workspace/package.json"; do
+    ok '[ "$(term $g "$c")" = 2 ] && grep -q "STL-CFG-312" "$T/out"' "r8 B: $(basename $g) refuses, coded, a link to a state path attached after an option cluster: $c"
+  done
+  for c in "grep -flnk /workspace/package.json" "grep -iflnk /workspace/package.json"; do
+    ok '[ "$(there $g "$c")" = 2 ] && grep -q "STL-CFG-312" "$T/out"' "r8 B: $(basename $g) refuses, coded, the same link attached by its bare name: $c"
+  done
+  for c in "grep -rn x bin" "ls -la" "git log -n5" "head -n5 /workspace/package.json" "grep -if$T/plain.jq /workspace/package.json"; do
+    ok '[ "$(term $g "$c")" = 0 ]' "r8 B control: $(basename $g) allows: $c"
+  done
+  ok '[ "$(there $g "grep -fplain.jq /workspace/package.json")" = 0 ]' "r8 B control: $(basename $g) allows grep -f<the bare name of an ordinary file>"
+  # r9 P3 (W4-CV6-03), P4 (W4-CV6-05): an option value that starts with a dash or holds a newline is judged like any other (links made and removed here)
+  ln -sfn "$T/lnk" "$T/-dash"; ln -sfn "$T/lnk" "$T/ln"$'\n'"k"
+  for c in "grep -f-dash /workspace/package.json" "grep -if -dash /workspace/package.json" "cat -- -dash"; do
+    ok '[ "$(there $g "$c")" = 2 ] && grep -q "STL-CFG-312" "$T/out"' "r9 P3: $(basename $g) refuses, coded, a link to a state path whose name starts with a dash: $c"
+  done
+  c="grep -f\$'ln\\nk' /workspace/package.json"
+  ok '[ "$(there $g "$c")" = 2 ] && grep -q "STL-CFG-312" "$T/out"' "r9 P4: $(basename $g) refuses, coded, a link to a state path whose name holds a newline, attached to a short option: $c"
+  for c in "grep -e -n /workspace/package.json" "grep -c -- -x /workspace/package.json" "grep -f\$'pla\\nin' /workspace/package.json"; do
+    ok '[ "$(there $g "$c")" = 0 ]' "r9 P3, P4 control: $(basename $g) allows a dash or newline value that names no protected path: $c"
+  done
+  rm -f "$T/-dash" "$T/ln"$'\n'"k"
+  for c in "jq -n -f $T/big.jq" "jq -n -f $T/x=y.jq" "jq -nf $T/x=y.jq" "jq -n -f ~+/p.jq" "jq -n -f ~-/p.jq"; do
+    ok '[ "$(term $g "$c")" = 2 ] && grep -q "STL-GRD-604" "$T/out"' "r8 C: $(basename $g) refuses, coded, a jq program file it cannot read whole or by that name: ${c//$T/<tmp>}"
+  done
+  for c in "jq -n -f $T/plain.jq" "jq -f $T/plain.jq /workspace/package.json" "jq -n -f ~/plain.jq"; do
+    ok '[ "$(term $g "$c")" = 0 ]' "r8 C control: $(basename $g) allows: ${c//$T/<tmp>}"
+  done
+done   # end r8
+# r7 B1 (W4-CV4-06, way b: no rule change): an abbreviation of --files0-from is refused for every command, and the printed reason says so
+ok '[ "$(term $S "rg --files")" = 2 ] && grep -q "an abbreviation of --files0-from" "$T/out" && grep -q "not its prefix" "$T/out"' "r7 B1: the secret guard's refusal of rg --files says it is an abbreviation of --files0-from and names the way out"
 ok '[ "$(ROLES_FILE=$T/none run $S read_file "{\"path\": \"/workspace/SUPERVISOR.md\"}")" = 2 ] && [ "$(ROLES_FILE=$T/none term $R "ls")" = 2 ]' "K6: an unreadable role table refuses every read (fail closed)"
+ok '[ "$(tail -c +$((TREE_SIZE + 1)) "$TREE_ALERTS" 2>/dev/null | grep -c .)" = 0 ]' "T7 (r5, W4-VER3-07): the tree's alert log gained no line of any kind during this run"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

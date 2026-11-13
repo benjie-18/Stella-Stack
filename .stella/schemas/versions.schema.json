@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Version pins",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "pins": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+            "maxLength": 128
+          },
+          "kind": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "source": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "integrity": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "tested_with": {
+            "type": "object",
+            "properties": {
+              "stack_commit": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "date": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "with": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                  "type": "string",
+                  "maxLength": 1024
+                }
+              }
+            },
+            "required": [
+              "stack_commit",
+              "date",
+              "with"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "version",
+          "source",
+          "tested_with"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "pins"
+  ],
+  "additionalProperties": false
+}

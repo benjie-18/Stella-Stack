@@ -8,15 +8,24 @@ CLI: roles.py check [hermes-root]     validate the table and its coverage of the
      roles.py spec [hermes-root]      JSON {profile: {dir, role, listed, platform_toolsets, skills_disabled, hook_files,
                                        config}} for bin/register-toolsets.sh and bin/apply-hermes-local.sh
      roles.py field <profile> <key>   one permission of the profile's role, as JSON (unlisted profiles get fallback_role)
+     roles.py requirements <role>     JSON {tool_calling, min_context_tokens, vision, allowed_data_classes}: what a model needs
+                                       to hold the role (exit 1, nothing on stdout, the code and its message on stderr: STL-CFG-311 for a role not in the
+                                       table, STL-CFG-303 for a table that fails validation)
      roles.py reviewers               JSON list of the profiles whose role may review (K8)
+     roles.py owner-data [root]       JSON list: the owner data paths relative to the stack (owner_paths; exit 1 when the index cannot be read)
+     roles.py refusal <code> <problem>  logs one alert line, prints "[code] <the catalog's plain message>" (for scripts that refuse)
+     roles.py hits <top> refused|boundary [root]   NUL-separated names on stdin (relative to <top>): the ones on stdout that are, lie in or hold a path of
+                                       the list, by identity not spelling (K1b); refused = owner_paths, boundary = boundary()
+     roles.py root                    the stack folder (ROOT)
+     roles.py boundary                JSON list: the paths that define the boundary itself, relative (boundary)
      roles.py prove [--profile P] [--task T]   the card whose own worker run this process belongs to (prove_card): JSON
                                        {card, workspace, branch} and exit 0; else the failed proof on stderr, exit 1
                                        (exit 3: the board could not be read)
 """
-import json, os, pwd, re, sqlite3, subprocess, sys
+import codecs, copy, functools, glob, hashlib, itertools, json, os, pwd, re, sqlite3, stat, subprocess, sys, time
 
 ROOT = "/workspace"   # the stack repo: roles.json, the protected repo paths and the hook sources live here
-PERMS = ("assignable", "may_complete", "may_unblock", "may_claim", "may_delegate", "may_create_cards", "may_review")
+PERMS = ("assignable", "may_answer_for_owner", "may_complete", "may_unblock", "may_claim", "may_delegate", "may_create_cards", "may_review")
 WORKSPACES = ("git-worktree", "read-parent-worktree", "none")
 OVERRIDES = ("model", "provider")
 NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
@@ -30,6 +39,22 @@ BOX_SHELL_ENV = {"BASH_ENV", "ENV", "PATH", "IFS", "SHELLOPTS", "BASHOPTS", "PRO
 BOX_DENY_ENV_PREFIX = ("LD_", "PYTHON")   # dynamic loader and interpreter start-up variables
 REVIEW_INT_KEYS = ("review_max_files", "review_max_mb", "review_clip_body", "review_clip_evidence", "review_clip_answers", "review_commits", "review_export_keep_hours")
 OVERRIDE_KEYS = {"claude_config_dir", "ro_over", "hide_files", "broker_env", "broker_when", "review_prompt", "review_model", "review_answer_prefix", "review_link_allow"} | set(REVIEW_INT_KEYS)
+REQ_BOOLS = ("tool_calling", "vision")
+REQ_KEYS = set(REQ_BOOLS) | {"min_context_tokens", "allowed_data_classes"}
+MAX_TOKENS = 2**53 - 1   # the largest integer every JSON reader (a double) holds exactly
+SCHEMA_VERSION = 1
+# The keys each object of the table may carry: these lists (validate() refuses any other key) and the schema's property lists each
+# hold them, and roles-selftest checks they are equal. A key a reader starts to use is added in both in the same change.
+ROLE_KEYS = set(PERMS) | {"workspace", "allowed_overrides", "requirements", "background_review", "complete_metadata",
+                          "complete_needs_review", "workers", "skills_disabled", "platform_toolsets", "config", "git_identity", "hooks",
+                          "runs_unboxed", "catch_all_tools"}
+HOOK_KEYS = {"matcher", "file", "command", "timeout", "workers", "writes", "catch_all"}   # writes: "refused" = the hook refuses every write; "judged" = a text guard that lets some through
+CATCH_ALL = "^(?!(?:{tools})$).+$"   # T5: the matcher of a catch_all hook; {tools} is filled at render time with the profile's other matchers and the tools of its role's toolsets
+WRITES = ("refused", "judged")
+PROFILE_KEYS = {"role", "worker", "dir", "soul", "display_name", "approval_evidence", "review_callers", "capability_fallback"}
+TOP_KEYS = {"_comment", "schema_version", "fallback_role", "protected", "owner_settings", "owner_data", "owner_commands", "data_index",
+            "worker_markers", "self_config_kinds", "profiles", "roles", "sandbox", "owner_commands_by_name", "boundary_paths", "write_tools", "worker_pins",
+            "main_branch", "judged_hooks", "read_verbs"}
 ROOT_PROFILE = "default"   # Hermes's own name for the profile that lives in the root of ~/.hermes
 
 
@@ -41,32 +66,125 @@ def path():
     return os.environ.get("ROLES_FILE") or f"{ROOT}/docs/hermes-local/roles.json"
 
 
-def load():
-    try:
-        d = json.load(open(path(), encoding="utf-8"))
-    except Exception as e:
-        raise RolesError(f"{path()}: {type(e).__name__}: {e}")
-    errs = validate(d)
-    if errs:
-        raise RolesError(f"{path()}: " + "; ".join(errs))
+def scratch():
+    """The one rule: a table is scratch when ROLES_FILE is set and its real path is not the live table's. A scratch table never pages the owner."""
+    return bool(os.environ.get("ROLES_FILE")) and os.path.realpath(path()) != os.path.realpath(f"{ROOT}/docs/hermes-local/roles.json")
+
+
+# A scratch table alerts into a scratch folder beside it, never into the stack's own state (as the data tool does for STELLA_ROOT).
+# NOFOLDER: why it cannot have one (the folder would be inside the stack tree, or cannot be made); then nothing is logged and load() refuses.
+NOFOLDER = ""
+if scratch() and not os.environ.get("ESCALATE_SUP_DIR"):
+    _f, _r = os.path.join(os.path.dirname(os.path.realpath(path())), ".supervisor"), os.path.realpath(ROOT)
+    if _f == _r or _f.startswith(_r + os.sep):
+        NOFOLDER = "the alert folder beside this table would be inside the stack tree"
+    elif not os.access(_f if os.path.isdir(_f) else os.path.dirname(_f), os.W_OK | os.X_OK):
+        NOFOLDER = "no alert folder can be made beside this table"
+    else:
+        os.environ["ESCALATE_SUP_DIR"] = _f
+
+
+def _pairs(pairs):
+    d = {}
+    for k, v in pairs:
+        if k in d:
+            raise ValueError(f"a key is repeated: {k!r}")   # json would keep the last copy, so a reader of the first is shown another table
+        d[k] = v
     return d
 
 
-def validate(d):
-    """Problems with the table, as a list of strings (empty = valid)."""
+def _int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _set(v):
+    """A list the code treats as a set: no repeated entry."""
+    return isinstance(v, list) and all(isinstance(x, str) for x in v) and len(set(v)) == len(v)
+
+
+def _const(c):
+    raise ValueError(f"{c} is not JSON")   # the data tool refuses it too: two judges of one table must agree
+
+
+def _float(s):
+    v = float(s)
+    if v in (float("inf"), float("-inf")) or (v == 0 and re.search(r"[1-9]", s.lower().split("e")[0])):   # overflow, underflow
+        raise ValueError("a number does not fit a float")
+    return v
+
+
+def _bigint(s):
+    v = int(s)
+    try:
+        float(v)
+    except OverflowError:
+        raise ValueError("a number does not fit a float") from None
+    return v
+
+
+def _sound(doc, limit=64):
+    """The data tool's other loader rules: no string that is not valid Unicode text, no nesting past 64; iterative."""
+    todo = [(doc, 1)]
+    while todo:
+        x, n = todo.pop()
+        if n > limit:
+            raise ValueError("nested too deeply")
+        if isinstance(x, dict):
+            todo += [(k, n + 1) for k in x] + [(v, n + 1) for v in x.values()]
+        elif isinstance(x, list):
+            todo += [(v, n + 1) for v in x]
+        elif isinstance(x, str):
+            try:
+                x.encode("utf-8")
+            except UnicodeEncodeError:
+                raise ValueError("a string is not valid Unicode text") from None
+
+
+_LOADED_AT = [0.0]
+_LOADED = {}   # T1: the validated table of this process, keyed by the file's identity and change time (a hook that asks twice reads it once)
+
+
+def load():
+    """The validated table, the hook-file rule included (W4-CV3-01, r5: every reader of the table, the guards too, refuses a table that names a hook
+    file that is not there). The proof is cheap: one lstat per folder and file not seen yet in this process; a table read anew drops those."""
+    try:
+        with open(path(), encoding="utf-8") as f:
+            st = os.fstat(f.fileno())
+            key = (path(), st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)   # W4-CV3-08: the change time too: putting an old mtime back changes it
+            if key in _LOADED and time.monotonic() - _LOADED_AT[0] < 1:   # r6: a long-lived reader (the box plugin) proves the hook files anew after a second; a hook process never lives that long
+                return copy.deepcopy(_LOADED[key])
+            _RF_MEMO.clear(); _bad_hook_path.cache_clear()   # W4-CV3-08: a table read anew looks its hook files up anew
+            d = json.load(f, object_pairs_hook=_pairs, parse_constant=_const, parse_float=_float, parse_int=_bigint)
+        _sound(d)
+    except Exception as e:
+        raise RolesError(f"{path()}: {type(e).__name__}: {e}")
+    errs = validate(d) + ([NOFOLDER + ": a scratch table needs a folder of its own for its alerts (set ESCALATE_SUP_DIR)"] if NOFOLDER else [])
+    if errs:
+        raise RolesError(f"{path()}: " + "; ".join(errs))
+    _LOADED.clear(); _LOADED[key] = d; _LOADED_AT[0] = time.monotonic()
+    return copy.deepcopy(d)
+
+
+def validate(d, root=ROOT):
+    """Problems with the table, as a list of strings (empty = valid). root: the stack tree the table belongs to (its hook files)."""
     roles, profs = d.get("roles") if isinstance(d, dict) else None, d.get("profiles") if isinstance(d, dict) else None
     if not isinstance(roles, dict) or not isinstance(profs, dict) or not roles:
         return ["profiles and roles must be objects, roles not empty"]
-    errs = []
+    errs = [f"unknown key {k!r} at the top level" for k in sorted(set(d) - TOP_KEYS)]
+    errs += [] if _int(d.get("schema_version")) and d["schema_version"] == SCHEMA_VERSION else [f"schema_version must be {SCHEMA_VERSION}"]
+    if "self_config_kinds" in d and not (isinstance(d["self_config_kinds"], list) and all(isinstance(x, str) for x in d["self_config_kinds"])):
+        errs.append("self_config_kinds must be a list of text")
     for n, r in roles.items():
         if not NAME.fullmatch(n) or not isinstance(r, dict):
             errs.append(f"role {n!r}: bad name or not an object"); continue
-        errs += [f"role {n}: {k} must be true or false" for k in PERMS if not isinstance(r.get(k), bool)]
+        errs += [f"role {n}: unknown key {k!r}" for k in sorted(set(r) - ROLE_KEYS)]
+        errs += validate_requirements(n, r.get("requirements"))
+        errs += [f"role {n}: {k} must be true or false" for k in PERMS + ("runs_unboxed",) if not isinstance(r.get(k), bool)]
         if r.get("workspace") not in WORKSPACES:
             errs.append(f"role {n}: workspace must be one of {', '.join(WORKSPACES)}")
         ov = r.get("allowed_overrides")
-        if not isinstance(ov, list) or not set(ov) <= set(OVERRIDES):
-            errs.append(f"role {n}: allowed_overrides must be a list of {', '.join(OVERRIDES)}")
+        if not isinstance(ov, list) or not set(ov) <= set(OVERRIDES) or len(set(ov)) != len(ov):
+            errs.append(f"role {n}: allowed_overrides must be a list of {', '.join(OVERRIDES)}, each once")
         if "background_review" in r and not isinstance(r["background_review"], bool):
             errs.append(f"role {n}: background_review must be true or false")
         cm = r.get("complete_metadata")   # S3A-03: the metadata pairs a reviewing role's kanban_complete must carry
@@ -76,25 +194,43 @@ def validate(d):
         if "complete_needs_review" in r and not isinstance(r["complete_needs_review"], bool):   # S3A-04
             errs.append(f"role {n}: complete_needs_review must be true or false")
         workers = r.get("workers", [])
-        if not isinstance(workers, list) or not all(isinstance(w, str) and w for w in workers):
-            errs.append(f"role {n}: workers must be a list of worker kinds")
+        if not _set(workers) or not all(workers):
+            errs.append(f"role {n}: workers must be a list of worker kinds, each once")
+        sd_, pt = r.get("skills_disabled", []), r.get("platform_toolsets", {})
+        if not _set(sd_) or not isinstance(pt, dict) or not all(_set(v) for v in pt.values()):
+            errs.append(f"role {n}: skills_disabled and each platform_toolsets entry must be a list of names, each once")
         if not isinstance(r.get("config", {}), dict):
             errs.append(f"role {n}: config must be an object")
         gi = r.get("git_identity")
         if gi is not None and not (isinstance(gi, dict) and set(gi) == {"name", "email"}
                                    and all(isinstance(v, str) and KEY.fullmatch(v) for v in gi.values())):
             errs.append(f"role {n}: git_identity must be {{name, email}}, each the name of an owner config key")
+        ct = r.get("catch_all_tools")
+        if ct is not None and not (_set(ct) and ct and all(re.fullmatch(r"[A-Za-z0-9_]+", t) for t in ct)):
+            errs.append(f"role {n}: catch_all_tools must be a non-empty list of plain tool names (A-Z, digits, _), each once")
+        if not isinstance(r.get("hooks", []), list):
+            errs.append(f"role {n}: hooks must be a list"); continue
         for h in r.get("hooks", []):
-            if not isinstance(h, dict) or not isinstance(h.get("matcher"), str) or ("file" in h) == ("command" in h):
-                errs.append(f"role {n}: a hook needs a matcher and exactly one of file, command"); continue
+            if not isinstance(h, dict) or not isinstance(h.get("matcher"), str) or ("file" in h) == ("command" in h) \
+                    or not isinstance(h.get("file", h.get("command")), str):
+                errs.append(f"role {n}: a hook needs a matcher and exactly one of file, command (text)"); continue
+            errs += [f"role {n}: hook has unknown key {k!r}" for k in sorted(set(h) - HOOK_KEYS)]
+            if h.get("writes", WRITES[0]) not in WRITES:
+                errs.append(f"role {n}: a hook's writes must be one of {', '.join(WRITES)}")
             try:
                 re.compile(h["matcher"])
             except re.error:
                 errs.append(f"role {n}: matcher {h['matcher']} is not a regex")
+            if "catch_all" in h and not (h["catch_all"] is True and h["matcher"] == CATCH_ALL):
+                errs.append(f"role {n}: a catch_all hook is marked true and has the matcher {CATCH_ALL} (its tool list is filled at render time)")
+            if "timeout" in h and not (_int(h["timeout"]) and h["timeout"] > 0):
+                errs.append(f"role {n}: a hook's timeout must be a positive integer")
             src = h.get("file") or h["command"]
-            if ".." in src.split("/") or not os.path.isfile(src if "command" in h else f"{ROOT}/{src}"):
+            if _bad_hook_path(src, "command" in h, root):
                 errs.append(f"role {n}: hook {src} does not exist")
-            if not set(h.get("workers", [])) <= set(workers):
+            if "workers" in h and not (_set(h["workers"]) and h["workers"]):
+                errs.append(f"role {n}: hook {src}: workers must be a non-empty list of worker kinds, each once")
+            elif not set(h.get("workers", [])) <= set(workers):
                 errs.append(f"role {n}: hook {src} names a worker kind the role does not list")
     fb = roles.get(d.get("fallback_role"))
     if not isinstance(fb, dict):
@@ -104,10 +240,12 @@ def validate(d):
     for p, row in profs.items():
         if not NAME.fullmatch(p) or not isinstance(row, dict):
             errs.append(f"profile {p!r}: bad name or not an object"); continue
+        errs += [f"profile {p}: unknown key {k!r}" for k in sorted(set(row) - PROFILE_KEYS)]
         if row.get("role") not in roles:
             errs.append(f"profile {p}: role {row.get('role')!r} is not in roles"); continue
         if "worker" in row and row["worker"] not in roles[row["role"]].get("workers", []):
             errs.append(f"profile {p}: worker {row['worker']!r} is not one of its role's workers")
+        errs += [f"profile {p}: {k} must be text" for k in ("dir", "soul", "display_name", "worker") if k in row and not isinstance(row[k], str)]
         if ".." in str(row.get("dir", "")).split("/") or str(row.get("dir", "")).startswith("/"):
             errs.append(f"profile {p}: dir must be relative to ~/.hermes")
         ae = row.get("approval_evidence")   # D100: complete-gate refuses this profile's completion without this evidence in its session
@@ -129,13 +267,147 @@ def validate(d):
                                 or profs[fbp].get("role") != row["role"]):   # RT10-01: a list or object is named, not a crash
             errs.append(f"profile {p}: capability_fallback must name another profile of the same role")
     pr = d.get("protected")
-    if not isinstance(pr, dict) or not all(isinstance(pr.get(k), list) and pr[k] for k in ("repo", "home")):
-        errs.append("protected needs non-empty repo and home lists")
+    if not isinstance(pr, dict) or not all(_set(pr.get(k)) and pr[k] for k in ("repo", "home")):
+        errs.append("protected needs non-empty repo and home lists, no entry twice")
     os_ = d.get("owner_settings")   # K6: the owner's settings files, refused to every agent role for reading and writing
-    if not (isinstance(os_, list) and os_ and all(isinstance(x, str) and x and not x.startswith("/") and ".." not in x.split("/")
+    if not (isinstance(os_, list) and os_ and _set(os_) and all(x and not x.startswith("/") and ".." not in x.split("/")
                                                    for x in os_)):
-        errs.append("owner_settings needs a non-empty list of paths relative to the stack repo")
-    return errs + validate_sandbox(d)
+        errs.append("owner_settings needs a non-empty list of paths relative to the stack repo, no path twice")
+    for k, what in (("owner_data", "paths no role writes (all may read them)"), ("owner_commands", "commands no role runs")):   # F1 W4 (E7)
+        v = d.get(k)
+        if not (isinstance(v, list) and v and _set(v) and all(_rel(x) for x in v)):
+            errs.append(f"{k} needs a non-empty list of {what}, relative to the stack repo, no . or .. segment, no path twice")
+    if not _rel(d.get("data_index")) or " " in d["data_index"]:   # the data index: names the backup folder, applied state and event log
+        errs.append("data_index needs a path relative to the stack repo, no . or .. segment")
+    wp = d.get("worker_pins")   # the variables the box sets to a worker's workspace and branch (the commit guard checks a marked commit against them)
+    if not (isinstance(wp, dict) and set(wp) == {"workspace", "branch"} and all(isinstance(v, str) and KEY.fullmatch(v) for v in wp.values())):
+        errs.append("worker_pins needs {workspace, branch}, each an environment variable name (A-Z, digits, _)")
+    if not (isinstance(d.get("main_branch"), str) and NAME.fullmatch(d["main_branch"])):   # the stack's main branch (the commit guard refuses a worker on it)
+        errs.append("main_branch needs the name of the stack's main branch")
+    jh = d.get("judged_hooks")   # K6: the guards every role outside the box that no profile serves carries (defined once, here)
+    if not (isinstance(jh, list) and jh and _set(jh) and all(_rel(x) for x in jh)):
+        errs.append("judged_hooks needs a non-empty list of hook files (paths relative to the stack repo), no file twice")
+    rv = d.get("read_verbs")   # K7: the verbs that may name an owner path (a command word, or "git <subcommand>")
+    if not (isinstance(rv, list) and rv and _set(rv) and all(re.fullmatch(r"[A-Za-z0-9_.\[\]+-]+(?: [a-z0-9-]+)?", x) for x in rv)):
+        errs.append("read_verbs needs a non-empty list of command words (or \"git <subcommand>\") that only read files, no entry twice")
+    wm = d.get("worker_markers")   # the environment variables that mark a worker's process (commit guard, apply tool, settings tool)
+    if not (isinstance(wm, list) and wm and _set(wm) and all(KEY.fullmatch(x) for x in wm)):
+        errs.append("worker_markers needs a non-empty list of environment variable names (A-Z, digits, _), no name twice")
+    for k, what in (("owner_commands_by_name", "owner commands refused wherever their name appears in a command"),
+                    ("boundary_paths", "paths that define the boundary itself"), ("write_tools", "tools that can write")):
+        v = d.get(k)
+        if not (isinstance(v, list) and v and _set(v) and all(_rel(x) if k != "write_tools" else NAME.fullmatch(x) for x in v)):
+            errs.append(f"{k} needs a non-empty list of {what}, no entry twice")
+    if isinstance(d.get("owner_commands_by_name"), list) and isinstance(d.get("owner_commands"), list) \
+            and not set(d["owner_commands_by_name"]) <= set(d["owner_commands"]):
+        errs.append("owner_commands_by_name must be a subset of owner_commands")
+    errs += validate_sandbox(d)
+    return errs or fallback_problems(d) + unboxed_problems(d)   # both on a well-formed table, each names its own gap (one never hides the other)
+
+
+def _bad_hook_path(src, command, root):
+    """A command is an absolute path, a file a repo path inside the root once symlinks are followed; True when it is not, or is no file."""
+    if command:
+        return not src.startswith("/") or ".." in src.split("/") or not os.path.isfile(src)
+    if not _rel(src):
+        return True
+    rr, f = _realfile(root), _realfile(f"{root}/{src}")
+    return rr is None or f is None or not stat.S_ISREG(f[1].st_mode) or not f[0].startswith(rr[0].rstrip("/") + "/")
+
+
+_RF_MEMO = {}   # T1 (r5): the folders the hook files share are looked up once per process (as the lru_cache below keeps each answer)
+
+
+def _realfile(p):
+    """(the real path, its stat) of p, following links, or None when it does not exist: os.path.realpath plus a stat, with one lstat per folder
+    that no earlier path of this process shared. A link anywhere is resolved by os.path.realpath itself (the long way)."""
+    comps, cur, st = [c for c in os.path.abspath(p).split("/") if c], "/", None
+    for c in comps:
+        cur = os.path.join(cur, c)
+        if cur not in _RF_MEMO:
+            try:
+                _RF_MEMO[cur] = os.lstat(cur)
+            except OSError:
+                _RF_MEMO[cur] = None
+        st = _RF_MEMO[cur]
+        if st is None:
+            return None
+        if stat.S_ISLNK(st.st_mode):
+            r = os.path.realpath(p)
+            try:
+                return r, os.stat(r)
+            except OSError:
+                return None
+    return cur, st if st is not None else os.lstat("/")
+
+
+_bad_hook_path = functools.lru_cache(maxsize=None)(_bad_hook_path)   # T1: the table names ~16 hook files about 60 times; each is looked up once per process
+
+
+def _hooks(r, judged=True):
+    return {(h["matcher"], h.get("file"), h.get("command")) for h in r.get("hooks", []) if judged or h.get("writes") != "refused"}
+
+
+def unboxed_problems(d):
+    """B2/K6 (F1 W4): a text guard cannot decide what a shell will do, so a role that runs outside the OS box must refuse every write by
+    its hooks: every profile outside sandbox.boxed_profiles and the fallback role have runs_unboxed true; such a role has explicit
+    toolsets, a hook that refuses (writes: refused) and no hook that only judges (writes: judged) on each tool of write_tools, and a hook
+    that refuses any tool name no other matcher names. A role a profile serves has explicit toolsets. A role in the box that no profile
+    serves carries every guard of judged_hooks (the full judged set, defined once). A hook with a workers filter covers a profile only
+    when the profile names that worker kind, so it is never counted for a role as a whole. Run on a table whose rows are already well formed."""
+    roles, boxed, tools = d["roles"], set((d.get("sandbox") or {}).get("boxed_profiles") or []), d["write_tools"]
+    need = {d["fallback_role"]} | {row["role"] for p, row in d["profiles"].items() if p not in boxed}
+    served = {row["role"] for row in d["profiles"].values()}
+    errs = [f"role {n} must have runs_unboxed true: a profile or the fallback uses it outside the OS box" for n in sorted(need) if not roles[n]["runs_unboxed"]]
+    errs += [f"role {n} is served by a profile and has no explicit platform_toolsets (a default toolset is not judged)" for n in sorted(served) if not any(roles[n].get("platform_toolsets", {}).values())]
+    cover = lambda r, t: [h for h in r.get("hooks", []) if "workers" not in h and not h.get("catch_all") and re.fullmatch(h["matcher"], t)]   # a catch-all never covers a tool of the role
+    for n, r in roles.items():
+        if not r["runs_unboxed"]:
+            if n not in served:
+                have = {h.get("file") or h["command"] for h in r.get("hooks", [])}
+                errs += [f"role {n} is in the box and served by no profile: it lacks the guard {j} of judged_hooks" for j in d["judged_hooks"] if j not in have]
+            continue
+        if not any(r.get("platform_toolsets", {}).values()):
+            errs.append(f"role {n} runs outside the box: it needs explicit platform_toolsets")
+        if any(h.get("writes") == "judged" for h in r.get("hooks", [])):
+            errs.append(f"role {n} runs outside the box: it lists a hook that only judges writes (writes: judged)")
+        errs += [f"role {n} runs outside the box: write tool {t} has no hook that refuses every write (writes: refused)"
+                 for t in tools if not any(h.get("writes") == "refused" for h in cover(r, t))]
+        cah = [h for h in r.get("hooks", []) if h.get("writes") == "refused" and h.get("catch_all") and "workers" not in h]
+        if not cah:
+            errs.append(f"role {n} runs outside the box: it needs a hook that refuses any tool name no other matcher names (writes: refused)")
+        elif not r.get("catch_all_tools"):   # T5 ruling (W4-VER3-04): the catch-all's allowed tools are named in the table (data), default-deny: a tool not named is refused
+            errs.append(f"role {n} runs outside the box: its catch-all needs catch_all_tools in the table (the tools it lets through; a tool not listed is refused)")
+    return errs
+
+
+def fallback_problems(d):
+    """The fallback is the narrowest row: it allows no data class another role lacks, has hooks, and every role no profile
+    names (so a profile never reaches it by a row) carries at least its hooks. Run on a table whose rows are already well formed."""
+    roles, fbn = d["roles"], d["fallback_role"]
+    fb, named = roles[fbn], {row.get("role") for row in d["profiles"].values() if isinstance(row, dict)}
+    errs = [f"fallback_role {fbn} allows data class {c!r}, which role {n} does not (the fallback is the narrowest)"
+            for c in fb["requirements"]["allowed_data_classes"]
+            for n in [next((n for n, r in roles.items() if c not in r["requirements"]["allowed_data_classes"]), None)] if n]
+    if not any("workers" not in h for h in fb.get("hooks", [])):   # a profile with no row has no worker kind, so a hook with a workers filter is never its hook
+        errs.append(f"fallback_role {fbn} must have at least one hook that has no workers filter")
+    errs += [f"role {n} is named by no profile and lacks a hook the fallback role {fbn} has" for n, r in roles.items()
+             if n != fbn and n not in named and not _hooks(fb, False) <= _hooks(r)]   # a refusing hook is for roles outside the box only (unboxed_problems)
+    return errs
+
+
+def validate_requirements(n, q):
+    """E3: what a model needs to hold role n: all four keys, nothing else."""
+    if not isinstance(q, dict):
+        return [f"role {n}: requirements must be an object"]
+    errs = [f"role {n}: requirements has unknown key {k}" for k in sorted(set(q) - REQ_KEYS)]
+    errs += [f"role {n}: requirements.{k} must be true or false" for k in REQ_BOOLS if not isinstance(q.get(k), bool)]
+    c, dc = q.get("min_context_tokens"), q.get("allowed_data_classes")
+    if not _int(c) or not 0 <= c <= MAX_TOKENS:
+        errs.append(f"role {n}: requirements.min_context_tokens must be an integer from 0 to {MAX_TOKENS}")
+    if not (isinstance(dc, list) and all(isinstance(x, str) and NAME.fullmatch(x) for x in dc) and len(set(dc)) == len(dc)):
+        errs.append(f"role {n}: requirements.allowed_data_classes must be a list of distinct class names")
+    return errs
 
 
 def _rel(x):
@@ -150,7 +422,7 @@ def validate_sandbox(d):
     if not isinstance(sb, dict):
         return ["sandbox must be an object"]
     errs = [f"sandbox: unknown key {k!r}" for k in sb if k not in SANDBOX_KEYS]
-    if sb.get("schema_version") != 1:
+    if not _int(sb.get("schema_version")) or sb["schema_version"] != 1:
         errs.append("sandbox: schema_version must be 1")
     names = [sb.get(k) for k in ("backend", "unboxed_backend")]
     if not all(isinstance(n, str) and BACKEND.fullmatch(n) for n in names) or names[0] == names[1]:
@@ -242,6 +514,307 @@ def owner_settings(d):
     return [f"{ROOT}/{p}" for p in d["owner_settings"]]
 
 
+def index(d, root=None):
+    """The data index (d['data_index']) parsed and shape-checked. Raises RolesError when it cannot be read: callers fail closed."""
+    try:
+        with open(f"{root or ROOT}/{d['data_index']}", encoding="utf-8") as f:
+            ix = json.load(f, object_pairs_hook=_pairs)
+        if not (isinstance(ix, dict) and all(_rel(ix.get(k)) for k in ("backup_dir", "applied_state", "event_log"))
+                and isinstance(ix.get("files"), list)
+                and all(isinstance(x, dict) and _rel(x.get("path")) and isinstance(x.get("owner_only"), bool) for x in ix["files"])):
+            raise ValueError("shape")
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise RolesError(f"{d['data_index']}: cannot be read ({type(e).__name__})")
+    return ix
+
+
+def owner_paths(d, root=None):
+    """G1 (F1 W4): the one definition of owner data, as paths relative to the stack: the index itself, every path of an index row with
+    owner_only true, and the table's own owner_data list (what the index cannot name, for example its schemas folder). The write guard,
+    the commit guard and the merge check all use this; a new owner-only row is protected with no other edit. It holds the owner settings and the
+    apply tool's state paths too: every path no role may write. Raises RolesError."""
+    ix = index(d, root)
+    return sorted({d["data_index"], *d["owner_data"], *d["owner_settings"], *(x["path"] for x in ix["files"] if x["owner_only"]),
+                   ix["backup_dir"], ix["applied_state"], ix["event_log"]})   # K1: the apply tool's state is a path no role writes either, the same list
+
+
+def owner_data(d):
+    """F1 W4: the owner's data paths (absolute): no role writes them, every role may read them."""
+    return [f"{ROOT}/{p}" for p in owner_paths(d)]
+
+
+def state_paths(d, root=None):
+    """B1 (F1 W4): the apply tool's state, relative: its backups (owner values in clear), applied state and event log (old and new
+    owner values). No role reads or writes them and no OS box mounts them. Raises RolesError when the index cannot be read."""
+    ix = index(d, root)
+    return [ix["backup_dir"], ix["applied_state"], ix["event_log"]]
+
+
+def state_trees(d):
+    """The state paths, absolute (every role's read and write guards refuse them). Raises RolesError: callers fail closed."""
+    return [f"{ROOT}/{p}" for p in state_paths(d)]
+
+
+def boundary(d):
+    """B3/K3 (F1 W4): the paths that define the boundary itself, relative: the table's boundary_paths (a list of data: every file the boundary's own
+    code loads, kept complete by a selftest that walks the import and source graph) and every hook file or command the table names. A card
+    branch that changes one meets a flag at the merge."""
+    hooks = {(h.get("file") or h["command"]) for r in d["roles"].values() for h in r.get("hooks", [])}
+    return sorted(set(d["boundary_paths"]) | {h[len(ROOT) + 1:] if h.startswith(ROOT + "/") else h for h in hooks} | table_named(d))
+
+
+def table_named(d, root=None):
+    """B.2 point 10 (W4-CV3-04): the repo files the table itself names as a command, a prompt or a hook (every value under a key "command",
+    "broker_when", "review_prompt" or "file", a regex unescaped): what the boundary code runs or reads on the table's word decides it too."""
+    out, todo = set(), [d]
+    while todo:
+        x = todo.pop()
+        if isinstance(x, dict):
+            for k, v in x.items():
+                if isinstance(v, str) and k in ("command", "broker_when", "review_prompt", "file"):
+                    for m in re.finditer(r"[\w.~-]+(?:/[\w.~-]+)+", re.sub(r"\\(.)", r"\1", v)):
+                        rel = m[0].removeprefix(ROOT.lstrip("/") + "/")   # an absolute path of the stack, or a repo path
+                        if _rel(rel) and os.path.isfile(os.path.join(root or ROOT, rel)):
+                            out.add(rel)
+                else:
+                    todo.append(v)
+        elif isinstance(x, list):
+            todo += x
+    return out
+
+
+def _outside_imports(d, top):
+    """B.3 point 18 (W4-VER3-02, W4-VAL3-10), r8 A (W4-CV5-01): every module name the boundary's python code imports (its own folders' modules
+    included: a package folder or a compiled file beside <module>.py is loaded instead of it), every standard-library name, and the bytecode
+    cache folder: a new path in a folder the hooks import from that starts with one stands in for it."""
+    dirs = {os.path.dirname(x) for x in d["boundary_paths"] if x.endswith(".py")}
+    names = set(sys.stdlib_module_names) | {"__pycache__"}
+    for x in boundary(d):
+        p = os.path.join(top, x)   # r9 P1 (W4-CV6-01): a boundary entry that is a folder is read too (the python files under it), and every name of an import line counts
+        for f in [p] if x.endswith(".py") and os.path.isfile(p) else [os.path.join(r, n) for r, _, fs in os.walk(p) for n in fs if n.endswith(".py")]:
+            for m in re.finditer(r"^\s*(?:from\s+([A-Za-z_]\w*)|import\s+([^#\n]+))", open(f, encoding="utf-8", errors="replace").read(), re.M):
+                names.update([m[1]] if m[1] else re.findall(r"(?:^|,)\s*([A-Za-z_]\w*)", m[2]))
+    return dirs, names
+
+
+def _lstat(path, memo):
+    if memo is None:
+        return os.lstat(path)
+    if path not in memo:
+        try:
+            memo[path] = os.lstat(path)
+        except OSError as e:
+            memo[path] = e
+    if isinstance(memo[path], OSError):
+        raise memo[path]
+    return memo[path]
+
+
+def _chain(p, memo=None):
+    """K1b: (the names of a path's components, the (device, inode) of the root and of each existing prefix): a path is known by what it is.
+    memo: the lstat results of one chains() call (the protected paths share their folders: each folder is looked up once)."""
+    a = os.path.abspath(p)
+    if ".." not in str(p).split("/"):   # T1: one lstat per component when no prefix is a link (realpath, then an lstat of each prefix, is two)
+        comps, ids, cur = [c for c in a.split("/") if c], [], "/"
+        for i in range(len(comps) + 1):
+            try:
+                st = _lstat(cur, memo)
+            except OSError:
+                return comps, ids
+            if stat.S_ISLNK(st.st_mode):
+                break   # a link: resolved the long way below
+            ids.append((st.st_dev, st.st_ino))
+            if i < len(comps):
+                cur = os.path.join(cur, comps[i])
+        else:
+            return comps, ids
+    comps = [c for c in os.path.realpath(p).split("/") if c]
+    ids, cur = [], "/"
+    for i in range(len(comps) + 1):
+        try:
+            st = os.lstat(cur)
+        except OSError:
+            break
+        ids.append((st.st_dev, st.st_ino))
+        if i < len(comps):
+            cur = os.path.join(cur, comps[i])
+    return comps, ids
+
+
+def chains(paths, memo=None):
+    """The protected paths (absolute), ready for overlap(). memo: a dict the caller keeps for the chains it builds at one time (T1, r5: the
+    protected paths share their folders, so each folder is looked up once; a guard passes one dict for the lists it builds when it starts)."""
+    memo = {} if memo is None else memo
+    return [(p, _chain(p, memo)) for p in paths]
+
+
+def overlap(p, prot):
+    """K1b, the one way every guard asks "is this path one of those": (relation, protected path) or None. The relation is "equal", "inside" (p lies
+    in a protected path) or "contains" (p is a folder that holds one). It is decided by IDENTITY where p or a parent of it exists (the device and
+    inode of each existing component, so an 8.3 short name, a case variant and a symlink of a folder name that folder), and by the casefolded
+    names below the deepest folder both paths share. A name is judged by what it resolves to, never by what it looks like (T3): a word that names
+    nothing on disk, below a folder that is not and does not lie in a protected path, is not a protected path (a git revision such as HEAD~1)."""
+    pc, pi = _chain(p)
+    fold = [c.casefold() for c in pc]
+    for q, (qc, qi) in prot:
+        pos = {i: k for k, i in enumerate(qi)}
+        qf = [c.casefold() for c in qc]
+        for j in range(len(pi) - 1, -1, -1):
+            k = pos.get(pi[j])
+            if k is None:
+                continue
+            pr, qr = fold[j:], qf[k:]
+            n = min(len(pr), len(qr))
+            if pr[:n] == qr[:n]:
+                return ("equal" if len(pr) == len(qr) else "inside" if len(pr) > len(qr) else "contains"), q
+    return None
+
+
+def hits(d, top, names, kind, root=None):
+    """K1/K3: the names (relative to the tree `top`) that are, lie in or hold a path of the list `kind`: "refused" = every path no role may
+    write (owner_paths: owner data, the owner settings, the apply tool's state), "boundary" = boundary(d) and, in a folder the boundary's python imports from (the hooks import from that folder first), any folder, any name without a suffix (a link to a package folder elsewhere), any file
+    python loads (.py, .pyc, .so) whatever its name, and any other file named like a module the boundary imports. Raises RolesError."""
+    rel = owner_paths(d, root or top) if kind == "refused" else boundary(d)
+    prot = chains(os.path.join(top, x) for x in rel)
+    out, shadow = [], None
+    for n in names:
+        if n.startswith("/") or ".." in n.split("/"):
+            out.append(n); continue
+        r = overlap(os.path.join(top, n), prot)
+        if r:
+            out.append(n)
+        elif kind == "boundary":   # r10 (FIN-CRT-02, FIN-CV-01): under such a folder any folder, any name without a suffix (W4-CV10-01: a link to a package folder) and any file python loads is a hit, whatever its name (a module looked up late is on no list); the name test stays for other suffixes
+            dirs, ext = shadow if shadow else (shadow := _outside_imports(d, top))
+            for dd in dirs:
+                if n.startswith(dd + "/") and ("/" in (t := n[len(dd) + 1:]) or "." not in t or t.endswith((".py", ".pyc", ".so")) or t.split(".")[0] in ext):
+                    out.append(n); break
+    return out
+
+
+def owner_commands(d):
+    """F1 W4: the owner's commands (absolute): no role runs them."""
+    return [f"{ROOT}/{p}" for p in d["owner_commands"]]
+
+
+def worker_markers(d):
+    """F1 W4: the environment variable names that mark a worker's process."""
+    return list(d["worker_markers"])
+
+
+def ansi(cmd):
+    """bash $'...' strings decoded as bash does, and $"..." as plain "...", so escapes cannot hide a name. Shared by the read and write guards."""
+    dec = lambda m: "'" + codecs.decode(m[1].encode("latin-1", "backslashreplace"), "unicode_escape").replace("'", "'\\''") + "'"
+    return re.sub(r"\$'((?:[^'\\]|\\.)*)'", dec, cmd).replace('$"', '"')
+
+
+BRACE = re.compile(r"(?<!\$)\{([^{}]*,[^{}]*)\}")
+
+
+def braces(word, limit=64):
+    """bash brace expansion of {a,b} (innermost first; not {1..3}). K5: the work is bounded, not only the output: every step that splits a
+    word adds at least one to the count of words held, and the first time the count passes `limit` the caller gets limit+1 words back
+    (it refuses the word), so no word of any length or depth costs more than about `limit` passes over it."""
+    work, out = [word], []
+    while work:
+        w = work.pop()
+        m = BRACE.search(w)
+        if not m:
+            out.append(w)
+        else:
+            alts = m[1].split(",")
+            if len(out) + len(work) + len(alts) > limit:
+                return [w] * (limit + 1)
+            work += [w[:m.start()] + a + w[m.end():] for a in reversed(alts)]
+        if len(out) + len(work) > limit:
+            return (out + work)[:limit + 1]
+    return out
+
+
+def globs(p, limit=500, depth=3):
+    """K5: the matches of a glob pattern, with the work bounded: at most `limit` matches are taken, and a pattern with more than `depth` wildcard
+    path components is too wide to scan (None: the caller refuses it)."""
+    if sum(1 for c in p.split("/") if glob.has_magic(c)) > depth:
+        return None
+    return list(itertools.islice(glob.iglob(p), limit))
+
+
+def expand_word(word, cwd, names=None):
+    """G2 (F1 W4): (real paths, unresolved) for a shell word as the shell will read it: braces, ~, variables the hook can know (names, then
+    its own environment), globs, then realpath. unresolved is true when an expansion is left that only the shell can compute ($(..), a
+    backtick, an unknown variable) or the brace expansion is too wide: the caller decides what that means for the command."""
+    ws, out, unres = braces(word), [], False
+    if len(ws) > 64:
+        return [], True
+    for w in ws:
+        w = re.sub(r"\$\{?([A-Za-z_]\w*)\}?", lambda m: (names or {}).get(m[1], os.environ.get(m[1], m[0])), w)
+        unres = unres or bool(re.search(r"\$[A-Za-z_{(]|`", w))
+        e = os.path.join(cwd or "/", os.path.expanduser(w))
+        out.append(os.path.realpath(e))
+        if glob.has_magic(e):
+            g = globs(e)
+            if g is None:
+                unres = True   # too many wildcard parts to scan: the caller treats it as a word only the shell can compute
+            else:
+                out += [os.path.realpath(x) for x in sorted(g)]
+    return out, unres
+
+
+def plain(code, once=None, **kv):
+    """'[CODE] <the catalog's plain message>' for a refusal, with the alert line logged: one call per refusal (G4). kv holds no owner value. once: a key for
+    the call (its payload); the hooks of one role that refuse the same call each print the message, but only the first writes the alert line (K8)."""
+    log_alert(code, once=once, **kv)
+    try:
+        import alert_catalog
+        return f"[{code}] " + alert_catalog.render(code, kv)[0].split("\n")[1]
+    except Exception:
+        return f"[{code}]"
+
+
+def call_key(payload):
+    """B.1 (r5): (key, window in seconds) of the tool call a hook payload belongs to. Hermes puts the call's id in extra.tool_call_id: the hooks of one call
+    share it and a retry has a new one, so the key is the id and needs no window. A payload without one is keyed on its bytes and the parent process,
+    and only hooks that start within 2 s of the first count as the same call (the limit: a retry of the same payload sooner than that writes no line)."""
+    try:
+        cid = (json.loads(payload).get("extra") or {}).get("tool_call_id")
+    except (ValueError, AttributeError, TypeError):
+        cid = None
+    return (f"id:{cid}", None) if isinstance(cid, str) and cid else (f"payload:{payload}|{os.getppid()}", 2)
+
+
+def _first(code, key):
+    """True for the first hook of a call to refuse it with this code: a marker file made with O_EXCL in the alert folder (hooks run as separate processes,
+    so a marker is how they tell they refuse the same call). key: a call key (call_key) or any text (then the old rule: the parent process, 30 s)."""
+    d = os.path.join(os.environ.get("ESCALATE_SUP_DIR") or f"{ROOT}/.supervisor", "once")
+    os.makedirs(d, exist_ok=True)
+    for old in glob.glob(d + "/*"):   # markers older than an hour go
+        if time.time() - os.stat(old).st_mtime > 3600:
+            os.unlink(old)
+    key, window = key if isinstance(key, tuple) else (f"{code}|{key}|{os.getppid()}", 30)   # a call key: one line per refused call, whatever code each hook gives
+    f = os.path.join(d, hashlib.sha1(key.encode()).hexdigest()[:24])
+    try:
+        os.close(os.open(f, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        return True
+    except FileExistsError:
+        if window is not None and time.time() - os.stat(f).st_mtime > window:
+            os.utime(f)
+            return True
+        return False
+
+
+def hook_refusal(code, problem, payload, card=None):
+    """B.1 (r5), the one way a hook refuses: '[CODE] <the catalog's plain message>' with exactly one alert line per refused call (the first hook of the call
+    to refuse with this code writes it), naming the role of the payload's profile and, where the caller knows it, the card."""
+    try:
+        d = load()
+    except Exception:   # r6 (W4-CV3-01, shell hooks too): a table that cannot be read refuses with the code every guard gives for it, whatever the hook's own rule
+        return plain("STL-CFG-303", once=call_key(payload), problem="the role table cannot be read by a guard hook")
+    try:
+        role = role_of(d, json.loads(payload).get("profile"))[0]
+    except Exception:
+        role = "unknown"
+    return plain(code, once=call_key(payload), problem=f"{problem} (role {role}{', card ' + card if card else ''})")
+
+
 def protected(d):
     """(repo paths, home config paths): the one protected list (D40 write guard, D46 card guard)."""
     return ([f"{ROOT}/{p}" for p in d["protected"]["repo"]],
@@ -294,16 +867,37 @@ def hook_command(path):
     which a boxed worker can write, so no user-site .pth or PYTHON* variable may reach it (RT-A-01)."""
     return f"python3 -I {path}" if path.endswith(".py") else path
 
-def hooks_for(d, H, name, folder, role):
-    """[(matcher, command, timeout, repo source or None)] the profile's role installs, filtered by its worker kind."""
+def hooks_for(d, H, name, folder, role, tools=None):
+    """[(matcher, command, timeout, repo source or None)] the profile's role installs, filtered by its worker kind. tools: the role's tools
+    (role_tools); a catch_all matcher is rendered to match only a name that none of the profile's other matchers names and that is no tool of the
+    role; without tools it stays the template (callers that only want the files)."""
     worker = (d["profiles"].get(name) or {}).get("worker")
+    mine = [h for h in d["roles"][role].get("hooks", []) if "workers" not in h or worker in h["workers"]]
+    names = "|".join([h["matcher"] for h in mine if not h.get("catch_all")] + d["roles"][role].get("catch_all_tools", []))   # T5: what a catch-all leaves alone: every other matcher and the role's catch_all_tools (data, default-deny)
     out = []
-    for h in d["roles"][role].get("hooks", []):
-        if "workers" in h and worker not in h["workers"]:
-            continue
+    for h in mine:
         cmd = hook_command(h.get("command") or f"{folder}/hooks/{os.path.basename(h['file'])}")
-        out.append((h["matcher"], cmd, int(h.get("timeout", 10)), h.get("file")))
+        m = h["matcher"].replace("{tools}", names) if h.get("catch_all") else h["matcher"]
+        out.append((m, cmd, int(h.get("timeout", 10)), h.get("file")))
     return out
+
+
+def role_tools(d, role):
+    """T5: the sorted tool names a role's profiles have: every tool of its platform toolsets (and of kanban for an assignable role, which the
+    dispatcher adds), resolved by Hermes's own toolsets module, so a tool Hermes adds to one of those toolsets needs no edit here. Raises RolesError
+    when Hermes's module cannot be read: a catch-all is never rendered from a guess."""
+    r = d["roles"][role]
+    sets = {s for plat in r.get("platform_toolsets", {}).values() for s in plat} | ({"kanban"} if r["assignable"] else set())
+    try:
+        if "toolsets" not in sys.modules:
+            sys.path.insert(0, f"{pwd.getpwuid(os.getuid()).pw_dir}/.hermes/hermes-agent")   # Hermes's install, as the matcher audit reads it
+        import toolsets
+        tools = sorted({t for s in sets for t in toolsets.resolve_toolset(s)})
+    except Exception as e:
+        raise RolesError(f"the tools of role {role} cannot be resolved from Hermes's toolsets ({type(e).__name__})")
+    if not tools or not all(re.fullmatch(r"[A-Za-z0-9_]+", t) for t in tools):   # plain names: no regex or YAML escape is needed in the matcher
+        raise RolesError(f"role {role} has no tools, or a tool name that is not plain, to render its catch-all with")
+    return tools
 
 
 def spec(d, H):
@@ -473,18 +1067,23 @@ def streak(j):
                    default=""))
 
 
-def log_alert(code, streak="", **kv):
+def log_alert(code, streak="", once=None, **kv):
     """One line in .supervisor/logs/alerts.log (bin/alert_catalog.py), and the rendered message's first line. K11: when
     the code's catalog "page" policy says so (once per card per streak, or once an hour), the message also goes to #alerts
     as bin/alert.sh sends it (`hermes send` to $ALERT_TARGET, with the root profile's home, which owns the Discord bot:
     a worker's hook runs with its own profile's); later repeats are logged only."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    if NOFOLDER:   # a scratch table with no alert folder of its own: never the stack's log, and not silent
+        print(f"{code} not logged: {NOFOLDER}", file=sys.stderr)
+        return f"{code} (not logged)"
     try:
         import alert_catalog
         body, tag, kv2 = alert_catalog.render(code, kv)
+        if once and not _first(code, once):   # another hook of this call wrote the line
+            return body.split("\n", 1)[0]
         alert_catalog.log(tag, kv2)
         due, f = alert_catalog.page_due(tag, str(kv.get("card") or ""), streak)
-        if due:
+        if due and not scratch():   # a scratch table never pages the owner
             env = dict(os.environ, HERMES_HOME=f"{pwd.getpwuid(os.getuid()).pw_dir}/.hermes", HOME=pwd.getpwuid(os.getuid()).pw_dir)   # RT-RTA-01: as kanban()
             r = subprocess.run(["hermes", "send", "--to", os.environ.get("ALERT_TARGET") or "discord:#alerts", "--quiet", body],
                                env=env, capture_output=True, timeout=5)   # shorter than the hook's own timeout; an unsent page is retried
@@ -495,8 +1094,31 @@ def log_alert(code, streak="", **kv):
         return f"{code} ({type(e).__name__})"
 
 
-if __name__ == "__main__":
+def fail(code, **kv):
+    """Exit 1 with the alert line logged and the catalog's plain message (not its title) on stderr."""
+    tag = log_alert(code, **kv)
+    try:
+        import alert_catalog
+        msg = alert_catalog.render(code, kv)[0].split("\n")[1]
+    except Exception:
+        msg = tag
+    print(f"{code} {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def main():
     cmd, args = (sys.argv[1] if len(sys.argv) > 1 else ""), sys.argv[2:]
+    if cmd == "hook-refusal" and len(args) == 2:   # <code> <problem>, the payload on stdin: a shell hook's refusal line (hook_refusal); never fails
+        print(hook_refusal(args[0], args[1][:300], sys.stdin.read()))
+        sys.exit(0)
+    if cmd == "hook-allow" and not args:   # r6: a shell hook asks before it allows: exit 0 only with a valid table, else the coded line and exit 2 (guards are fail-closed)
+        pay = sys.stdin.read()
+        try:
+            load()
+        except Exception:
+            print(hook_refusal("STL-CFG-303", "", pay))
+            sys.exit(2)
+        sys.exit(0)
     if cmd == "prove":   # needs no role table: the board and the kernel only
         o = dict(zip(args[::2], args[1::2]))
         j, why = prove_card(o.get("--profile"), o.get("--task", ""))
@@ -510,9 +1132,11 @@ if __name__ == "__main__":
     try:
         d = load()
     except RolesError as e:
+        if cmd != "check":   # a read: stdout stays empty; the problem, the code, its plain message and one alert line say why
+            print(f"roles: INVALID {e}", file=sys.stderr)
+            fail("STL-CFG-303", problem=str(e)[:300])
         print(f"roles: INVALID {e}")
-        if cmd == "check":
-            print(log_alert("STL-CFG-303", problem=str(e)[:300]))
+        print(log_alert("STL-CFG-303", problem=str(e)[:300]))
         sys.exit(1)
     if cmd == "check":
         gaps = coverage(d, H)
@@ -523,10 +1147,36 @@ if __name__ == "__main__":
         sys.exit(1 if gaps else 0)
     elif cmd == "spec":
         print(json.dumps(spec(d, H), indent=1))
+    elif cmd == "requirements" and len(args) == 1:
+        if args[0] not in d["roles"]:
+            fail("STL-CFG-311", problem=f"role {args[0][:80]} is not in the role table")
+        print(json.dumps(d["roles"][args[0]]["requirements"]))
+    elif cmd == "refusal" and len(args) == 2:   # <code> <problem>: one alert line and the coded plain message, for a shell script that refuses (G4)
+        print(plain(args[0], problem=args[1][:300]))
     elif cmd == "reviewers":
         print(json.dumps(reviewers(d)))
+    elif cmd in ("owner-data", "boundary"):   # [root]: the stack folder whose index is read (the commit guard passes its own tree)
+        try:
+            print(json.dumps(owner_paths(d, args[0] if args else None) if cmd == "owner-data" else boundary(d)))
+        except RolesError as e:
+            fail("STL-CFG-303", problem=str(e)[:300])
+    elif cmd == "hits" and len(args) in (2, 3) and args[1] in ("refused", "boundary"):   # <top> <kind> [<stack folder holding the data index>]: NUL-separated names on stdin, the ones that hit on stdout (K1)
+        try:
+            names = [os.fsdecode(x) for x in sys.stdin.buffer.read().split(b"\0") if x]
+            sys.stdout.buffer.write(b"".join(os.fsencode(x) + b"\0" for x in hits(d, args[0], names, args[1], args[2] if len(args) > 2 else None)))
+        except RolesError as e:
+            fail("STL-CFG-303", problem=str(e)[:300])
+    elif cmd == "root" and not args:
+        print(ROOT)
     elif cmd == "field" and len(args) == 2:
         print(json.dumps(role_of(d, args[0])[1].get(args[1])))
     else:
         print(__doc__.split("\n", 1)[1], file=sys.stderr)
         sys.exit(2)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:   # no command ends in a traceback; the type only, a value may be owner data
+        fail("STL-CFG-303", problem=f"roles.py failed unexpectedly: {type(e).__name__}")

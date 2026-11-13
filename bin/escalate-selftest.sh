@@ -102,7 +102,7 @@ for a in "--model opus" "--model=opus" "--fallback-model haiku" "--max-budget-us
   check 2 "extra arg refused: $a" sh -c "echo hi | $E t_12345678 sonnet review why -- $a"
 done
 ok '[ "$(runs)" = "$n" ]' "H2: no claude run for any of them"
-check 0 "an ordinary extra arg is passed on" sh -c "echo hi | $E t_12345678 sonnet review why -- --verbose"
+check 2 "an extra arg outside that list is refused too: no caller of the stack passes one (W5-RT6-01)" sh -c "echo hi | $E t_12345678 sonnet review why -- --verbose"
 echo "events: $(jq -r .event "$T/sup/escalations.log" | sort | uniq -c | tr -s ' \n' ' ')"
 # D42: `timeout 0` disables the timeout, so CALL_TIMEOUT 0, empty or non-numeric must fall back to 600 with a warning.
 mkdir -p "$T/tbin"; printf '#!/bin/sh\necho "$1" >> "%s/timeout_args"\nshift\nexec "$@"\n' "$T" > "$T/tbin/timeout"; chmod +x "$T/tbin/timeout"
@@ -196,5 +196,154 @@ ok '! grep -q "fixture-secret-abcdef" "$T/sup/escalations.log" "$T/sup/comments"
 n=$(fbn); echo "an ordinary prompt" | ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_eeee0013 sonnet review "clean-prompt" >/dev/null 2>&1; rc=$?
 ok '[ "$rc" = 0 ] && [ "$(fbn)" = $((n + 1)) ]' "S6D-05 control: a prompt that matches nothing is rerouted (exit $rc)"
 export FALLBACK_CONFIG="$T/no-such-fallback-config.json"
+
+# W5: the two fallback numbers (call timeout, queue maximum) are the settings registry defaults, read through bin/stella_data.py.
+# A scratch root (STELLA_ROOT) holds a registry whose defaults differ from the shipped ones, so the source is proven.
+cp "$T/sup/limits.env" "$T/limits.keep"; R="$T/reg"; mkdir -p "$R"; cp -r /workspace/.stella "$R/.stella"
+REG=$(jq -r '.files[] | select(.id == "settings") | .path' /workspace/.stella/data-files.json)   # the registry's path comes from the data index
+setdef() { jq --arg k "$1" --argjson v "$2" '(.entries[] | select(.key == $k) | .default) = $v' "/workspace/$REG" >"$R/$REG"; }
+setdef CALL_TIMEOUT 123; setlimit CALL_TIMEOUT abc; setlimit HAIKU_MAX_PER_DAY 40; : > "$T/timeout_args"
+ok '[ "$(STELLA_ROOT=$R PATH="$T/tbin:$PATH" sh -c "echo hi | $E t_12345678 haiku judge to 2>$T/err1" >/dev/null; echo $?)" = 0 ] && [ "$(cat "$T/timeout_args")" = 123 ] && grep -q "using 123" "$T/err1"' "W5: a bad CALL_TIMEOUT falls back to the registry default (123 in the scratch registry), not a literal"
+setlimit CALL_TIMEOUT 600; setdef QUEUE_MAX 0; sed -i '/^QUEUE_MAX=/d' "$T/sup/limits.env"; setlimit HAIKU_MAX_PER_DAY 0; nq=$(jq -s '[.[] | select(.state == "queued")] | length' "$Q")
+check 3 "W5: QUEUE_MAX unset uses the registry default (0 in the scratch registry): over limit, exit 3" env STELLA_ROOT=$R sh -c "echo hi | $E t_aaaa0101 haiku judge why"
+ok '[ "$(jq -s "[.[] | select(.state == \"queued\")] | length" "$Q")" = "$nq" ]' "W5: ... and nothing was queued"
+n=$(runs); echo '{' >"$R/$REG"
+check 2 "W5: unreadable registry, QUEUE_MAX unset: refused" env STELLA_ROOT=$R sh -c "echo hi | $E t_aaaa0102 haiku judge why"
+ok 'grep -q STL-CFG-310 "$T/err" && [ "$(runs)" = "$n" ]' "W5: ... with STL-CFG-310 and no claude run"
+cp "$T/limits.keep" "$T/sup/limits.env"; setlimit CALL_TIMEOUT abc
+check 2 "W5: unreadable registry, bad CALL_TIMEOUT: refused, no call without a timeout" env STELLA_ROOT=$R sh -c "echo hi | $E t_aaaa0103 haiku judge why"
+ok 'grep -q STL-CFG-310 "$T/err" && [ "$(runs)" = "$n" ]' "W5: ... with STL-CFG-310 and no claude run"
+# W5 r2 (E1, E2): a limit that is set but outside the registry's range is handled like a bad timeout; the queue count is one number
+cp "$T/limits.keep" "$T/sup/limits.env"; cp "$Q" "$T/queue.keep"; setlimit HAIKU_MAX_PER_DAY 0; setlimit QUEUE_MAX abc
+for i in $(seq 50); do printf '{"id":"q_full_%s","card":"t_aaaa0000","state":"queued","prompt_file":"/nonexistent"}\n' "$i"; done >"$Q"
+check 3 "E1: QUEUE_MAX=abc with 50 queued (the registry default): refused over the limit" sh -c "echo hi | $E t_aaaa0201 haiku judge why 2>$T/err1"
+ok '[ "$(jq -s "[.[] | select(.state == \"queued\")] | length" "$Q")" = 50 ] && grep -q "QUEUE_MAX=.abc" "$T/err1" && ! grep -q "expression" "$T/err1" "$T/err"' "E1: ... nothing queued beyond 50, a warning names the bad QUEUE_MAX, no shell error"
+setlimit QUEUE_MAX 0; rm -f "$Q"
+check 3 "E1: QUEUE_MAX=0 and no queue file yet: refused over the limit" sh -c "echo hi | $E t_aaaa0202 haiku judge why"
+ok '[ ! -s "$Q" ] && ! grep -q "expression" "$T/err"' "E1: ... nothing queued, no shell error (the count is one number)"
+cp "$T/queue.keep" "$Q"; setlimit HAIKU_MAX_PER_DAY 40; setlimit QUEUE_MAX 50; setlimit CALL_TIMEOUT 99999999d; : >"$T/timeout_args"
+ok '[ "$(PATH="$T/tbin:$PATH" sh -c "echo hi | $E t_aaaa0203 haiku judge why 2>$T/err1" >/dev/null; echo $?)" = 0 ] && [ "$(cat "$T/timeout_args")" -le 86400 ] && grep -q "using 600" "$T/err1"' "E1: CALL_TIMEOUT above the registry maximum gets the registry default (600) and a warning"
+# E2: the refusal prints the catalog code itself when the catalog tool fails
+cp "$T/limits.keep" "$T/sup/limits.env"; mkdir -p "$T/pbin"; py=$(command -v python3)
+printf '#!/bin/sh\ncase "$*" in *alert_catalog*) exit 1;; esac\nexec %s "$@"\n' "$py" >"$T/pbin/python3"; chmod +x "$T/pbin/python3"
+R="$T/reg"; mkdir -p "$R"; cp -r /workspace/.stella "$R/.stella"; echo '{' >"$R/$REG"
+check 2 "E2: unreadable registry and a failing catalog tool: still refused" env STELLA_ROOT=$R PATH="$T/pbin:$PATH" sh -c "echo hi | $E t_aaaa0204 haiku judge why"
+ok 'grep -q "^STL-CFG-310 " "$T/err"' "E2: ... and the refusal prints STL-CFG-310 and the problem itself"
+cp "$T/limits.keep" "$T/sup/limits.env"; rm -rf "$R"
+
+# W5 r3 (F4, F5, F6): a refusal or a lost call is never silent; a queue file is never trusted blindly and never lied about
+cp "$T/limits.keep" "$T/sup/limits.env"; : >"$T/sup/sends"; rm -f "$T/sup/state/alert-"*.stamp; R="$T/reg2"; mkdir -p "$R"; cp -r /workspace/.stella "$R/.stella"; echo '{' >"$R/$REG"
+check 2 "F4: unreadable registry: refused" env STELLA_ROOT=$R sh -c "echo hi | $E t_aaaa0301 haiku judge why"
+ok '[ "$(nalerts "\\[STL-CFG-310\\]\\*\\*\$")" = 1 ] && grep -q "t_aaaa0301" "$T/sup/sends" && grep -q "^STL-CFG-310\|STL-CFG-310" "$T/err"' "F4: ... the refusal raises one #alerts line (STL-CFG-310, the card named) beside the coded stderr line; nothing is queued (the queue bound is what could not be read)"
+rm -rf "$R"; cp "$T/limits.keep" "$T/sup/limits.env"; setlimit HAIKU_MAX_PER_DAY 0; setlimit QUEUE_MAX 2
+qline() { printf '{"id":"q_%s","card":"t_aaaa0000","model":"haiku","purpose":"judge","reason":"LIMIT","created":"2026-01-01T00:00:00Z","state":"queued","prompt_file":"/nonexistent"}\n' "$1"; }
+{ qline c1; qline c2; printf '{"id":"q_cut","card":"t_aaaa0000","sta\n'; } >"$Q"; : >"$T/sup/sends"; rm -f "$T/sup/state/alert-"*.stamp; : >"$T/sup/comments"
+check 3 "F5: one cut line in the queue file, two entries, QUEUE_MAX=2: refused" sh -c "echo hi | $E t_aaaa0302 haiku judge why 2>$T/err1"
+ok '[ "$(wc -l <"$Q")" = 3 ] && grep -q "queue.jsonl" "$T/err1" && grep -q "NOT queued" "$T/err1" && ! grep -q "recorded in the queue" "$T/err1" "$T/sup/comments" && [ "$(nalerts "\\[STL-LIM-405\\]\\*\\*\$")" = 1 ] && grep -q "NOT queued" "$T/sup/comments"' "F5/RT2-03: ... the file is not read as empty: nothing is added, one warning names the file, the card note and the #alerts line say it was not queued"
+qline c1 >"$Q"; printf '{"id":"q_cut' >>"$Q"; chmod 444 "$Q"; : >"$T/sup/sends"
+check 3 "F5/RT2-04: queue file that cannot be written (read-only): refused" sh -c "echo hi | $E t_aaaa0303 haiku judge why 2>$T/err1"
+ok '! grep -q "recorded in the queue" "$T/err1" && grep -q "NOT queued" "$T/err1"' "F5/RT2-04: ... no 'recorded in the queue' claim"
+rm -f "$Q"; touch "$Q"; chmod 000 "$Q"; : >"$T/sup/sends"; rm -f "$T/sup/state/alert-"*.stamp
+check 3 "F5/RT2-04: queue file that cannot be read or written (mode 000): refused" sh -c "echo hi | $E t_aaaa0304 haiku judge why 2>$T/err1"
+chmod 600 "$Q"; ok '! grep -q "recorded in the queue" "$T/err1" && grep -q "NOT queued" "$T/err1" && [ "$(nalerts "\\[STL-LIM-405\\]\\*\\*\$")" = 1 ]' "F5/RT2-04: ... no 'recorded' claim, one #alerts line"
+{ qline d1 | tr -d '\n'; } >"$Q"; setlimit QUEUE_MAX 5
+check 3 "F5: a valid last line without a newline, then a new entry" sh -c "echo hi | $E t_aaaa0305 haiku judge why"
+ok '[ "$(wc -l <"$Q")" = 2 ] && [ "$(jq -sc "length" "$Q")" = 2 ]' "F5: ... the new entry is not swallowed by the line before it (two whole JSON lines)"
+rm -f "$Q"
+check 3 "F5/VER2-04: no queue file yet, room in the queue: the first call is queued (the product creates the file itself)" sh -c "echo hi | $E t_aaaa0306 haiku judge why"
+ok '[ "$(jq -sc "length" "$Q")" = 1 ]' "F5/VER2-04: ... exactly one entry"
+# the drain reads past a line it cannot parse, and keeps it
+{ qline e1; printf 'not json at all\n'; qline e2; } >"$Q"
+ok '[ "$($D --list 2>"$T/err1" | cut -f1 | tr "\n" ,)" = "q_e1,q_e2," ] && grep -q "1 line(s)" "$T/err1"' "F6/RT2-03: --list shows the entries before and after an unparsable line, and warns once"
+ok '$D --drop q_e2 | grep -q dropped && [ "$(sed -n 2p "$Q")" = "not json at all" ] && [ "$(sed -n 3p "$Q" | jq -r .state)" = dropped ]' "F6/RT2-03: --drop of an entry after the line works and leaves the line as it was"
+rm -f "$Q"
+
+# W5 r4 (V4): a standing condition (bad registry, bad queue file) alerts once an hour; every lost or refused call keeps its own log line;
+# the registry is read after the usage checks and never alerts for a replay. Written before the fix.
+nlog() { jq -r --arg e "$1" 'select(.event == $e) | .card' "$T/sup/escalations.log" | grep -c -- "$2" || true; }
+stamps() { rm -f "$T/sup/state/alert-"*.stamp; : >"$T/sup/sends"; }
+cp "$T/limits.keep" "$T/sup/limits.env"; R="$T/reg4"; mkdir -p "$R"; cp -r /workspace/.stella "$R/.stella"; echo '{' >"$R/$REG"; stamps
+check 2 "V4: unreadable registry, a replayed call: refused" env STELLA_ROOT=$R ESCALATE_REPLAY=q_zz sh -c "echo hi | $E t_aaaa0401 haiku judge why"
+ok '[ "$(nalerts t_aaaa0401)" = 0 ]' "V4: ... no #alerts line for a replay"
+check 2 "V4: unreadable registry, a call with an unknown card: refused as a usage error" env STELLA_ROOT=$R sh -c "echo hi | $E t_00000000 haiku judge why"
+ok 'grep -q "not found" "$T/err" && ! grep -q STL-CFG-310 "$T/err" && [ ! -s "$T/sup/sends" ]' "V4: ... the usage check comes first: no registry refusal, no alert"
+check 2 "V4: unreadable registry, first call" env STELLA_ROOT=$R sh -c "echo hi | $E t_aaaa0402 haiku judge why"
+check 2 "V4: unreadable registry, second call" env STELLA_ROOT=$R sh -c "echo hi | $E t_aaaa0403 haiku judge why"
+ok '[ "$(nalerts "\\[STL-CFG-310\\]\\*\\*\$")" = 1 ] && [ "$(nlog SETTING_UNREADABLE t_aaaa040[23])" = 2 ]' "V4: ... two refusals, one #alerts line (once an hour), one log line each"
+rm -rf "$R"; cp "$T/limits.keep" "$T/sup/limits.env"; setlimit HAIKU_MAX_PER_DAY 0; setlimit QUEUE_MAX 5
+{ qline f1; printf '{"id":"q_cut","card":"t_aaaa0000","sta\n'; } >"$Q"; stamps; : >"$T/sup/comments"
+check 3 "V4: a bad queue line, first call" sh -c "echo hi | $E t_aaaa0404 haiku judge why"
+check 3 "V4: a bad queue line, second call" sh -c "echo hi | $E t_aaaa0405 haiku judge why"
+ok '[ "$(nalerts "\\[STL-LIM-405\\]\\*\\*\$")" = 1 ] && [ "$(nalerts "\\[STL-CFG-310\\]")" = 0 ] && [ "$(nlog NOT_QUEUED t_aaaa040[45])" = 2 ] && [ "$(grep -c "NOT queued" "$T/sup/comments")" = 2 ]' "V4: ... two lost calls, one STL-LIM-405 #alerts line (once an hour), a NOT_QUEUED log line and a card note each"
+ok 'python3 -I /workspace/bin/alert_catalog.py explain STL-LIM-405 | grep -qi "lost"' "V4: STL-LIM-405 is in the catalog and says the call was lost"
+for i in 1 2 3 4 5; do qline "g$i"; done >"$Q"; stamps
+check 3 "V4: the queue is full" sh -c "echo hi | $E t_aaaa0406 haiku judge why"
+ok '[ "$(nlog NOT_QUEUED t_aaaa0406)" = 1 ]' "V4: ... the lost call has its own NOT_QUEUED log line"
+rm -f "$Q"; cp "$T/limits.keep" "$T/sup/limits.env"
+
+# W5 r5 (RT4-01): no file of the state folder is opened for writing through a link; the link is refused before the open
+V="$T/victim"; echo keep >"$V"; setlimit HAIKU_MAX_PER_DAY 0; setlimit QUEUE_MAX 5; stamps; ln -s "$V" "$Q"
+check 3 "P1: the queue file is a link" sh -c "echo hi | $E t_aaaa0501 haiku judge why"
+ok '[ "$(cat "$V")" = keep ] && [ "$(nlog NOT_QUEUED t_aaaa0501)" = 1 ] && [ "$(nalerts "\\[STL-LIM-405\\]\\*\\*\$")" = 1 ]' "P1: ... nothing written through it, NOT_QUEUED, one STL-LIM-405 line"
+rm -f "$Q" "$T/sup/state/queue.lock"; ln -s "$V" "$T/sup/state/queue.lock"; stamps
+check 3 "P1: the queue lock is a link" sh -c "echo hi | $E t_aaaa0502 haiku judge why"
+ok '[ "$(cat "$V")" = keep ] && [ ! -e "$Q" ] && [ "$(nlog NOT_QUEUED t_aaaa0502)" = 1 ] && [ "$(nalerts "\\[STL-LIM-405\\]\\*\\*\$")" = 1 ]' "P1: ... not truncated, nothing queued, NOT_QUEUED, one STL-LIM-405 line"
+rm -f "$T/sup/state/queue.lock"; cp "$T/limits.keep" "$T/sup/limits.env"; setlimit OPUS_MAX_CONCURRENT 1; rm -f "$T/sup/state/opus.1.lock"; ln -s "$V" "$T/sup/state/opus.1.lock"
+check 3 "P1: the only slot lock is a link: no slot" sh -c "echo hi | $E t_aaaa0503 opus plan why"
+ok '[ "$(cat "$V")" = keep ]' "P1: ... the slot lock's target is not truncated"
+rm -f "$T/sup/state/opus.1.lock" "$T/sup/state/haiku.lock"; ln -s "$V" "$T/sup/state/haiku.lock"
+check 3 "P1: the Haiku lock is a link" sh -c "echo hi | $E t_aaaa0504 haiku judge why"
+rm -f "$T/sup/state/haiku.lock"; C1="$T/sup/state/haiku-$(date -u +%F).count"; rm -f "$C1"; ln -s "$V" "$C1"
+check 3 "P1: the Haiku counter is a link" sh -c "echo hi | $E t_aaaa0505 haiku judge why"
+ok '[ "$(cat "$V")" = keep ]' "P1: ... neither the Haiku lock's nor the counter's target is written"
+rm -f "$C1" "$Q"; cp "$T/limits.keep" "$T/sup/limits.env"
+
+# W5 r6 (VER5-02): the prompt_file of a queue line is used only when it is a regular, unlinked prompt-*.txt directly in the state folder
+pline() { printf '{"id":"q_%s","card":"t_aaaa0000","model":"haiku","purpose":"judge","call_reason":"why","claude_args":[],"reason":"LIMIT","created":"%s","state":"queued","prompt_file":"%s"}\n' "$1" "$(date -u +%FT%TZ)" "$2"; }
+ln -s "$V" "$T/sup/state/prompt-link.txt"; { pline p1 "$V"; pline p2 "$V"; pline p3 "$T/sup/state/prompt-link.txt"; pline p4 "$V"; } >"$Q"; n=$(runs)
+$D --replay q_p1 >/dev/null 2>&1; $D --drop q_p2 >/dev/null 2>&1; $D --all >/dev/null 2>&1
+ok '[ "$(cat "$V")" = keep ] && [ "$(runs)" = "$n" ] && [ "$(jq -r .state "$Q" | tr "\n" ,)" = "stale,dropped,stale,stale," ]' "Q3: a prompt_file outside the state folder, or a link in it (--replay, --drop, --all): not read, not removed, no model call, the entries stale or dropped"
+rm -f "$T/sup/state/prompt-link.txt" "$Q"
+
+# W5 r6 (VER5-05): a state folder that is itself a link is refused by both scripts before anything is made in it
+mkdir "$T/outside"; mv "$T/sup/state" "$T/state.keep"; ln -s "$T/outside" "$T/sup/state"
+check 2 "Q6: the state folder is a link: the call is refused" sh -c "echo hi | $E t_aaaa0601 haiku judge why"
+check 2 "Q6: ... and so is the drain" $D --list
+ok '[ -z "$(ls -A "$T/outside")" ]' "Q6: ... nothing is made in the folder it points at"
+rm -f "$T/sup/state"; mv "$T/state.keep" "$T/sup/state"
+
+# Round 7 (W5-RT6-01, W5-RT6-03), in a state folder of its own: no extra argument reaches the model command, direct or from a
+# queue line, and no queued call is lost because a field is long.
+S7="$T/sup7"; mkdir -p "$S7/state"; cp /workspace/.supervisor/limits.env "$S7/"; echo canary >"$T/canary"; Q7="$S7/state/queue.jsonl"
+runs7() { cat "$S7/claude_n" 2>/dev/null || echo 0; }
+st7() { jq -r --arg id "$1" 'select(.id == $id) | .state' "$Q7" | tail -1; }
+plant7() {  # plant7 <id> <jq update of a good entry> [file for $r]
+  echo hi >"$S7/state/prompt-$1.txt"
+  jq -nc --arg id "$1" --arg pf "$S7/state/prompt-$1.txt" --arg c "$(date -u +%FT%TZ)" --arg f "$T/canary" --rawfile r "${3:-/dev/null}" '{id: $id, card: "t_aaaa0701",
+    model: "sonnet", purpose: "review", call_reason: "why", claude_args: [], reason: "LIMIT", detail: "x", created: $c, state: "queued", prompt_file: $pf} | '"$2" >>"$Q7"; }
+export ESCALATE_SUP_DIR="$S7"
+for a in "--system-prompt-file $T/canary" "--mcp-config {}" "--verbose" "why2"; do
+  check 2 "S1: a direct call with the extra argument '${a%% *}' is refused" sh -c "echo hi | $E t_12345678 sonnet review why -- $a"
+done
+ok '[ "$(runs7)" = 0 ]' "S1: ... and the model command is not started for any of them"
+plant7 q_s1 '.claude_args = ["--system-prompt-file", $f]'; $D --replay q_s1 >/dev/null 2>&1
+ok '[ "$(runs7)" = 0 ] && [ "$(st7 q_s1)" = queued ] && [ -s "$S7/state/prompt-q_s1.txt" ]' "S1: a queue line's extra argument is refused on a replay: no run, left queued with its prompt"
+plant7 q_s1ok .; $D --replay q_s1ok >/dev/null 2>&1
+ok '[ "$(runs7)" = 1 ] && [ "$(st7 q_s1ok)" = replayed ]' "S1: a queue line without extra arguments (the form every caller queues) is replayed"
+check 0 "S1: a direct call that ends in a bare -- still runs" sh -c "echo hi | $E t_12345678 sonnet review why --"
+head -c 8192 /dev/zero | tr '\0' r >"$T/r8192"; n=$(runs7)
+check 0 "S2: a reason of 8192 characters runs" sh -c "echo hi | $E t_12345678 sonnet review $(cat "$T/r8192")"
+check 2 "S2: a longer reason is refused, also where the call would be queued" env ESCALATE_FORCE_POOL_EXHAUSTED=1 sh -c "echo hi | $E t_aaaa0702 sonnet review $(cat "$T/r8192")r"
+ok '[ "$(runs7)" = $((n + 1)) ] && ! grep -q t_aaaa0702 "$Q7" && [ -z "$(ls "$S7/state" | grep -- "-t_aaaa0702-")" ] && [ "$(tail -1 "$S7/escalations.log" | jq -r "[.event, (.reason | length < 200)] | join(\" \")")" = "USAGE true" ]' "S2: ... nothing queued, no prompt file left, one short log line"
+head -c 200000 /dev/zero | tr '\0' r >"$T/r200k"; plant7 q_s2 '.call_reason = $r' "$T/r200k"; n=$(runs7); out=$($D --replay q_s2 2>&1)
+ok '[ "$(runs7)" = "$n" ] && [ "$(st7 q_s2)" = queued ] && [ -s "$S7/state/prompt-q_s2.txt" ] && grep -q "left in the queue" <<<"$out"' "S2: a replay that cannot start (a field over the argument limit) is left queued with its prompt, and says so"
+# Round 8 (W5-RT7-02, W5-VER7-01). A two-byte letter 8192 times: the drain's read of that line gives back more characters.
+n=$(runs7); check 75 "T1: a reason of 8192 two-byte letters is queued" env ESCALATE_FORCE_POOL_EXHAUSTED=1 sh -c "echo hi | $E t_aaaa0801 sonnet review $(sed "s/r/$(printf '\xd0\x96')/g" "$T/r8192")"
+id=$(jq -r 'select(.card == "t_aaaa0801") | .id' "$Q7" | tail -1); $D --replay "$id" >/dev/null 2>&1
+ok '[ -n "$id" ] && [ "$(runs7)" = $((n + 1)) ] && [ "$(st7 "$id")" = replayed ]' "T1: ... and replayed (a reason accepted when queued is not refused for its length on the replay)"
+# the stub stands in for a model command that did not start: escalate.sh sees only the exit code
+plant7 q_t3 .; FAKE_OUT=' ' FAKE_RC=127 $D --replay q_t3 >/dev/null 2>&1; w="the model command did not start (exit 127); left in the queue as q_t3"
+ok '[ "$(st7 q_t3)" = queued ] && [ "$(tail -1 "$S7/escalations.log" | jq -r --arg w "$w" ".detail | contains(\$w)")" = true ] && tail -1 "$S7/comments" | grep -qF "$w"' "T3: a replay whose model command did not start: the log line and the card note say it is left in the queue"
+export ESCALATE_SUP_DIR="$T/sup"
 
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

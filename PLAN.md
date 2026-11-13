@@ -34,6 +34,27 @@ Run exactly these; all must exit 0.
 # e.g. npm run lint
 ```
 
+### Core contract (core cards only; delete for other cards)
+
+A core card is not done until it ships all fourteen. Tick each with the evidence line that shows it, or write why it does not apply.
+
+- [ ] 1. Data first: behavior comes from versioned data files, each with a schema and a `--check` validator; no names in code.
+- [ ] 2. Headless core, JSON out: a CLI with `--json` read commands; write commands go through the same gate path as approvals.
+- [ ] 3. One approval service, channel-neutral: approvals and escalations go through the one interface; gate rules live once.
+- [ ] 4. One event log: append-only JSONL with a schema version; no secret values.
+- [ ] 5. Codes from the catalog: every failure has a catalog code and a plain message.
+- [ ] 6. Selftest, a fake entry, and the hard-code lint: a fake entry in a scratch root works with no code change; the lint passes.
+- [ ] 7. Unknown fails closed: the most restrictive treatment plus one alert.
+- [ ] 8. Apply contract: every write is applied by the idempotent script (`--check`, `--dry-run`, backup, rollback); no direct edit of live config.
+- [ ] 9. Versioned and portable: `schema_version` in every data file; migrations are scripts; no secret in an export; pins in `.stella/versions.json`.
+- [ ] 10. Adapter boundary: the engine and each worker CLI sit behind one adapter module each.
+- [ ] 11. Extension manifest: hosts, secrets, tools, allowed roles and risk class declared; install needs approval; a disable switch.
+- [ ] 12. Feature registry: the feature is listed in `.stella/features.json` (id, owner phase, status, depends_on, flag).
+- [ ] 13. Host-OS interface: no new hard-coded paths, users or hosts in host scripts.
+- [ ] 14. Supportable: logs redact secrets; `docs/alert-codes.md` is generated from the catalog.
+
+Every new test is registered in `.stella/test-map.json` (`python3 -I bin/test-map.py check`).
+
 ### Evidence
 
 _Filled in when closing: commands run, exit codes, trimmed output, screenshot paths._
@@ -553,3 +574,47 @@ Owner instructions: ignore `docs/spec/`; one real Claude review on the final cod
 | 7 Tests | targeted selftests only: box, reviewer-claude, approval-evidence, roles, routing, hardcode-lint, owner-config, profile-hooks, secret-read, owner-leak, complete-gate, owner-settings, write-guard: all PASS. **The full suite and the freeze verification were not re-run.** The freeze manifest was regenerated for the final tree. | `targeted-results.txt` |
 
 Left for you: the trap I planted at `.scratch/s6-scratch/.worktrees/t_393087ae/notes` (the permission layer refused my delete; harmless, ignored folder); the stray profile folders `~/.hermes/profiles/cache` and `installs`; the Hermes patch for S6N-01 (D121, whenever you decide); the PR.
+
+## Build phase F1: the core contract (2026-11-10 onward; branch `build/F1`)
+
+- Freeze: the Stage 5/6 freeze was lifted for F1 by the owner, 2026-11-10 (the owner's answers in the session: "Passed, run all of F1"; "Lift it now, run F1"). The manifest `.supervisor/state/stage5-freeze.sha256` was not touched by this phase (owner: "Leave it, report only"); the phase report lists the covered files this branch changes.
+- State of the phase (work items, checks, evidence, findings per QA round) is in `.scratch/F1/`: `progress.md`, `tests.json`, `work-items.json`, `evidence/`, `findings/`, `REPORT.md`. The evidence table below is filled for the final tested hash.
+
+### F1 evidence table (per acceptance check: the result and the hash it was proven on)
+
+The commands, exit codes and trimmed output of each row are in `.scratch/F1/evidence/` (one folder per test pass, each with its hand-back and logs) and are summed up in `.scratch/F1/REPORT.md`. A check keeps the hash it was last proven on when no file it covers changed afterwards (owner rule of 2026-11-11: no passing test is rerun on a hash where nothing it covers changed). The timed full suite on the final hash (checks A6a, A8a, A8b, A8d) is recorded in `REPORT.md`, since this file is part of that hash.
+
+| check | what it proves | result | hash it was proven on |
+|---|---|---|---|
+| A1 | audit.md exists, answers every Part A question from live evidence, and ends with the "what would break" list. | done (audit.md) | - |
+| A2 | Every schema validates. | PASS | 8e878d1 |
+| A3a | A fake provider validates and loads with no code change. | PASS | 8e878d1 |
+| A3b | A fake app validates and loads with no code change. | PASS | 8e878d1 |
+| A3c | A fake channel validates and loads with no code change. | PASS | 8e878d1 |
+| A3d | A fake role validates and loads with no code change. | PASS | 6f1b487 |
+| A3e | A fake capability validates and loads with no code change. | PASS | 8e878d1 |
+| A3f | A fake extension validates and loads with no code change. | PASS | 8e878d1 |
+| A3g | (product rule 5) An unknown entry fails closed with one alert; an override that widens the data policy is refused by --check. | PASS | 8e878d1 |
+| A4a | The lint passes on the baseline. | PASS | 349cf2f |
+| A4b | The lint fails on a planted literal provider, model, host and board name (each one). | PASS | eba56c0 |
+| A5a | Apply contract: a dry run changes no file. | PASS | 21cf47d |
+| A5b | Apply then rollback leaves the files byte-identical to before. | PASS | 21cf47d |
+| A5c | A second apply is a no-op. | PASS | 21cf47d |
+| A5d | --check reports a hand edit as drift. | PASS | 21cf47d |
+| A5e | Each apply and rollback leaves one event-log line with no secret value in it. | PASS | 21cf47d |
+| A5f | Every role is refused when it writes each owner setting (write tool, shell redirect, git, delegated subagent). | PASS | 9977ebb |
+| A5g | The owner path writes one owner setting through the apply contract, and rollback restores it. | PASS | 9977ebb |
+| A6a | Behavior of the live stack is unchanged apart from the protected paths and the cheap fixes. The existing selftests still pass (full suite on the fi... | PASS | 349cf2f |
+| A6b | (baseline) The full suite passes on the run branch before any F1 change other than the git modes: main c75e865 itself is red on five selftests (aud... | PASS (baseline suite 40 of 40) | aeaab3a |
+| A7 | (product rule 8) Every test is registered in .stella/test-map.json; a test missing from the map fails the test-map lint. | PASS | 4199391 |
+| A8a | Each selftest of the suite runs in its own copy of the runner's tree with its own temp folder and its own alert log: after a suite run the source t... | PASS | 349cf2f |
+| A8b | The parallel run gives the same result for every selftest as the one-at-a-time run on the same hash; three parallel runs in a row on the same hash:... | PASS | 349cf2f |
+| A8c | A selftest marked serial never overlaps another; a planted failing selftest makes the runner print its FAIL lines and exit 1; the number run at onc... | PASS | 349cf2f |
+| A8d | The full suite (npm test) on the final hash ends under the watchdog's step limit (1200 s wall), with the time of every selftest recorded. | PASS (995.4 s, 46 of 46) | 7a85135 |
+| A8e | The quick tier is data in the test map (a name outside the suite list is refused by check); the watchdog's test step runs it (which npm script: the... | PASS | 36b8aff |
+| A9a | A stack card merges on the reduced test set (the map's selected selftests for the card's diff plus the quick tier, run boxed, from the tree under t... | PASS | 9977ebb |
+
+- Items stopped or scoped by the owner (not fixed in this phase; listed in `REPORT.md`): the apply contract's open findings (decision of 2026-11-13: flag, do not fix), two runner findings outside the granted scope, the queue script's environment finding (a follow-up card is drafted), and the state and log writes of eight other live scripts (a follow-up card is drafted).
+- Accepted limits (owner decision of 2026-11-13, C): `.scratch/F1/qa/known-limits.json` lists each with its id, its reproducing test (kept, untouched) and the fix it needs.
+- Selftest assertions replaced during the phase (each is listed old/new in the round's report under `.scratch/F1/briefs/` and ruled in `.scratch/F1/findings/`): role requirements, round 3 (three strengthened, one fixture); owner-only write path, round 5 (25 assertion lines replaced; five were weaker and are restored, four in round 6 and one in round 7); merge-card selftest line 176 (a stale assertion, replaced in the item's last ladder round); queue script, round 7 (`bin/escalate-selftest.sh:105`: `check 0` became `check 2` for the same command, because the script now refuses every extra argument); owner-only write path, round 10 (`bin/roles-selftest.sh:482`, `:484`, `:486`, `:488`: four assertions that pinned "a python file or folder with an uncounted name under `bin/` is not a boundary change" now expect the same inputs flagged, by the owner's decision of 2026-11-13 to close the class; one assertion added at `:490`; none dropped).
+- Round 10 of the owner-only write path (after the final round, by the owner's decision of 2026-11-13; D131): the final round showed by run that a card adding a file under `bin/` named like a module looked up late merged without the boundary flag and was loaded outside the box. Fix: one line in `bin/roles.py` `hits()`. The round's one review found one more form by run (a link with no suffix under `bin/` to a package folder elsewhere merged without the flag); the same line got one more clause (a name with no dot is a boundary change too) and row `:490` three more inputs, no assertion replaced; the tester's failing test `.scratch/F1/qa/W4/r28-late-name-link-test.sh` is green after. Tracked files newly flagged: `bin/approval-sim.py`, `bin/model_watch.py`, `bin/watchdog_settings.py` (60 of 219 tracked paths, 57 before). Evidence: `.scratch/F1/briefs/W4-builder-r10-report.md` (red before, green after) and the review round's pass under `.scratch/F1/evidence/R28/`; the full suite was not run again (owner: no full suite for this round), so checks proven on 7a85135 keep that hash except where R28 reran them.

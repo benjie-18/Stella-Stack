@@ -30,7 +30,7 @@ ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)
 n() { grep -c -- "$1" "$T/sup/sends" 2>/dev/null || true; }
 # The settings are the real file with this test's log, pause file and process name; gw edits them for one scenario.
 fresh() { date +%s > "$T/sup/state/reply-poll.heartbeat"; : > "$T/gateway.log"
-  jq --arg l "$T/gateway.log" --arg e "$T/ESTOP" '.gateway.activity_logs = [$l] | .gateway.pause_file = $e | .gateway.process_match = "watchdog-selftest"' \
+  jq --arg l "$T/gateway.log" --arg e "$T/ESTOP" '.gateway.activity_logs = [$l] | .gateway.pause_file = $e | .gateway.process_match = "watchdog-selftest" | .test_step.npm_script = "test"' \
     /workspace/docs/hermes-local/watchdog-settings.json > "$T/settings.json"; }
 gw() { jq "$@" "$T/settings.json" > "$T/settings.tmp" && mv "$T/settings.tmp" "$T/settings.json"; }
 
@@ -95,7 +95,7 @@ ok '[ "$(n "\[STL-GW-103 resolved\]")" = 1 ] && grep -q "it saw: her log was wri
 reset; rm -f "$T/gateway.log"; $W >/dev/null 2>&1; $W >/dev/null 2>&1
 ok '[ "$(n "\[STL-GW-103\]\*\*$")" = 1 ] && [ "$(n "\[STL-GW-10[12]\]")" = 0 ] && grep -q "her log files cannot be read" "$T/sup/sends"' "D47: no readable log: one unknown alert"
 # A failed test is run again by the name the settings give; only a second failure alerts, naming the check and its first line.
-mkdir -p "$T/root/bin"; printf '#!/usr/bin/env bash\n[ -e "%s/rerun_ok" ]\n' "$T" > "$T/root/bin/fake-selftest.sh"; chmod +x "$T/root/bin/fake-selftest.sh"
+mkdir -p "$T/root/bin"; printf '#!/usr/bin/env bash\n[ "$1" = fake-selftest ] && [ -e "%s/rerun_ok" ]\n' "$T" > "$T/root/bin/selftests.sh"; chmod +x "$T/root/bin/selftests.sh"   # the rerun goes through the suite runner (bin/selftests.sh {check}): isolated like the first run
 reset; touch "$T/rerun_ok"; FAKE_FAIL_STEP=test FAKE_FAIL_OUT=1 $W >/dev/null 2>&1
 ok '[ ! -s "$T/sup/sends" ] && grep -q "flaky: fake-selftest failed once and passed on the rerun (fake line)" "$WLOG" && jq -e "[.steps[] | select(.step == \"test\")][0] | .exit_code == 0 and .rerun_passed == \"fake-selftest\"" "$T/sup/status.json" >/dev/null' "D47: a failed check that passes on the rerun raises no alert and is logged as flaky"
 reset; rm -f "$T/rerun_ok"; FAKE_FAIL_STEP=test FAKE_FAIL_OUT=1 $W >/dev/null 2>&1; FAKE_FAIL_STEP=test FAKE_FAIL_OUT=1 $W >/dev/null 2>&1
@@ -223,4 +223,16 @@ vals=$(jq -r '.gateway | (.activity_logs[], .process_match, .connected_marker, .
 ok '! grep -qF -f <(printf "%s\n" "$vals") /workspace/bin/watchdog.sh /workspace/bin/watchdog_settings.py' "D47: watchdog.sh and watchdog_settings.py hold no log path, marker, process name or pause file (they come from the settings)"
 # RU-07 (D69): the cron job gives a step more time than the suite needs (11-13 min), else every run is killed and reported hung.
 ok '[ "$(sed -n "s/^[^#].*WATCHDOG_STEP_TIMEOUT=\([0-9][0-9]*\) .*bin\/watchdog.sh.*/\1/p" ${CRONTAB_TXT:-/workspace/bin/crontab.txt})" -ge 900 ]' "RU-07: the watchdog cron job sets WATCHDOG_STEP_TIMEOUT to at least 900 s"
+# S4 (owner decision 2026-11-12): the test step runs the npm script the settings name (the quick tier); its name in the state stays "test".
+printf '{"scripts": {"test": "x", "test:quick": "x", "lint": "x"}}\n' > "$T/root/package.json"
+reset; gw '.test_step.npm_script = "test:quick"'; FAKE_FAIL_STEP=test $W >/dev/null 2>&1
+ok '[ ! -s "$T/sup/sends" ] && jq -e "[.steps[] | select(.step == \"test\")][0].exit_code == 0" "$T/sup/status.json" >/dev/null' "S4: with test_step.npm_script = test:quick, the full test script is not run (a failing test script raises nothing)"
+reset; gw '.test_step.npm_script = "test:quick"'; FAKE_FAIL_STEP=test:quick $W >/dev/null 2>&1
+ok '[ "$(n "automatic test run failed")" = 1 ] && jq -e "[.steps[] | select(.step == \"test\")][0].exit_code == 1" "$T/sup/status.json" >/dev/null' "S4: a failing quick script is a failed step named test, one alert"
+reset; gw '.test_step.npm_script = "test:nope"'; $W >/dev/null 2>&1
+ok '[ "$(n "automatic test run failed")" = 1 ] && grep -q "nothing was tested" "$T/sup/sends" && jq -e "[.steps[] | select(.step == \"test\")][0] | .exit_code == 1 and (has(\"skipped\") | not)" "$T/sup/status.json" >/dev/null' "S4: a test script that package.json lacks is a failed test step with a plain line, not a skip"
+reset; gw 'del(.test_step)'; $W >/dev/null 2>&1
+ok '[ "$(n "automatic test run failed")" = 1 ] && grep -q "nothing was tested" "$T/sup/sends"' "S4: a settings file with no test_step is a failed test step, not a silent pass"
+jq "del(.test_step)" $SET > "$T/nots.json"
+ok '! WATCHDOG_SETTINGS="$T/nots.json" python3 -I $WS --check >/dev/null 2>&1' "S4: --check refuses settings without test_step.npm_script"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

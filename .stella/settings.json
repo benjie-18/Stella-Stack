@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "key": "WORKER_GIT_NAME",
+      "label": "Git author name for worker commits",
+      "type": "string",
+      "validation": {
+        "pattern": "^[^\\n]{1,100}(?!\\n)$"
+      },
+      "scope": "global",
+      "sensitivity": "identity_critical",
+      "default": null,
+      "store": {
+        "data": "owner-settings",
+        "key": "WORKER_GIT_NAME"
+      },
+      "apply": {
+        "script": "bin/stella-apply.py",
+        "needs_restart": false
+      },
+      "code": "STL-CFG-315"
+    },
+    {
+      "key": "WORKER_GIT_EMAIL",
+      "label": "Git author email for worker commits",
+      "type": "string",
+      "validation": {
+        "pattern": "^[^@\\s]+@[^@\\s]+(?!\\n)$"
+      },
+      "scope": "global",
+      "sensitivity": "identity_critical",
+      "default": null,
+      "store": {
+        "data": "owner-settings",
+        "key": "WORKER_GIT_EMAIL"
+      },
+      "apply": {
+        "script": "bin/stella-apply.py",
+        "needs_restart": false
+      },
+      "code": "STL-CFG-315"
+    },
+    {
+      "key": "CALL_TIMEOUT",
+      "label": "Seconds before a Claude call is stopped",
+      "type": "integer",
+      "validation": {
+        "minimum": 1,
+        "maximum": 86400
+      },
+      "scope": "global",
+      "sensitivity": "plain",
+      "default": 600,
+      "store": {
+        "data": "limits",
+        "key": "CALL_TIMEOUT"
+      },
+      "apply": {
+        "script": "bin/stella-apply.py",
+        "needs_restart": false
+      },
+      "code": "STL-CFG-315"
+    },
+    {
+      "key": "QUEUE_MAX",
+      "label": "Most held Claude requests kept in the queue",
+      "type": "integer",
+      "validation": {
+        "minimum": 0,
+        "maximum": 100000
+      },
+      "scope": "global",
+      "sensitivity": "plain",
+      "default": 50,
+      "store": {
+        "data": "limits",
+        "key": "QUEUE_MAX"
+      },
+      "apply": {
+        "script": "bin/stella-apply.py",
+        "needs_restart": false
+      },
+      "code": "STL-CFG-315"
+    }
+  ]
+}

@@ -3,6 +3,9 @@
 set -u
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 CG=${CG:-/workspace/bin/commit-guard.sh}
+# T7 (F1 W4 r4): every alert this run's guards write goes to this run's own folder, never the tree's alert log (on the live tree each line may page)
+TREE_ALERTS=/workspace/.supervisor/logs/alerts.log; TREE_SIZE=$(stat -c %s "$TREE_ALERTS" 2>/dev/null || echo 0)
+export ESCALATE_SUP_DIR=$T/sup; mkdir -p "$T/sup/logs"
 export GIT_AUTHOR_NAME=owner GIT_AUTHOR_EMAIL=owner@example.invalid GIT_COMMITTER_NAME=owner GIT_COMMITTER_EMAIL=owner@example.invalid
 unset HERMES_KANBAN_TASK HERMES_KANBAN_WORKSPACE HERMES_KANBAN_BRANCH
 # K1: the card is proven by its own worker process, never by HERMES_KANBAN_* (Hermes sets them after the worker starts and
@@ -88,6 +91,48 @@ ok '[ "$(guard "$W" HERMES_KANBAN_WORKSPACE="$W" HERMES_KANBAN_BRANCH=stella/t_b
 ok '[ "$(guard "$R")" = 0 ]' "The owner's normal commit (no worker marker) allowed, on main too"
 ok '[ "$(guard "$R" GIT_AUTHOR_EMAIL=test@test.com)" = 1 ] && grep -q "test@test.com" "$T/err"' "author test@test.com refused"
 ok '[ "$(guard "$R" GIT_AUTHOR_EMAIL=)" = 1 ] && grep -q "empty" "$T/err"' "empty author email refused"
+# F1 W4 round 2 (G3, G1): the staged names are read whole (-z, no rename detection); owner data is the one definition in bin/roles.py.
+WK=(HERMES_KANBAN_WORKSPACE="$W" HERMES_KANBAN_BRANCH="$BR")
+SETP=$(jq -r '.files[] | select(.id == "settings") | .path' "/workspace/$(jq -r .data_index /workspace/docs/hermes-local/roles.json)")   # an owner_only index row, found by its id
+mkdir -p "$W/.stella/extensions" "$W/.stella/schemas"; echo x >"$W/.stella/schemas/zz-w4.json"
+git -C "$W" add -f .stella/schemas/zz-w4.json && git -C "$W" -c core.hooksPath=/dev/null commit -q -m "owner data, as the owner committed it"
+echo x >"$W/.stella/extensions/é.json"; git -C "$W" add -f ".stella/extensions/é.json"
+ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "G3: a non-ASCII name under owner data (it printed quoted and escaped before -z): refused for a worker"
+ok '[ "$(guard "$W")" = 0 ]' "G3: the same name staged by the owner (no worker marker): allowed"
+git -C "$W" reset -q; rm -f "$W/.stella/extensions/é.json"
+git -C "$W" mv .stella/schemas/zz-w4.json moved-w4.json
+ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "G3: a rename out of an owner folder (the old path is listed, no rename detection): refused for a worker"
+git -C "$W" reset -q --hard
+git -C "$W" rm -q .stella/schemas/zz-w4.json
+ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "G3: a deletion of owner data: refused for a worker"
+ok '[ "$(guard "$W")" = 0 ]' "G3: the same deletion by the owner: allowed"
+git -C "$W" reset -q --hard
+# B.1 point 6 (r5, W1-RT6-01): a worker that replaces a folder holding an owner path (the owner settings' folder, owner data's, the apply tool's state's) by a
+# symbolic link: refused (a merge of it would replace the live folder, whose owner file is untracked and ignored)
+RFT=/workspace/docs/hermes-local/roles.json; IXF=/workspace/$(jq -r .data_index "$RFT")
+for hd in "$(jq -r '.owner_settings[0]' "$RFT" | cut -d/ -f1)" "$(jq -r '.owner_data[0]' "$RFT" | cut -d/ -f1)" "$(jq -r .applied_state "$IXF" | cut -d/ -f1)"; do
+  mkdir -p "$W/$hd"; echo x >"$W/$hd/zz-held.txt"; git -C "$W" add -f "$hd/zz-held.txt"; git -C "$W" -c core.hooksPath=/dev/null commit -q -m "a file in $hd, as the owner committed it"
+  git -C "$W" rm -r -q --cached "$hd"; rm -rf "${W:?}/$hd"; ln -s /tmp "$W/$hd"; git -C "$W" add -f "$hd"
+  ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "B.1 (r5): a worker replacing the folder $hd (it holds an owner path) by a symbolic link: refused"
+  git -C "$W" reset -q; rm -f "$W/$hd"; git -C "$W" checkout -q -- "$hd"; git -C "$W" reset -q --hard
+done
+mkdir -p "$W/.stella"; echo x >"$W/$SETP"; echo x >"$W/.stella/capabilities.json"; echo x >"$W/.stella/test-map.json"
+git -C "$W" add -f "$SETP"
+ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "G1: a worker staging an owner_only index row (the settings row): refused"
+git -C "$W" reset -q; git -C "$W" add -f .stella/capabilities.json .stella/test-map.json
+ok '[ "$(guard "$W" "${WK[@]}")" = 0 ]' "G1: a worker staging the capability registry and the test map (rows that are not owner-only; product rules 4 and 8): allowed"
+git -C "$W" reset -q
+# G1: flip a row's flag in a scratch index and the same file moves in or out of the refusal, with no other edit
+GT=$T/gt; mkdir -p "$GT/bin" "$GT/docs/hermes-local" "$GT/.stella"; cp "$CG" /workspace/bin/roles.py "$GT/bin/"; cp /workspace/docs/hermes-local/roles.json "$GT/docs/hermes-local/"
+jq '(.files[] | select(.id == "capabilities") | .owner_only) = true | (.files[] | select(.id == "settings") | .owner_only) = false' /workspace/.stella/data-files.json >"$GT/.stella/data-files.json"
+git -C "$W" add -f .stella/capabilities.json
+ok '[ "$(CG=$GT/bin/commit-guard.sh guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "G1: capabilities.json made owner_only in a scratch index: now refused for a worker"
+git -C "$W" reset -q; git -C "$W" add -f "$SETP"
+ok '[ "$(CG=$GT/bin/commit-guard.sh guard "$W" "${WK[@]}")" = 0 ]' "G1: the settings row made not owner_only in the scratch index: now allowed (no other edit)"
+git -C "$W" reset -q
+printf '{}' >"$GT/.stella/data-files.json"; git -C "$W" add -f .stella/capabilities.json
+ok '[ "$(CG=$GT/bin/commit-guard.sh guard "$W")" = 1 ] && grep -qi "cannot be read" "$T/err"' "G1: an index the guard cannot read: every commit is refused, the owner's too (fail closed)"
+git -C "$W" reset -q --hard "$(git -C "$R" rev-parse main)"   # back to the first commit: the end-to-end counts below start there
 # End to end: the guard as the repo's real pre-commit hook, through git commit (worktrees share .git/hooks).
 ln -s "$CG" "$R/.git/hooks/pre-commit"
 ok '! (cd "$R" && echo b > b && git add b && HERMES_KANBAN_WORKSPACE="$W" git commit -q -m x 2>/dev/null) && [ "$(git -C "$R" rev-list --count HEAD)" = 1 ]' "git commit by a worker on main: refused, no commit made"
@@ -119,4 +164,23 @@ git -C "$K/main" reset -q -- f11; rm -f "$K/main/f11"
 ok '[ "$(guard "$K/main" HERMES_DELEGATED_CHILD_CONTEXT=1)" = 1 ] && grep -qF "cannot be proven" "$T/err"' "HERMES_DELEGATED_CHILD_CONTEXT=1 with no bound run and no workspace env: refused (cannot be proven)"
 N1=$(git -C "$K/main" rev-list --count HEAD)   # counted here: an earlier case's commit (the pre-K1 code) must not shift this one
 ok '(echo own > $K/main/fo && git -C $K/main add fo) && (cd $K/main && env PATH=/usr/bin:/bin git commit -q -m owner) && [ "$(git -C $K/main rev-list --count HEAD)" = "$((N1+1))" ]' "owner commit with no markers and hermes off PATH: allowed"
+# F1 W4 round 3 (K1, K1b, K8, K9): the refused set holds the apply tool's state paths too; a name is compared by identity; the refusal is coded with one alert line;
+# the stack folder, the main branch and the pins come from the table, and a pin the guard needs but cannot read refuses instead of passing.
+export ESCALATE_SUP_DIR=$T/sup; mkdir -p "$T/sup/logs"; : >"$T/sup/logs/alerts.log"; WGA=$T/sup/logs/alerts.log
+STP=$(jq -r '.event_log' /workspace/.stella/data-files.json)
+git -C "$W" reset -q --hard "$(git -C "$R" rev-parse main)"; mkdir -p "$W/${STP%/*}"; echo x >"$W/$STP"; git -C "$W" add -f "$STP"
+ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "STL-CFG-312" "$T/err" && [ "$(wc -l <"$WGA")" = 1 ]' "K1: a worker staging the apply tool's event log: refused, the code, one alert line"
+ok '[ "$(guard "$W")" = 0 ]' "K1: the same file staged by the owner (no worker marker): allowed"
+git -C "$W" reset -q; rm -rf "$W/${STP%%/*}"
+SCH=$(jq -r '.owner_data[0]' /workspace/docs/hermes-local/roles.json); mkdir -p "$W/$SCH"; echo x >"$W/$SCH/zz.json"; git -C "$W" add -f "$SCH/zz.json" && git -C "$W" -c core.hooksPath=/dev/null commit -q -m "schema"
+mkdir -p "$W/$(echo "$SCH" | tr a-z A-Z)"; echo y >"$W/$(echo "$SCH" | tr a-z A-Z)/new.json"; git -C "$W" add -f -A
+ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "K1b: a new file in another spelling (case) of an owner data folder: refused for a worker"
+git -C "$W" reset -q --hard; rm -rf "$W/$(echo "$SCH" | tr a-z A-Z)"
+for k in main_branch worker_pins; do
+  jq "del(.$k)" /workspace/docs/hermes-local/roles.json >"$GT/docs/hermes-local/roles.json"; echo z >"$W/zz-k9"; git -C "$W" add zz-k9
+  ok '[ "$(CG=$GT/bin/commit-guard.sh guard "$W" "${WK[@]}")" = 1 ] && grep -qi "cannot be read" "$T/err"' "K9: $k absent from the table: a worker's commit is refused, not passed"
+  git -C "$W" reset -q; rm -f "$W/zz-k9"
+done
+cp /workspace/docs/hermes-local/roles.json "$GT/docs/hermes-local/roles.json"
+ok '[ "$(tail -c +$((TREE_SIZE + 1)) "$TREE_ALERTS" 2>/dev/null | grep -c .)" = 0 ]' "T7 (r5, W4-VER3-07): the tree's alert log gained no line of any kind during this run"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

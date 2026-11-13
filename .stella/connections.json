@@ -1,0 +1,285 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "id": "local-model-server",
+      "kind": "provider",
+      "subkind": "openai-compatible-local",
+      "label": "Local model server",
+      "enabled": true,
+      "locality": "local",
+      "hosts": [
+        {
+          "host": "host.docker.internal",
+          "port": 11434,
+          "purpose": "model API (the one firewall rule to the host)"
+        }
+      ],
+      "auth_types": [
+        "none"
+      ],
+      "secrets": [],
+      "actions": [
+        {
+          "id": "complete",
+          "approval_class": "read"
+        }
+      ],
+      "models": [
+        {
+          "id": "qwen3.5:9b-64k",
+          "capabilities": {
+            "tool_calling": true,
+            "json_mode": null,
+            "context_tokens": null,
+            "vision": null,
+            "streaming": true
+          },
+          "probed_at": null,
+          "probe_source": "observed in live use (cards complete through tool calls); not a probe",
+          "cost": null,
+          "limits": null
+        }
+      ],
+      "cost": null,
+      "limits": null,
+      "data_policy": {
+        "retention": "local",
+        "training_use": "none",
+        "region": "local",
+        "zero_retention_available": null,
+        "data_classes_allowed": [
+          "public",
+          "internal",
+          "client"
+        ]
+      },
+      "tos": {
+        "status": "not_applicable",
+        "subscription_login_by_agent": "not_applicable"
+      },
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer",
+        "tester",
+        "validator",
+        "verifier",
+        "red-team",
+        "router",
+        "voice",
+        "look",
+        "proposer"
+      ],
+      "risk_class": "read"
+    },
+    {
+      "id": "claude-subscription",
+      "kind": "provider",
+      "subkind": "direct-subscription",
+      "label": "Claude subscription (Claude Code CLI)",
+      "enabled": true,
+      "locality": "cloud",
+      "hosts": [
+        {
+          "host": "api.anthropic.com",
+          "port": 443,
+          "purpose": "API"
+        }
+      ],
+      "auth_types": [
+        "oauth_subscription"
+      ],
+      "secrets": [
+        "CLAUDE_CODE_OAUTH_TOKEN"
+      ],
+      "actions": [
+        {
+          "id": "complete",
+          "approval_class": "read"
+        }
+      ],
+      "models": [
+        {
+          "id": "haiku",
+          "capabilities": {
+            "tool_calling": null,
+            "json_mode": null,
+            "context_tokens": null,
+            "vision": null,
+            "streaming": null
+          },
+          "probed_at": null,
+          "probe_source": null,
+          "cost": null,
+          "limits": null
+        },
+        {
+          "id": "sonnet",
+          "capabilities": {
+            "tool_calling": null,
+            "json_mode": null,
+            "context_tokens": null,
+            "vision": null,
+            "streaming": null
+          },
+          "probed_at": null,
+          "probe_source": null,
+          "cost": null,
+          "limits": null
+        },
+        {
+          "id": "opus",
+          "capabilities": {
+            "tool_calling": null,
+            "json_mode": null,
+            "context_tokens": null,
+            "vision": null,
+            "streaming": null
+          },
+          "probed_at": null,
+          "probe_source": null,
+          "cost": null,
+          "limits": null
+        }
+      ],
+      "cost": null,
+      "limits": null,
+      "data_policy": {
+        "retention": null,
+        "training_use": null,
+        "region": null,
+        "zero_retention_available": null,
+        "data_classes_allowed": []
+      },
+      "tos": {
+        "status": "unverified",
+        "subscription_login_by_agent": "unverified"
+      },
+      "allowed_roles": [],
+      "risk_class": "send"
+    },
+    {
+      "id": "fallback-gateway",
+      "kind": "provider",
+      "subkind": "openai-compatible-aggregator",
+      "label": "Fallback gateway (aggregator proxy)",
+      "enabled": true,
+      "locality": "cloud",
+      "hosts": [
+        {
+          "host": "127.0.0.1",
+          "port": 20128,
+          "purpose": "the gateway's own API (loopback)"
+        },
+        {
+          "host": "openrouter.ai",
+          "port": 443,
+          "purpose": "outbound host of the provider it forwards to"
+        }
+      ],
+      "auth_types": [
+        "api_key"
+      ],
+      "secrets": [
+        "OMNIROUTE_ENDPOINT_KEY"
+      ],
+      "actions": [
+        {
+          "id": "complete",
+          "approval_class": "read"
+        }
+      ],
+      "models": [
+        {
+          "id": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+          "capabilities": {
+            "tool_calling": null,
+            "json_mode": null,
+            "context_tokens": null,
+            "vision": null,
+            "streaming": null
+          },
+          "probed_at": "2026-11-10",
+          "probe_source": "live probe 2026-11-10, answered 200 (docs/hermes-local/fallback-routing.json, _chosen_by); capabilities not probed"
+        }
+      ],
+      "cost": null,
+      "limits": null,
+      "data_policy": {
+        "retention": null,
+        "training_use": null,
+        "region": null,
+        "zero_retention_available": null,
+        "data_classes_allowed": [],
+        "free_tiers_may_retain_or_train": true
+      },
+      "tos": {
+        "status": "unverified",
+        "subscription_login_by_agent": "unverified"
+      },
+      "allowed_roles": [],
+      "risk_class": "send"
+    },
+    {
+      "id": "discord",
+      "kind": "channel",
+      "subkind": "chat",
+      "label": "Discord (connected chat channel)",
+      "enabled": true,
+      "locality": "cloud",
+      "hosts": [
+        {
+          "host": "discord.com",
+          "port": 443,
+          "purpose": "REST API"
+        },
+        {
+          "host": "gateway.discord.gg",
+          "port": 443,
+          "purpose": "gateway"
+        }
+      ],
+      "auth_types": [
+        "bot_token"
+      ],
+      "secrets": [
+        "DISCORD_BOT_TOKEN"
+      ],
+      "actions": [
+        {
+          "id": "read-thread",
+          "approval_class": "read"
+        },
+        {
+          "id": "post-message",
+          "approval_class": "post"
+        }
+      ],
+      "models": [],
+      "cost": null,
+      "limits": null,
+      "data_policy": {
+        "retention": null,
+        "training_use": null,
+        "region": null,
+        "zero_retention_available": null,
+        "data_classes_allowed": []
+      },
+      "tos": {
+        "status": "unverified",
+        "subscription_login_by_agent": "not_applicable"
+      },
+      "allowed_roles": [],
+      "risk_class": "post",
+      "scopes": [
+        "read_message_history",
+        "send_messages"
+      ],
+      "redaction_patterns": [
+        "[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{6}\\.[A-Za-z0-9_-]{25,}",
+        "(?i)bearer\\s+[A-Za-z0-9._~+/=-]+"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Capability registry",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "entries": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+            "maxLength": 128
+          },
+          "kind": {
+            "enum": [
+              "tool",
+              "skill",
+              "mcp_server",
+              "command",
+              "extension"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "keywords": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          "inputs": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "outputs": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "allowed_roles": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          "risk_class": {
+            "enum": [
+              "read",
+              "write",
+              "post",
+              "send",
+              "pay",
+              "delete",
+              "sign_in"
+            ]
+          },
+          "hosts": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          "secrets": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9]*_[A-Z0-9_]*$",
+              "maxLength": 64
+            }
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "approved",
+              "disabled"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "triage": {
+            "type": "object",
+            "properties": {
+              "result": {
+                "enum": [
+                  "pending",
+                  "accepted",
+                  "rejected",
+                  "shipped"
+                ]
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "summary",
+          "keywords",
+          "inputs",
+          "outputs",
+          "allowed_roles",
+          "risk_class",
+          "hosts",
+          "secrets",
+          "status",
+          "source",
+          "triage"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "entries"
+  ],
+  "additionalProperties": false
+}

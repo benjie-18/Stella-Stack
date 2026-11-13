@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Test map",
+  "description": "Which selftests a changed file can affect (product rule 8). Read by bin/test-map.py.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "about": {
+      "type": "string"
+    },
+    "runner": {
+      "description": "The suite runner; its suite list is the line `for t in <names>; do`.",
+      "type": "string",
+      "minLength": 1
+    },
+    "test_file": {
+      "description": "Where the selftest of a target lives; {name} is the target name.",
+      "type": "string",
+      "pattern": "^[^{}]+\\{name\\}[^{}]+$"
+    },
+    "test_like": {
+      "description": "Globs (matched against the lower-cased path) of files that look like tests: each must be a suite selftest or be listed in not_tests.",
+      "$ref": "#/$defs/globs"
+    },
+    "not_tests": {
+      "description": "Globs of files that look like tests and are not (fixtures, the runner, this map).",
+      "$ref": "#/$defs/globs"
+    },
+    "follow": {
+      "description": "Globs of code files; a file that starts with #! is code too. A selftest reaches the files its code names.",
+      "$ref": "#/$defs/globs"
+    },
+    "data": {
+      "description": "Globs of files read as data (JSON, YAML, text lists). A file that a code or data file names may not sit in a row that adds no target beyond the always gates. An empty or missing list means every file counts.",
+      "$ref": "#/$defs/globs"
+    },
+    "always": {
+      "description": "Fast gates: targets of every selection.",
+      "$ref": "#/$defs/targets"
+    },
+    "quick": {
+      "description": "The quick tier the 15-minute watchdog runs (owner decision 2026-11-12): suite names, at least one. The full suite runs at merge and on the final hash.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._-]+$"
+      }
+    },
+    "full": {
+      "description": "Globs of shared contracts: a change selects the full suite. The stack ships it empty (every tracked file has rows instead); a file on it needs no row.",
+      "$ref": "#/$defs/globs"
+    },
+    "map": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "globs": {
+            "description": "Unless the row is a scan row, each glob starts with a literal first path component (a folder or top-level file name without * ? [): bin/test-map.py check refuses any other.",
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "targets": {
+            "$ref": "#/$defs/targets"
+          },
+          "scan": {
+            "description": "true: the targets read every matching file (a folder scan). The row adds targets and does not count as a match.",
+            "type": "boolean"
+          },
+          "why": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "globs",
+          "targets"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "runner",
+    "test_file",
+    "test_like",
+    "not_tests",
+    "follow",
+    "always",
+    "quick",
+    "full",
+    "map"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "globs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "targets": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._-]+$"
+      }
+    }
+  }
+}

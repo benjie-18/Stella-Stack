@@ -11,7 +11,8 @@ S=${STAGE:-/workspace/bin}   # the guard under test (a staged copy while it is b
 G=$S/role-guard.py
 RF=${ROLES_FILE:-/workspace/docs/hermes-local/roles.json}   # the table under test (a staged copy while it is being replaced)
 fails=0
-ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); [ -s "$T/out" ] && sed 's/^/     /' "$T/out" | head -3; fi; }
+ok() { local REAL=; case $1 in *alerts.log*) REAL=1 ;; esac   # T1 (r5): a case that reads the alert log runs its guard as a real process
+  if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); [ -s "$T/out" ] && sed 's/^/     /' "$T/out" | head -3; fi; }
 mkdir -p "$T/bin" "$T/sup" "$T/cards"
 # Stub hermes: `kanban --board <b> show <id> --json` prints $T/cards/<id>.json; `kanban --board <b> list --assignee <p>
 # --status running --json` prints $T/running-<p>.json (default []); anything else fails. Only the stack's board answers (B).
@@ -35,9 +36,60 @@ PY
 export ROLES_FILE="$RF" PROJECTS_DB="$T/projects.db" ESCALATE_SUP_DIR="$T/sup" PATH="$T/bin:$PATH"
 unset HERMES_KANBAN_TASK HERMES_KANBAN_RUN_ID
 # run <profile> <tool> <tool_input json> [env...]: the guard's exit code; its stdout in $T/out
-run() { local prof=$1 tool=$2 in=$3; shift 3
-  jq -nc --arg p "$prof" --arg t "$tool" --argjson i "$in" '{hook_event_name: "pre_tool_call", tool_name: $t, tool_input: $i, profile: $p, extra: {}}' \
-    | env "$@" python3 "$G" >"$T/out" 2>&1; echo $?; }
+# T1 (F1 W4 r5): a run row (the guard on a payload, no process tree) is judged by ONE judge process that runs the guard's whole script with the
+# row's environment, folder and payload, stdout and stderr as one stream and its exit code, as the process does. The first row of each (role,
+# exit code) class also runs as a real process and both must agree; an agreement case with a planted-difference control is at the end.
+# The process-tree rows (tree) and the rows that read the alert log stay real processes.
+cat >"$T/rjudge.py" <<'PY'
+import base64, io, json, os, sys, traceback
+inp, outp = sys.argv[1:3]; codes = {}; open(os.path.join(os.path.dirname(inp), "jpid"), "w").write(str(os.getpid())); keep = (sys.stdout, sys.stderr, sys.stdin, sys.argv, dict(os.environ), os.getcwd())
+while True:
+    with open(inp, encoding="utf-8") as f:
+        line = f.readline()
+    if not line.strip() or line.strip() == "QUIT":
+        break
+    r = json.loads(line); g = r["hook"]
+    if g not in codes:
+        codes[g] = compile(open(g, encoding="utf-8").read(), g, "exec")
+    for m in [m for m in sys.modules if m in ("roles", "alert_catalog")]:
+        del sys.modules[m]   # as a fresh process: the stack modules read their environment when imported
+    os.environ.clear(); os.environ.update(r["env"] if "env" in r else {**keep[4], **r["add"]}); os.chdir(r["cwd"])   # the full environment, or the one at start plus the row's own
+    out = io.StringIO(); sys.stdout = sys.stderr = out; sys.stdin = io.StringIO(r["payload"]); sys.argv = [g]
+    try:
+        exec(codes[g], {"__name__": "__main__", "__file__": g}); rc = 0
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else 0 if e.code is None else 1
+        if isinstance(e.code, str):
+            print(e.code, file=out)
+    except BaseException:
+        traceback.print_exc(file=out); rc = 1
+    finally:
+        sys.stdout, sys.stderr, sys.stdin, sys.argv = keep[:4]; os.environ.clear(); os.environ.update(keep[4]); os.chdir(keep[5])
+    with open(outp, "w", encoding="utf-8") as f:
+        f.write(f"{rc}\t{base64.b64encode(out.getvalue().encode()).decode()}\n")
+PY
+
+mkdir -p "$T/rj/seen"; mkfifo "$T/rj/in" "$T/rj/oq"; python3 -I "$T/rjudge.py" "$T/rj/in" "$T/rj/oq" </dev/null >/dev/null 2>&1 & RJP=$!; : >"$T/rjrows"
+RJENV=$(env | sort | md5sum)   # the judge's environment at start; a row is sent with its own variables only while the exported environment is the same
+declare -A ROLE_OF; while IFS=$'\t' read -r p r; do ROLE_OF[$p]=$r; done < <(jq -r '.profiles | to_entries[] | "\(.key)\t\(.value.role)"' "$RF"); ROLE_FB=$(jq -r .fallback_role "$RF")
+rjudge() {   # rjudge <guard> <payload> [env...]: exit code echoed, output in $T/out
+  local g=$1 pay=$2 rc b; shift 2
+  if [ "$(env | sort | md5sum)" = "$RJENV" ]; then
+    jq -nc --arg p "$pay" --arg h "$g" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, add: ($ARGS.positional | map(capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}' --args "$@" >"$T/rj/in"
+  else
+    env -0 "$@" | jq -Rsc --arg p "$pay" --arg h "$g" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, env: (split("\u0000") | map(select(length > 0) | capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}' >"$T/rj/in"
+  fi
+  IFS=$'\t' read -r rc b <"$T/rj/oq"; printf '%s' "$b" | base64 -d >"$T/out"; echo "$rc"; }
+run() { local prof=$1 tool=$2 in=$3 pay rc rrc; shift 3
+  pay=$(jq -nc --arg p "$prof" --arg t "$tool" --argjson i "$in" '{hook_event_name: "pre_tool_call", tool_name: $t, tool_input: $i, profile: $p, extra: {}}')
+  if [ -n "${REAL:-}" ]; then printf '%s' "$pay" | env "$@" python3 "$G" >"$T/out" 2>&1; echo $?; return; fi
+  rc=$(rjudge "$G" "$pay" "$@"); printf '%s\t%s\n' "$(printf '%s' "$pay" | base64 -w0)" "$([ $# -gt 0 ] && printf '%s\0' "$@" | base64 -w0)" >>"$T/rjrows"
+  local k="${ROLE_OF[${prof:-?}]:-$ROLE_FB}|$rc"   # the class: the profile's role (the fallback for a profile with no row) and the verdict
+  if [ ! -e "$T/rj/seen/$k" ]; then
+    : >"$T/rj/seen/$k"; cp "$T/out" "$T/out.judge"; printf '%s' "$pay" | env "$@" python3 "$G" >"$T/out" 2>&1; rrc=$?
+    if [ "$rrc" != "$rc" ] || [ "$(sort "$T/out")" != "$(sort "$T/out.judge")" ]; then echo "     route agreement: $prof $tool exit $rc in the judge, $rrc as a process" >&2; echo 99; return; fi
+  fi
+  echo "$rc"; }
 card() {  # card <id> <assignee> <open run id> <worker pid> <its fingerprint> [bound claim lock]: a running card whose run
   # is bound to that pid, as Hermes's worker_bound event records it (pid 0 = no binding recorded)
   jq -nc --arg id "$1" --arg a "$2" --argjson r "${3:-0}" --argjson pid "${4:-0}" --arg fp "${5:-}" --arg lock "${6:-host:1}" '
@@ -61,7 +113,7 @@ until [ -f "$1/go" ]; do sleep 0.05; done
 sh -c 'python3 "$0" "$1" "$2"' "$2" "$3" "$1/payload" >"$1/out" 2>&1
 echo $? >"$1/rc"
 EOF
-sleep 600 & STR=$!; trap 'kill $STR 2>/dev/null; rm -rf "$T"' EXIT
+sleep 600 & STR=$!; trap 'kill $STR $RJP 2>/dev/null; rm -rf "$T"' EXIT
 wn=0
 # tree <profile> <tool_input json> <fixture>: the guard's exit code when run under a fresh fake worker; output in $T/out.
 # The fixture (fx_<name> <worker pid> <its fingerprint>) writes the board state the test needs, with the worker's real pid.
@@ -247,7 +299,7 @@ for tf in "$T/bad.json" "$T/garbage.json" "$T/nope.json" "$T/nomr.json" "$T/strm
 done
 # Not hard-coded to the stack's profiles: a second reviewing profile in the table is accepted and listed; with none, the
 # refusal says so; a profile of another role that gets may_review is accepted.
-jq --arg r "$(role "$RV1")" '.profiles["qa-x"] = {role: $r, soul: "reviewer.md"}' "$RF" >"$T/two.json"
+jq --arg r "$(role "$RV1")" '.profiles["qa-x"] = {role: $r, soul: "reviewer.md"} | .sandbox.boxed_profiles += ["qa-x"]' "$RF" >"$T/two.json"
 ok '[ "$(run "$WT" kanban_request_review "$(rr qa-x)" ROLES_FILE=$T/two.json)" = 0 ] && [ "$(run "$WT" kanban_request_review "$(rr "$RV1")" ROLES_FILE=$T/two.json)" = 0 ] && [ "$(run "$WT" kanban_request_review "$(rr "$WT")" ROLES_FILE=$T/two.json)" = 2 ] && grep -qF qa-x "$T/out" && grep -qF "$RV1" "$T/out"' "K8: a second reviewing profile in the table: accepted, and listed in a refusal"
 ok '[ "$(run "$RV1" kanban_request_review "$(rr qa-x)" ROLES_FILE=$T/two.json)" = 0 ] && [ "$(run qa-x kanban_request_review "$(rr qa-x)" ROLES_FILE=$T/two.json)" = 2 ] && grep -qF "$RV1" "$T/out" && ! grep -qF "ask the owner" "$T/out"' "K8: one reviewing profile may hand to the other, never to itself"
 jq '.roles[].may_review = false' "$RF" >"$T/nobody.json"
@@ -284,8 +336,8 @@ if [ -n "$RCP" ]; then
   fi
 fi
 # A1-01: a role that takes cards, or a profile with no row, comments on its own proven running card only. Fake worker's
-# process tree again (D48); the coordinator (a listed role that takes no cards) comments anywhere.
-DISP=$(for q in $PROFILES; do [ "$(jq -r --arg p "$q" '.roles[.profiles[$p].role].assignable' "$RF")" = false ] && echo "$q" && break; done)
+# process tree again (D48); the coordinator (the role with may_answer_for_owner) comments anywhere.
+DISP=$(for q in $PROFILES; do [ "$(jq -r --arg p "$q" '.roles[.profiles[$p].role].may_answer_for_owner' "$RF")" = true ] && echo "$q" && break; done)   # W2-RT-01: the field, never `assignable`
 cm() { printf '{"task_id":"%s","comment":"UNBLOCK: escalation reply\\nGo on."}' "$1"; }
 export TREE_TOOL=kanban_comment
 ok '[ "$(tree "$WT" "$(cm t_0000c0de)" ok)" = 0 ]' "A1-01: $WT comments on its own proven card: allowed"
@@ -295,9 +347,30 @@ ok '[ "$(tree "$WT" "$(cm t_0000c0de)" other)" = 2 ] && grep -qF "assigned to" "
 ok '[ "$(tree "$WT" "$(cm t_0000c0de)" nobind)" = 2 ] && [ "$(tree "$WT" "$(cm t_0000c0de)" stranger)" = 2 ]' "A1-01: own card without a bound worker run in the caller's ancestors: refused"
 ok '[ "$(tree "$WT" "{\"task_id\":[\"t_0000c0de\"],\"comment\":\"x\"}" ok)" = 2 ] && [ "$(tree "$WT" "{\"task_id\":\" t_0000c0de\",\"comment\":\"x\"}" ok)" = 2 ]' "A1-01: a task_id that is not exactly a card id: refused (fail closed)"
 ok '[ "$(run no-such-profile kanban_comment "$(cm t_0000c001)")" = 2 ] && [ "$(run no-such-profile kanban_comment "{\"comment\":\"x\"}")" = 0 ]' "A1-01: a profile with no row: cross-card refused; no task_id left to Hermes: allowed"
-[ -n "$DISP" ] && ok '[ "$(run "$DISP" kanban_comment "$(cm t_0000c001)")" = 0 ]' "A1-01: $DISP ($(role "$DISP"), takes no cards) comments on any card: allowed"
+[ -n "$DISP" ] && ok '[ "$(run "$DISP" kanban_comment "$(cm t_0000c001)")" = 0 ]' "A1-01: $DISP ($(role "$DISP"), may_answer_for_owner) comments on any card: allowed"
 [ -n "$RV1" ] && ok '[ "$(tree "$RV1" "$(cm t_0000beef)" wrongcard)" = 2 ]' "A1-01: the reviewing role is a worker too: other card refused"
+ok '[ -n "$DISP" ] && [ "$(jq "[.roles[] | select(.may_answer_for_owner == true)] | length" "$RF")" = 1 ]' "W2-RT-01: exactly one role has may_answer_for_owner, and a profile has it ($DISP)"
+# W2-RT-01: a role without the field is a worker for this rule, listed or not, whatever its `assignable`: foreign comment refused
+for r in $(jq -r '.roles | to_entries[] | select(.value.may_answer_for_owner != true) | .key' "$RF"); do
+  # a served role needs explicit platform_toolsets (W4 r3 table rule); one that has none gets those of the first boxed profile's role
+  jq --arg r "$r" '. as $d | .profiles["qa-p"] = {"role": $r} | .sandbox.boxed_profiles += ["qa-p"] | .roles[$r].platform_toolsets |= (if [(. // {})[] | length] | add // 0 > 0 then . else $d.roles[$d.profiles[$d.sandbox.boxed_profiles[0]].role].platform_toolsets end)' "$RF" >"$T/qa-t.json"
+  ok '[ "$(ROLES_FILE=$T/qa-t.json run qa-p kanban_comment "$(cm t_0000c001)")" = 2 ] && grep -qF "not your own running card" "$T/out"' "W2-RT-01: a profile with role $r (no may_answer_for_owner) is refused a foreign comment by the own-card proof"
+done
 unset TREE_TOOL
 GM=$(sed -n 's/^GUARDS = \[("pre_tool_call", "\(.*\)",$/\1/p' /workspace/bin/register-escalation-hook.sh)
 ok '[ -n "$GM" ] && [[ kanban_comment =~ $GM ]] && [[ kanban_complete =~ $GM ]] && ! [[ kanban_show =~ $GM ]]' "A1-01: the registered role-guard matcher covers kanban_comment (and still not kanban_show)"
+# T1 (r5): the two routes agree on every 10th run row (the judge and a real guard process, the same row), and a planted difference (the judge
+# given a copy of the guard whose refusal reads otherwise) is caught
+ragree() { local n=0 i=0 p e pay rc rrc args
+  while IFS=$'\t' read -r p e; do i=$((i+1)); [ $((i % 10)) = 1 ] || continue
+    mapfile -d '' -t args < <(printf '%s' "$e" | base64 -d); pay=$(printf '%s' "$p" | base64 -d)
+    rc=$(rjudge "$1" "$pay" "${args[@]}"); cp "$T/out" "$T/ag.judge"
+    [ -f "$T/ag.real.$i" ] || { printf '%s' "$pay" | env "${args[@]}" python3 "$G" >"$T/ag.real.$i" 2>&1; echo $? >"$T/ag.rc.$i"; }   # the process run once per row, kept for the control
+    { [ "$rc" = "$(<"$T/ag.rc.$i")" ] && [ "$(sort "$T/ag.real.$i")" = "$(sort "$T/ag.judge")" ]; } || n=$((n+1))
+  done < <(cat "$T/rjrows"); echo "$n"; }
+sed 's/"action": "block"/"action": "blocked"/' "$G" >"$T/rg-planted.py"
+RN=$(wc -l <"$T/rjrows"); RD=$(ragree "$G"); RX=$(ragree "$T/rg-planted.py")
+ok '[ "$RN" -ge 100 ] && [ "$RD" = 0 ]' "T1 route agreement: every 10th of $RN run rows judged in one process gives the same exit code and output as a real guard process ($RD differ)"
+ok '[ "$RX" -gt 0 ]' "T1 route agreement, negative control: a planted difference in the judge's guard is caught ($RX differ)"
+printf 'QUIT\n' >"$T/rj/in"; wait "$RJP"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

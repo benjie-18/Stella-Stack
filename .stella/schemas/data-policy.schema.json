@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Data policy",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "data_classes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "default": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "enum": [
+            "open",
+            "local_only",
+            "allowed_providers"
+          ]
+        },
+        "allowed_providers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          }
+        }
+      },
+      "required": [
+        "mode",
+        "allowed_providers"
+      ],
+      "additionalProperties": false
+    },
+    "projects": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "enum": [
+              "open",
+              "local_only",
+              "allowed_providers"
+            ]
+          },
+          "allowed_providers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+            }
+          }
+        },
+        "required": [
+          "mode",
+          "allowed_providers"
+        ],
+        "additionalProperties": false
+      },
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+      }
+    },
+    "local_hosts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$",
+        "maxLength": 253
+      },
+      "uniqueItems": true,
+      "description": "Host names that count as local: a provider with locality local may list only these."
+    }
+  },
+  "required": [
+    "schema_version",
+    "data_classes",
+    "default",
+    "projects",
+    "local_hosts"
+  ],
+  "additionalProperties": false
+}

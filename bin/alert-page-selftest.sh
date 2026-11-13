@@ -6,12 +6,14 @@
 # SWF = the selftests.sh that holds the send-refusing wrapper.
 set -u
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+# a colon in the temp path would split the PATH entry of the stub below: every page would reach the caller's hermes
+case $T in *:*) echo "FAIL the temp path $T holds a colon, so the stub hermes would be on no PATH entry: nothing run, no hermes called"; echo "selftest FAIL (1)"; exit 1 ;; esac
 AS=${AS:-/workspace/bin}; RG=${RG:-$AS/role-guard.py}; WG=${WG:-/workspace/docs/hermes-local/hooks/builder/write-guard.py}
 ACAT=${ACAT:-/workspace/docs/hermes-local/alert-catalog.json}; SWF=${SWF:-/workspace/bin/selftests.sh}
 ORIG_PATH=$PATH; fails=0
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 mkdir -p "$T/bin" "$T/cards" "$T/sup/logs"
-export ESCALATE_SUP_DIR=$T/sup ALERT_CATALOG=$ACAT FAKE_CARDS=$T/cards SENDS=$T/sends.log FAKE_FAIL=$T/fail PATH="$T/bin:$PATH"
+export PYTHONDONTWRITEBYTECODE=1 ESCALATE_SUP_DIR=$T/sup ALERT_CATALOG=$ACAT FAKE_CARDS=$T/cards SENDS=$T/sends.log FAKE_FAIL=$T/fail PATH="$T/bin:$PATH"
 sleep 600 & STR=$!   # a live process that is no ancestor of any hook: a card bound to it has a failed proof
 trap 'kill $STR 2>/dev/null; rm -rf "$T"' EXIT
 cat >"$T/bin/hermes" <<'SH'
@@ -97,15 +99,24 @@ ok '[ "$(ALERT_CATALOG=$T/bad-catalog.json python3 -c "import sys; sys.path.inse
 ok '[ "$(python3 -c "import sys; sys.path.insert(0, sys.argv[1]); import alert_catalog; print(alert_catalog.validate())" "$AS" 2>/dev/null)" = "[]" ]' "the staged catalog validates (every page value is log, hourly or card_streak)"
 
 echo "## the selftests.sh wrapper: no selftest posts to Discord"
+# The runner's own wrapper line (its printf), built with the runner's variable names. Not found: both rows fail and no hermes
+# is called. The send runs only when the wrapper is the first hermes on PATH, and the wrapper's "real" one is a stop that
+# never passes a send on, so a broken wrapper fails the row instead of posting.
+WL=$(grep -m1 '^ *printf .*hermes send refused in a selftest.*>"\$q/\.bin/hermes"$' "$SWF")
+[ "$(grep -c '>"\$q/\.bin/hermes"' "$SWF")" = 1 ] || WL=   # the line found must be the only one that writes the wrapper, so it is the one the runner runs
 cat >"$T/wrap.sh" <<WRAP
 set -u
-$(sed -n '/^G=\$(mktemp -d)/,/export PATH=/p' "$SWF")
+q=$(printf %q "$T/g"); mkdir -p "\$q/.bin"; real_hermes=\$q/real
+printf '#!/usr/bin/env bash\nfor a; do [ "\$a" != send ] || exit 7; done\nexec %q "\$@"\n' "\$(command -v hermes || echo /bin/false)" >"\$real_hermes"
+$WL
+chmod +x "\$real_hermes" "\$q/.bin/hermes"; export PATH="\$q/.bin:\$PATH"
+[ "\$(command -v hermes)" = "\$q/.bin/hermes" ] || exit 9
 hermes send --to discord:#alerts --quiet body; echo "send_rc=\$?"
 echo "where=\$(command -v hermes)"
 echo "version=\$(hermes --version 2>/dev/null | head -1)"
 WRAP
-W=$(env PATH="$ORIG_PATH" bash "$T/wrap.sh" 2>"$T/wrap.err")
-REAL_VERSION=$(env PATH="$ORIG_PATH" hermes --version 2>/dev/null | head -1)
+W=; : >"$T/wrap.err"; [ -z "$WL" ] || W=$(env PATH="$ORIG_PATH" bash "$T/wrap.sh" 2>"$T/wrap.err")
+REAL_VERSION=; [ -z "$WL" ] || REAL_VERSION=$(env PATH="$ORIG_PATH" hermes --version 2>/dev/null | head -1)
 ok 'printf "%s\n" "$W" | grep -qx "send_rc=1" && printf "%s\n" "$W" | grep -q "^where=.*/hermes$" && grep -qF "hermes send refused in a selftest" "$T/wrap.err"' "the wrapper refuses hermes send (exit 1, names the refusal) and comes first on PATH"
 ok '[ "$(printf "%s\n" "$W" | sed -n "s/^version=//p")" = "$REAL_VERSION" ] && [ -n "$REAL_VERSION" ]' "the wrapper passes every other call through (hermes --version is the real one)"
 ok 'grep -q "alert-page" "$SWF"' "the selftests.sh list runs alert-page"

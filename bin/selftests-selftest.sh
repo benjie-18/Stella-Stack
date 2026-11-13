@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# Hermetic self-test for bin/selftests.sh (the suite runner): a scratch tree holds a copy of the runner and four fake
+# selftests (a, b: the same fixed temp name and alert log; s: serial; f: fails). Checks isolation per selftest, the output
+# lines, a named run, an unknown name, and fail closed when bubblewrap is missing or refuses. Takes a few seconds.
+set -u
+SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+T=$(mktemp -d); mkdir -p "$SRC/.scratch"; T2=$(mktemp -d "$SRC/.scratch/selftests-self.XXXXXX")   # a second tree on the stack tree's filesystem (ignored folder), not the temp folder's
+trap 'chmod -R u+rwX "$T" "$T2" 2>/dev/null; rm -rf "$T" "$T2"; [ -z "${SLP:-}" ] || kill $SLP 2>/dev/null' EXIT
+fails=0; export LC_ALL=C   # no locale warning lines in the runner output
+ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); [ -s "$T/out" ] && sed 's/^/     /' "$T/out" | tail -6; fi; }
+mkdir -p "$T/tree/bin" "$T/tmp" "$T/marks"
+# the runner under test, its list cut down to the fakes (the real names would run real selftests)
+sed 's/^for t in [a-z].*; do$/for t in a b s f; do/' "$SRC/bin/selftests.sh" >"$T/tree/bin/selftests.sh"
+cp "$SRC/bin/watchdog_settings.py" "$T/tree/bin/"; chmod +x "$T/tree/bin/selftests.sh"
+git -C "$T/tree" init -q
+# a, b: write the SAME fixed temp name and the tree's alert log, sleep, assert they see only their own bytes; they record when they ran
+for n in a b; do cat >"$T/tree/bin/$n-selftest.sh" <<S
+#!/usr/bin/env bash
+s=\$EPOCHREALTIME; F=\${TMPDIR:-/tmp}/fixed; L=/workspace/.supervisor/logs/alerts.log
+mkdir -p "\$(dirname \$L)"; printf 'own-$n' >"\$F"; printf 'alert-$n\n' >>"\$L"; sleep 1
+[ "\$(cat \$F)" = own-$n ] && [ "\$(cat \$L)" = alert-$n ] || { echo "FAIL $n saw bytes of another selftest"; exit 1; }
+[ $n != a ] || { hermes send x 2>/dev/null && { echo "FAIL hermes send was not refused"; exit 1; }; }
+[ $n != a ] || { hermes probe; hermes -p x send y 2>/dev/null; hermes --x send z 2>/dev/null; hermes -- send z 2>/dev/null; }
+echo "\$s \$EPOCHREALTIME" >"\$MARKS/$n"; echo "selftest PASS"
+S
+done
+printf '#!/usr/bin/env bash\n# selftest: serial\ns=$EPOCHREALTIME; sleep 1; echo "$s $EPOCHREALTIME" >"$MARKS/s"; echo "selftest PASS"\n' >"$T/tree/bin/s-selftest.sh"
+printf '#!/usr/bin/env bash\necho "FAIL boom line"; echo "selftest FAIL"; exit 1\n' >"$T/tree/bin/f-selftest.sh"
+printf '#!/usr/bin/env bash\necho "selftest PASS"\n' >"$T/tree/bin/a_b-selftest.sh"
+printf '#!/usr/bin/env bash\n: >%q/canary 2>/dev/null; echo "selftest PASS"\n' "$T/tree" >"$T/tree/bin/c-selftest.sh"   # writes to its tree's real path
+chmod +x "$T"/tree/bin/*-selftest.sh
+# a stand-in for the real hermes that records its calls: the runner's wrapper passes to it, also when this runs under an outer runner
+mkdir "$T/rh"; printf '#!/usr/bin/env bash\necho "$*" >>%q\n' "$T/hcalls" >"$T/rh/hermes"; chmod +x "$T/rh/hermes"
+# the runner's temp folder is $T/tmp (TMPDIR), so $T itself stays visible inside the namespace for the marks
+run() { PATH="$T/rh:$PATH" TMPDIR="${TDX:-$T/tmp}" MARKS="$T/marks" WATCHDOG_SETTINGS="$T/set.json" "$T/tree/bin/selftests.sh" "$@" >"$T/out" 2>&1; echo $? >"$T/rc"; }
+echo '{"test_rerun": {"parallel": 1}}' >"$T/set.json"
+
+run a b
+ok 'grep -qx "ok   a-selftest" "$T/out" && grep -qx "ok   b-selftest" "$T/out" && [ "$(tail -1 "$T/out")" = "selftests PASS" ] && [ "$(cat "$T/rc")" = 0 ]' "S1 two selftests that share a fixed temp name and an alert log pass (each sees only its own bytes), hermes send refused inside"
+ok 'grep -qx probe "$T/hcalls" && ! grep -qw send "$T/hcalls"' "S1 the real hermes gets the other call and no call holding send (also after -p)"
+ok '[ -z "$(ls -A "$T/tmp")" ] && [ ! -e "$T/tree/.supervisor" ] && [ -z "$(git -C "$T/tree" status --short -uall | grep -v "bin/")" ]' "S1 the source tree, its alert log and the shared temp folder hold nothing the fakes wrote"
+ok '[ "$(grep -c "^ok " "$T/out")" = 2 ]' "S1 a named run runs only the named selftests"
+run c
+ok 'grep -qx "ok   c-selftest" "$T/out" && [ ! -e "$T/tree/canary" ]' "S1 a tree outside the stack path: a selftest writing to the tree's real path reaches its copy, never the source tree"
+
+run f a
+ok '[ "$(sed -n 1p "$T/out")" = "FAIL f-selftest" ] && sed -n 2p "$T/out" | grep -qx "     FAIL boom line" && [ "$(sed -n 3p "$T/out")" = "ok   a-selftest" ] && [ "$(tail -1 "$T/out")" = "selftests FAIL (1)" ] && [ "$(cat "$T/rc")" = 1 ]' "S1 a failing selftest: its FAIL line and its detail in list order, selftests FAIL (1), exit 1"
+run nope
+ok 'grep -qx "FAIL nope-selftest" "$T/out" && grep -q "no such selftest" "$T/out" && [ "$(tail -1 "$T/out")" = "selftests FAIL (1)" ] && [ "$(cat "$T/rc")" = 1 ]' "S1 an unknown name is FAIL, not skipped"
+run ../x
+ok 'grep -qx "FAIL ../x-selftest" "$T/out" && [ "$(cat "$T/rc")" = 1 ]' "S1 a name that is not plain characters is FAIL"
+run 'a b' a_b
+ok '[ "$(sed -n 1p "$T/out")" = "FAIL a b-selftest" ] && grep -qx "ok   a_b-selftest" "$T/out" && [ "$(tail -1 "$T/out")" = "selftests FAIL (1)" ] && [ "$(cat "$T/rc")" = 1 ]' "S1 a refused name never shares result files with a valid one (a b and a_b)"
+
+# S2 up to N at once (N is data: test_rerun.parallel in the watchdog settings); a selftest marked serial runs alone, after the batch
+overlap() { awk 'FNR==1{s[++n]=$1; e[n]=$2} END{exit !(s[1] < e[2] && s[2] < e[1])}' "$T/marks/$1" "$T/marks/$2"; }
+echo '{"test_rerun": {"parallel": 2}}' >"$T/set.json"; rm -f "$T/marks"/*; run a b s
+ok 'overlap a b && ! overlap a s && ! overlap b s && [ "$(grep -c "^ok " "$T/out")" = 3 ] && [ "$(tail -1 "$T/out")" = "selftests PASS" ]' "S2 N=2: a and b run at the same time (and pass), the serial selftest overlaps neither"
+echo '{"test_rerun": {"parallel": 1}}' >"$T/set.json"; rm -f "$T/marks"/*; run a b
+ok '! overlap a b && [ "$(grep -c "^ok " "$T/out")" = 2 ]' "S2 N=1: the same path run one at a time, no overlap"
+echo '{"test_rerun": {"parallel": 2}}' >"$T/set.json"; rm -f "$T/marks"/*; SELFTESTS_TIMES="$T/times" run f a b
+ok '[ "$(sed -n 1p "$T/out")" = "FAIL f-selftest" ] && [ "$(grep "^ok " "$T/out" | tr -d "\n")" = "ok   a-selftestok   b-selftest" ] && [ "$(cut -f2,3 "$T/times" | tr "\n" " ")" = "f	FAIL a	ok b	ok " ] && grep -Eq "^[0-9]+\.[0-9]{3}	f	FAIL$" "$T/times"' "S2 the output is in list order whatever finished first; SELFTESTS_TIMES gets one line per selftest"
+
+run a a-selftest a
+ok '[ "$(cat "$T/out")" = "$(printf "ok   a-selftest\nselftests PASS")" ]' "S2 a name given twice (also as <name>-selftest) runs once, first-seen order"
+# S4 the quick tier: --quick runs the names `test-map.py quick` prints, same isolation and output; an unreadable or empty list is one FAIL, never the full list, never nothing
+cat >"$T/tree/bin/test-map.py" <<'S'
+import os, sys
+d = os.path.dirname(os.path.abspath(__file__))
+if os.path.exists(d + "/qfail"): sys.exit(print("list unreadable", file=sys.stderr) or 1)
+if not os.path.exists(d + "/qempty"): print("a\nf")
+S
+rm -f "$T/marks"/*; run --quick
+ok '[ "$(sed -n 1p "$T/out")" = "ok   a-selftest" ] && [ "$(sed -n 2p "$T/out")" = "FAIL f-selftest" ] && [ "$(tail -1 "$T/out")" = "selftests FAIL (1)" ] && [ -e "$T/marks/a" ] && [ ! -e "$T/marks/b" ]' "S4 --quick runs the quick list of the test map and only that"
+touch "$T/tree/bin/qfail"; rm -f "$T/marks"/*; run --quick
+ok 'grep -q "FAIL the quick list cannot be read: list unreadable" "$T/out" && [ "$(tail -1 "$T/out")" = "selftests FAIL (1)" ] && [ "$(cat "$T/rc")" = 1 ] && [ -z "$(ls -A "$T/marks")" ]' "S4 --quick with a list that cannot be read: one FAIL, exit 1, nothing ran"
+rm "$T/tree/bin/qfail"; touch "$T/tree/bin/qempty"; run --quick
+ok 'grep -q "FAIL the quick list cannot be read" "$T/out" && [ "$(cat "$T/rc")" = 1 ] && [ -z "$(ls -A "$T/marks")" ]' "S4 --quick with an empty list: one FAIL, exit 1, nothing ran"
+run a-selftest
+ok '[ "$(cat "$T/out")" = "$(printf "ok   a-selftest\nselftests PASS")" ]' "S2 a failed check named as the watchdog sees it (a-selftest) reruns that selftest, isolated"
+
+# R16 faults of the runner, on a second tree (the stack tree's filesystem, not the temp folder's):
+# F1 the copy lies on the tree's own filesystem; F2 a tracked file is tracked in the copy and an untracked one is not (odd names too); F3 a started selftest never sees SELFTESTS_TIMES;
+# F4 a folder of a runner that is no longer alive is swept, one of a live runner is not.
+mkdir -p "$T2/bin" "$T2/tmp"; sed 's/^for t in [a-z].*; do$/for t in t; do/' "$SRC/bin/selftests.sh" >"$T2/bin/selftests.sh"; cp "$SRC/bin/watchdog_settings.py" "$T2/bin/"; chmod +x "$T2/bin/selftests.sh"
+cat >"$T2/bin/t-selftest.sh" <<'S'
+#!/usr/bin/env bash
+n=$(git -C /workspace ls-files | grep -c 'untracked'); k=$(git -C /workspace ls-files -- bin/tracked.txt ./-tracked.txt | wc -l)
+[ "$(stat -f -c %T /workspace)" = "$FSWANT" ] || { echo "FAIL the copy is on a $(stat -f -c %T /workspace) filesystem, the source tree on $FSWANT"; echo "selftest FAIL"; exit 1; }
+[ "$n" = 0 ] && [ "$k" = 2 ] && [ -e /workspace/bin/untracked.txt ] && [ -e "/workspace/-untracked name.txt" ] || { echo "FAIL tracked/untracked files differ in the copy (untracked tracked: $n, tracked seen: $k)"; echo "selftest FAIL"; exit 1; }
+[ -z "${SELFTESTS_TIMES:-}" ] || { echo "FAIL a started selftest sees SELFTESTS_TIMES"; echo "selftest FAIL"; exit 1; }
+[ ! -e /workspace/gone.txt ] && [ -z "$(git -C /workspace ls-files -- gone.txt)" ] || { echo "FAIL a tracked file deleted on disk is in the copy or its commit"; echo "selftest FAIL"; exit 1; }
+echo "$(stat -f -c %T "${TMPDIR:-/tmp}") $(stat -f -c %T /workspace)" >"$FSMARK"
+echo "selftest PASS"
+S
+printf '#!/usr/bin/env bash\n: >"$FSMARK.w"; sleep 30; echo "selftest PASS"\n' >"$T2/bin/w-selftest.sh"; chmod +x "$T2/bin/w-selftest.sh"
+chmod +x "$T2/bin/t-selftest.sh"; echo tracked >"$T2/bin/tracked.txt"; echo tracked >"$T2/-tracked.txt"; echo gone >"$T2/gone.txt"
+git -C "$T2" init -q; git -C "$T2" add -- bin ./-tracked.txt gone.txt; git -C "$T2" -c user.name=t -c user.email=t@scratch.invalid commit -qm t
+rm "$T2/gone.txt"; echo u >"$T2/bin/untracked.txt"; echo u >"$T2/-untracked name.txt"
+# each run folder has a twin of the same name in the temp folder whose .alive names it; a twin naming another tree's folder is not this tree's
+for n in dead live other; do mkdir -p "$T2/.scratch/selftests.$n" "$T/tmp/selftests.$n"; : >"$T2/.scratch/selftests.$n/.alive"; echo "$T2/.scratch/selftests.$n" >"$T/tmp/selftests.$n/.alive"; done
+echo "/elsewhere/.scratch/selftests.other" >"$T/tmp/selftests.other/.alive"
+flock "$T2/.scratch/selftests.live/.alive" sleep 60 & SLP=$!; sleep 0.3
+t2run() { FSWANT=$(stat -f -c %T "$T2") FSMARK="$T/fs" SELFTESTS_TIMES="$T/times2" TMPDIR="$T/tmp" WATCHDOG_SETTINGS="$T/set.json" "$T2/bin/selftests.sh" "$@" >"$T/out" 2>&1; echo $? >"$T/rc"; }
+t2run
+ok '[ "$(cat "$T/out")" = "$(printf "ok   t-selftest\nselftests PASS")" ]' "F1 F2 F3 the copy is on the tree's own filesystem, tracks what the tree tracks (odd names too; a tracked file deleted on disk is in neither), and the selftest sees no SELFTESTS_TIMES"
+ok '[ "$(cut -f2,3 "$T/times2")" = "$(printf "t\tok")" ]' "F3 the caller's times file holds only the runner's own line"
+ok '[ ! -e "$T2/.scratch/selftests.dead" ] && [ -e "$T2/.scratch/selftests.live" ] && [ "$(ls -A "$T2/.scratch" | wc -l)" = 1 ]' "F4 a folder of a runner that is gone is swept, one of a live runner and the runner's own are not left/removed"
+left() { [ "$(ls -A "$T2/.scratch" | tr '\n' ' ')" = "selftests.live " ] && [ "$(ls -A "$T/tmp" | tr '\n' ' ')" = "selftests.live selftests.other " ]; }
+ok 'left' "G1 the same in the temp folder: the dead runner's twin is swept, the live runner's twin and another tree's are kept, the runner's own is removed"
+fs=$(stat -f -c %T "$T/tmp"); [ "$fs" = "$(stat -f -c %T "$T2")" ] && echo "skip G1 the temp folder and the tree are both $fs here: cannot tell where a selftest's temp folder lies" ||
+  ok '[ "$(cat "$T/fs")" = "$fs $(stat -f -c %T "$T2")" ]' "G1 a started selftest's temp folder lies on the caller's temp filesystem, its tree on the tree's"
+# TERM: the runner stops its selftest, removes its folders in both places, and says why it stopped
+FSWANT=x FSMARK="$T/fs" TMPDIR="$T/tmp" WATCHDOG_SETTINGS="$T/set.json" "$T2/bin/selftests.sh" w >"$T/out" 2>&1 & r=$!
+for i in $(seq 100); do [ -e "$T/fs.w" ] && break; sleep 0.1; done; kill -TERM $r; wait $r; echo $? >"$T/rc"
+ok '[ -e "$T/fs.w" ] && [ "$(cat "$T/rc")" = 143 ] && [ "$(tail -1 "$T/out")" = "selftests FAIL (stopped by a signal)" ] && ! pgrep -f "/workspace/bin/w-selftest.sh" >/dev/null && left' "G1 G2c TERM: the selftest is stopped, nothing left in either place, the last line names the signal"
+kill $SLP 2>/dev/null; SLP=
+# G2a G2b the run folder cannot be made (.scratch a symbolic link out of the tree, a file): every name FAIL with the reason, summary last, nothing made anywhere
+mkdir -p "$T/out-of-tree"; mv "$T2/.scratch" "$T/s.keep"
+for k in link file; do
+  [ $k = link ] && ln -s "$T/out-of-tree" "$T2/.scratch" || echo x >"$T2/.scratch"
+  t2run t w
+  ok '[ "$(cat "$T/out" | grep -c "^FAIL [tw]-selftest$")" = 2 ] && [ "$(grep -c "^     FAIL .*\.scratch" "$T/out")" = 2 ] && [ "$(tail -1 "$T/out")" = "selftests FAIL (2)" ] && [ "$(wc -l <"$T/out")" = 5 ] && [ "$(cat "$T/rc")" = 1 ] && [ -z "$(ls -A "$T/out-of-tree")" ] && [ "$(ls -A "$T/tmp" | tr "\n" " ")" = "selftests.live selftests.other " ]' "G2a G2b .scratch a $k: every name FAIL with a reason naming .scratch, the summary last, nothing made"
+  rm -f "$T2/.scratch"
+done
+mv "$T/s.keep" "$T2/.scratch"
+# G3 a dead run folder whose twin's .alive is a FIFO: the sweep never opens it (it would block under the gate): the run ends, the FIFO stays untouched
+mkdir "$T2/.scratch/selftests.fifo" "$T/tmp/selftests.fifo"; : >"$T2/.scratch/selftests.fifo/.alive"; mkfifo "$T/tmp/selftests.fifo/.alive"
+FSWANT=$(stat -f -c %T "$T2") FSMARK="$T/fs" TMPDIR="$T/tmp" WATCHDOG_SETTINGS="$T/set.json" timeout -k 5 60 "$T2/bin/selftests.sh" t >"$T/out" 2>&1; echo $? >"$T/rc"
+ok '[ "$(cat "$T/rc")" = 0 ] && [ -p "$T/tmp/selftests.fifo/.alive" ] && [ ! -e "$T2/.scratch/selftests.fifo" ]' "G3 a twin whose .alive is a FIFO: the run ends and passes, the FIFO is untouched, the dead run folder is swept"
+rm -rf "$T/tmp/selftests.fifo"
+
+# fail closed: no bubblewrap on PATH, and a bubblewrap that refuses: every selftest FAIL with a plain line, nothing ran
+mkdir -p "$T/nobwrap" "$T/badbwrap"
+for f in /usr/bin/* /bin/*; do [ "${f##*/}" = bwrap ] || ln -sf "$f" "$T/nobwrap/" 2>/dev/null; done
+printf '#!/bin/sh\necho "bwrap: refused for the test" >&2\nexit 1\n' >"$T/badbwrap/bwrap"; chmod +x "$T/badbwrap/bwrap"
+for p in "$T/nobwrap" "$T/badbwrap:$PATH"; do
+  rm -f "$T/marks"/*; PATH=$p run a b
+  ok 'grep -qx "FAIL a-selftest" "$T/out" && grep -qx "FAIL b-selftest" "$T/out" && grep -q "     FAIL cannot make the private copy or the mount namespace" "$T/out" && [ "$(tail -1 "$T/out")" = "selftests FAIL (2)" ] && [ "$(cat "$T/rc")" = 1 ] && [ -z "$(ls -A "$T/marks")" ]' "S1 fail closed ($(basename "${p%%:*}")): every selftest FAIL with the plain line, nothing ran"
+done
+mkdir "$T/c:d"; TDX="$T/c:d" run a
+ok 'grep -qx "FAIL a-selftest" "$T/out" && grep -q "holds a colon.*nothing started" "$T/out" && [ "$(cat "$T/rc")" = 1 ] && ! grep -qw send "$T/hcalls"' "S1 a temp folder whose path holds a colon: nothing started (the hermes wrapper would be on no PATH entry)"
+mkdir "$T/rel"; ( cd "$T" && TDX=rel run a )
+ok 'grep -qx "FAIL a-selftest" "$T/out" && grep -q "     FAIL the temp folder rel is not an absolute path.*nothing started" "$T/out" && [ "$(cat "$T/rc")" = 1 ] && ! grep -qw send "$T/hcalls" && [ -z "$(ls -A "$T/rel")" ]' "S1 a temp folder that is not an absolute path: nothing started, with the reason (the hermes wrapper would be on no PATH entry)"
+printf 'hermes() { echo "fn $*" >>%q; }\n' "$T/hcalls" >"$T/benv"
+( . "$T/benv"; export -f hermes; BASH_ENV="$T/benv" run a )
+ok 'grep -qx "ok   a-selftest" "$T/out" && ! grep -q "^fn " "$T/hcalls"' "S1 a hermes function the caller exports or defines through BASH_ENV reaches no selftest"
+
+
+[ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

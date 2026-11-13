@@ -39,16 +39,33 @@ def _parse():
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError as e:   # an editor's ANSI save: name the line like any other bad line, never crash
         raise OwnerConfigError(f"{p} line {raw[:e.start].count(10) + 1}: not {FORMS} (the line is not UTF-8 text)")
+    return p, parse_env(text, p)
+
+def parse_env(text, where):
+    """{key: value} of owner-file text, strictly (LINE per line, blank lines and # comments); a bad line raises OwnerConfigError."""
     cfg = {}
     for n, line in enumerate(text.split("\n"), 1):
         if not line.strip(" \t\r") or line.lstrip(" \t").startswith("#"):
             continue
         m = LINE.fullmatch(line)
         if not m:
-            raise OwnerConfigError(f"{p} line {n}: not {FORMS}")
+            raise OwnerConfigError(f"{where} line {n}: not {FORMS}")
         cfg[m[1]] = next(v for v in m.groups()[1:] if v is not None)
-    return p, cfg
+    return cfg
 
+def line(key, value):
+    """The canonical line KEY='value' (F1 W4, the only writer). The strict parser has no escapes, so a value with a single quote is
+    written KEY="value" when it holds no $, backtick, backslash or double quote; one that holds both kinds, a line break or NUL cannot
+    be read back as itself and is refused (OwnerConfigError), never written in a form that reads differently. Bash reads it the same."""
+    if not (isinstance(key, str) and re.fullmatch(r"[A-Z][A-Z0-9_]*", key)):
+        raise OwnerConfigError("a key is upper-case letters, digits and _, starting with a letter")
+    if not isinstance(value, str) or re.search(r"[\n\r\0]", value):
+        raise OwnerConfigError(f"{key}: a value is one line of text")
+    if "'" not in value:
+        return f"{key}='{value}'"
+    if not re.search(r'[$`\\"]', value):
+        return f'{key}="{value}"'
+    raise OwnerConfigError(f"{key}: a value with a single quote and also a $, backtick, backslash or double quote cannot be stored in this file")
 
 def load():
     p, cfg = _parse()

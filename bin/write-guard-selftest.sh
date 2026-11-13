@@ -96,6 +96,73 @@ wf() { run write_file "$(jq -nc --arg p "$1" '{path: $p, content: "x"}')" "${2:-
 sh() { run terminal "$(jq -nc --arg c "$1" '{command: $c}')" "${2:-$W}"; }
 said() { grep -q -- "$1" "$T/out"; }
 
+# ---- T1 (F1 W4 r5): lines 1..98 above are the harness the qa tests take; the in-process route is defined here, after it
+ok() { local REAL=; case $1 in *'$WGA'*|*'$AL'*|*FAKE_LOG*) REAL=1 ;; esac   # T1 (r5): a case that reads the alert log or the board calls runs its hooks as real processes
+  if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
+hookrun() {  # hookrun <fixture> <card> <profile> <workspace> <tool> <tool_input json> <cwd> [env...]: the guard's exit code, as run
+  # by a worker bound per <fixture> to <card>, assigned to ${ASG:-<profile>}; the payload names <profile>
+  local fx=$1 c=$2 pr=$3 ws=$4 tool=$5 in=$6 cwd=$7 pay; shift 7
+  pay=$(jq -nc --arg t "$tool" --argjson a "$in" --arg c "$cwd" --arg p "$pr" '{tool_name: $t, tool_input: $a, session_id: "s1", cwd: $c, profile: $p, extra: {}}')
+  if [ "$fx" = bind ] && [ -z "${REAL:-}" ]; then bjrun "$c" "${ASG:-$pr}" "$ws" "stella/$c-x" "$pay" "$pr|$tool" "$@"; return; fi
+  bound "$fx" "$c" "${ASG:-$pr}" "$ws" "stella/$c-x" "$pay" -- env "$@" python3 "$G"; }
+# T1 (F1 W4 r5): a bound row (fixture bind, no alert or board-call assertion) is judged by a judge that runs AS the bound worker's child, one per
+# (card, assignee, workspace, branch): the card proof is the real one (the process tree, the stub board), and the hook's whole script runs in it with
+# the row's environment, folder and payload, its exit code and printed output as a process gives them. The first row of each (profile, tool,
+# exit code) class also runs through bound() as a real hook process, and both must agree. The other fixtures (the proof failing) stay processes.
+cat >"$T/bjudge.py" <<'PY'
+import base64, io, json, os, sys, traceback
+inp, outp = sys.argv[1:3]; codes = {}; open(os.path.join(os.path.dirname(inp), "jpid"), "w").write(str(os.getpid())); keep = (sys.stdout, sys.stderr, sys.stdin, sys.argv, dict(os.environ), os.getcwd())
+while True:
+    with open(inp, encoding="utf-8") as f:
+        line = f.readline()
+    if not line.strip() or line.strip() == "QUIT":
+        break
+    r = json.loads(line); g = r["hook"]
+    if g not in codes:
+        codes[g] = compile(open(g, encoding="utf-8").read(), g, "exec")
+    for m in [m for m in sys.modules if m in ("roles", "alert_catalog")]:
+        del sys.modules[m]   # as a fresh process: the stack modules read their environment when imported
+    os.environ.clear(); os.environ.update(r["env"] if "env" in r else {**keep[4], **r["add"]}); os.chdir(r["cwd"])   # the full environment, or the one at start plus the row's own
+    out = io.StringIO(); sys.stdout = sys.stderr = out; sys.stdin = io.StringIO(r["payload"]); sys.argv = [g]
+    try:
+        exec(codes[g], {"__name__": "__main__", "__file__": g}); rc = 0
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else 0 if e.code is None else 1
+        if isinstance(e.code, str):
+            print(e.code, file=out)
+    except BaseException:
+        traceback.print_exc(file=out); rc = 1
+    finally:
+        sys.stdout, sys.stderr, sys.stdin, sys.argv = keep[:4]; os.environ.clear(); os.environ.update(keep[4]); os.chdir(keep[5])
+    with open(outp, "w", encoding="utf-8") as f:
+        f.write(f"{rc}\t{base64.b64encode(out.getvalue().encode()).decode()}\n")
+PY
+: >"$T/bjseen"; : >"$T/bjrows"
+bjrun() {   # bjrun <card> <assignee> <workspace> <branch> <payload> <class> [env...]: exit code echoed, output in $T/out
+  local c=$1 a=$2 ws=$3 br=$4 pay=$5 cls=$6 d rc b req; shift 6
+  d=$T/bj/$(printf '%s' "$c|$a|$ws|$br" | md5sum | cut -c1-16)
+  if [ ! -s "$d/card.json" ]; then   # a judge for this binding: a fake worker that runs it, the card bound to that worker
+    mkdir -p "$d"; mkfifo "$d/in" "$d/oq"; : >"$d/payload"; rm -f "$FAKE_CARDS"/*.json
+    bash "$T/worker.sh" "$d" "$T/runner.py" python3 -I "$T/bjudge.py" "$d/in" "$d/oq" </dev/null >/dev/null 2>&1 &
+    for _ in $(seq 200); do [ -s "$d/pid" ] && break; sleep 0.02; done
+    mk bind "$c" "$a" "$ws" "$br" "$(cat "$d/pid")"; cp "$FAKE_CARDS"/*.json "$d/card.json"; echo "$d" >>"$T/bjdirs"; env | sort | md5sum >"$d/envh"; touch "$d/go"
+  fi
+  rm -f "$FAKE_CARDS"/*.json; cp "$d/card.json" "$FAKE_CARDS/$(printf '%s' "$c" | tr -c 'A-Za-z0-9_' '_').json"
+  if [ "$(env | sort | md5sum)" = "$(<"$d/envh")" ]; then   # the exported environment is the judge's own: send the row's variables only
+    req=$(jq -nc --arg p "$pay" --arg h "$G" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, add: ($ARGS.positional | map(capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}' --args "$@")
+  else
+    req=$(env -0 "$@" | jq -Rsc --arg p "$pay" --arg h "$G" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, env: (split("\u0000") | map(select(length > 0) | capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}')
+  fi
+  printf '%s\n' "$req" >"$d/in"; IFS=$'\t' read -r rc b <"$d/oq"; printf '%s' "$b" | base64 -d >"$T/out"
+  [ -n "${NOCLS:-}" ] || printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$c" "$a" "$ws" "$br" "$(printf '%s' "$pay" | base64 -w0)" "$([ $# -gt 0 ] && printf '%s\0' "$@" | base64 -w0)" >>"$T/bjrows"
+  if [ -z "${NOCLS:-}" ] && ! grep -qxF -- "$cls|$rc" "$T/bjseen"; then
+    echo "$cls|$rc" >>"$T/bjseen"; cp "$T/out" "$T/out.judge"
+    local rrc; rrc=$(bound bind "$c" "$a" "$ws" "$br" "$pay" -- env "$@" python3 "$G")
+    if [ "$rrc" != "$rc" ] || [ "$(sort "$T/out")" != "$(sort "$T/out.judge")" ]; then echo "     route agreement: $cls exit $rc in the judge, $rrc as a process" >&2; echo 99; return; fi
+    cp "$T/out.judge" "$T/out"
+  fi
+  echo "$rc"; }
+bjstop() { local d; [ -s "$T/bjdirs" ] || return 0; while read -r d; do printf 'QUIT\n' >"$d/in"; done <"$T/bjdirs"; : >"$T/bjdirs"; }
 ok '[ "$(wf "$W/a.md")" = 0 ] && [ "$(wf sub/b.md)" = 0 ]' "write_file inside the own worktree (absolute and relative): allowed"
 ok '[ "$(wf /workspace/config/owner.env)" = 2 ] && said "only inside their own worktree"' "write_file /workspace/config/owner.env: refused, says to write in the worktree"
 ok '[ "$(wf /workspace/bin/x)" = 2 ]' "write_file /workspace/bin/x: refused"
@@ -225,6 +292,12 @@ for p in $(python3 -c 'import sys; sys.path.insert(0, "/workspace/bin"); import 
 done
 ok '! grep -nE "^(PROTECTED|CONFIG) = \[" "$G"' "the write guard keeps no protected list of its own"
 ok '[ "$(ROLES_FILE=/nonexistent wf "$W/a.md")" = 2 ] && said "STL-CFG-303"' "a missing role table: every write refused (STL-CFG-303)"
+# r7 A6 (W4-CV4-05): an owner command file that cannot be read turns the by-bytes rule off, so the guard refuses every call instead (a scratch table names a scratch file)
+UR=/workspace/.scratch/wgst-unread-$C; mkdir -p "$UR"; printf '#!/bin/sh\n' >"$UR/cmd.sh"; jq --arg c "${UR#/workspace/}/cmd.sh" '.owner_commands += [$c]' /workspace/docs/hermes-local/roles.json >"$T/unread.json"
+ok '[ "$(ROLES_FILE=$T/unread.json wf "$W/a.md")" = 0 ]' "r7 A6 control: a table naming one more owner command, readable: a write in the worktree is allowed"
+chmod 000 "$UR/cmd.sh"
+ok '[ "$(ROLES_FILE=$T/unread.json wf "$W/a.md")" = 2 ] && said "STL-CFG-303"' "r7 A6: an owner command file that cannot be read: every call refused (STL-CFG-303), the by-bytes rule is never silently off"
+rm -rf "$UR"
 ok '[ "$(hookrun bind "$C" x-unlisted "/workspace/.worktrees/$C" write_file "$(wjson "/workspace/.worktrees/$C/a.md")" /tmp)" = 2 ] && grep -q "has no card worktree" "$T/out" && [ "$(jq -nc --arg p "$HOME/.hermes/profiles/x-unlisted/cache/scratch/a" '"'"'{tool_name: "write_file", tool_input: {path: $p, content: "x"}, cwd: "/tmp", profile: "x-unlisted", extra: {}}'"'"' | python3 "$G" >/dev/null 2>&1; echo $?)" = 0 ] && [ "$(jq -nc '"'"'{tool_name: "write_file", tool_input: {path: "/tmp/x"}, cwd: "/tmp", profile: "x-unlisted", extra: {}}'"'"' | python3 "$G" >/dev/null 2>&1; echo $?)" = 0 ]' "a profile with no row: no card worktree (refused there), /tmp still allowed"
 # K1 (real tree): for every builder profile of the role table, the card is proven by a fake worker bound to a running card.
 # OWN is the card's own worktree inside /workspace (F8: that path is what counts); it need not exist, nothing is written.
@@ -326,7 +399,7 @@ for p in $BUILDERS; do
   : >"$AL"
   ok '[ "$(hookrun stranger $C $p $OWN write_file "$(wjson "$OWN/a.md")" $OWN)" = 2 ] && grep -qF "[STL-GRD-603]" "$T/out" && grep -qF "the stack could not identify this card" "$T/out" && grep -qF "fault in the stack, not a rule about" "$T/out" && ! grep -qF "(D40)" "$T/out" && [ "$(grep -c "^STL-GRD-603 " "$AL")" = 1 ] && grep -qF "$CQ" "$AL"' "$p: a card runs for this profile and its proof fails (bound to no ancestor): refused with STL-GRD-603 (a fault in the stack, no (D40) tail), one alerts.log line naming the card"
   : >"$AL"
-  ok '[ "$(hookrun none "" $p $OWN write_file "$(wjson "$OWN/a.md")" $OWN)" = 2 ] && grep -qF "builders write only inside their own worktree" "$T/out" && [ ! -s "$AL" ]' "$p: no running card for the profile: the old rule message and no STL-GRD-603"
+  ok '[ "$(hookrun none "" $p $OWN write_file "$(wjson "$OWN/a.md")" $OWN)" = 2 ] && grep -qF "builders write only inside their own worktree" "$T/out" && [ "$(grep -c "^STL-GRD-604 " "$AL")" = 1 ] && [ "$(wc -l <"$AL")" = 1 ]' "$p: no running card for the profile: the old rule message and exactly one alert line, the role-rule code STL-GRD-604 (r7 A8: no STL-GRD-603, no other line)"
   : >"$AL"
   ok '[ "$(hookrun bind $C $p $OWN write_file "$(wjson "$OWN/a.md")" $OWN PATH=/usr/bin:/bin)" = 2 ] && grep -qF "[STL-GRD-603]" "$T/out" && [ "$(grep -c "^STL-GRD-603 " "$AL")" = 1 ]' "$p: the board cannot be read: refused with STL-GRD-603, one alerts.log line"
   : >"$AL"   # K2, terminal path (verifier round 4): a terminal write under the same stack fault names STL-GRD-603 too
@@ -337,6 +410,217 @@ for p in $BUILDERS; do
   # xargs regression (verifier F2 / RT4-14): a read-only xargs pipeline is allowed, an xargs-fed write verb is refused
   ok '[ "$(hookrun bind $C $p $OWN terminal "$(tjson "ls /tmp | xargs -n1 echo")" $OWN)" = 0 ] && [ "$(hookrun bind $C $p $OWN terminal "$(tjson "ls $OWN | xargs wc -l")" $OWN)" = 0 ] && [ "$(hookrun bind $C $p $OWN terminal "$(tjson "ls /tmp | xargs rm -f")" $OWN)" = 2 ] && grep -qF "feeds paths this guard cannot see" "$T/out"' "$p: ls | xargs echo and xargs wc allowed; xargs rm refused for the right reason"
 done
+# ---- F1 W4 round 2 (G2, G4): the guard reads a command the way the shell will. A card worktree OWN under /workspace is the proven one.
+NL=$'\n'; WGA=$T/sup/logs/alerts.log
+for p in $BUILDERS; do
+  OWN=/workspace/.worktrees/$C
+  wg() { hookrun bind $C $p $OWN terminal "$(tjson "$1")" "${2:-$OWN}"; }
+  # the false-positive controls: everyday commands in the worktree, with literal paths, stay allowed
+  while IFS= read -r c; do
+    c=${c//@O@/$OWN}; ok '[ "$(wg "$c")" = 0 ]' "G2 $p: allowed (an everyday command in the worktree): $c"
+  done <<'G2OK'
+git checkout -- .
+git restore .
+git reset --hard
+git stash
+git add app/settings.py
+git commit -m "touch settings"
+git status
+git diff --stat
+cat src/settings.py
+python3 settings.py --help
+grep -rn settings src
+for f in $(ls); do cat $f; done
+out=@O@/o.txt; echo x > "$out"
+echo hi > @O@/n.txt
+find . -name '*.py' -exec echo {} \;
+npm test
+cp a b
+echo $(date); ls
+for f in *.txt; do mv "$f" "$f.bak"; done
+G2OK
+  ok '[ "$(wg "cat > $OWN/n.md <<'"'"'EOF'"'"'${NL}rm /workspace/bin/x${NL}EOF")" = 0 ] && [ "$(wg "cat > $OWN/n.md <<EOF${NL}text${NL}EOF${NL}ls")" = 0 ]' "G2 $p: allowed: a here-document's body is text, not commands"
+  ok '[ "$(wg "cat <<EOF${NL}\$(rm /workspace/bin/x)${NL}EOF")" = 2 ] && [ "$(wg "cat > $OWN/n.md <<'"'"'EOF'"'"'${NL}text${NL}EOF${NL}rm /workspace/bin/x")" = 2 ] && [ "$(wg "echo \"<<X\"${NL}rm /workspace/bin/x${NL}X")" = 2 ]' "G2 $p: refused: a command substitution inside an unquoted here-document runs; a command after the body, and a << inside quotes, are commands"
+  ok '[ "$(wg "echo ok${NL}ls")" = 0 ] && [ "$(wg "ls${NL}git status")" = 0 ]' "G2 $p: allowed: two harmless lines"
+  ok '[ "$(wg "ls 2>&1")" = 0 ] && [ "$(wg "echo x >&2")" = 0 ] && [ "$(wg "echo x 2>/dev/null")" = 0 ]' "G2 $p: allowed: descriptor duplicates open no file"
+  # refused: every redirect form, a second line, expansions, case, unresolved words, git, owner commands by resolved file
+  while IFS= read -r c; do
+    ok '[ "$(wg "$c")" = 2 ]' "G2 $p: refused: $c"
+  done <<'G2NO'
+echo x >& /workspace/bin/y
+echo x >&/workspace/bin/y
+: <> /workspace/bin/y
+echo x &> /workspace/bin/y
+echo x >| /workspace/bin/y
+echo x 2> /workspace/bin/y
+echo x > /workspace/bi{n,}/y
+echo x > $'/workspace/b\151n/y'
+echo x > /workspace/BIN/y
+echo x > /workspace/bi?/roles.py
+echo x > "$ZZ_UNSET_VAR/y"
+cp a "$ZZ_UNSET_VAR"
+x=/workspace/bin/y; echo x > "$x"
+ls | xargs python3
+find . -name x -exec python3 {} ;
+python3 /workspace/bin/event_log.py append --type apply
+python3 /workspace/bin/Settings.py get X
+python3 /workspace/bin/set*.py get X
+python3 /workspace/bin/set{t,}ings.py get X
+python3 -I -B /workspace/bin/sett''ings.py get X
+python3 $'/workspace/bin/set\164ings.py' get X
+bash /tmp/x-merge-card.sh
+x=/workspace/bin/settings.py; python3 "$x" get X
+python3 "$ZZ_UNSET_VAR" get X
+git checkout HEAD -- .stella/settings.json
+git -C /workspace checkout -- .
+git update-index --add --cacheinfo 100644,0000000000000000000000000000000000000000,.stella/settings.json
+git add --pathspec-from-file=/tmp/l
+git --git-dir=/workspace/.git add x
+git -C /workspace/.worktrees/t_00000000 add x
+echo $(date); rm /workspace/bin/x
+cp a $(echo /workspace/bin/x)
+cp a `echo /workspace/bin/x`
+for f in /workspace/bin/*.py; do rm "$f"; done
+for f in $(ls); do rm "$f"; done
+(cd .); cp a /workspace/bin/b
+G2NO
+  for c in "echo ok${NL}cp /tmp/x /workspace/bin/y" "ls${NL}tee /workspace/bin/y" "ls${NL}dd of=/workspace/bin/y" "echo ok \\${NL}> /workspace/bin/y"; do
+    ok '[ "$(wg "$c")" = 2 ]' "G2 $p: refused (a second line is a command of its own): ${c//$NL/<NL>}"
+  done
+  # git in the main checkout: every form, whatever its paths
+  while IFS= read -r c; do
+    ok '[ "$(wg "$c" /workspace)" = 2 ]' "G2 $p: refused in the main checkout: $c"
+  done <<'G2GIT'
+git checkout -- .
+git checkout HEAD -- docs/hermes-local/roles.json
+git restore .
+git restore --source=HEAD --worktree -- .
+git reset --hard HEAD
+git stash
+git clean -fd
+git hash-object -w x
+git commit-tree HEAD^{tree} -m x
+git update-ref refs/heads/f1/card HEAD
+git am /tmp/p.patch
+git apply --cached /tmp/p.patch
+git commit -m x
+G2GIT
+  : >"$WGA"
+  ok '[ "$(wg "python3 /workspace/bin/settings.py get X")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out" && grep -q "an owner command" "$T/out" && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ] && ! grep -q "owner.env" "$WGA"' "G4 $p: an owner command run: the code, the catalog message, one alert line"
+  : >"$WGA"
+  ok '[ "$(run write_file "$(wjson /workspace/.stella/settings.json)")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out" && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ]' "G4 $p: a write of owner data: the code, one alert line"
+  : >"$WGA"
+  ok '[ "$(wg "echo x > /workspace/.stella/settings.json")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out" && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ]' "G4 $p: a redirect into owner data: the code, one alert line"
+  : >"$WGA"
+  ok '[ "$(wg "echo x > /workspace/.supervisor/logs/events.jsonl")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out" && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ]' "G4 $p: a redirect into an owner state path (the event log): the code, one alert line"
+  : >"$WGA"
+  ok '[ "$(wg "echo x > /workspace/bin/y")" = 2 ] && ! grep -qF "STL-CFG-312" "$T/out" && grep -qF "[STL-GRD-604]" "$T/out" && [ "$(grep -c "^STL-GRD-604 " "$WGA")" = 1 ] && [ "$(wc -l <"$WGA")" = 1 ]' "G4 $p: an older refusal keeps its text, is not called owner data, and carries the role-rule code with one alert line (B.1, r5: was no code and no line)"
+done
+# ---- F1 W4 round 3 (K7, K1b, K8, K9): the rule turned around. A command that names a path no role may write (owner data, the owner settings, the apply tool's
+# state) runs only when its verb is a known reader (the table's read_verbs); an unknown writer needs no list entry to be refused.
+ODF=$(jq -r '.files[] | select(.id == "settings") | .path' "/workspace/$(jq -r .data_index /workspace/docs/hermes-local/roles.json)"); ODD=${ODF%/*}; SCH=$(jq -r '.owner_data[0]' /workspace/docs/hermes-local/roles.json)
+# the 8.3 short name of the first owner command named by name, as this mount gives it (T3: a name is judged by what it resolves to; the short name is found with -ef)
+MCMD=/workspace/$(jq -r '.owner_commands_by_name[0]' /workspace/docs/hermes-local/roles.json); MST=$(basename "${MCMD%.*}" | tr a-z A-Z | cut -c1-6)
+MSN=$(for i in 1 2 3 4 5 6 7 8 9; do x="$(dirname "$MCMD")/$MST~$i.$(printf '%s' "${MCMD##*.}" | tr a-z A-Z | cut -c1-3)"; [ "$x" -ef "$MCMD" ] && echo "$x" && break; done)   # readdir lists no short name: each is tried
+for p in $BUILDERS; do
+  OWN=/workspace/.worktrees/$C
+  wg() { hookrun bind $C $p $OWN terminal "$(tjson "$1")" "${2:-$OWN}"; }
+  for c in "sort -o /workspace/$ODF /etc/hostname" "perl -pi -e s/a/b/ /workspace/$ODF" "touch /workspace/$ODF" "gzip -f /workspace/$ODF" "awk -i inplace 1 /workspace/$ODF" \
+           "curl -s -o /workspace/$ODF file:///etc/hostname" "ex -sc wq /workspace/$ODF" "split -b1 /etc/hostname /workspace/$ODD/x" "tar -C /workspace/$ODD -xf /tmp/x.tar" "cp /tmp/x /workspace/$ODD/" "mkdir /workspace/$ODD/zz-new" "cp -t/workspace/$ODD /tmp/x" \
+           "python3 -c \"open('/workspace/$ODF','w').write('y')\"" "node -e \"require('fs').writeFileSync('/workspace/$ODF','y')\"" "perl -e 'open(F, \">/workspace/$ODF\")'" \
+           "git checkout HEAD -- $ODD" "git restore $ODD" "git rm -r -q $SCH" "git clean -fdx $SCH" "rm -rf $SCH" "mv $SCH moved" "touch $ODF" "cp /tmp/x $SCH/"; do
+    ok '[ "$(wg "$c")" = 2 ] && grep -qF "STL-CFG-312" "$T/out"' "K7 $p: refused, an unknown writer or a folder that holds owner data: $c"
+  done
+  ok '[ "$(wg "python3 - <<EOF${NL}open(\"/workspace/$ODF\",\"w\").write(\"y\")${NL}EOF")" = 2 ] && [ "$(wg "bash <<EOF${NL}echo x > /workspace/$ODF${NL}EOF")" = 2 ]' "K7 $p: refused: an interpreter given owner-path code in a here-document"
+  ok '[ "$(wg "cat <<EOF${NL}notes about /workspace/$ODF${NL}EOF")" = 0 ] && [ "$(wg "cat /workspace/$ODF")" = 0 ]' "K7 $p: allowed: a reader that names an owner path (a here-document body for cat, cat itself)"
+  ok '[ "$(wg "bash <<EOF${NL}export HERMES_DELEGATED_CHILD_CONTEXT=1${NL}EOF")" = 2 ] && [ "$(wg "sh <<EOF${NL}/workspace/bin/merge-card.sh x${NL}EOF")" = 2 ]' "K7 $p: refused: a here-document body is judged by the text checks it had before round 2 (the marker, an owner command by name)"
+  for c in "cat $ODF" "grep -n schema $ODF" "jq . $ODF" "diff $ODF /tmp/x" "git show HEAD:$ODF" "git diff main -- $ODF" "ls $SCH" "head -3 $SCH/zz" "git log --oneline -3 -- $ODD" "wc -l $ODF"; do
+    ok '[ "$(wg "$c")" = 0 ]' "K7 $p: allowed, a known reader names owner data: $c"
+  done
+  ok '[ "$(wg "git add .")" = 0 ] && [ "$(wg "git diff --output=/tmp/x -- $ODF")" = 2 ] && [ "$(wg "find . -name x -fprint /workspace/$ODF")" = 2 ]' "K7 $p: the tree-wide form in the worktree is allowed; a reader that writes by an option is not a reader"
+  ok '[ "$(wg "cp /tmp/x $(echo /workspace/STELLA~1)/schemas/x")" = 2 ] && [ "$(wg "cp /tmp/x /workspace/STELLA~1/schemas/x")" = 2 ] && [ "$(wg "cp /tmp/x /workspace/.STELLA/schemas/x")" = 2 ] && [ -n "$MSN" ] && [ "$(wg "bash $MSN x")" = 2 ]' "K1b $p: a short name and a case variant are the same folder and the same owner command ($MSN)"
+  : >"$WGA"; ok '[ "$(wg "touch /workspace/$ODF")" = 2 ] && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ] && grep -q "role " "$WGA"' "K8 $p: the alert line names the role"
+  ok '[ "$(wg "echo owner.env")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out"' "K8 $p: an older rule that catches a mention of the owner settings file first still says so with the code"
+  ok '[ "$(wg "cp bin/merge-card.sh /tmp/mc; bash /tmp/merge-card x")" = 2 ] && [ "$(wg "bash /tmp/merge-card x")" = 2 ] && [ "$(wg "bash bin/merge-card-selftest.sh")" = 0 ]' "K9 $p: a copy of the merge script under another name (no extension) is refused as at 900d9b3; its selftest is not the script"
+  # B.2 point 14 (r5, W4-CV3-07): a copy of any owner command is refused by its BYTES (a renamed copy); a like-named file with other bytes is not
+  cp /workspace/bin/settings.py "$T/x-settings.py"; cp /workspace/bin/event_log.py "$T/qa-copy.py"; printf 'print(1)\n' >"$T/mine-settings.py"
+  ok '[ "$(wg "python3 $T/x-settings.py get X")" = 2 ] && grep -qF "STL-CFG-312" "$T/out" && [ "$(wg "python3 $T/qa-copy.py append")" = 2 ] && [ "$(wg "python3 $T/mine-settings.py")" = 0 ] && [ "$(wg "cat $T/x-settings.py")" = 0 ]' "B.2 point 14 $p: a renamed copy of an owner command (settings.py, event_log.py) is refused by its bytes; a like-named file with other bytes, and a read of the copy, are allowed"
+  # r6 T3 (R14): the copy is judged by what it IS however the run names it (cwd = the folder that holds it): a bare name, an interpreter's script, wrappers,
+  # xargs, a nested command line, a function body, quoted code, stdin, python -m; a reader and rm may name it, but then nothing in the line runs
+  cp /workspace/bin/merge-card.sh "$T/qa-tool.sh" 2>/dev/null; printf 'echo 1\n' >"$T/mine.sh"
+  for c in "python3 qa-copy.py append" "bash qa-tool.sh" "sh -c 'bash qa-tool.sh'" "env X=1 python3 qa-copy.py" "exec python3 qa-copy.py" "command python3 qa-copy.py" "timeout 5 python3 qa-copy.py" \
+           "echo qa-copy.py | xargs python3" "f() { python3 \"\$@\"; }; f qa-copy.py" "alias r='python3 qa-copy.py'; r" "python3 -m qa-copy" "python3 -c 'import runpy; runpy.run_path(\"qa-copy.py\")'" \
+           "python3 < qa-copy.py" "cat qa-copy.py | python3 -" "cat qa-copy.py | python3" "bash < qa-tool.sh" ". qa-tool.sh" "source ./qa-tool.sh" "chmod +x qa-copy.py" "cp qa-copy.py other.py" \
+           "cat /workspace/bin/settings.py > n.py; python3 n.py" "dd if=/workspace/bin/settings.py of=n.py; python3 n.py" "sed -n p /workspace/bin/settings.py > n.py && python3 n.py" \
+           "git show HEAD:bin/settings.py > n.py; python3 n.py" "cat /workspace/bin/settings.py > n; chmod +x n; ./n"; do
+    ok '[ "$(wg "$c" "$T")" = 2 ] && grep -qF "STL-CFG-312" "$T/out"' "r6 T3 $p: refused: $c"
+  done
+  for c in "cat qa-copy.py" "head -3 qa-tool.sh" "rm qa-nothing-here.py" "bash mine.sh" "python3 mine-settings.py" "cat /workspace/bin/settings.py" "git -C /workspace diff -- bin/settings.py"; do
+    ok '[ "$(wg "$c" "$T")" = 0 ]' "r6 T3 $p: allowed (a read of a copy or of the command, a file with other bytes): $c"
+  done
+  ok '[ "$(wg "rm qa-tool.sh" "$T")" = 0 ]' "r6 T3 $p: allowed: a copy may be removed (rm)"
+  B40=$(printf '{a,b}%.0s' $(seq 1 40))   # T4: built outside the quoted case (its quotes ended the case's own string)
+  ok '[ "$(wg "tee /tmp/zz ${B40}x")" = 2 ]' "K5 $p: a brace-bomb word is refused (more than 64 words), not expanded"
+done
+# T4 (F1 W4 r4): the rule once, proven over a generated set. A verb that is not a known reader (the table's read_verbs) and names a path no role writes, or a
+# folder that holds one, in any argument position, as an attached option value or in a -C / --directory form, is refused with the code. The matrix (every verb
+# x every form x every target) judges through the guard's own reason() in one process (the same code from the parsed payload to the verdict; only the card
+# proof is given: the worktree a bound worker would prove); one command of each form also goes through a real hook process, end to end.
+cat >"$T/matrix.py" <<'PY'
+import json, sys
+G, own, prof = sys.argv[1:4]
+src = open(G).read().split("\nPAY = sys.stdin.read()")[0]   # the guard without its stdin read and exit: its functions, its table
+ns = {"__name__": "wg_matrix", "__file__": G}
+exec(compile(src, G, "exec"), ns)
+ns["own_worktree"] = lambda: (own, "")   # the proof a bound worker gives (the real hook runs below prove it from the process tree)
+bad = 0
+for line in sys.stdin:
+    want, cmd = line.rstrip("\n").split("\t", 1)
+    why = ns["reason"]({"tool_name": "terminal", "tool_input": {"command": cmd}, "cwd": own, "profile": prof})
+    got = "refused" if why and why.startswith("[STL-CFG-312]") else "allowed" if why is None else "other"
+    if got != want:
+        bad += 1; print(f"     {want} expected, {got}: {cmd} :: {(why or '')[:160]}")
+print(f"matrix-bad={bad}")
+PY
+MV=(cp mv install ln tar rsync unzip sort touch gzip perl sed tee dd truncate curl split cpio zip chmod)
+MF=("@V @P" "@V /tmp/x @P" "@V @P/" "@V -C @P" "@V -C@P" "@V --directory=@P" "@V -t @P" "@V -o @P" "@V -x /tmp/x -f @P")
+MT=("/workspace/$ODD" "/workspace/$ODF" "/workspace/$(printf '%s' "$ODD" | tr a-z A-Z)" "/workspace/$(jq -r .applied_state "/workspace/$(jq -r .data_index /workspace/docs/hermes-local/roles.json)" | cut -d/ -f1)")   # the folder, a file, a case variant, a folder above the state paths
+MR=(cat head wc grep jq ls stat cmp)
+{ for v in "${MV[@]}"; do for f in "${MF[@]}"; do for t in "${MT[@]}"; do c=${f//@V/$v}; printf 'refused\t%s\n' "${c//@P/$t}"; done; done; done
+  for v in "${MR[@]}"; do for t in "${MT[@]}"; do printf 'allowed\t%s %s\n' "$v" "$t"; printf 'allowed\t%s /tmp/x %s\n' "$v" "$t"; done; done; } >"$T/matrix.txt"
+MXP=(); for p in $BUILDERS; do python3 -I "$T/matrix.py" "$G" "/workspace/.worktrees/$C" "$p" <"$T/matrix.txt" >"$T/matrix-$p.out" 2>&1 & MXP+=($!); done; wait "${MXP[@]}"   # the builders' matrices side by side (only these: the stranger sleep is a job too)
+for p in $BUILDERS; do
+  OWN=/workspace/.worktrees/$C
+  ok 'grep -q "^matrix-bad=0$" "$T/matrix-$p.out"' "T4 $p: $(grep -c ^refused "$T/matrix.txt") generated non-reader commands (${#MV[@]} verbs x ${#MF[@]} forms x ${#MT[@]} targets) refused with the code, $(grep -c ^allowed "$T/matrix.txt") reader commands allowed"
+  grep "^     " "$T/matrix-$p.out" | head -5
+  wg() { hookrun bind $C $p $OWN terminal "$(tjson "$1")" "${2:-$OWN}"; }
+  k=0; for f in "${MF[@]}"; do v=${MV[$((k % ${#MV[@]}))]}; t=${MT[$((k % ${#MT[@]}))]}; k=$((k+1)); c=${f//@V/$v}; c=${c//@P/$t}
+    ok '[ "$(wg "$c")" = 2 ] && grep -qF "STL-CFG-312" "$T/out"' "T4 $p: the real hook process agrees with the matrix: $c"
+  done
+done
+# K5: no input of any length makes the guard run longer than a fraction of its hook timeout
+BOMB=$(printf '{a,b}%.0s' $(seq 1 24))x; LONG=$(head -c 100000 /dev/zero | tr '\0' 'a')
+for inp in "tee /tmp/zz $BOMB" "cat $BOMB" "echo $LONG" "python3 -c \"print('$LONG')\"" "cp $(printf '/workspace/bin/x%.0s ' $(seq 1 3000)) /tmp"; do
+  st=$(date +%s%N); jq -nc --arg c "$inp" '{tool_name: "terminal", tool_input: {command: $c}, cwd: "/tmp", profile: "zz-qa"}' | python3 "$G" >/dev/null 2>&1; en=$(( ($(date +%s%N) - st) / 1000000 ))
+  ok '[ "$en" -lt 5000 ]' "K5: the write guard answers in ${en} ms (limit 5000, hook timeout 20 s) on a ${#inp}-byte command"
+done
+ROLES_BAD=$T/roles-typeerr.json; jq '.roles[(.profiles | to_entries[0].value.role)].allowed_overrides = [{}]' /workspace/docs/hermes-local/roles.json >"$ROLES_BAD"
+ok '[ "$(jq -nc "{tool_name: \"terminal\", tool_input: {command: \"ls\"}, cwd: \"/tmp\", profile: \"x\"}" | ROLES_FILE=$ROLES_BAD python3 "$G" >"$T/out" 2>"$T/err"; echo $?)" = 2 ] && ! grep -q Traceback "$T/err" && grep -q "STL-" "$T/out"' "CV-12: a table that makes validation raise (not a RolesError) is a refusal with a coded line, never a traceback"
+ok '[ "$(echo "{" | python3 "$G" >"$T/out" 2>"$T/err"; echo $?)" = 2 ] && ! grep -q Traceback "$T/err" && grep -q "STL-CFG-312" "$T/out"' "an exception inside the guard (unreadable payload) is a coded refusal"
 ok '[ "$(ls -A /workspace/.worktrees 2>/dev/null | sort)" = "$REAL_BEFORE" ]' "the real /workspace/.worktrees gained no entries during the run"
 ok '[ "$(tail -c +$((LIVE_SIZE + 1)) "$LIVE_ALERTS" 2>/dev/null | grep -c "^STL-GRD-603 ")" = 0 ]' "no STL-GRD-603 line from this test reached the live alerts.log"
+# T1 (r5): the two routes agree on every 10th bound row judged above (the judge and a real bound hook process, the same row), and a planted
+# difference (the judge given a copy of the guard whose refusal reads otherwise) is caught
+bjagree() { local n=0 i=0 c a ws br p e pay rc rrc args
+  while IFS=$'\t' read -r c a ws br p e; do i=$((i+1)); [ $((i % 10)) = 1 ] || continue
+    mapfile -d '' -t args < <(printf '%s' "$e" | base64 -d); pay=$(printf '%s' "$p" | base64 -d)
+    rc=$(G=$1 NOCLS=1 bjrun "$c" "$a" "$ws" "$br" "$pay" agree "${args[@]}"); cp "$T/out" "$T/ag.judge"
+    [ -f "$T/ag.real.$i" ] || { bound bind "$c" "$a" "$ws" "$br" "$pay" -- env "${args[@]}" python3 "$G" >"$T/ag.rc.$i"; cp "$T/out" "$T/ag.real.$i"; }   # the process run once per row, kept for the control
+    { [ "$rc" = "$(<"$T/ag.rc.$i")" ] && [ "$(sort "$T/ag.real.$i")" = "$(sort "$T/ag.judge")" ]; } || n=$((n+1))
+  done < <(cat "$T/bjrows"); echo "$n"; }
+sed 's/"action": "block"/"action": "blocked"/' "$G" >"$T/wg-planted.py"
+BN=$(wc -l <"$T/bjrows"); BD=$(bjagree "$G"); BX=$(bjagree "$T/wg-planted.py")
+ok '[ "$BN" -ge 100 ] && [ "$BD" = 0 ]' "T1 route agreement: every 10th of $BN bound rows judged in the worker's judge gives the same exit code and output as a real bound hook process ($BD differ)"
+ok '[ "$BX" -gt 0 ]' "T1 route agreement, negative control: a planted difference in the judge's guard is caught ($BX differ)"
+bjstop   # the judges end
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

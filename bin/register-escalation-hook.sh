@@ -15,9 +15,9 @@
 # change: backed up first to ~/.hermes/backups/hooks-<UTC time>/, then replaced atomically (F25, S25). A registered hook
 # this script does not list is reported as UNLISTED (never removed: remove a stale one by hand).
 # usage: register-escalation-hook.sh           register
-#        register-escalation-hook.sh --check   change nothing; report missing hooks or approvals (exit 1 if any)
+#        register-escalation-hook.sh --check   change nothing; report missing hooks or approvals, and a guard registered without fail_closed (exit 1 if any)
 set -euo pipefail
-python3 - "${1:-apply}" <<'PY'
+python3 -I - "${1:-apply}" <<'PY'
 import json, os, re, sys, time
 check = sys.argv[1] == "--check"
 drift = 0
@@ -38,6 +38,16 @@ try:
 except roles.RolesError as e:   # a broken role table registers nothing: never guess at access (D46)
     print(f"roles: INVALID {e}; no hook registered or checked ({roles.log_alert('STL-CFG-303', problem=str(e)[:300])})")
     sys.exit(1)
+# T5 ruling (W4-VER3-04): the catch-all's allowed tools are the table's catch_all_tools (data). Default-deny: a tool Hermes resolves for the role
+# that the table does not name stays inside the catch-all (refused); registration and --check report it in one coded line, so the owner adds a row.
+for n, r in R["roles"].items():
+    if any(h.get("catch_all") for h in r.get("hooks", [])):
+        try:
+            extra = sorted(set(roles.role_tools(R, n)) - set(r.get("catch_all_tools", [])))
+        except roles.RolesError as e:
+            print(f"{n}: {e}"); drift += 1; continue
+        for t in extra:
+            print(f"{n}: UNNAMED TOOL {t}: {roles.plain('STL-CFG-303', problem=f'Hermes resolves the tool {t} for role {n}, which its catch_all_tools does not name; it stays refused until the owner adds it to docs/hermes-local/roles.json')}"); drift += 1
 for name, folder, role, listed in roles.profiles(R, H):
     cfg = f"{folder}/config.yaml"
     if not os.path.exists(cfg):
@@ -83,6 +93,14 @@ for name, folder, role, listed in roles.profiles(R, H):
             else:
                 s = s[:ot.start(1)] + str(timeout) + s[ot.end(1):]
                 added.append(f"{event} timeout {ot.group(1)} -> {timeout}")
+        # K5: a guard Hermes may run past its timeout must be registered fail_closed (a timeout then blocks the call); an entry without it is reported, and added on apply
+        fo = re.search(r'command: "' + re.escape(cmd) + r'"\n((?:      [a-z_]+: [^\n]*\n)*)', s)
+        if closed and fo and "fail_closed: true" not in fo.group(1):
+            if check:
+                print(f"{name}: FAIL-OPEN {cmd}: registered without fail_closed (a hook timeout would let the call through)"); drift += 1
+            else:
+                s = s[:fo.end()] + "      fail_closed: true\n" + s[fo.end():]
+                added.append(f"{event} fail_closed for {os.path.basename(cmd)}")
         if cmd not in s and check:
             print(f"{name}: MISSING {event} {matcher or ''} {cmd}"); drift += 1
         elif cmd not in s:

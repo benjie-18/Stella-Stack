@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "event_log": ".supervisor/logs/events.jsonl",
+  "backup_dir": ".supervisor/state/backups",
+  "applied_state": ".supervisor/state/applied.json",
+  "role_table": "docs/hermes-local/roles.json",
+  "files": [
+    {
+      "id": "data-files",
+      "path": ".stella/data-files.json",
+      "schema": "data-files",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": "files",
+      "id_field": "id"
+    },
+    {
+      "id": "connections",
+      "path": ".stella/connections.json",
+      "schema": "connections",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [
+        "(?i)(key|token|secret|password|passwd|credential|authorization)$"
+      ],
+      "list_key": "entries",
+      "id_field": "id"
+    },
+    {
+      "id": "data-policy",
+      "path": ".stella/data-policy.json",
+      "schema": "data-policy",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": "projects",
+      "id_field": "id"
+    },
+    {
+      "id": "role-assignments",
+      "path": ".stella/role-assignments.json",
+      "schema": "role-assignments",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [
+        "(?i)(key|token|secret|password|passwd|credential|authorization)$"
+      ],
+      "list_key": "assignments",
+      "id_field": "id"
+    },
+    {
+      "id": "approved-hosts",
+      "path": ".stella/approved-hosts.json",
+      "schema": "approved-hosts",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": "hosts",
+      "id_field": "host,port"
+    },
+    {
+      "id": "capabilities",
+      "path": ".stella/capabilities.json",
+      "schema": "capabilities",
+      "format": "json",
+      "owner_only": false,
+      "redact_keys": [],
+      "list_key": "entries",
+      "id_field": "id"
+    },
+    {
+      "id": "features",
+      "path": ".stella/features.json",
+      "schema": "features",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": "entries",
+      "id_field": "id"
+    },
+    {
+      "id": "extensions",
+      "path": ".stella/extensions",
+      "schema": "extension",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "id"
+    },
+    {
+      "id": "versions",
+      "path": ".stella/versions.json",
+      "schema": "versions",
+      "format": "json",
+      "owner_only": false,
+      "redact_keys": [],
+      "list_key": "pins",
+      "id_field": "id"
+    },
+    {
+      "id": "settings",
+      "path": ".stella/settings.json",
+      "schema": "settings",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": "entries",
+      "id_field": "key"
+    },
+    {
+      "id": "limits",
+      "path": ".supervisor/limits.env",
+      "schema": null,
+      "format": "env",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "key"
+    },
+    {
+      "id": "owner-settings",
+      "path": "config/owner.env",
+      "schema": null,
+      "format": "env",
+      "owner_only": true,
+      "redact_keys": [
+        "(?i)(TOKEN|SECRET|PASSWORD|KEY)"
+      ],
+      "list_key": null,
+      "id_field": "key"
+    }
+  ]
+}

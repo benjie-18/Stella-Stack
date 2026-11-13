@@ -9,9 +9,61 @@ D=${HD:-/workspace/docs/hermes-local/hooks}   # RT22: HD=<hooks dir> points the 
 REG=${REG:-/workspace/bin/register-escalation-hook.sh}   # the registration script under test (a staged copy while it is being replaced)
 RT=${RTT:-$D/reviewer/test-only-terminal.sh}   # the reviewer's terminal hook under test (K9)
 fails=0
+# H1: the lines the stack's alert log gains during this run are counted from here and checked at the end (never the whole file:
+# other jobs write there while this runs, and a card worktree has no such log)
+SLOG=$(dirname "$(dirname "$(readlink -f "$0")")")/.supervisor/logs/alerts.log
+N0=$({ wc -l <"$SLOG"; } 2>/dev/null || echo 0)
+h1() { [ "$(tail -n +$(($2 + 1)) "$1" 2>/dev/null | grep -cF "$T")" = 0 ]; }   # h1 <log> <lines it had at the start>: no line added since names a path under this run's temp folder
+export ESCALATE_SUP_DIR=$T/sup-h1; mkdir -p "$ESCALATE_SUP_DIR/logs"   # every script run below that can raise an alert writes into the temp folder
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 # run <hook> <tool> <tool_input json>: the hook's exit code (2 = blocked); its stdout goes to $T/out
-run() { jq -nc --arg t "$2" --argjson i "$3" '{hook_event_name: "pre_tool_call", tool_name: $t, tool_input: $i}' | "$1" >"$T/out" 2>/dev/null; echo $?; }
+# T1 (F1 W4 r5): a python hook's row is judged by ONE judge process that runs the hook's whole script with the row's payload (its printed output
+# and exit code, as the process gives them; stderr is dropped here as before). The first row of each (hook, tool, exit code) class also runs as
+# a real process and both must agree; an agreement case with a planted-difference control is at the end. Shell hooks stay processes.
+cat >"$T/pjudge.py" <<'PY'
+import base64, io, json, os, sys, traceback
+inp, outp = sys.argv[1:3]; codes = {}; open(os.path.join(os.path.dirname(inp), "jpid"), "w").write(str(os.getpid())); keep = (sys.stdout, sys.stderr, sys.stdin, sys.argv, dict(os.environ), os.getcwd())
+while True:
+    with open(inp, encoding="utf-8") as f:
+        line = f.readline()
+    if not line.strip() or line.strip() == "QUIT":
+        break
+    r = json.loads(line); g = r["hook"]
+    if g not in codes:
+        codes[g] = compile(open(g, encoding="utf-8").read(), g, "exec")
+    for m in [m for m in sys.modules if m in ("roles", "alert_catalog")]:
+        del sys.modules[m]   # as a fresh process: the stack modules read their environment when imported
+    os.environ.clear(); os.environ.update(r["env"] if "env" in r else {**keep[4], **r["add"]}); os.chdir(r["cwd"])   # the full environment, or the one at start plus the row's own
+    out = io.StringIO(); sys.stdout, sys.stderr = out, io.StringIO(); sys.stdin = io.StringIO(r["payload"]); sys.argv = [g]
+    try:
+        exec(codes[g], {"__name__": "__main__", "__file__": g}); rc = 0
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else 0 if e.code is None else 1
+        if isinstance(e.code, str):
+            print(e.code, file=sys.stderr)
+    except BaseException:
+        traceback.print_exc(file=sys.stderr); rc = 1
+    finally:
+        sys.stdout, sys.stderr, sys.stdin, sys.argv = keep[:4]; os.environ.clear(); os.environ.update(keep[4]); os.chdir(keep[5])
+    with open(outp, "w", encoding="utf-8") as f:
+        f.write(f"{rc}\t{base64.b64encode(out.getvalue().encode()).decode()}\n")
+PY
+
+mkdir -p "$T/pj"; mkfifo "$T/pj/in" "$T/pj/oq"; python3 -I "$T/pjudge.py" "$T/pj/in" "$T/pj/oq" </dev/null >/dev/null 2>&1 & PJP=$!; trap 'kill $PJP 2>/dev/null; rm -rf "$T"' EXIT
+: >"$T/pjseen"; : >"$T/pjrows"; PJENV=$(env | sort | md5sum)   # a row is sent without the environment while the exported environment is the judge's own
+pjudge() {   # pjudge <hook> <payload>: exit code echoed, stdout in $T/out (its stderr is dropped, as the process rows drop it)
+  local rc b
+  if [ "$(env | sort | md5sum)" = "$PJENV" ]; then jq -nc --arg h "$1" --arg p "$2" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, add: {}}' >"$T/pj/in"
+  else env -0 | jq -Rsc --arg p "$2" --arg h "$1" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, env: (split("\u0000") | map(select(length > 0) | capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}' >"$T/pj/in"; fi
+  IFS=$'\t' read -r rc b <"$T/pj/oq"; printf '%s' "$b" | base64 -d >"$T/out"; echo "$rc"; }
+run() { local pay rc rrc; pay=$(jq -nc --arg t "$2" --argjson i "$3" '{hook_event_name: "pre_tool_call", tool_name: $t, tool_input: $i}')
+  case $1 in *.py) ;; *) printf '%s' "$pay" | "$1" >"$T/out" 2>/dev/null; echo $?; return ;; esac
+  rc=$(pjudge "$1" "$pay"); printf '%s\t%s\n' "$1" "$(printf '%s' "$pay" | base64 -w0)" >>"$T/pjrows"
+  if ! grep -qxF -- "$1|$2|$rc" "$T/pjseen"; then
+    echo "$1|$2|$rc" >>"$T/pjseen"; cp "$T/out" "$T/out.judge"; printf '%s' "$pay" | "$1" >"$T/out" 2>/dev/null; rrc=$?
+    if [ "$rrc" != "$rc" ] || ! cmp -s "$T/out" "$T/out.judge"; then echo "     route agreement: ${1##*/} $2 exit $rc in the judge, $rrc as a process" >&2; echo 99; return; fi
+  fi
+  echo "$rc"; }
 term() { run "$1" terminal "$(jq -nc --arg c "$2" '{command: $c}')"; }
 
 B=$D/default/deny-kanban-block.sh
@@ -309,6 +361,16 @@ ok 'has profiles/builder-local/ git-guard.py && has profiles/builder-claude/ git
 ok 'has profiles/builder-local/ write-guard.py && has profiles/builder-claude/ write-guard.py && ! grep -q write-guard "$H/config.yaml" "$H/profiles/reviewer/config.yaml"' "write guard registered fail-closed in both builders only (D40)"
 ok '( for g in secret-guard.py model-guard.py; do has profiles/builder-local/ $g && has profiles/builder-claude/ $g || exit 1; done ) && ! grep -q model-guard.py "$H/config.yaml" "$H/profiles/reviewer/config.yaml"' "secret guard (F12) and model guard (F14) registered fail-closed in both builders; the model guard in no other profile (the secret guard also guards Stella's and the reviewer's file reads, D42)"
 ok 'HOME="$T/home" "$REG" --check >/dev/null' "registration --check: in sync after apply"
+# T5 ruling (W4-VER3-04, r5): a tool Hermes resolves for an unboxed role that its catch_all_tools does not name is reported (default-deny); the catch-all keeps refusing it
+MKT=$(python3 -I -c "import sys,json; sys.path.insert(0,'/workspace/bin'); import roles; d=roles.load(); print(next(n for n,r in d['roles'].items() if r.get('catch_all_tools')))")
+RFD=$(HOME="$T/home" python3 -I -c "import os; print(os.path.expanduser('~/.hermes'))")
+DROPPED=$(python3 -I -c "import json,re,sys; d=json.load(open('/workspace/docs/hermes-local/roles.json')); r=d['roles'][sys.argv[1]]; ms=[h['matcher'] for h in r['hooks'] if not h.get('catch_all')]
+print(next(t for t in r['catch_all_tools'] if not any(re.fullmatch(m, t) for m in ms)))" "$MKT")   # a tool only the catch-all decides (no other matcher of the role names it)
+jq --arg n "$MKT" --arg t "$DROPPED" '.roles[$n].catch_all_tools -= [$t]' /workspace/docs/hermes-local/roles.json >"$T/drop.json"
+ok '[ -n "$DROPPED" ] && HOME="$T/home" ROLES_FILE=$T/drop.json "$REG" --check 2>&1 | grep -q "UNNAMED TOOL $DROPPED" && [ "$(HOME="$T/home" ROLES_FILE=$T/drop.json "$REG" --check >/dev/null 2>&1; echo $?)" = 1 ]' "T5: registration --check reports a tool ($DROPPED) Hermes resolves for role $MKT that catch_all_tools does not name, drift"
+HOOK=$(jq -r --arg n "$MKT" '[.roles[$n].hooks[] | select(.catch_all) | .file][0]' /workspace/docs/hermes-local/roles.json)
+RENDERED=$(HOME="$T/home" ROLES_FILE=$T/drop.json python3 -I -c "import sys,json; sys.path.insert(0,'/workspace/bin'); import roles; d=roles.load(); print(next(m for m,c,_,_ in roles.hooks_for(d,sys.argv[2],'p','',sys.argv[1]) if '(?!' in m))" "$MKT" "$RFD")
+ok 'python3 -I -c "import re,sys; sys.exit(0 if re.fullmatch(sys.argv[1], sys.argv[2]) else 1)" "$RENDERED" "$DROPPED"' "T5: the rendered catch-all of role $MKT matches the unnamed tool $DROPPED (it stays refused)"
 sed -i '/deny-kanban-block/,+2d' "$H/config.yaml"
 ok '! HOME="$T/home" "$REG" --check >/dev/null' "registration --check: a missing hook is drift"
 # Matchers, checked the way Hermes checks them (re.fullmatch, agent/shell_hooks.py) against the real tool names, so a
@@ -361,6 +423,11 @@ sed -i '/command: ".*write-guard.py"/{n;s/timeout: [0-9]*/timeout: 7/}' "$H/prof
 ok '[ "$(wt profiles/builder-local/ write-guard.py)" = 7 ] && HOME="$T/home" "$REG" --check | grep -q "TIMEOUT DRIFT"' "K1-RT-11: a hook registered with another timeout than roles.json: --check reports drift"
 HOME="$T/home" "$REG" >/dev/null
 ok '[ -n "$want" ] && [ "$(wt profiles/builder-local/ write-guard.py)" = "$want" ] && [ "$(grep -c write-guard.py "$H/profiles/builder-local/config.yaml")" = 1 ]' "K1-RT-11: apply sets the timeout from roles.json in place ($want s), no duplicate entry"
+# F1 W4 round 3 (K5): a guard registered without fail_closed is reported by --check (a hook timeout would let the call through), and apply puts it back
+sed -i '/command: ".*write-guard.py"/{n;n;/fail_closed: true/d}' "$H/profiles/builder-local/config.yaml"
+ok '! grep -A3 "command: \".*write-guard.py\"" "$H/profiles/builder-local/config.yaml" | grep -q fail_closed && HOME="$T/home" "$REG" --check | grep -q "FAIL-OPEN.*write-guard.py"' "K5: a registered write guard without fail_closed: --check reports FAIL-OPEN"
+HOME="$T/home" "$REG" >/dev/null
+ok 'grep -A3 "command: \".*write-guard.py\"" "$H/profiles/builder-local/config.yaml" | grep -q fail_closed && HOME="$T/home" "$REG" --check >/dev/null' "K5: apply restores fail_closed, --check is clean again"
 # S4, S24, F25, S25: apply-hermes-local.sh against a scratch HOME with a hermes stub whose `config get` fails. It must not
 # abort before the hook and toolset steps; an unmarked SOUL keeps its first line; SOUL.md, config.yaml and the allowlist
 # are replaced atomically with a backup first; hooks registered but not listed are reported.
@@ -370,7 +437,8 @@ echo '{}' > "$HA/kanban/boards/ai-stack/board.json"
 python3 -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("create table projects (id, slug, name, board_slug, primary_path, archived)"); c.execute("insert into projects values (?, ?, ?, ?, ?, 0)", ("p_0000aaaa", "proj-a", "A", sys.argv[2], "/workspace")); c.commit()' "$HA/projects.db" "$(. /workspace/bin/kanban-board.sh; echo "$KANBAN_BOARD")"   # D46: the board binding the SOUL renders
 printf 'My own first line\nmore hand-written text\n' > "$HA/profiles/reviewer/SOUL.md"
 printf 'You are Hermes Agent, a helpful assistant.\nold text\n' > "$HA/SOUL.md"
-printf '#!/usr/bin/env bash\necho "$*" >> "%s/calls"\ncase "$*" in *"config get"*|*"config set"*) exit 1;; esac\nexit 0\n' "$A" > "$A/bin/hermes"; chmod +x "$A/bin/hermes"
+# H1: the stub refuses `send` as bin/selftests.sh does, so no page is marked as sent
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/calls"\ncase "$*" in *"config get"*|*"config set"*|send*) exit 1;; esac\nexit 0\n' "$A" > "$A/bin/hermes"; chmod +x "$A/bin/hermes"
 ap() { HOME="$A" PATH="$A/bin:$PATH" OWNER_CONFIG=/workspace/config/owner.example.env /workspace/bin/apply-hermes-local.sh "$@" > "$A/out" 2>&1; echo $?; }
 # Guard: apply must touch nothing outside the scratch HOME. A literal /home/node/.hermes root (outside PATH lines and
 # comments) means a live write, so the scratch run is skipped and reported.
@@ -519,4 +587,35 @@ for f in "$JQB"/*.sh "$RT"; do
 done
 # the regression the red-team found: sourcing owner-config.sh must leave `git config --global` working
 ok '[ "$(env HOME=$T/plant-g bash -c ". $JQB/owner-config.sh; git config --global --add safe.directory /x" >/dev/null 2>&1; echo $?)" = 0 ] && grep -q "directory = /x" $T/plant-g/.gitconfig' "RT-RTA-01: sourcing owner-config.sh does not stop git config --global (container-start.sh)"
+ok 'h1 "$SLOG" "$N0"' "H1: the stack's alert log gained no line that names a path under this run's temp folder (every call alerts into the temp folder instead)"
+ok '[ -s "$ESCALATE_SUP_DIR/logs/alerts.log" ] && grep -qF "$T" "$ESCALATE_SUP_DIR/logs/alerts.log"' "H1: the alert lines the calls raised are there, in the temp folder"
+# the check must fail when a call alerts into the stack's log: a planted call writes a line naming a temp path into a log that already has lines
+mkdir -p "$T/plant/logs"; echo "STL-X earlier line" >"$T/plant/logs/alerts.log"
+ESCALATE_SUP_DIR="$T/plant" python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import alert_catalog as a; _, tag, kv = a.render("STL-CFG-312", {"problem": sys.argv[2]}); a.log(tag, kv)' "$(dirname "$(readlink -f "$0")")" "$T/planted" 2>/dev/null
+ok '! h1 "$T/plant/logs/alerts.log" 1 && h1 "$T/plant/logs/alerts.log" 2' "H1: planted call: a line naming a temp path added to a log fails the check; the same log counted from after it passes"
+# F1 W4 round 3 (K4): the allow-list terminal runs git only in a repository it can vouch for (the stack, the main checkout of a bound project). A repository a
+# boxed worker left behind names a program in its own config for each of: fsmonitor, external diff, textconv, clean filter, pager, hooks path, an alias, gpg.program.
+PL=$T/planted4; git init -q "$PL"; printf '#!/bin/sh\necho ran >>%s/marker4\nexit 1\n' "$T" >"$T/prog4"; chmod +x "$T/prog4"
+for kv in core.fsmonitor diff.external core.pager core.hooksPath alias.st gpg.program diff.x.textconv filter.x.clean; do git -C "$PL" config "$kv" "$T/prog4"; done
+printf '* diff=x filter=x\n' >"$PL/.gitattributes"; printf 'a\n' >"$PL/f"; git -C "$PL" add f .gitattributes 2>/dev/null; git -C "$PL" -c core.fsmonitor= -c user.name=t -c user.email=t@example.invalid commit -q -m x 2>/dev/null; printf 'b\n' >"$PL/f"
+rm -f "$T/marker4"
+for c in "git -C $PL status" "git -C $PL diff" "git -C $PL log -1" "git -C $PL show HEAD" "git -C $PL/ rev-parse HEAD" "git -C $PL st"; do
+  ok '[ "$(term $R "$c")" = 2 ] && [ ! -e "$T/marker4" ]' "K4: a repository outside the stack and the bound projects is refused, nothing it names runs: $c"
+done
+ok '[ "$(cd "$PL" && term $R "git status")" = 2 ] && [ ! -e "$T/marker4" ]' "K4: git with no -C, the terminal's folder a planted repository: refused, nothing runs"
+ok '[ "$(cd "$T" && term $R "git status")" = 2 ]' "K4: git in a folder that is no repository at all: refused"
+ok '[ "$(term $R "git -C /workspace status --short")" = 0 ]' "K4 control: git in the stack folder is allowed"
+# T1 (r5): the two routes agree on every 3rd judged row (the judge and a real hook process, the same row), and a planted difference (the judge
+# given copies of the hooks whose refusal reads otherwise) is caught
+pagree() { local n=0 i=0 h p pay rc rrc jh
+  while IFS=$'\t' read -r h p; do i=$((i+1)); [ $((i % 3)) = 1 ] || continue; pay=$(printf '%s' "$p" | base64 -d); jh=$h
+    [ -n "$1" ] && { jh=$T/pplant/$(printf '%s' "$h" | md5sum | cut -c1-8).py; [ -f "$jh" ] || sed 's/"action": "block"/"action": "blocked"/' "$h" >"$jh"; }
+    rc=$(pjudge "$jh" "$pay"); cp "$T/out" "$T/ag.judge"
+    [ -f "$T/ag.real.$i" ] || { printf '%s' "$pay" | "$h" >"$T/ag.real.$i" 2>/dev/null; echo $? >"$T/ag.rc.$i"; }   # the process run once per row, kept for the control
+    { [ "$rc" = "$(<"$T/ag.rc.$i")" ] && cmp -s "$T/ag.real.$i" "$T/ag.judge"; } || n=$((n+1))
+  done < <(cat "$T/pjrows"); echo "$n"; }
+mkdir -p "$T/pplant"; PN=$(wc -l <"$T/pjrows"); PD=$(pagree ""); PX2=$(pagree plant)
+ok '[ "$PN" -ge 100 ] && [ "$PD" = 0 ]' "T1 route agreement: every 3rd of $PN rows judged in one process gives the same exit code and output as a real hook process ($PD differ)"
+ok '[ "$PX2" -gt 0 ]' "T1 route agreement, negative control: a planted difference in the judge's hooks is caught ($PX2 differ)"
+printf 'QUIT\n' >"$T/pj/in"; wait "$PJP"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

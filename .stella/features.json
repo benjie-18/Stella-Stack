@@ -1,0 +1,258 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "id": "escalation",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "escalation-thread",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "watchdog",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "model-watch",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "kanban-board",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "role-guards",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "complete-gate",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "check-guard",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "false-close-guard",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "commit-guard",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "review",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "fallback-routing",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "bench",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "box",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "alert-catalog",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "broker-stand-in",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "owner-config",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "firewall",
+      "owner_phase": "stages 1-6",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "test-map",
+      "owner_phase": "F0",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "contract-data",
+      "owner_phase": "F1",
+      "status": "on",
+      "depends_on": [],
+      "flag": null
+    },
+    {
+      "id": "role-requirements",
+      "owner_phase": "F1",
+      "status": "on",
+      "depends_on": [
+        "contract-data"
+      ],
+      "flag": null
+    },
+    {
+      "id": "event-log",
+      "owner_phase": "F1",
+      "status": "on",
+      "depends_on": [
+        "contract-data"
+      ],
+      "flag": null
+    },
+    {
+      "id": "apply-contract",
+      "owner_phase": "F1",
+      "status": "on",
+      "depends_on": [
+        "contract-data",
+        "event-log"
+      ],
+      "flag": null
+    },
+    {
+      "id": "owner-write-path",
+      "owner_phase": "F1",
+      "status": "on",
+      "depends_on": [
+        "apply-contract"
+      ],
+      "flag": null
+    },
+    {
+      "id": "hardcode-lint",
+      "owner_phase": "F1",
+      "status": "on",
+      "depends_on": [
+        "contract-data"
+      ],
+      "flag": null
+    },
+    {
+      "id": "role-resolver",
+      "owner_phase": "F2",
+      "status": "planned",
+      "depends_on": [
+        "contract-data",
+        "role-requirements"
+      ],
+      "flag": null
+    },
+    {
+      "id": "build-team-preset",
+      "owner_phase": "F2",
+      "status": "planned",
+      "depends_on": [
+        "role-resolver"
+      ],
+      "flag": null
+    },
+    {
+      "id": "generated-team-files",
+      "owner_phase": "F3",
+      "status": "planned",
+      "depends_on": [
+        "build-team-preset"
+      ],
+      "flag": null
+    },
+    {
+      "id": "approved-hosts-firewall",
+      "owner_phase": "Phase 4a",
+      "status": "planned",
+      "depends_on": [
+        "contract-data",
+        "apply-contract"
+      ],
+      "flag": null
+    },
+    {
+      "id": "broker",
+      "owner_phase": "Phase 5",
+      "status": "planned",
+      "depends_on": [
+        "contract-data",
+        "event-log"
+      ],
+      "flag": null
+    },
+    {
+      "id": "vm-worker",
+      "owner_phase": "Phase 6",
+      "status": "planned",
+      "depends_on": [
+        "broker"
+      ],
+      "flag": null
+    },
+    {
+      "id": "harness-proposals",
+      "owner_phase": "Phase 7",
+      "status": "planned",
+      "depends_on": [
+        "event-log",
+        "apply-contract"
+      ],
+      "flag": null
+    }
+  ]
+}

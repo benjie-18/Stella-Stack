@@ -80,6 +80,24 @@ ok 'k5_silent "$gone"' "K5: the #alerts text for a missing file names no line an
 rm -rf "$T/k5-thr"; mkdir -p "$T/k5-thr/state" "$T/k5-thr/logs"
 ESCALATE_SUP_DIR="$T/k5-thr" OWNER_CONFIG="$T/k5-mal.env" /workspace/bin/escalation-thread.sh t_aaaaaaaa "Title" "Decision needed: A or B." >/dev/null 2>&1; k5_trc=$?
 ok '[ "$k5_trc" = 3 ] && k5_names "$(cat "$T/k5-thr/sends" 2>/dev/null)" "$(wc -l < "$T/k5-mal.env")"' "K5: escalation-thread.sh on a malformed line exits 3 and its #alerts send names the line and the forms"
+# r8 D (ORCH-04, W5-VER6-02): the hourly stamp and the log append do not write through a planted name (a symbolic link, a second hard link).
+# FAKE canary only; its bytes, size and times are compared before and after. Each case has its own state dir.
+d_sig() { stat -c '%s %Y %Z %h' "$1" 2>/dev/null; cksum <"$1" 2>/dev/null; }
+d_dir() { rm -rf "${1:?}"; mkdir -p "$1/state"; printf 'FAKE-CANARY-R8D\n' >"$1/canary"; touch -d '3 hours ago' "$1/canary"; }
+d_stamp() { ( export ESCALATE_SUP_DIR="$1"; . /workspace/bin/owner-config.sh; once_per_hour zz ) 2>"$1/err"; echo $?; }
+d_dir "$T/d1"; ln -s "$T/d1/canary" "$T/d1/state/alert-zz.stamp"; touch -h -d '2 hours ago' "$T/d1/state/alert-zz.stamp"; sig=$(d_sig "$T/d1/canary")
+ok '[ "$(d_stamp "$T/d1")" = 1 ] && [ "$(wc -l <"$T/d1/err")" = 1 ] && [ "$(d_sig "$T/d1/canary")" = "$sig" ]' "r8 D: a stale stamp that is a symbolic link is not touched through: not now, one stderr line, the canary's bytes, size and times unchanged"
+d_dir "$T/d2"; ln -s "$T/d2/nowhere" "$T/d2/state/alert-zz.stamp"; touch -h -d '2 hours ago' "$T/d2/state/alert-zz.stamp"
+ok '[ "$(d_stamp "$T/d2")" = 1 ] && [ "$(wc -l <"$T/d2/err")" = 1 ] && [ ! -e "$T/d2/nowhere" ]' "r8 D: a stale stamp that is a dangling link does not create its target"
+d_dir "$T/d3"; ln "$T/d3/canary" "$T/d3/state/alert-zz.stamp"; sig=$(d_sig "$T/d3/canary")
+ok '[ "$(d_stamp "$T/d3")" = 1 ] && [ "$(wc -l <"$T/d3/err")" = 1 ] && [ "$(d_sig "$T/d3/canary")" = "$sig" ]' "r8 D: a stale stamp with a second hard link is not touched: the canary's times unchanged"
+d_dir "$T/d4"; : >"$T/d4/state/alert-zz.stamp"; touch -d '2 hours ago' "$T/d4/state/alert-zz.stamp"
+ok '[ "$(d_stamp "$T/d4")" = 0 ] && [ ! -s "$T/d4/err" ] && [ "$(d_stamp "$T/d4")" = 1 ] && mkdir -p "$T/d5" && [ "$(d_stamp "$T/d5")" = 0 ]' "r8 D control: a plain stale stamp and a first call are true once, silently, then not now"
+for how in "-s" ""; do
+  d_dir "$T/d6"; ln $how "$T/d6/canary" "$T/d6/escalations.log"; sig=$(d_sig "$T/d6/canary")
+  ( export ESCALATE_SUP_DIR="$T/d6" OWNER_CONFIG="$T/k5-missing.env"; . /workspace/bin/owner-config.sh; owner_config_load ) >/dev/null 2>"$T/d6/err"
+  ok '[ "$(d_sig "$T/d6/canary")" = "$sig" ] && [ "$(grep -c "is a link" "$T/d6/err")" = 1 ] && grep -q STL-CFG-301 "$T/d6/sends"' "r8 D: a log that is a link (ln ${how:-, a second hard link}) is not appended to: the canary's bytes, size and times unchanged, one stderr line, the alert still sent"
+done   # end r8 D
 # K5 follow-up (the verifier's findings): lines end at "\n" only; after a value only space, tab or CR may follow; the unquoted
 # class excludes shell operators, glob and tilde characters; a blank line is spaces, tabs or CRs; the file is UTF-8 (a BOM is
 # ignored, a bad byte names its line and never crashes). Every fixture is a scratch file, the bad line is always the last one.
@@ -178,4 +196,34 @@ ok '[ -z "$miss" ]' "every consumer self-test sets OWNER_CONFIG to a scratch fil
 # A6-01: seven selftests build their scratch owner config as `cat config/owner.example.env` plus appended lines; a missing
 # final newline fuses the first appended key into the last line and 5 of them fail with no hint why (15 red hours, 2026-11-05).
 ok '[ "$(tail -c1 /workspace/config/owner.example.env | od -An -c | tr -d " ")" = "\\n" ]' "config/owner.example.env ends with a newline (the consumer selftests append lines to a copy of it)"
+# F1 W4 (E7): the canonical writer. What it writes, the strict parser (and bash) read back as the same value; what the grammar
+# cannot hold (a single quote together with $, backtick, backslash or ", a line break) is refused, never written in a form that reads back differently.
+cat >"$T/rt.py" <<'PY'
+import os, subprocess, sys
+sys.path.insert(0, sys.argv[1]); import owner_config as o
+good = ["plain", "with space", "it's", "q\"uote", "back\\slash", "dollar $HOME", "hash # not a comment", "a=b=c", "Zoë 日本語 ñ", "", "  lead and trail  ",
+        "semi;colon & amp | pipe", "glob * ? [x] ~ {a,b}", "tab\there", "'", "\"", "a'b#c=d e", "$", "back`tick`"]
+for v in good:
+    try:
+        line = o.line("SOME_KEY", v)
+    except o.OwnerConfigError:
+        assert "'" in v and any(c in v for c in "$`\\\""), f"refused a value the grammar can hold: {v!r}"
+        continue
+    assert o.parse_env(line + "\n", "t")["SOME_KEY"] == v, f"round trip failed for {v!r}"
+    got = subprocess.run(["bash", "-c", 'eval "$1"; printf %s "$SOME_KEY"', "b", line], capture_output=True, text=True).stdout
+    assert got == v, f"bash reads {got!r} for {v!r}"
+for v in ["a'b$c", "a'b`c", "a'b\\c", "a'b\"c", "line\nbreak", "cr\rhere", "nul\0x"]:
+    try:
+        o.line("SOME_KEY", v)
+    except o.OwnerConfigError:
+        continue
+    raise AssertionError(f"wrote a value the strict parser cannot hold: {v!r}")
+for k in ["lower", "1BAD", "BAD KEY", "", "A=B"]:
+    try:
+        o.line(k, "v")
+    except o.OwnerConfigError:
+        continue
+    raise AssertionError(f"wrote a bad key: {k!r}")
+PY
+ok 'python3 -I "$T/rt.py" /workspace/bin >"$T/rt.out" 2>&1' "F1 W4: the canonical writer round-trips quotes, backslashes, spaces, \$, #, = and non-ASCII text through the strict parser and bash, and refuses what the grammar cannot hold"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

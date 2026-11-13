@@ -2,6 +2,7 @@
 # Option A (OS box) self-test. Layers: 1 roles.py sandbox validator and spec; 2 box.py mount list; 3 the real bwrap box on
 # scratch trees (git-route attacks fail inside, succeed outside); 4 the terminal plugin (provider flags, env, refusals).
 # The `sandbox` block of roles.json is data: profile names come from the table, never from this file's logic.
+# selftest: serial
 # Not part of `npm test` (the suite is not changed by this build); run as: flock .scratch/readiness/test.lock bin/box-selftest.sh
 set -u
 T=$(mktemp -d); trap '[ -n "${KEEP:-}" ] || rm -rf "$T"' EXIT
@@ -15,16 +16,61 @@ R=$(jq -r '. as $d | .profiles | to_entries[] | select($d.roles[.value.role].wor
 SB='{"schema_version":1,"backend":"os_box","unboxed_backend":"local","boxed_profiles":[$p],"plugin_dir":"docs/hermes-local/plugins/os-box",
  "tmp_dir":"{profile_dir}/box-tmp","snapshot_keep_hours":12,"home_ro":[".local/bin",".local/share/uv"],"home_protect":[".local/bin/",".local/lib/",".bash_profile",".bashrc",".gitconfig",".config/git/",".jq"],"hide":[".scratch"],"sibling_dirs":[".worktrees"],
  "canary":"boxcanary/canary.txt","env":{"LC_ALL":"C.UTF-8"},"profile_overrides":{($p):{"claude_config_dir":"{home}/.claude","ro_over":["settings.json","hooks"]}}}'
-mkrf() { jq --arg p "$P" --arg r "$R" "$1" "$RF" >"$T/roles.json"; }   # scratch table: the real one with a sandbox edit
-val() { ROLES_FILE=$T/roles.json python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import roles
+# F1 W4 round 2 (B2): the table requires every profile outside the box to have a role that refuses every write (runs_unboxed). This test boxes one profile
+# at a time and leaves the others "unboxed", so mkrf gives the role of each unboxed profile the fallback role's refusing hooks and toolsets (norm).
+NORM='def norm: . as $d | (($d.sandbox.boxed_profiles // []) as $b | [$d.profiles | to_entries[] | select(.key as $k | $b | index($k) | not) | .value.role]) as $rs
+  | reduce ($rs | unique)[] as $x (.; if $d.roles[$x].runs_unboxed == true then . else .roles[$x] |= (.runs_unboxed = true | .hooks = $d.roles[$d.fallback_role].hooks | .platform_toolsets = $d.roles[$d.fallback_role].platform_toolsets | .catch_all_tools = $d.roles[$d.fallback_role].catch_all_tools) end);'
+mkrf() { jq --arg p "$P" --arg r "$R" "$NORM $1 | norm" "$RF" >"$T/roles.json"; }   # scratch table: the real one with a sandbox edit
+# T1 (F1 W4 r5): the table verdict (roles.load on the scratch table) runs in ONE driver process that executes the same script a process would
+# (its argv, the table in ROLES_FILE, its output and exit code); stack modules are imported fresh each time. The first case of each verdict
+# (VALID, INVALID) also runs as a real process and both must agree; an agreement case with a planted-difference control follows section 1.
+cat >"$T/val.py" <<'PY'
+import sys; sys.path.insert(0, sys.argv[1])
+for m in [m for m in sys.modules if m in ("roles", "alert_catalog")]:
+    del sys.modules[m]
+import roles
 try: d = roles.load(); print("VALID")
-except roles.RolesError as e: print("INVALID", e)' "$S"; }
+except roles.RolesError as e: print("INVALID", e)
+PY
+cat >"$T/cli.py" <<'PY'
+import base64, io, json, os, sys, traceback
+codes, keep = {}, (sys.stdout, sys.stderr, sys.stdin, sys.argv)
+for line in keep[2]:
+    r = json.loads(base64.b64decode(line))
+    if r["script"] not in codes:
+        codes[r["script"]] = compile(open(r["script"], encoding="utf-8").read(), r["script"], "exec")
+    old = {k: os.environ.get(k) for k in r["env"]}; os.environ.update(r["env"])
+    out = io.StringIO(); sys.stdout = sys.stderr = out; sys.stdin = io.StringIO(""); sys.argv = [r["script"], *r["argv"]]
+    try:
+        exec(codes[r["script"]], {"__name__": "__main__", "__file__": r["script"]}); rc = 0
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else 0 if e.code is None else 1
+        if isinstance(e.code, str):
+            print(e.code, file=out)
+    except BaseException:
+        traceback.print_exc(file=out); rc = 1
+    finally:
+        sys.stdout, sys.stderr, sys.stdin, sys.argv = keep
+        for k, v in old.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+    keep[0].write(f"{rc}\t{base64.b64encode(out.getvalue().encode()).decode()}\n"); keep[0].flush()
+PY
+
+mkfifo "$T/cin" "$T/cout"; python3 -I "$T/cli.py" <"$T/cin" >"$T/cout" 2>"$T/cerr" & CPID=$!; exec {CW}>"$T/cin" {CR}<"$T/cout"; : >"$T/vseen"; : >"$T/vrows"
+dval() {   # dval <script> <table>: the script's output in the driver
+  local rc b; printf '%s\n' "$(jq -nc --arg s "$1" --arg t "$2" --arg a "$S" '{script: $s, argv: [$a], env: {ROLES_FILE: $t}}' | base64 -w0)" >&"$CW"
+  IFS=$'\t' read -r rc b <&"$CR"; printf '%s' "$b" | base64 -d; }
+val() { local o k; o=$(dval "$T/val.py" "$T/roles.json"); k=${o%% *}; cp "$T/roles.json" "$T/vrow.$(wc -l <"$T/vrows").json"; echo x >>"$T/vrows"
+  if ! grep -qxF -- "$k" "$T/vseen"; then echo "$k" >>"$T/vseen"
+    [ "$o" = "$(ROLES_FILE=$T/roles.json python3 "$T/val.py" "$S")" ] || { echo "ROUTE-DISAGREE"; return; }
+  fi
+  printf '%s\n' "$o"; }
 
 # ---- 1. validator
 mkrf ".sandbox = $SB"
 ok '[ "$(val)" = VALID ]' "1.1 a complete sandbox block is valid"
 mkrf 'del(.sandbox)'
-ok '[ "$(val)" = VALID ]' "1.2 no sandbox block is valid (boxed profiles are refused at run time, not here)"
+ok '[ "$(val)" = VALID ]' "1.2 a table with no sandbox block is valid once every profile's role refuses every write (the fixture gives each unboxed role the fallback role's refusing hooks and toolsets; without that roles.py refuses the table: roles-selftest W4 B2)"
 bad() { mkrf ".sandbox = $SB | $1"; val >"$T/out"; grep -q "^INVALID.*$2" "$T/out"; }
 ok 'bad "del(.sandbox.schema_version)" schema_version' "1.3 missing schema_version"
 ok 'bad ".sandbox.schema_version = 2" schema_version' "1.4 unknown schema_version"
@@ -82,6 +128,15 @@ ok 'bad ".sandbox.hide = [\"./.scratch\"]" hide' "1.34 hide entry with a . segme
 ok 'bad ".sandbox.env = {\"LD_PRELOAD\": \"/x\"}" env' "1.35 env cannot set the dynamic loader (LD_PRELOAD)"
 ok 'bad ".sandbox.env = {\"PATH\": \"/x\"}" env' "1.36 env cannot set PATH"
 ok 'bad ".sandbox.home_protect = [\"a/../b\"]" home_protect' "1.37 home_protect entry with .."
+# T1 (r5): the two routes agree on every 3rd table judged above (the driver and a real process), and a planted difference (a driver copy of the
+# validator script whose verdict word reads otherwise) is caught
+vagree() { local n=0 i; for ((i = 0; i < $(wc -l <"$T/vrows"); i += 3)); do
+    [ -f "$T/vag.$i" ] || ROLES_FILE=$T/vrow.$i.json python3 "$T/val.py" "$S" >"$T/vag.$i"   # the process run once per row, kept for the control
+    [ "$(dval "$1" "$T/vrow.$i.json")" = "$(<"$T/vag.$i")" ] || n=$((n+1)); done; echo "$n"; }
+sed 's/print("VALID")/print("FINE")/' "$T/val.py" >"$T/val-planted.py"
+VN=$(wc -l <"$T/vrows"); VD=$(vagree "$T/val.py"); VX=$(vagree "$T/val-planted.py")
+ok '[ "$VN" -ge 40 ] && [ "$VD" = 0 ]' "T1 route agreement: every 3rd of $VN tables gives the same verdict in the driver as in a real process ($VD differ)"
+ok '[ "$VX" -gt 0 ]' "T1 route agreement, negative control: a planted difference in the driver's validator is caught ($VX differ)"
 # ---- 1b. spec(): what register-toolsets applies per profile
 mkrf ".sandbox = $SB"
 spec() { ROLES_FILE=$T/roles.json python3 "$S/roles.py" spec "$HOME/.hermes" 2>/dev/null; }
@@ -100,6 +155,9 @@ echo x >"$F/ws/bin/a"; echo x >"$F/ws/docs/b"; echo S >"$F/ws/config/owner.env";
 echo c >"$F/ws/boxcanary/canary.txt"; echo S >"$F/ws/.env"; echo ok >"$F/ws/.env.example"; echo S >"$F/ws/id.pem"; echo S >"$F/ws/x.key"
 echo h >"$F/ws/.scratch/hidden"; echo k >"$F/home/.claude/.credentials.json"; echo s >"$F/ws/CaSe"
 ln -s "$F/ws/config/owner.env" "$F/ws/via-link"; ln -s /etc "$F/ws/out-link"; ln -s "$F/ws/bin" "$F/ws/in-link"
+mkdir -p "$F/ws/.stella" "$F/ws/.supervisor/state/backups/owner-settings/x" "$F/ws/.supervisor/logs"   # B1 (F1 W4): the apply tool's state, named by the data index
+cp /workspace/.stella/data-files.json "$F/ws/.stella/"; echo SECRET-OLD >"$F/ws/.supervisor/state/backups/owner-settings/x/file"
+echo SECRET-APPLIED >"$F/ws/.supervisor/state/applied.json"; echo SECRET-EVENT >"$F/ws/.supervisor/logs/events.jsonl"; echo alert-line >"$F/ws/.supervisor/logs/alerts.log"
 G="git -c user.name=t -c user.email=t@t -c init.defaultBranch=main"
 $G -C "$F/ws" init -q && echo r >"$F/ws/README" && $G -C "$F/ws" add README && $G -C "$F/ws" commit -qm r
 $G -C "$F/ws" worktree add -q "$F/ws/.worktrees/card1" -b card/x; $G -C "$F/ws" worktree add -q "$F/ws/.worktrees/sib1" -b card/s
@@ -136,6 +194,11 @@ ok '! hasre "via-link" && ! hasre "out-link"' "2.9 a symlink to the owner file o
 ok 'has "ro $WS/bin $WS/in-link"' "2.10 a symlink inside the root is bound by its resolved target"
 ok '! hasre "\.scratch"' "2.11 nothing of .scratch is mounted for a card outside it"
 ok '! hasre "sib1"' "2.12 a sibling worktree is not bound"
+ok '! hasre "backups|applied\.json|events\.jsonl|SECRET"' "B1 2.47: no mount names the apply tool's backups, applied state or event log (the three paths come from the data index)"
+ok 'has "tmpfs $WS/.supervisor/logs" && has "ro $WS/.supervisor/logs/alerts.log $WS/.supervisor/logs/alerts.log"' "B1 2.48: the folders that hold them are tmpfs parents; their other children (the alert log) are bound"
+jq '.data_index = ".stella/zz-no-index.json"' "$T/roles.json" >"$T/roles-noidx.json"
+ROLES_FILE=$T/roles-noidx.json python3 "$T/plan.py" "$S" "$F" "$P" "$WT" card/x >"$T/plan2.txt" 2>"$T/out"
+ok 'grep -q "^REFUSED.*data index" "$T/plan2.txt"' "B1 2.49: a data index the box cannot read: the box does not start (fail closed)"
 ok 'has "rw $WT $WT"' "2.13 a worker role gets its card worktree read-write at the real path"
 G1=$(sed -n 's/^gitdir: //p' "$WT/.git"); ID=$(basename "$G1"); CD=$(realpath "$F/ws/.git")
 ok 'has "ro $CD $CD"' "2.14 the repo git dir is read-only"
@@ -243,6 +306,10 @@ ok 'inb "echo hi" && grep -q hi "$T/out"' "3.1 a command runs in the box"
 ok 'inb "echo hi > $WT/new && git add new && git commit -qm n && git log --oneline | head -1" && grep -q " n$" "$T/out"' "3.2 a commit in the card worktree works in the box (pre-commit proof falls back to the marker)"
 ok '! inb "test -e $WS/boxcanary/canary.txt" && ! inb "test -e $WS/BOXCANARY/CANARY.TXT" && ! inb "test -e $WS/config/owner.env" && ! inb "test -e $WS/Config/OWNER.ENV"' "3.3 the canary, the owner file and their case variants are absent in the box"
 ok 'test -r "$WS/boxcanary/canary.txt"' "3.4 negative control: the canary is readable outside the box by a plain read"
+ok '! inb "test -e $WS/.supervisor/state/backups" && ! inb "test -e $WS/.supervisor/state/applied.json" && ! inb "test -e $WS/.supervisor/logs/events.jsonl" && ! inb "cat $WS/.supervisor/logs/events.jsonl" && ! grep -q SECRET "$T/out"' "B1 3.4b: the backups, the applied state and the event log are absent in the box (no file)"
+ok 'inb "ls $WS/.supervisor/state $WS/.supervisor/logs" && ! grep -qE "backups|applied.json|events.jsonl" "$T/out" && grep -q alerts.log "$T/out"' "B1 3.4c: ...and absent from a listing, while their sibling (the alert log) is listed"
+ok '! inb "python3 -c \"print(open(\\\"$WS/.supervisor/state/applied.json\\\").read())\"" && ! grep -q SECRET "$T/out" && inb "python3 -c \"import glob; print(glob.glob(\\\"$WS/.supervisor/state/backups/*/*/file\\\"))\"" && ! grep -q owner-settings "$T/out"' "B1 3.4d: an interpreter one-liner naming the state path finds nothing in the box (the path sits in the code, not in a shell word)"
+ok 'inb "cat $WS/.supervisor/logs/alerts.log" && grep -q alert-line "$T/out"' "B1 3.4e: control: the alert log beside them is readable in the box"
 ok '! inb "touch $WS/newfile" && grep -qi "read-only" "$T/out"' "3.5 a new file in the project root fails (EROFS)"
 ok '! inb "echo x > $WS/bin/a" && grep -qi "read-only" "$T/out"' "3.6 a bound child is read-only"
 ok 'inb "echo x > $WT/f2" && [ -f "$WT/f2" ]' "3.7 the card worktree is writable"
@@ -329,8 +396,8 @@ git -C "$WT" checkout -q -- README 2>/dev/null || true
 jq --arg r "$R" "$BOV | .sandbox.profile_overrides[\$r].review_prompt = \"nope.txt\"" "$T/roles.base.json" >"$T/roles.json"
 ok '! inr "true" && grep -qi "review" "$T/out"' "3.75 a missing template refuses the box (fail closed)"
 ok '! sed -n "/^def _git_ro/,/^def plan/p" "$S/box.py" | grep -q -- "work-tree\|\"status\"\|gd"' "3.77 the host-side git of the review prompt never names the worktree, its index or its git dir"
-# red-team S6L-RT-04: the owner's answers in the prompt are the comments the escalation poller wrote (a profile that takes no cards), not any comment with the right prefix
-PX=$(jq -r '. as $d | [.profiles | to_entries[] | select($d.roles[.value.role].assignable == false) | .key][0]' "$RF")
+# red-team S6L-RT-04: the owner's answers in the prompt are the comments the escalation poller wrote (a profile whose role has may_answer_for_owner), not any comment with the right prefix
+PX=$(jq -r '. as $d | [.profiles | to_entries[] | select($d.roles[.value.role].may_answer_for_owner == true) | .key][0]' "$RF")   # W2-RT-01: the field, never `assignable`
 cat >"$T/ta.py" <<'PY'
 import json, sys
 sys.path.insert(0, sys.argv[1]); import box, roles
@@ -338,7 +405,13 @@ pre = "UNBLOCK: escalation reply from discord:u in thread 1: "
 print(json.dumps(box.trusted_answers(roles.load(), [{"author": sys.argv[2], "body": pre + "blue"}, {"author": sys.argv[3], "body": pre + "worker text"},
                                                     {"author": sys.argv[2], "body": "just a note"}, {"body": pre + "no author"}], "UNBLOCK: escalation reply from ")))
 PY
-ok '[ "$(ROLES_FILE=$T/roles.json python3 -I "$T/ta.py" "$S" "$PX" "$P")" = "[\"UNBLOCK: escalation reply from discord:u in thread 1: blue\"]" ]' "3.79 only the escalation poller's comments (a profile that takes no cards) count as owner answers: a worker's text with the prefix, a plain note and an author-less comment do not"
+ok '[ "$(ROLES_FILE=$T/roles.json python3 -I "$T/ta.py" "$S" "$PX" "$P")" = "[\"UNBLOCK: escalation reply from discord:u in thread 1: blue\"]" ]' "3.79 only the escalation poller's comments (a profile whose role has may_answer_for_owner) count as owner answers: a worker's text with the prefix, a plain note and an author-less comment do not"
+# W2-RT-01: a profile whose role lacks may_answer_for_owner (listed or not, whatever its `assignable`) is no trusted author
+for r in $(jq -r '.roles | to_entries[] | select(.value.may_answer_for_owner != true) | .key' "$RF"); do
+  # a served role needs explicit platform_toolsets (W4 r3 table rule); one that has none gets those of the first boxed profile's role
+  jq --arg r "$r" '. as $d | .profiles["qa-p"] = {"role": $r} | .sandbox.boxed_profiles += ["qa-p"] | .roles[$r].platform_toolsets |= (if [(. // {})[] | length] | add // 0 > 0 then . else $d.roles[$d.profiles[$d.sandbox.boxed_profiles[0]].role].platform_toolsets end)' "$T/roles.json" >"$T/roles-x.json"
+  ok '[ -n "$PX" ] && [ "$(ROLES_FILE=$T/roles-x.json python3 -I "$T/ta.py" "$S" qa-p "$P")" = "[]" ]' "W2-RT-01: role $r (no may_answer_for_owner): its comments are not the owner's answers"
+done
 # cluster C round (red-team S6M-RC C-01, C-03, C-04, C-05, C-08, C-09)
 jq --arg r "$R" "$BOV | .sandbox.profile_overrides[\$r].review_prompt = \"review-prompt.txt\" | .sandbox.profile_overrides[\$r].review_model = \"model-from-data\" | $RVK" "$T/roles.base.json" >"$T/roles.json"
 ok 'inr "printenv GIT_COMMON_DIR" && [ "$(cat "$T/out")" = "$CD" ]' "C-03 the reviewing box pins GIT_COMMON_DIR to the shared git dir (a rewritten commondir cannot redirect git)"
@@ -635,10 +708,12 @@ ok 'attack x "git fetch -u --refmap=refs/heads/card/x:refs/heads/main origin ref
 # real on a tree on the stack's own kind of mount (9p, case-insensitive): a bind over one spelling of a ref hides only that spelling
 # (`T_SIB` overwrites `t_sib`), so the card's refs cannot be per-file read-only binds inside a shared folder: the box gets a private
 # copy of its own ref, and box.py applies it to the real repo after the call.
+mkdir -p "${HH_TREE:-$W/.scratch/readiness}"   # an ignored folder: absent in a fresh copy
 L=$(mktemp -d "${HH_TREE:-$W/.scratch/readiness}/hh-box.XXXXXX"); F2=$L/f
 trap '[ -n "${KEEP:-}" ] || rm -rf "$T" "$L"' EXIT
-mkdir -p "$F2/ws" "$F2/home/.hermes/profiles/$P/home" "$F2/home/.hermes/profiles/$P/skills" "$F2/R.git"
+mkdir -p "$F2/ws/.stella" "$F2/home/.hermes/profiles/$P/home" "$F2/home/.hermes/profiles/$P/skills" "$F2/R.git"
 PHH2=$F2/home/.hermes/profiles/$P/home; printf '[user]\n\temail = t@t\n\tname = t\n[safe]\n\tdirectory = *\n' >"$PHH2/.gitconfig"
+cp /workspace/.stella/data-files.json "$F2/ws/.stella/"   # B1: the box reads the data index of the tree it guards
 : >"$F2/ws/.alias-probe"
 ok '[ -e "$F2/ws/.ALIAS-PROBE" ]' "3.30 control: this tree is case-insensitive like /workspace (a case variant names the same file)"
 $G -C "$F2/ws" init -q && echo r >"$F2/ws/README" && $G -C "$F2/ws" add README && $G -C "$F2/ws" commit -qm r
@@ -855,8 +930,8 @@ PP=$NB plug ok; unset PP; ok '[ "$(pj .avail)" = false ]' "4.12 without bwrap on
 # ---- 5. bin/register-toolsets.sh: the per-profile backend, the plugin files and the plugin enable (scratch HOME, stub hermes)
 A5=$T/home5; H5=$A5/.hermes; mkdir -p "$A5/bin" "$H5/profiles/$P" "$H5/profiles/$R"
 for d in "$H5" "$H5/profiles/$P" "$H5/profiles/$R"; do printf 'model: x\n' >"$d/config.yaml"; done
-printf '#!/usr/bin/env bash\necho "$*" >> "%s/calls"\ncase "$*" in *"config get"*) echo unset;; esac\nexit 0\n' "$A5" >"$A5/bin/hermes"; chmod +x "$A5/bin/hermes"
-jq --arg p "$P" --arg r "$R" ".sandbox = $SB | .roles[].platform_toolsets = {} " "$RF" >"$T/roles5.json"
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/calls"\ncase "$*" in *"config get"*) echo unset;; *"tools list"*) printf "  ✓ enabled file\\n  ✓ enabled terminal\\n";; esac\nexit 0\n' "$A5" >"$A5/bin/hermes"; chmod +x "$A5/bin/hermes"
+jq --arg p "$P" --arg r "$R" "$NORM .sandbox = $SB | norm | .roles |= map_values(if .runs_unboxed then . else .platform_toolsets = {} end)" "$RF" >"$T/roles5.json"   # a role outside the box needs toolsets (B2): the stub lists the ones it wants, so nothing is changed for them
 for pp in $(jq -r '.profiles | keys[] | select(. != "default")' "$T/roles5.json"); do mkdir -p "$H5/profiles/$pp"; printf 'model: x\n' >"$H5/profiles/$pp/config.yaml"; done
 reg() { HOME="$A5" PATH="$A5/bin:$PATH" ROLES_FILE=$T/roles5.json "${REG:-$W/bin/register-toolsets.sh}" "$@" >"$T/out" 2>&1; echo $?; }
 : >"$A5/calls"; ok '[ "$(reg)" = 0 ]' "5.1 register-toolsets applies a table with a sandbox block"
@@ -866,5 +941,12 @@ ok 'cmp -s "$W/docs/hermes-local/plugins/os-box/__init__.py" "$H5/profiles/$P/pl
 ok 'grep -qx -- "-p $R config set terminal.backend local" "$A5/calls" && ! grep -q -- "-p $R plugins enable" "$A5/calls" && [ ! -e "$H5/profiles/$R/plugins" ]' "5.5 an unboxed profile is pinned to the unboxed backend and gets no plugin"
 n1=$(grep -c ' set \| enable ' "$A5/calls"); ok '[ "$(reg --check)" = 1 ] && grep -q "plugin os-box DRIFT" "$T/out" && [ "$(grep -c " set \| enable " "$A5/calls")" = "$n1" ]' "5.6 --check reports the plugin drift and changes nothing"
 
+# B.1 (r5): the sweep never writes into a worktree the caller has removed (it re-made .worktrees/<card>/.git and .git/worktrees/<card>)
+ok 'ROLES_FILE=$T/roles.json python3 -I -c "
+import os, sys; sys.path.insert(0, sys.argv[1]); import box
+t = sys.argv[2]; wt, gd = t + \"/gone/.worktrees/t_0000g0ne\", t + \"/gone/.git/worktrees/t_0000g0ne\"
+box._sanitise({\"wt\": wt, \"gd\": gd, \"common\": t + \"/gone/.git\"}, {wt + \"/.git\": b\"gitdir: \" + gd.encode() + b\"\\n\", gd + \"/gitdir\": wt.encode() + b\"/.git\\n\"})
+sys.exit(1 if os.path.lexists(wt) or os.path.lexists(gd) else 0)" "$W/bin" "$T"' "B.1 (r5): the sweep after a box writes nothing into a worktree (and git dir) the caller removed meanwhile"
+exec {CW}>&- {CR}<&-; wait "$CPID"   # the validator driver ends
 [ -n "${KEEP:-}" ] && echo "KEPT $T"
 [ "$fails" = 0 ] && echo "box selftest PASS" || { echo "box selftest FAIL ($fails)"; exit 1; }

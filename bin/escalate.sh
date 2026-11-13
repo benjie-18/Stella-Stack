@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # The only sanctioned way to run Claude Opus, Haiku or Sonnet: card-scoped, logged, rate-limited.
-# usage: escalate.sh <card-id> <haiku|sonnet|opus> <purpose> <reason...> [-- <extra claude args>]
-#   prompt on stdin; opus purpose must be in OPUS_PURPOSES (plan runs --model opusplan).
-# Exit: 0 ok, 2 usage, 3 over a limit (never retried), 75 pool exhausted, else claude's exit code.
+# usage: escalate.sh <card-id> <haiku|sonnet|opus> <purpose> <reason...> [--]
+#   prompt on stdin; opus purpose must be in OPUS_PURPOSES (plan runs --model opusplan). Anything after -- is refused (exit 2): no caller passes an extra arg. A reason over 8192 characters is refused (exit 2; not on a replay).
+# Exit: 0 ok, 2 usage or a refusal (a setting's registry default unreadable: STL-CFG-310; the log or a state file of the call is a link; nothing run), 3 over a limit (never retried), 75 pool exhausted, else claude's exit code.
 # Queue (F15, F28, F29): a call refused by a zeroed or exceeded limit (Opus slots, Haiku per day) and every pool-exhausted
 # call is recorded in state/queue.jsonl with its prompt file, and raises one #alerts line; the caller still gets 3 or 75.
-# Nothing retries it: bin/escalate-drain.sh (manual) replays it. Beyond QUEUE_MAX queued entries the call is refused
-# unqueued (one #alerts line an hour). ESCALATE_REPLAY=<id> (set by the drain) never queues or alerts again.
+# A queue file that cannot be read, parsed or written is never read as empty and never reported as written: the call is not queued,
+# the caller still gets 3 or 75, the stderr line, the card note and a NOT_QUEUED log line say it was lost, and STL-LIM-405 tells the
+# owner (one alert an hour: the file stays broken until it is fixed). An unreadable settings registry is checked after the
+# usage checks and refuses the call (STL-CFG-310, one alert an hour). Nothing retries a call: bin/escalate-drain.sh (manual)
+# replays a queued one. Beyond QUEUE_MAX queued entries the call is refused unqueued (NOT_QUEUED, one #alerts line an hour).
+# ESCALATE_REPLAY=<id> (set by the drain) never queues or alerts again.
 # Test hook (Stage 6 T15): ESCALATE_FORCE_POOL_EXHAUSTED=1 skips claude and takes the fallback path. The fallback config
 # (FALLBACK_CONFIG, default docs/hermes-local/fallback-routing.json) says whether a low-risk call is served by a fallback runner
 # when the pool is exhausted and which models it tries; disabled or missing = NO_REROUTE and queue.
@@ -24,8 +28,7 @@ mkdir -p "$STATE"
 # shellcheck source=/dev/null
 . "$SUP/limits.env" || { echo "escalate.sh: cannot read $SUP/limits.env" >&2; exit 2; }
 . /workspace/bin/kanban-board.sh   # kanban(): every kanban call names its board (F4)
-# `timeout 0` means no timeout, so 0, empty or non-numeric CALL_TIMEOUT falls back to the default (warned below, D42).
-[[ "${CALL_TIMEOUT:-}" =~ ^[1-9][0-9]*[smhd]?$ ]] || { bad_timeout="${CALL_TIMEOUT:-}"; CALL_TIMEOUT=600; }
+. /workspace/bin/owner-config.sh   # once_per_hour, and alert_text (D44) through it
 
 # Rate-limit / pool-exhausted output, verified in claude 2.1.310 (bin/claude.exe strings).
 POOL_PATTERNS=("You've hit your" "You've reached your" "You're out of usage credits" "You're out of extra usage"
@@ -44,28 +47,60 @@ log() {  # log <event> <exit_code|null> [model_used] [fallback] [cost] [detail]
     '{time: $time, card: $card, model: $model, purpose: $purpose, reason: $reason, event: $event,
       exit_code: $exit_code, model_used: $model_used, fallback: $fallback, cost_usd: $cost_usd, detail: $detail}' >>"$LOG"
 }
-[ -z "${bad_timeout+x}" ] || { log WARN null "" false null "CALL_TIMEOUT='$bad_timeout' is not a positive duration (0 would disable the timeout); using 600"
-  echo "escalate.sh: warning: CALL_TIMEOUT='$bad_timeout' is not a positive duration; using 600" >&2; }
 refuse() { log "$1" "$2" "" false null "$3"; echo "escalate.sh: $1: $3" >&2; exit "$2"; }
+registry() {  # registry <KEY>: sets reg_def reg_min reg_max from the settings registry; unreadable = refuse (exit 2, STL-CFG-310)
+  local v p="the default and range of setting $1 cannot be read"
+  v=$(python3 -I /workspace/bin/stella_data.py get --json settings "$1" 2>/dev/null | jq -er '[.default, .validation.minimum, .validation.maximum]
+    | select(all(type == "number" and . == floor) and .[1] <= .[0] and .[0] <= .[2]) | @tsv') && read -r reg_def reg_min reg_max <<<"$v" && [ -n "$reg_max" ] && return
+  python3 -I /workspace/bin/alert_catalog.py preview STL-CFG-310 problem="$p" >&2 2>/dev/null || echo "STL-CFG-310 $p" >&2   # fallback: no catalog, still a code
+  # Nothing is queued (the queue bound is what could not be read) and the prompt is not read: the caller keeps it. The owner is told
+  # on the alerts channel once an hour (a standing condition), never for a replay; each refused call has its own log line.
+  if [ -z "${ESCALATE_REPLAY:-}" ] && once_per_hour registry-unreadable; then
+    hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-CFG-310 problem="$p; escalate.sh refused the call for card $card ($model $purpose): it was not run and not queued, the caller still holds the prompt; later calls are refused the same way until it is fixed (each in escalations.log, SETTING_UNREADABLE)")" >/dev/null 2>&1
+  fi
+  refuse SETTING_UNREADABLE 2 "$p; no call without a timeout, no unbounded queue"
+}
 note() { kanban comment --author escalate.sh "$card" "$1" >/dev/null 2>&1; }
-. /workspace/bin/owner-config.sh   # once_per_hour, and alert_text (D44) through it
 QUEUE="$STATE/queue.jsonl"
+# nolink <file>: false, with a warning, when a file of the state folder (or the log) is a symbolic link or has a second hard link;
+# no write there opens one (W5-RT4-01).
+# shortcut: whoever can write the state folder can put a link in between this test and the open; upgrade to an O_NOFOLLOW open if a less trusted user can write it
+nolink() { { [ ! -L "$1" ] && { [ ! -f "$1" ] || [ "$(stat -c %h "$1")" = 1 ]; }; } || { echo "escalate.sh: warning: ${1#"$SUP"/} is a link: not written through it" >&2; return 1; }; }
+nolink "$LOG" || exit 2   # every call logs: checked once, before the first line is appended
+nolink "$STATE" || refuse STATE_LINK 2 "the state folder is a link: nothing is made in it"
+queue_failed() {  # queue_failed <what>: the call is not in the queue, and every message says so (the prompt goes: nothing points at it)
+  flock -u 6 2>/dev/null; rm -f "$prompt"; qid=""   # fd 6 is not open when the lock file was refused
+  qnote="NOT queued: $1; fix the file (the call is lost, run it again)"
+  echo "escalate.sh: warning: $1" >&2
+  log NOT_QUEUED null none false null "$1; the call is lost"   # every lost call has its own line; the alert below is once an hour
+  once_per_hour queue-unusable && hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-LIM-405 card="$card" model="${model^}" problem="$1" since="$(date -u +%FT%TZ)")" >/dev/null 2>&1
+}
 queue() {  # queue <LIMIT|POOL_EXHAUSTED> <what happened>: one entry and one #alerts line; sets qid ("" if not queued), qnote
   qid="" qnote="not queued"
   [ -z "${ESCALATE_REPLAY:-}" ] || { qnote="left in the queue as $ESCALATE_REPLAY"; rm -f "$prompt"; return 0; }
-  exec 6>"$STATE/queue.lock"; flock 6
-  if [ "$(jq -s '[.[] | select(.state == "queued")] | length' "$QUEUE" 2>/dev/null || echo 0)" -ge "${QUEUE_MAX:-50}" ]; then
+  nolink "$STATE/queue.lock" || { queue_failed "the queue lock state/queue.lock is a link"; return 0; }
+  exec 6>>"$STATE/queue.lock"; flock 6
+  nolink "$QUEUE" || { queue_failed "the queue file state/queue.jsonl is a link"; return 0; }
+  nq=0   # a missing file is an empty queue; a file that cannot be read or parsed is not (the count is unknown, so nothing is queued past the limit)
+  if [ -e "$QUEUE" ] && ! nq=$(jq -s '[.[] | select(.state == "queued")] | length' "$QUEUE" 2>/dev/null); then
+    queue_failed "the queue file state/queue.jsonl cannot be read or parsed"; return 0
+  fi
+  if [ "$nq" -ge "$QUEUE_MAX" ]; then
     flock -u 6; rm -f "$prompt"
-    qnote="not queued: the queue is full (QUEUE_MAX=${QUEUE_MAX:-50})"
-    once_per_hour queue-full && hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-LIM-403 max="${QUEUE_MAX:-50}" why="$1" card="$card" since="$(date -u +%FT%TZ)")" >/dev/null 2>&1
+    qnote="not queued: the queue is full (QUEUE_MAX=$QUEUE_MAX)"
+    log NOT_QUEUED null none false null "the queue is full (QUEUE_MAX=$QUEUE_MAX); the call is lost"
+    once_per_hour queue-full && hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-LIM-403 max="$QUEUE_MAX" why="$1" card="$card" since="$(date -u +%FT%TZ)")" >/dev/null 2>&1
     return 0
   fi
   qid="q_$(date -u +%Y%m%dT%H%M%SZ)_${card}_$$"
-  jq -nc --arg id "$qid" --arg card "$card" --arg model "$model" --arg purpose "$purpose" --arg call_reason "$reason" \
+  entry=$(jq -nc --arg id "$qid" --arg card "$card" --arg model "$model" --arg purpose "$purpose" --arg call_reason "$reason" \
     --argjson claude_args "$(if [ ${#extra_args[@]} -gt 0 ]; then printf '%s\n' "${extra_args[@]}" | jq -Rsc 'split("\n")[:-1]'; else echo '[]'; fi)" \
     --arg why "$1" --arg detail "$2" --arg created "$(date -u +%FT%TZ)" --arg prompt_file "$prompt" \
     '{id: $id, card: $card, model: $model, purpose: $purpose, call_reason: $call_reason, claude_args: $claude_args,
-      reason: $why, detail: $detail, created: $created, state: "queued", prompt_file: $prompt_file}' >>"$QUEUE"
+      reason: $why, detail: $detail, created: $created, state: "queued", prompt_file: $prompt_file}')
+  # a cut last line (no newline) would swallow this entry: end it first; a write that fails is not a queued call
+  { [ ! -s "$QUEUE" ] || [ -z "$(tail -c1 "$QUEUE")" ] || echo >>"$QUEUE"; } && printf '%s\n' "$entry" >>"$QUEUE" \
+    || { queue_failed "the queue file state/queue.jsonl cannot be written"; return 0; }
   flock -u 6
   qnote="recorded in the queue as $qid; run bin/escalate-drain.sh"
   log QUEUED null none "$([ "$1" = POOL_EXHAUSTED ] && echo true || echo false)" null "$1; $qid"
@@ -74,13 +109,14 @@ queue() {  # queue <LIMIT|POOL_EXHAUSTED> <what happened>: one entry and one #al
   alert_rc=$?
 }
 limit() { queue LIMIT "$1"; note "escalate.sh LIMIT: $model ($purpose) for '$reason': $1. No result; $qnote."; refuse LIMIT 3 "$1; $qnote"; }
-extra_args=("$@")   # claude args after --, kept with a queue entry
-for a in "${extra_args[@]}"; do   # review H2: claude takes the last of a repeated option, so these would override ours
-  case "${a%%=*}" in
-    --model|--fallback-model|--max-budget-usd|--permission-mode|--dangerously-skip-permissions|--allow-dangerously-skip-permissions|--yolo|--settings|--add-dir|--allowedTools|--allowed-tools)
-      refuse USAGE 2 "extra claude arg $a would override escalate.sh's model, budget or permissions" ;;
-  esac
-done
+# shortcut: the limit is a number here (limits.env and the settings registry hold none), move it to the registry when a caller needs another; in characters, so 32 KiB at most, far under the 128 KiB the kernel gives one argument (W5-RT6-03: a longer one cannot be replayed)
+# Not on a replay (W5-RT7-02): the drain's read can give a queued reason back with more characters, and a reason accepted when it was
+# queued is never refused for its length; one over the kernel's limit cannot be handed over by the drain at all (exit 126, left queued).
+[ -n "${ESCALATE_REPLAY:-}" ] || [ ${#reason} -le 8192 ] || { m="reason of ${#reason} characters is longer than 8192: put the detail in the prompt"; reason="${reason:0:80}..."; refuse USAGE 2 "$m"; }
+# W5-RT6-01: an extra arg is passed on only if a caller of the stack uses it. None does (the drain replays the empty list every
+# caller queues), so every one is refused, here, where a direct call and a replay both pass. To allow one, name it in this test.
+extra_args=("$@")   # always empty past the next line; kept with a queue entry
+[ $# -eq 0 ] || refuse USAGE 2 "extra claude arg $(printf %q "$1") is refused: no caller of the stack passes one (it could override escalate.sh's model, budget or permissions, or make the model command read a file or start a command)"
 
 [[ "$card" =~ ^t_[0-9a-f]{8}$ ]] || refuse USAGE 2 "card id required (t_xxxxxxxx), got '${card}'"
 [ -n "$reason" ] || refuse USAGE 2 "reason required"
@@ -92,22 +128,41 @@ case "$model" in
     claude_model=$([ "$purpose" = plan ] && echo opusplan || echo opus) ;;
   *) refuse USAGE 2 "model must be haiku, sonnet or opus" ;;
 esac
+# The settings registry is read after the usage checks: a bad call is refused for what it is, before any alert.
+# A limit that is set but outside the registry's type and range is treated like a bad timeout: one warning, then the registry
+# default (`timeout 0` means no timeout; a non-number makes `[ -ge ]` fail, which would queue without bound).
+registry CALL_TIMEOUT; ct_def=$reg_def ct_min=$reg_min ct_max=$reg_max
+registry QUEUE_MAX; qm_def=$reg_def qm_min=$reg_min qm_max=$reg_max
+# shortcut: nine digits at most (a number of days still fits in 64 bits); longer is out of range anyway
+secs=; if [[ "${CALL_TIMEOUT:-}" =~ ^([1-9][0-9]{0,8})([smhd]?)$ ]]; then
+  case "${BASH_REMATCH[2]}" in m) mul=60;; h) mul=3600;; d) mul=86400;; *) mul=1;; esac; secs=$(( ${BASH_REMATCH[1]} * mul )); fi
+if [ -z "$secs" ] || [ "$secs" -lt "$ct_min" ] || [ "$secs" -gt "$ct_max" ]; then bad_timeout="${CALL_TIMEOUT:-}"; CALL_TIMEOUT=$ct_def
+  log WARN null "" false null "CALL_TIMEOUT='$bad_timeout' is not a positive duration of $ct_min to $ct_max seconds (0 would disable the timeout); using $CALL_TIMEOUT"
+  echo "escalate.sh: warning: CALL_TIMEOUT='$bad_timeout' is not a positive duration of $ct_min to $ct_max seconds; using $CALL_TIMEOUT" >&2; fi
+if [ -z "${QUEUE_MAX:-}" ]; then QUEUE_MAX=$qm_def   # unset or empty: the default, silently
+elif ! [[ "$QUEUE_MAX" =~ ^[0-9]{1,9}$ ]] || [ "$((10#$QUEUE_MAX))" -lt "$qm_min" ] || [ "$((10#$QUEUE_MAX))" -gt "$qm_max" ]; then
+  log WARN null "" false null "QUEUE_MAX='$QUEUE_MAX' is not a whole number from $qm_min to $qm_max; using $qm_def"
+  echo "escalate.sh: warning: QUEUE_MAX='$QUEUE_MAX' is not a whole number from $qm_min to $qm_max; using $qm_def" >&2; QUEUE_MAX=$qm_def
+else QUEUE_MAX=$((10#$QUEUE_MAX)); fi
 
 prompt="$STATE/prompt-$(date -u +%Y%m%dT%H%M%SZ)-$card-$$.txt"
+{ nolink "$prompt" && nolink "$prompt.err"; } || refuse STATE_LINK 2 "the prompt file of this call in the state folder is a link"
 cat >"$prompt"
 [ -s "$prompt" ] || { rm -f "$prompt"; refuse USAGE 2 "prompt required on stdin"; }
 
 if [ "$model" = opus ]; then
   got=""
   for i in $(seq 1 "$OPUS_MAX_CONCURRENT"); do
-    exec 8>"$STATE/opus.$i.lock"
+    lk="$STATE/opus.$i.lock"; nolink "$lk" || continue
+    exec 8>>"$lk"
     flock -n 8 && { got=1; break; }
   done
   [ -n "$got" ] || limit "no Opus slot free (OPUS_MAX_CONCURRENT=$OPUS_MAX_CONCURRENT)"
 fi
 if [ "$model" = haiku ]; then
   counter="$STATE/haiku-$(date -u +%F).count"
-  exec 7>"$STATE/haiku.lock"
+  lk="$STATE/haiku.lock"; { nolink "$lk" && nolink "$counter"; } || limit "the lock or counter of the daily limit in the state folder is a link"
+  exec 7>>"$lk"
   flock 7
   n=$(cat "$counter" 2>/dev/null || echo 0)
   [ "$n" -lt "$HAIKU_MAX_PER_DAY" ] || { flock -u 7; limit "Haiku daily limit reached ($n/$HAIKU_MAX_PER_DAY for $(date -u +%F))"; }
@@ -177,8 +232,10 @@ cost=$(jq -r '.total_cost_usd // "null"' <<<"$out" 2>/dev/null) || cost=null
 # exit 0 counts only with a parseable, non-error result
 [ "$rc" -eq 0 ] && ! jq -e '.is_error == false' <<<"$out" >/dev/null 2>&1 && rc=1
 if [ "$rc" -ne 0 ]; then
+  # W5-VER7-01: on a replay the drain leaves these two exit codes queued; the note, the log line and stderr say the same
+  ns=FAIL; [ -z "${ESCALATE_REPLAY:-}" ] || [[ $rc != 12[67] ]] || { ns="the model command did not start (exit $rc); left in the queue as $ESCALATE_REPLAY"; err="$ns: $err"; }
   log FAIL "$rc" "${model_used:-unknown}" false "${cost:-null}" "$(head -c 300 <<<"$out$err")"
-  note "escalate.sh FAIL: $model ($purpose) exit $rc for '$reason'. model_used: ${model_used:-unknown}, fallback: false."
+  note "escalate.sh $ns: $model ($purpose) exit $rc for '$reason'. model_used: ${model_used:-unknown}, fallback: false."
   rm -f "$prompt"   # F16: kept only while a queue entry points at it
   printf '%s\n' "$out"; printf '%s\n' "$err" >&2
   exit "$rc"

@@ -53,13 +53,18 @@ started=$(date -u +%FT%TZ)
 steps='[]'
 failed=""
 for step in test lint build; do
-  if ! jq -e --arg s "$step" '.scripts[$s]' package.json >/dev/null; then
+  # The test step runs the npm script the settings name (test_step.npm_script: the quick tier, owner decision 2026-11-12); its name here stays "test".
+  script=$step; [ "$step" != test ] || script=$(python3 -I "$BIN/watchdog_settings.py" get test_step.npm_script 2>/dev/null)
+  missing=""; jq -e --arg s "$script" '.scripts[$s]' package.json >/dev/null 2>&1 || missing=1
+  if [ -n "$missing" ] && [ "$step" != test ]; then
     steps=$(jq -c --arg s "$step" '. + [{step: $s, exit_code: null, skipped: "no npm script"}]' <<<"$steps")
     continue
   fi
-  echo "== $(date -u +%FT%TZ) npm run $step" >>"$LOG"
+  echo "== $(date -u +%FT%TZ) npm run ${script:-?}" >>"$LOG"
   out=$(mktemp "$SUP/state/step-out.XXXXXX")
-  timeout "$STEP_TIMEOUT" npm run --silent "$step" >"$out" 2>&1
+  # a test step with no script to run is a failure, never a skip: a watchdog that silently tests nothing is the fault to exclude
+  if [ -n "$missing" ]; then echo "the test step has no npm script to run (settings test_step.npm_script is \"${script}\"; package.json lacks it): nothing was tested" >"$out"; false
+  else timeout "$STEP_TIMEOUT" npm run --silent "$script" >"$out" 2>&1; fi
   rc=$?
   cat "$out" >>"$LOG"
   # Test hook: WATCHDOG_FORCE_FAIL=<step> simulates that step failing (alert-path test).
@@ -80,6 +85,7 @@ for step in test lint build; do
     done < <(python3 -I "$BIN/watchdog_settings.py" failures "$out" 2>/dev/null)
     [ -n "$flaky" ] && [ -z "$names" ] && rc=0
   fi
+  [ -z "$missing" ] || detail="test step: $(head -c 200 "$out")"
   rm -f "$out"
   steps=$(jq -c --arg s "$step" --argjson rc "$rc" --argjson h "$hung" --arg f "$flaky" '. + [{step: $s, exit_code: $rc} + (if $h then {hung: true} else {} end) + (if $f != "" then {rerun_passed: $f} else {} end)]' <<<"$steps")
   if [ "$rc" -ne 0 ] && [ -z "$failed" ]; then

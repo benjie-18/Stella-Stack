@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Data file index",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "event_log": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"
+    },
+    "backup_dir": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"
+    },
+    "applied_state": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"
+    },
+    "role_table": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"
+          },
+          "schema": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "format": {
+            "enum": [
+              "json",
+              "env"
+            ]
+          },
+          "owner_only": {
+            "type": "boolean"
+          },
+          "redact_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "list_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id_field": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "schema",
+          "format",
+          "owner_only",
+          "redact_keys",
+          "list_key",
+          "id_field"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "schema_version",
+    "event_log",
+    "backup_dir",
+    "applied_state",
+    "role_table",
+    "files"
+  ],
+  "additionalProperties": false
+}

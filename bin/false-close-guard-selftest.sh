@@ -5,6 +5,7 @@
 # and the rows at the end pin the reassign sentence of the no-delegate refusal.
 # Replays t_fbfdaf63 (heredoc write, then OpenCode), the recovery path the refusal names, and the Windows-path checks (F3, F4).
 set -u
+mkdir -p /workspace/.scratch   # ignored by git: absent in a fresh copy
 T=$(mktemp -d); W=$(mktemp -d /workspace/.scratch/fcg.XXXXXX); trap 'rm -rf "$T" "$W"' EXIT
 echo "Phase 4 test OK" > "$W/phase4-test.md"
 cp /workspace/config/owner.example.env "$T/owner.env"   # scratch owner config (D39): OWNER_STACK_PATH_WIN='C:\stack'

@@ -1,21 +1,22 @@
 """OS box (option A), stdlib only: the bubblewrap mount list for one terminal call of a boxed profile.
 plan() turns the card proof and the `sandbox` block of roles.json into mounts; box_argv() makes the bwrap argv. No profile,
 role, path or project is named here: they come from the table, the card proof and the board's project roots. A path
-the box must not show (owner settings, the canary, secret classes, hidden folders) is never mounted: every parent of
+the box must not show (owner settings, the apply tool's backups, applied state and event log named by the data index, the canary, secret classes, hidden folders) is never mounted: every parent of
 one is a tmpfs and each safe child is bound on its own, because /workspace is case-insensitive (9p) and a bind over one
 spelling hides only that spelling. Any doubt raises BoxError and the terminal is refused (fail closed).
 The card's branch ref is not bound from the shared refs/heads/<project> folder (HH-05: on the case-insensitive 9p mount a bind
 over one spelling of a sibling's ref hides only that spelling): the box sees a private copy of its own ref, and run() applies
 it to the real repo after the call, for this ref only, as a compare-and-swap.
 """
-import ast, contextlib, fnmatch, json, os, re, shutil, signal, stat, subprocess, sys, tarfile, time, uuid
+import ast, contextlib, fnmatch, json, os, pwd, re, shutil, signal, stat, subprocess, sys, tarfile, time, uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import roles
 
 HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs/hermes-local/hooks/builder/secret-guard.py")
+NO_NEST = "--disable-userns"   # no namespace inside a box; only the merge test of a stack card runs without it (merge_exec nest)
 BASE = ["bwrap", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup-try",
-        "--disable-userns", "--die-with-parent", "--new-session", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"]
+        NO_NEST, "--die-with-parent", "--new-session", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"]
 
 
 class BoxError(Exception):
@@ -119,11 +120,11 @@ def _escaping_links(wt, allow=()):
 
 
 def trusted_answers(d, comments, prefix):
-    """The owner's answers recorded on a card: comment bodies that start with the escalation poller's prefix AND were written by a profile that takes
-    no cards (the dispatcher's, which the poller runs as). The kanban guard also refuses that text from agents, but it is fail-open; the author is the second check."""
+    """The owner's answers recorded on a card: comment bodies that start with the escalation poller's prefix AND were written by a profile whose role has may_answer_for_owner
+    (the coordinator's, which the poller runs as). The kanban guard also refuses that text from agents, but it is fail-open; the author is the second check."""
     if not prefix:
         return []
-    poller = {n for n, pr in d["profiles"].items() if d["roles"][pr["role"]].get("assignable") is False}
+    poller = {n for n, pr in d["profiles"].items() if d["roles"][pr["role"]].get("may_answer_for_owner") is True}
     return [c["body"] for c in comments or [] if isinstance(c, dict) and c.get("author") in poller and isinstance(c.get("body"), str)
             and c["body"].startswith(prefix)]
 
@@ -276,7 +277,11 @@ def plan(d, profile, proof, *, hermes_root, home, roots, stack_root=None, spec=N
     roots = list(dict.fromkeys(os.path.realpath(r) for r in [stack, *roots]))   # the stack repo is always walked: the hide rules never depend on the board's project list
     roots = [r for r in roots if not any(r != o and r.startswith(o + "/") for o in roots)]   # a nested root is reached through its parent
     cf = lambda p: p.casefold()
-    prot = [os.path.join(stack, p) for p in d["owner_settings"]] + [os.path.join(stack, sb["canary"])]
+    try:   # B1 (F1 W4): the apply tool's backups, applied state and event log hold owner values: they are mounted like the owner settings, never (no file, no listing)
+        state = roles.state_paths(d, stack)
+    except roles.RolesError as e:
+        raise BoxError(f"the data index cannot be read, so the box does not start: {e}")
+    prot = [os.path.join(stack, p) for p in d["owner_settings"]] + [os.path.join(stack, p) for p in state] + [os.path.join(stack, sb["canary"])]
     protcf = {cf(x) for x in prot} | {cf(os.path.realpath(x)) for x in prot}
     for x in prot:
         if os.path.isfile(x) and os.stat(x).st_nlink > 1:
@@ -316,7 +321,7 @@ def plan(d, profile, proof, *, hermes_root, home, roots, stack_root=None, spec=N
             must[common] = [("ro", common, common)] + [("rw", x, x) for x in (f"{common}/objects", gd)] + \
                            [("rw", priv + "/refs", refs), ("rw", priv + "/logs", logs)] + \
                            [("ro", f"{gd}/{f}", f"{gd}/{f}") for f in ("commondir", "gitdir")]   # read-only over the writable folder
-            env["HERMES_KANBAN_BRANCH"] = branch
+            env[d["worker_pins"]["branch"]] = branch
             env["GIT_CONFIG_GLOBAL"] = pdir + "/home/.gitconfig"   # HH-06: HOME=<dir> / XDG_CONFIG_HOME=<dir> cannot make git read a planted config (the commit hook stays on); the file is read-only (home_protect)
         else:
             ov_r = sb["profile_overrides"].get(profile, {})
@@ -352,7 +357,7 @@ def plan(d, profile, proof, *, hermes_root, home, roots, stack_root=None, spec=N
                 raise BoxError(f"the worktree holds a symlink that leaves it ({bad}); the reviewing box does not start")
             must[wt], must[common] = [("ro", wt, wt)], [("ro", common, common)]
             env["GIT_DIR"], env["GIT_WORK_TREE"] = gd, wt   # S6I-01: git here never discovers a repo the builder planted in a subfolder (its config can name programs git runs)
-        env["HERMES_KANBAN_WORKSPACE"] = wt   # the commit guard's marker: the proof cannot run inside the box (design 4.4)
+        env[d["worker_pins"]["workspace"]] = wt   # the commit guard's marker: the proof cannot run inside the box (design 4.4)
     inside = lambda p, m: p == m or p.startswith(m + "/")
     out, done = [("tmpfs", "/tmp")] + ([("tmpfs", "/commandhistory")] if os.path.isdir("/commandhistory") else []), set()
 
@@ -560,7 +565,7 @@ def _sanitise(spec, snap):
 
 def _last_resort(spec):
     gd = spec.get("gd")
-    if not gd:
+    if not gd or not os.path.isdir(gd):   # B.1 (r5): nothing to quarantine in a git dir that is gone
         return
     for p in (spec.get("wt"), gd):
         with contextlib.suppress(Exception):
@@ -577,6 +582,8 @@ def _sanitise_inner(spec, snap):
     cannot list, a gitlink path outside the worktree, an error on one entry) fails closed: the card's index is moved aside, so the host sees no gitlink at all.
     The host reads the index with --git-dir=<common> only. A launcher killed with SIGKILL is covered by a detached helper (run()); the full fix is in Hermes."""
     if not snap:
+        return
+    if not (os.path.isdir(spec["wt"]) and os.path.isdir(spec["gd"])):   # B.1 (r5): a worktree the caller removed meanwhile is never written again (no .git, no git dir re-made)
         return
     for p in (spec["wt"], spec["gd"]):   # a box can leave its folders unwritable (9p honours modes)
         with contextlib.suppress(OSError):
@@ -629,20 +636,21 @@ def run(spec, cmd):
     old = _git(spec, "rev-parse", "--verify", "-q", ref + "^{commit}").stdout.strip()
     if not old:
         print(f"box: cannot read the card branch {spec['branch']}; nothing was run", file=sys.stderr)
-        return 126
+        return 70   # W4-VAL3-01: a reserved "box could not start" code; a card test may legitimately exit 126
     os.makedirs(priv + "/refs"); os.makedirs(priv + "/logs")
     with open(f"{priv}/refs/{name}", "w") as f:
         f.write(old + "\n")
     child, early = [], []
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):   # a kill meant for the call ends the box; this process stays to apply the ref
         signal.signal(sig, lambda n, _f: child[0].send_signal(n) if child else early.append(n))
-    snap = _snapshot_git(spec)
+    snap, helper = _snapshot_git(spec), None
     if snap:   # a launcher that Hermes kills with SIGKILL after a timeout cannot sweep: a helper in its own session does it once the launcher is gone
         import base64
         enc = json.dumps({k: (base64.b64encode(v).decode() if v is not None else None) for k, v in snap.items()})
-        subprocess.Popen([sys.executable, "-I", os.path.abspath(__file__), "sweep", json.dumps(spec), enc, str(os.getpid())], start_new_session=True,
+        helper = subprocess.Popen([sys.executable, "-I", os.path.abspath(__file__), "sweep", json.dumps(spec), enc, str(os.getpid())], start_new_session=True,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
-    child.append(subprocess.Popen(cmd))
+    sfd = os.environ.get("BOX_START_FD", "")   # r6: merge_exec's start pipe goes on to the box; nothing else is inherited
+    child.append(subprocess.Popen(cmd, pass_fds=[int(sfd)] if sfd.isdigit() else ()))
     for n in early:   # a signal that came before the box existed
         child[0].send_signal(n)
     ppid0 = os.getppid()   # a launcher already reparented to init (parent 1) at start is orphaned from the first moment
@@ -659,11 +667,18 @@ def run(spec, cmd):
                     child[0].kill()
                     rc = child[0].wait()
                 break
+    gfd = os.environ.get("BOX_SIGNAL_FD", "")
+    if rc < 0 and gfd.isdigit():   # r6: the box itself was ended by a signal: told to merge_exec on a pipe the box never held (a file in the git dir is the test's to write)
+        with contextlib.suppress(OSError):
+            os.write(int(gfd), str(-rc).encode())
     rc = rc if rc >= 0 else 128 - rc
     try:
         _sanitise(spec, snap)
     except (OSError, subprocess.SubprocessError) as e:
         print(f"box: the card's git files were not checked after the call ({type(e).__name__})", file=sys.stderr)
+    else:
+        if helper:   # B.1 (r5): swept here: the helper (for a launcher killed with SIGKILL) has nothing left to do and must not sweep a worktree removed meanwhile
+            helper.kill()
     new = _plain_id(f"{priv}/refs/{name}")
     if not new:
         print("box: the card branch in the box is not a plain commit id; not applied", file=sys.stderr)
@@ -694,6 +709,63 @@ def _sweep_after(spec, enc, pid):
         pass
 
 
+def merge_exec(top, wt, branch, card, script, nest=False):
+    """K2 (F1 W4): run `script` (the card's test command, in bash) in the OS box with the plan a builder's worker gets: the card worktree
+    writable, the rest read-only, the owner settings files and the state paths not mounted, the worker markers set. The profile is the first
+    of sandbox.boxed_profiles whose role has a writable card worktree (one without broker variables first): from the table, never named here.
+    nest (r6 B2, owner decision 4): the box of a STACK card's merge test may make namespaces of its own (the suite runner isolates each selftest in one); that
+    box alone drops the launcher's no-nested-namespaces switch, every mount and hidden path stays as planned, and no worker's box ever takes this route.
+    The box is the only way: there is no unboxed run. Raises BoxError when the box cannot start. Returns the script's exit code."""
+    d = roles.load()
+    sb = roles.sandbox(d)
+    ps = sorted((p for p in (sb or {}).get("boxed_profiles", []) if p in d["profiles"] and d["roles"][d["profiles"][p]["role"]]["workspace"] == "git-worktree"),
+                key=lambda p: (bool(sb["profile_overrides"].get(p, {}).get("broker_env")), p))
+    ps = [p for p in ps if not sb["profile_overrides"].get(p, {}).get("broker_env")]   # W4-VAL3-12: the card's tests never carry a broker token
+    if not ps:
+        raise BoxError("no boxed profile without broker variables has a writable card worktree, so the card's tests have no box to run in")
+    home = pwd.getpwuid(os.getuid()).pw_dir
+    root = os.environ.get("BOX_HERMES_ROOT") or f"{home}/.hermes"
+    argv, over = box_argv(d, ps[0], {"card": card, "workspace": wt, "branch": branch}, hermes_root=root, home=home, roots=[top])
+    if nest:
+        argv = [a for a in argv if a != NO_NEST]
+    env = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "LC_ALL", "LC_CTYPE")}
+    env.update({m: card for m in roles.worker_markers(d)})
+    env.update(over)
+    # r6 (R14): whether the box started and whether it was killed are told on two pipes, never by an exit code or a file the test can write. The box's
+    # first act writes the start pipe and closes it before the test is exec'd; the signal pipe stays with the launcher (run) and never enters the box.
+    (sr, sw), (gr, gw) = os.pipe(), os.pipe()
+    env.update(BOX_START_FD=str(sw), BOX_SIGNAL_FD=str(gw))
+    try:
+        rc = subprocess.run(argv + ["--chdir", wt, "bash", "-c", 'echo started >&"$0" || exit 1; eval "exec $0>&-"; exec bash -c "$1"', str(sw), script], env=env,
+                            stdin=subprocess.DEVNULL, pass_fds=(sw,) if argv[0] == BASE[0] else (sw, gw)).returncode
+        os.close(sw); os.close(gw)
+        os.set_blocking(sr, False); os.set_blocking(gr, False)
+        def got(fd):
+            try:
+                return os.read(fd, 64).decode(errors="replace").strip()
+            except BlockingIOError:   # a stray process still holds the write end and wrote nothing
+                return ""
+        started, sig = got(sr).startswith("started"), got(gr) if rc >= 0 else str(-rc)
+    finally:
+        for fd in (sr, gr):
+            os.close(fd)
+    if not started:
+        raise BoxError(f"the box did not start (exit {rc}): the tests never ran")
+    if sig:
+        raise BoxError(f"the box was ended by signal {sig[:8]}: the tests did not finish")
+    return rc
+
+
+if __name__ == "__main__" and sys.argv[1:2] == ["exec"]:   # exec <top> <worktree> <branch> <card> <script>: the verdict is ONE line on descriptor 3, which the box never holds:
+    # "ran <the script's exit code>" or nothing (the box could not start: the coded line is on stderr). The exit code repeats it for a reader, it is not the verdict.
+    try:
+        rc = merge_exec(*sys.argv[2:6], sys.argv[6], nest=sys.argv[7:8] == ["nest"])
+        with contextlib.suppress(OSError):
+            os.write(3, f"ran {rc}\n".encode())
+        sys.exit(rc)
+    except (BoxError, roles.RolesError, OSError) as e:
+        print(roles.plain("STL-GRD-605", problem=f"the box could not start: {str(e)[:200]}"), file=sys.stderr)
+        sys.exit(70)
 if __name__ == "__main__" and sys.argv[1:2] == ["run"]:
     sys.exit(run(json.loads(sys.argv[2]), sys.argv[4:]))
 if __name__ == "__main__" and sys.argv[1:2] == ["sweep"]:

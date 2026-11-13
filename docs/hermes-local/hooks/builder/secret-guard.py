@@ -12,23 +12,35 @@ import json, sys
 # as the shell would), brace expansion ({a,b}), $'…' escapes, option values (--include=…) and command lines nested in
 # quotes. Recursing into a folder that holds secrets counts too. Not caught: a path the shell builds at run time (an
 # unknown variable, $(…), an encoder).
-import codecs, fnmatch, glob, os, pwd, re, shlex
+import codecs, fnmatch, glob, os, pwd, re, shlex, time
 SECRETS = (".env*", "*.pem", "*.key", "~/.hermes/.env", "~/.hermes/auth.json", "~/.claude/.credentials*",
            "~/.local/share/opencode/auth.json", "~/.hermes/broker", "~/.ssh", "~/.aws", "~/.config/gh")
 SECRET_OK = (".env.example", ".env.sample", ".env.template")
 HOMES = sorted({pwd.getpwuid(os.getuid()).pw_dir, os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir})
+UNREADABLE = ""   # set when the role table or the data index cannot be read: every read is refused, with this message
 try:   # K6: the owner settings files (roles.json owner_settings) are read by no agent role; an unreadable table refuses all
     sys.path.insert(0, "/workspace/bin")
     import roles as _roles
-    OWNER_FILES = {os.path.realpath(f).casefold() for f in _roles.owner_settings(_roles.load())}   # B2V-01: /workspace is case-insensitive
-except Exception:
-    OWNER_FILES = None
+    _t = _roles.load()
+    OWNER_FILES = {os.path.realpath(f).casefold() for f in _roles.owner_settings(_t)}   # B2V-01: /workspace is case-insensitive
+    OWNER_TREES = [os.path.realpath(t).casefold() for t in _roles.state_trees(_t)]   # B1 (F1 W4): the apply tool's backups, applied state and event log hold owner values: no role reads them
+    OWNER_TEXT = [p.casefold() for p in _roles.state_paths(_t)]   # ... however the path is spelled in a command (an interpreter's code included)
+    _LM = {}   # one memo for the lists built here (T1, r5)
+    FILE_CH = _roles.chains(_roles.owner_settings(_t), _LM)   # K1b: a path is one of these by what it IS (identity: a short name, a case variant, a link), never by its spelling
+    TREE_CH = _roles.chains(_roles.state_trees(_t), _LM)
+    DIR_CH = _roles.chains({os.path.dirname(f) for f in _roles.owner_settings(_t)} | set(_roles.state_trees(_t)), _LM)
+except Exception as _e:
+    OWNER_FILES, OWNER_TREES, OWNER_TEXT, FILE_CH, TREE_CH, DIR_CH = None, [], [], [], [], []
+    UNREADABLE = f"the role table or the data index cannot be read ({type(_e).__name__}), so every read is refused until it is fixed [STL-CFG-303]"
 SECRET_DIRS = [f"{h}/{d}" for h in HOMES for d in (".hermes", ".claude", ".local/share/opencode", ".ssh", ".aws", ".config/gh")]
 SECRET_DIRS.append("/proc")   # a recursive search of /proc reads every process's environment
 SECRET_TEXT = re.compile(r"(?<![\w.-])\.env(?!\.(?:example|sample|template)\b)|\.claude/\.credentials|\.hermes/auth\.json|"
                          r"opencode/auth\.json|\.hermes/broker\b|(?:(?<![\w.~-])|(?<=-[A-Za-z]))/proc/(?:self|thread-self|\d|[*?\[$])|(?<![\w.-])\.(?:ssh|aws)\b|\.config/gh\b")
 RECURSIVE = {"rg", "ag", "ack", "rgrep", "find", "tar", "zip", "cp", "rsync", "scp", "diff"}   # diff: two folders compare every file (B2V-14)
 GIT_READERS = {"diff", "grep", "difftool"}   # B2V-14: a path outside the repo turns them into plain file readers
+FOLDER_OPTS = {"jq": ("-L", "--library-path")}   # B.2 point 9 (W4-CV3-03): a reader that builds a file name from a NAMED folder and a word (jq -L <dir> with
+# import/include reads <dir>/<module>.jq): the folder is judged as searched. From the manuals: of the allow-list readers only jq has this (-L / --library-path);
+# every other reader names the file it opens as a whole word, or takes a pattern/program file by -e/-f (already judged), or searches a folder recursively (rec).
 WRAPPERS = {"sudo", "env", "nohup", "time", "command", "exec", "builtin", "timeout", "nice", "ionice", "stdbuf", "setsid",
             "chroot", "doas", "xargs", "{", "}", "!", "if", "elif", "then", "while", "until", "do", "else"}   # as write-guard PREFIXES
 SPLIT = {"&&", "||", ";", "|", "&", "(", ")"}
@@ -37,15 +49,20 @@ SPLIT = {"&&", "||", ";", "|", "&", "(", ")"}
 def _within(p, root):
     return p == root or p.startswith(root.rstrip("/") + "/")
 
+def _hit(p, ch, rels):
+    x = _roles.overlap(p, ch)
+    return bool(x) and x[0] in rels
+
+
 def _owner_dir(p):
     """True when p is a folder that holds an owner settings file, or inside one (RT7-01: never the terminal's folder)."""
-    return any(_within(os.path.realpath(p).casefold(), os.path.dirname(f)) for f in OWNER_FILES or ())
+    return _hit(p, DIR_CH, ("equal", "inside"))
 
 def secret_path(p):
     n = os.path.normpath(p)
     if re.match(r"/proc/(?:self|thread-self|\d+)(?:/|$)", n):   # another process's environment, memory, fds: a review token lives there while a review runs
         return True
-    if OWNER_FILES is None or os.path.realpath(p).casefold() in OWNER_FILES:
+    if OWNER_FILES is None or _hit(p, FILE_CH, ("equal",)) or _hit(p, TREE_CH, ("equal", "inside")):
         return True
     b = os.path.basename(p).casefold()   # B2V-01: .ENV is .env on a case-insensitive mount
     if b not in SECRET_OK and any(fnmatch.fnmatch(b, s) for s in SECRETS if "/" not in s):
@@ -60,19 +77,34 @@ def _where(word, cwd, names):
 
 
 def _braces(word):
-    """bash brace expansion of {a,b} (innermost first; not {1..3}); over 64 words is refused by path_why."""
-    m = re.search(r"(?<!\$)\{([^{}]*,[^{}]*)\}", word)
-    return [word] if not m else [w for alt in m[1].split(",") for w in _braces(word[:m.start()] + alt + word[m.end():])][:65]
+    """bash brace expansion of {a,b} (innermost first; not {1..3}); over 64 words is refused by path_why. One copy, shared with the write guard."""
+    return _roles.braces(word)
 
 
 def _ansi(cmd):
-    """bash $'…' strings decoded as bash does, and $"…" as plain "…", so escapes cannot hide a name."""
-    dec = lambda m: "'" + codecs.decode(m[1].encode("latin-1", "backslashreplace"), "unicode_escape").replace("'", "'\\''") + "'"
-    return re.sub(r"\$'((?:[^'\\]|\\.)*)'", dec, cmd).replace('$"', '"')
+    """bash $'…' strings decoded as bash does, and $"…" as plain "…", so escapes cannot hide a name. One copy, shared with the write guard."""
+    return _roles.ansi(cmd)
+
+
+DEADLINE = [0.0]   # K5: when the look-ups of one command must be done (monotonic); 0 = no limit (a single path from a tool call)
+
+
+SEEN = {}   # T1: the verdict of each (word, folder, names it uses, recursive) of this call; a command that repeats a path looks it up once
 
 
 def path_why(word, cwd, names=None, recursive=False):
     """Why reading `word` (a path as written, relative to `cwd`) reads a secret, or None."""
+    if OWNER_FILES is None:
+        return UNREADABLE
+    if DEADLINE[0] and time.monotonic() > DEADLINE[0]:
+        return "the command names too many paths to check in time"
+    key = (word, cwd, recursive, tuple(sorted((names or {}).items())) if "$" in word else ())
+    if key not in SEEN:
+        SEEN[key] = _path_why(word, cwd, names, recursive)
+    return SEEN[key]
+
+
+def _path_why(word, cwd, names, recursive):
     words = _braces(word)
     if len(words) > 64:
         return f"{word[:60]}… expands to more than 64 words, too many to check"
@@ -81,16 +113,21 @@ def path_why(word, cwd, names=None, recursive=False):
             continue   # the standard streams as written (they resolve to this process's own pipes); a link that resolves to one is not exempt
         p = _where(w, cwd, names or {})
         raw = os.path.realpath(os.path.join(cwd or "/", os.path.expanduser(w)))   # without normpath first: the kernel follows a link before it applies ..
-        for x in [p, raw] + (glob.glob(p) if glob.has_magic(p) else []):
+        g = _roles.globs(p) if glob.has_magic(p) else []   # K5: bounded
+        if g is None:
+            return f"{word} is a glob with too many wildcard parts to check"
+        for x in [p, raw] + g:
             for q in {x, os.path.realpath(x)}:
-                if OWNER_FILES and os.path.realpath(q).casefold() in OWNER_FILES:
+                if _hit(q, FILE_CH, ("equal",)):
                     return f"{word} is an owner settings file ({q})"   # B2V-16
+                if _hit(q, TREE_CH, ("equal", "inside")):
+                    return f"{word} is an owner state path of the apply tool ({q}) [STL-CFG-312]"
                 if secret_path(q):
                     return f"{word} is a secret path ({q})"
                 if recursive and os.path.isdir(q) and any(_within(q, d) or _within(d, q) for d in SECRET_DIRS):
                     return f"recursing into {q} reads secret files"
-                if recursive and os.path.isdir(q) and any(_within(f, os.path.realpath(q).casefold()) for f in OWNER_FILES or ()):
-                    return f"recursing into {q} reads an owner settings file"   # K6: the folder that holds one
+                if recursive and (_hit(q, FILE_CH, ("contains",)) or _hit(q, TREE_CH, ("contains",))):   # also a folder that does not exist (yet)
+                    return f"recursing into {q} reads an owner settings file or an owner state path [STL-CFG-312]"   # K6: the folder that holds one
         b = os.path.basename(w)
         if b.startswith(".") and glob.has_magic(b) and any(fnmatch.fnmatch(n, b) for n in (".env", ".env.local", ".credentials.json")):
             return f"the glob {word} matches secret files"
@@ -145,17 +182,27 @@ def _search_paths(name, words, base, names):
         ops = ops[1:]   # the first operand is the pattern
     # shortcut: a value-taking option missing from VALUE_OPTS shifts the words; only an existing path counts, so a shifted
     # pattern word never hides the current folder unless it also names an existing path. Session 2 option A replaces this.
-    return [w for w in ops if os.path.exists(p := _where(w, base, names)) or (glob.has_magic(p) and glob.glob(p))]   # RT8-01: a glob that matches names paths
+    return [w for w in ops if os.path.exists(p := _where(w, base, names)) or (glob.has_magic(p) and _roles.globs(p))]   # RT8-01: a glob that matches names paths
 
 def secret_why(cmd, cwd):
     """Why the shell command line `cmd`, run in `cwd`, reads a secret path, or None."""
     cmd = _ansi(cmd)
-    if OWNER_FILES and any(os.path.basename(f) in cmd.casefold() for f in OWNER_FILES):
+    DEADLINE[0] = time.monotonic() + 4.0
+    if OWNER_FILES is None:
+        return UNREADABLE
+    if any(os.path.basename(f) in cmd.casefold() for f in OWNER_FILES):
         return "the command names an owner settings file"   # B2V-16: the owner-settings tail, not "block for a secret"
-    if SECRET_TEXT.search(cmd) or OWNER_FILES is None:
+    if any(t in cmd.casefold() for t in OWNER_TEXT):
+        return "the command names an owner state path of the apply tool (its backups, applied state or event log) [STL-CFG-312]"
+    if SECRET_TEXT.search(cmd):
         return "the command names a secret path"
     if _owner_dir(cwd):
         return f"{cwd} is the folder that holds an owner settings file"
+    for piece in sorted({x for x in re.findall(r"[\w.~$@+%/*?\[\]-]+", cmd) if "/" in x}):   # K1b: every path-like piece of the command text, in code or in quotes, by identity (bounded by the deadline, K5, linear)
+        if len(piece) > 1:
+            why = path_why(piece, cwd, {})
+            if why and ("owner settings" in why or "[STL-CFG-312]" in why or "too many paths" in why):
+                return why
     for toks in all_lines(cmd):
         here, names, seg = cwd, {}, []
         for t in toks + [";"]:
@@ -174,6 +221,10 @@ def secret_why(cmd, cwd):
                     break
                 seg.pop(0)
             if seg:
+                if "/" in seg[0]:   # a path as the command word (inside an interpreter's code it is the first word of its own line)
+                    why = path_why(seg[0], here, names)
+                    if why:
+                        return why
                 name = seg[0].rsplit("/", 1)[-1]
                 sub = next((w for i, w in enumerate(seg[1:], 1) if not w.startswith("-") and seg[i - 1] not in ("-C", "-c")),
                            "") if name == "git" else ""
@@ -183,12 +234,45 @@ def secret_why(cmd, cwd):
                     re.fullmatch(r"-[a-zA-Z]*[rR][a-zA-Z]*|--(?:dereference-)?recursive|--directories=recurse|recurse", w)
                     for w in seg[1:]))
                 base = _where(seg[seg.index("-C") + 1], here, names) if name == "git" and "-C" in seg[:-1] else here
+                for opt in FOLDER_OPTS.get(name, ()):   # B.2 point 9: jq -L <dir> and -L<dir> (attached, as the write guard reads it) name a folder jq searches
+                    for i, w in enumerate(seg):
+                        d = seg[i + 1] if w == opt and i + 1 < len(seg) else w[len(opt):] if w.startswith(opt) and len(w) > len(opt) else None
+                        if d and not d.startswith("-"):
+                            why = path_why(d, base, names, True)
+                            if why:
+                                return why
                 for i, w in enumerate(seg[1:], 1):
                     r = rec and not (name == "git" and seg[i - 1] in ("-C", "-c"))   # git -C <dir> names where, not what it reads
-                    for v in [w] + ([w.split("=", 1)[1]] if w.startswith("-") and "=" in w else []):
-                        why = None if v.startswith("-") or not v else path_why(v, base, names, r)
+                    for v in [w] + ([w.split("=", 1)[1]] if w.startswith("-") and "=" in w else []) + ([w[i:] for i in range(2, len(w))] if re.fullmatch(r"(?s)-[A-Za-z0-9].+", w) else []):   # r7 A7, r8 B: the value attached to a short option (-f/path, -ifname) is the path, wherever it starts in the word
+                        why = path_why(v, base, names, r) if v else None   # r9 P3 (W4-CV6-03): a value that starts with a dash is a name too
                         if why:
                             return why
+                if name == "jq":   # r6 C1 (R14, W4-CV3-03): jq resolves a module name against its search folders (../ included), so the file it opens is no word of
+                    # the command. No everyday call of any role uses jq's module system, so a jq command that can load a module at all is refused: the
+                    # program text (also from a program file) names import, include or modulemeta, a library path option in any spelling, or a JQ_ variable.
+                    jtext = " ".join(seg[1:])
+                    if any(re.fullmatch(r"-[A-Za-z]*f[A-Za-z]*|--fr[a-z-]*(?:=.*)?", w) for w in seg[1:]):   # the program is a file: its text counts
+                        for v in {x for w in seg[1:] for x in (w, w.split("=", 1)[-1])}:   # r8 C: a name with = is looked up whole and after the =
+                            pf = _where(v, base, names)
+                            # r7 A3 (W4-CV4-02): a standard stream, a name the shell still expands (r8 C: ~+/ and ~-/ too), or anything that exists and is no regular file is a program this guard cannot read
+                            if (re.search(r"[*?\[{$]|^~[^/]", v) or re.fullmatch(r"/(?:dev|proc/[^/]+)/(?:std(?:in|out|err)|fd/\d+)", os.path.normpath(pf))
+                                    or (os.path.lexists(pf) and not os.path.isfile(pf))):
+                                jtext += " import"
+                            elif os.path.isfile(pf):
+                                try:
+                                    with open(pf, errors="replace") as fh:
+                                        t = fh.read((1 << 20) + 1)
+                                    jtext += " import" if len(t) > 1 << 20 else " " + t   # r8 C: a file this guard does not read whole is taken as one that imports
+                                except OSError:
+                                    jtext += " import"   # a program file that cannot be read is taken as one that imports
+                    if (re.search(r"\b(?:import|include|modulemeta)\b", jtext) or any(k.startswith("JQ_") for k in names) or "JQ_" in jtext
+                            or any(re.match(r"-[A-Za-z]*L", w) or (len(w.split("=", 1)[0]) >= 5 and "--library-path".startswith(w.split("=", 1)[0])) for w in seg[1:])):
+                        return "jq's module system (import, include, modulemeta, a library path) opens files this guard cannot judge: it is not used here"
+                if any(w.startswith("--f") and "--files0-from".startswith(w.split("=", 1)[0]) for w in seg[1:]):   # r6 C1: any prefix spelling, any command (wc, sort, du)
+                    return (f"{name}: an option of this command is an abbreviation of --files0-from (which reads the names of the files to open from a file or a pipe; this guard "
+                            "cannot judge those); write the option in a form that is not its prefix, e.g. `rg --files-with-matches`, `-f`, `-F`")   # r7 B1 (way b): the rule stands, the reason is true
+                # shortcut: a file name built at run time and fed by xargs (echo -e '<escaped>' | xargs cat) is not seen here; the read-only terminal refuses
+                # xargs and the box does not mount these paths for a boxed role. Upgrade if an unboxed role ever gets xargs.
                 if rec and name in SEARCH and not _search_paths(name, seg[1:], base, names):
                     why = path_why(".", base, names, True)
                     if why:
@@ -224,12 +308,32 @@ def reason(p):
     return None
 
 
+PAY = sys.stdin.read()
 try:
-    why = reason(json.load(sys.stdin))
+    P = json.loads(PAY)
+    why = reason(P)
 except Exception as e:  # fail closed: a payload we cannot read is refused
-    why = f"unreadable payload: {type(e).__name__}"
+    P, why = {}, f"unreadable payload: {type(e).__name__}"
 if why is None:
     sys.exit(0)
+
+
+def coded(code, problem):   # K8: the catalog code, its plain message, one alert line for the call (the role's other hook that refuses it writes none); the role named, no owner value
+    try:
+        return _roles.hook_refusal(code, problem, PAY)   # B.1 (r5): the one way a hook refuses
+    except Exception:   # the role module itself is missing: the code and the problem still print
+        return f"[{code}] {problem}"
+
+
+if why.startswith("the role table or the data index cannot be read"):
+    print(json.dumps({"action": "block", "message": "secret guard: " + coded("STL-CFG-303", "the role table or the data index cannot be read by a read guard") + " Every read is refused until it is fixed."}))
+    sys.exit(2)
+if "[STL-CFG-312]" in why:   # G4: the code, the catalog's plain message, one alert line; no value from any owner file
+    why = coded("STL-CFG-312", "a role tried to read an owner state path of the apply tool") + " " + why.replace(" [STL-CFG-312]", "")
+elif "owner settings" in why:   # an older rule caught it first: it still says so with the code
+    why = coded("STL-CFG-312", "a role tried to read an owner settings file") + " " + why
+else:   # B.1 (r5): every other refusal of this guard (a secret path) carries the code of a refusal by the role's rules
+    why = coded("STL-GRD-604", "the secret guard refused a read of a secret path") + " " + why
 tail = ("No agent reads the owner settings file (the owner's rule): leave it out of the task. To search, name a narrower "
         "folder that does not hold it (for example bin or docs)." if "owner settings" in why else   # RT7-03, B2V-16
         "Agents here never read secrets (.env files, keys, Hermes, Claude, OpenCode, GitHub, SSH or AWS credentials). If the "

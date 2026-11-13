@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Extension manifest",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "kind": {
+      "enum": [
+        "skill",
+        "mcp_server",
+        "connector",
+        "channel",
+        "worker_adapter",
+        "provider"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "hosts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "secrets": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z][A-Z0-9]*_[A-Z0-9_]*$",
+        "maxLength": 64
+      }
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "allowed_roles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "risk_class": {
+      "enum": [
+        "read",
+        "write",
+        "post",
+        "send",
+        "pay",
+        "delete",
+        "sign_in"
+      ]
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "status": {
+      "enum": [
+        "proposed",
+        "approved",
+        "disabled"
+      ]
+    },
+    "source": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "kind",
+    "summary",
+    "hosts",
+    "secrets",
+    "tools",
+    "allowed_roles",
+    "risk_class",
+    "enabled",
+    "status",
+    "source"
+  ],
+  "additionalProperties": false
+}
