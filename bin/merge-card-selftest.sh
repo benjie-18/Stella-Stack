@@ -316,7 +316,7 @@ card t_0000d0f6 f6.txt f6 "$bad"
 ok '[ "$(mc t_0000d0f6 --owner-approved)" = 0 ]' "K2: in the box the worker markers are set and the owner settings file is not mounted"
 # K2: where the box cannot start the merge is refused, coded, and the tests do not run unboxed
 card t_0000d0f7 f7.txt f7 "touch $T/ran-unboxed"; h=$(head_of "$T/repo")
-ok '[ "$(BOX_HERMES_ROOT=$T/nohermes mc t_0000d0f7 --owner-approved)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -q "could not start" "$T/out" && [ ! -e "$T/ran-unboxed" ] && [ "$(head_of "$T/repo")" = "$h" ]' "K2: the box cannot start: refused with a coded line, nothing ran outside it, main untouched"
+ok '[ "$(BOX_HERMES_ROOT=$T/nohermes mc t_0000d0f7 --owner-approved)" = 3 ] && grep -q "STL-GRD-605" "$T/out" && grep -q "could not start" "$T/out" && [ ! -e "$T/ran-unboxed" ] && [ "$(head_of "$T/repo")" = "$h" ]' "K2: the box cannot start: refused with a coded line, nothing ran outside it, main untouched"
 # B.2 point 11 (r5, W4-VAL3-01, W4-CV3-05): a card test that itself exits 126 is a test failure, never "box could not start"; a lock a test writes into its
 # throw-away worktree entry does not refuse the next merge of the same card uncoded
 card t_0000e126 e126.txt e126 'exit 126'; h=$(head_of "$T/repo")
@@ -325,7 +325,7 @@ card t_0000e127 e127.txt e127 'mkdir -p "$(git rev-parse --git-dir)/worktrees"; 
 ok '[ "$(mc t_0000e127 --owner-approved)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ] && [ "$(mc t_0000e127 --owner-approved)" = 3 ]' "B.2 point 11: a test that locks its throw-away worktree entry still merges, and the entry is cleared (the next merge of the same card is not refused by a stale lock; second run refused because it is no longer ahead)"
 # r6 (R14): the verdict of the boxed run comes on a pipe the test never holds, so every exit code a test can choose is "tests failed" with that code
 for x in 1 70 124 125 137 255; do c=t_0000f$(printf %03x $x); card $c f$x.txt f$x "echo QA-RAN-$x; exit $x"; h=$(head_of "$T/repo")
-  ok '[ "$(mc $c --owner-approved)" = 3 ] && grep -q "QA-RAN-$x" "$T/out" && grep -q "tests failed.*exit $x)" "$T/out" && ! grep -q "could not" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "r6: a card test that ran and exited $x is 'tests failed' with that code, never a box or worktree fault"
+  ok '[ "$(mc $c --owner-approved)" = 3 ] && grep -q "QA-RAN-$x" "$T/out" && grep -q "STL-GRD-606.*tests failed.*exit $x)" "$T/out" && ! grep -q "could not" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "r6: a card test that ran and exited $x is 'tests failed' with that code, never a box or worktree fault"
 done
 card t_0000f301 f301.txt f301 'd=$(git rev-parse --absolute-git-dir); rm -f "$d/box-started"; echo 9 >"$d/box-signal"; exit 0'; h=$(head_of "$T/repo")
 ok '[ "$(mc t_0000f301 --owner-approved)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ]' "r6: files a test writes or removes in its git dir (the round-5 start marker and signal file) say nothing: a passing test merges"
@@ -334,7 +334,7 @@ ok '[ "$(mc t_0000f302 --owner-approved)" = 3 ] && grep -q "tests failed.*exit 7
 # B.2 point 11 (W4-VAL3-12), not run by tester R14: a table whose only boxed profiles with a card worktree carry broker variables has no box for a card's tests
 jq '. as $d | reduce (.sandbox.boxed_profiles[] | select($d.roles[$d.profiles[.].role].workspace == "git-worktree")) as $p (.; .sandbox.profile_overrides[$p].broker_env = {QA_TOKEN: "qa-broker"})' "$RF" >"$T/brokeronly.json"
 card t_0000f303 f303.txt f303 'echo QA-RAN-BROKER; exit 0'; h=$(head_of "$T/repo"); a0=$(nal)
-ok '[ "$(ROLES_FILE=$T/brokeronly.json mc t_0000f303 --owner-approved)" = 3 ] && grep -q "without broker variables" "$T/out" && grep -q "STL-CFG-312" "$T/out" && ! grep -q QA-RAN-BROKER "$T/out" && [ "$(nal)" = $((a0+1)) ] && [ "$(head_of "$T/repo")" = "$h" ]' "B.2 point 11: only broker-carrying profiles: refused with one coded line, the test never ran, main untouched"
+ok '[ "$(ROLES_FILE=$T/brokeronly.json mc t_0000f303 --owner-approved)" = 3 ] && grep -q "without broker variables" "$T/out" && grep -q "STL-GRD-605" "$T/out" && ! grep -q QA-RAN-BROKER "$T/out" && [ "$(nal)" = $((a0+1)) ] && [ "$(head_of "$T/repo")" = "$h" ]' "B.2 point 11: only broker-carrying profiles: refused with one coded line, the test never ran, main untouched"
 # K8: the boundary refusal and an unreadable list are coded, with one alert line each
 HOOK=$(jq -r '[.roles[].hooks[]? | .file // empty] | first' "$RF"); mkdir -p "$T/repo/${HOOK%/*}"; printf '#!/bin/sh\n' >"$T/repo/$HOOK"; g add -f "$HOOK"; g -c core.hooksPath=/dev/null commit -qm "a hook file"
 wcard t_0000d0a8; printf '#!/bin/sh\nexit 0\n' >"$T/repo/.worktrees/t_0000d0a8/$HOOK"; git -C "$T/repo/.worktrees/t_0000d0a8" add -f -A; wcommit t_0000d0a8
@@ -346,10 +346,13 @@ printf 'zz-ign.txt\nzz-idir/\n' >>"$T/repo/.gitignore"; g add .gitignore; g -c c
 printf 'OWNER-LOCAL\n' >"$T/repo/zz-ign.txt"; mkdir -p "$T/repo/zz-idir"; printf 'OWNER-LOCAL\n' >"$T/repo/zz-idir/f"
 k7=0; for sp in zz-ign.txt zz-idir; do k7=$((k7+1)); c=t_0000f0$(printf '%02x' "$k7"); wcard $c
   printf 'CARD\n' >"$T/repo/.worktrees/$c/$sp"; git -C "$T/repo/.worktrees/$c" add -f -- "$sp"; wcommit $c; h=$(head_of "$T/repo")
-  ok '[ "$(FAKE_APPROVED='$c' mc '$c' --owner-approved)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -qF "'$sp'" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ] && [ "$(cat "$T/repo/zz-ign.txt")" = OWNER-LOCAL ] && [ "$(cat "$T/repo/zz-idir/f")" = OWNER-LOCAL ]' "B.3 point 17: a card whose merge would replace the untracked $sp of the main checkout is refused, the main checkout byte-identical"
+  ok '[ "$(FAKE_APPROVED='$c' mc '$c' --owner-approved)" = 3 ] && grep -q "STL-GRD-607" "$T/out" && grep -qF "'$sp'" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ] && [ "$(cat "$T/repo/zz-ign.txt")" = OWNER-LOCAL ] && [ "$(cat "$T/repo/zz-idir/f")" = OWNER-LOCAL ]' "B.3 point 17: a card whose merge would replace the untracked $sp of the main checkout is refused, the main checkout byte-identical"
 done
 c=t_0000f0a1; wcard $c; mkdir -p "$T/repo/.worktrees/$c/zz-idir/sub"; printf 'CARD\n' >"$T/repo/.worktrees/$c/zz-idir/sub/new.txt"; git -C "$T/repo/.worktrees/$c" add -f -- zz-idir/sub/new.txt; wcommit $c; h=$(head_of "$T/repo")
-ok '[ "$(FAKE_APPROVED='$c' mc '$c' --owner-approved)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -qF "zz-idir/sub/new.txt (untracked at zz-idir)" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "r6 T5: the refusal names the path the merge would write and the untracked folder above it, not the folder alone"
+ok '[ "$(FAKE_APPROVED='$c' mc '$c' --owner-approved)" = 3 ] && grep -q "STL-GRD-607" "$T/out" && grep -qF "zz-idir/sub/new.txt (untracked at zz-idir)" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "r6 T5: the refusal names the path the merge would write and the untracked folder above it, not the folder alone"
+printf 'local\n' >"$T/repo/zz-untracked-local.txt"; a0=$(nal)
+ok '[ "$(FAKE_APPROVED='$c' mc '$c' --owner-approved)" = 3 ] && grep -q "STL-GRD-607" "$T/out" && grep -q "is not clean" "$T/out" && [ "$(nal)" = $((a0+1)) ] && [ "$(head_of "$T/repo")" = "$h" ]' "r6 C2: a main checkout that is not clean (an untracked file) is refused with a code and one alert line"
+rm -f "$T/repo/zz-untracked-local.txt"
 c=t_0000f0a0; wcard $c; printf 'new\n' >"$T/repo/.worktrees/$c/zz-new-tracked.txt"; git -C "$T/repo/.worktrees/$c" add zz-new-tracked.txt; wcommit $c; h=$(head_of "$T/repo")
 ok '[ "$(FAKE_APPROVED='$c' mc '$c' --owner-approved)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ]' "B.3 point 17 control: a card adding a new tracked path where nothing exists merges"
 # B.1 point 6 (r5, W1-RT6-01): a card branch that replaces a folder holding an owner path (the owner settings' folder, owner data's, the apply tool's

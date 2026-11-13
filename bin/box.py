@@ -764,7 +764,7 @@ if __name__ == "__main__" and sys.argv[1:2] == ["exec"]:   # exec <top> <worktre
             os.write(3, f"ran {rc}\n".encode())
         sys.exit(rc)
     except (BoxError, roles.RolesError, OSError) as e:
-        print(roles.plain("STL-CFG-312", problem=f"the box for the card's tests could not start: {str(e)[:200]}"), file=sys.stderr)
+        print(roles.plain("STL-GRD-605", problem=f"the box could not start: {str(e)[:200]}"), file=sys.stderr)
         sys.exit(70)
 if __name__ == "__main__" and sys.argv[1:2] == ["run"]:
     sys.exit(run(json.loads(sys.argv[2]), sys.argv[4:]))
