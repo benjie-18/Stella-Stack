@@ -152,10 +152,11 @@ g show "$tip:package.json" 2>/dev/null | jq -e '.scripts.test' >/dev/null 2>&1 |
 # suite runner, all three read from and run in the tree under test (the throw-away worktree, never the main checkout's files), in the box. `full` from the
 # map, a map tool that fails or an empty answer runs the whole suite; a quick list that cannot be read, or a runner that cannot isolate, fails the tests.
 # The runner makes a namespace per selftest, so this box alone may nest namespaces (box.py merge_exec nest). The full suite still runs on the final hash.
-tscript='timeout 1800 npm test' nest=
+tscript='timeout 1800 npm test' nest= tname='npm test'   # tname: what a refusal calls the test run (r7 B6)
 if [ "$(readlink -f "$top")" = "$(readlink -f "$here/..")" ]; then
   mb=$(g merge-base "$before" "$tip") && fl=$(g diff --name-only --no-renames "$mb" "$tip" | base64 -w0) && [ -n "$fl" ] \
     || coded STL-CFG-303 "git cannot list what $branch changed since it left main" "so its tests cannot be selected; nothing was merged"
+  tname="the stack's selftests the test map selects, or its whole suite"
   nest=nest   # shortcut: one hour for the reduced set or the whole suite in the box, a limit in data when the suite's run time is settled
   tscript='sel=$(printf %s '"$fl"' | base64 -d | python3 -I bin/test-map.py select -) && [ -n "$sel" ] || sel=full
 if [ "$sel" = full ]; then echo "merge test: the whole suite (the test map selects it)" >&2; exec timeout 3600 bash bin/selftests.sh; fi
@@ -175,7 +176,7 @@ echo "merge-card.sh: running this branch's own test command in the OS box (the c
 intree "$tip" merge-check
 [ "$tres" != wt ] || coded STL-GRD-605 "the throw-away worktree $top/.worktrees/merge-check-$card for the card's tests could not be made" "The tests never run outside the box; remove a leftover of an earlier run (git -C $top worktree remove $top/.worktrees/merge-check-$card), then merge again; nothing was merged"
 [[ $tres =~ ^ran\ [0-9]+$ ]] || refuse "the box for the tests could not start or did not finish (its coded line is above), and the tests never run outside it; nothing was merged"
-[ "$tres" = "ran 0" ] || coded STL-GRD-606 "the test command of $branch ended with status ${tres#ran }" "tests failed on $branch (npm test, in the box, exit ${tres#ran }); nothing was merged"
+[ "$tres" = "ran 0" ] || coded STL-GRD-606 "the test command of $branch ended with status ${tres#ran }" "tests failed on $branch ($tname, in the box, exit ${tres#ran }); nothing was merged"
 [ "$(g rev-parse --verify "refs/heads/$branch^{commit}")" = "$tip" ] || refuse "$branch moved while its tests ran; nothing was merged"
 # N1: the tests ran for up to 30 minutes with the shared objects folder writable by a box; check the objects again before the merge
 g fsck --no-dangling --no-progress >/dev/null 2>&1 || refuse "git fsck reports a damaged or altered object in $top after the tests; nothing was merged"
@@ -189,7 +190,7 @@ if ! g merge --no-ff --no-commit "$tip" >/dev/null; then
   exit 1
 fi
 if [ -z "$mtree" ] || [ "$(g write-tree)" != "$mtree" ]; then
-  g merge --abort; coded STL-CFG-312 "the merge of $branch did not produce the tree that was checked" "nothing was merged"
+  g merge --abort; coded STL-GRD-607 "the merge of $branch made in the main checkout did not produce the tree that was checked" "the merge was undone (git merge --abort); nothing was merged"   # r7 B6: no owner-path refusal (312): the checkout is not as the merge needs it
 fi
 if ! g commit --no-verify -q --no-edit -m "Merge $branch (card $card)"; then
   g merge --abort 2>/dev/null; echo "merge-card.sh: merge of $branch failed (commit); aborted, main left at ${before:0:12}" >&2; exit 1
