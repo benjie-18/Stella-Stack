@@ -203,16 +203,37 @@ Unknown means `null` or `"unverified"`: never write a capability, cost or term y
 ## One section per data file
 
 ### `.stella/connections.json` (connections catalog)
-Providers, apps and channels as one list (`entries[]`, `kind` is provider, app or channel). Fields: `id`, `kind`, `subkind`
-(for example `openai-compatible-aggregator`), `label`, `enabled`, `locality` (local or cloud), `hosts[]` (host, port,
+Providers, apps, channels and input sources as one list (`entries[]`, `kind` is provider, app, channel or input_source). Fields: `id`, `kind`, `subkind`
+(for example `openai-compatible-aggregator`), `label`, `enabled`, `locality` (local, cloud or hub), `hosts[]` (host, port,
 purpose), `auth_types[]`, `secrets[]` (names), `actions[]` (id and approval class: read is automatic; write, post, send,
 pay, delete need approval first; sign_in is an escalation), `models[]` (id, probed `capabilities`: `tool_calling`,
 `json_mode`, `context_tokens`, `vision`, `streaming`, each a value or null for not probed; `probed_at`, `probe_source`),
 `data_policy` (retention, training use, region, zero retention, `data_classes_allowed`; an empty list allows no class)
 `tos` (`status`, `unverified` is a legal value; `subscription_login_by_agent` is required and is the declared automated-agent terms flag:
 `unverified`, `allowed`, `forbidden` or `not_applicable`; no other key), `scopes[]` (the access scopes it asks for), `redaction_patterns[]`
-(Python regular expressions masked in its logs) and `allowed_roles[]` and `risk_class` (required on a provider and a channel; `[]` allows no role). *To add one:* append an entry; an aggregator proxy is a provider with
+(Python regular expressions masked in its logs) and `allowed_roles[]` and `risk_class` (required on every kind but an app; `[]` allows no role). *To add one:* append an entry; an aggregator proxy is a provider with
 `subkind: openai-compatible-aggregator`, disabled until the owner turns it on, with its own outbound hosts in `hosts`.
+
+Connection types (F1b D5; the schema subset has no conditionals, so `check` states the per-type and per-kind rules in
+`rule_catalog` and `rule_policy` of `bin/stella_data.py`). Every entry has `type`: `api` (a key or OAuth token the broker
+holds) or `cli-login` (a coding CLI logged in to the owner's own subscription; only a provider or an app). A `cli-login` entry
+names `cli` (the CLI's id, a versions.json pin id where one exists), `quota_source[]` (`cli_usage`, `limit_errors`),
+`concurrency_limit` (>= 1), `credential_store` (`engine_cli_store`: the CLI's own store on the engine, which Stella never
+reads; `vault_vm`: a leased rotating vault entry, only when the owner allows a CLI login inside VMs) and `terms_ok` (null =
+unset, the default; true or false is the owner's record of the provider's terms); an `api` entry has none of these five.
+`terms_ok` and `credential_store` are `x-owner-only` (`stella_data.py owner-only` lists them): the owner sets them with
+`bin/stella-apply.py apply connections --from <candidate>` (dry run first; `rollback` restores the bytes). Routing refuses a
+`cli-login` link whose `terms_ok` is not true (W3). An `api` provider may be `aggregator: true` (one endpoint fronting
+several upstream providers) and then names `broker_entries` {`unified`, `admin`, `upstream[]`}: broker entry names only.
+An app may be `integration_aggregator: true` (one key fronting many apps); its `data_policy.hosted` must be true. A hosted
+connection (the provider's cloud keeps data) may not allow a class that never reaches a cloud store (class rule `sync:
+never` or `hosted: never`, a class with no rule row, or the `data_class` of a `never_cloud` record kind: secrets, vault
+content), a private project may not name it in `allowed_providers`, and routing never sends a private project to it, whatever
+the project's mode. Kind `input_source` (schema only): a camera, microphone or sensor feed; its `subkind` is the data class of
+what it produces (a class of the data policy) and its `locality` is `local` or `hub` (a home-automation hub; only an input
+source is on a hub). A provider may carry `realtime` {`audio`, `video`} for models that take live audio or video (schema only).
+The shipped Claude Code login (`claude-subscription`, CLI `claude-code`, used by the builder-claude and reviewer-claude
+profiles) is `cli-login` with `terms_ok` null; every other shipped entry is `api`.
 
 ### `.stella/data-policy.json`
 `data_classes[]`, `local_hosts[]` (the host names that count as local; a provider declared local may list only these), a `default` and `projects{}`; each has `mode` (`open`, `local_only`, `allowed_providers`) and

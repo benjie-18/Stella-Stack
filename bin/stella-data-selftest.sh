@@ -18,8 +18,8 @@ INS=$(jq -r '.files[] | select(.schema == "install") | .path' "$ROOT/.stella/dat
 ids() { echo "global_id:\"$(cat /proc/sys/kernel/random/uuid)\",install_id:\"$IID\""; }   # F1b D1: the two ids of a new fake record, as jq text
 rid() { echo "record_kind:(.files[] | select(.id == \"$1\") | .record_kind),$(ids)"; }   # F1b D1/D2: a fake index row of the kind of row <id>, with its two ids
 AR=$(jq -c '.fallback_role as $fb | [.roles | keys[] | select(. != $fb)]' "$ROOT/docs/hermes-local/roles.json")   # every assignable role
-conn() {  # <id> <kind> <subkind> <locality>: a complete connections entry as jq text; it allows every assignable role, so a case fails for its own cause
-  echo "{id:\"$1\",kind:\"$2\",subkind:\"$3\",label:\"Fake $1\",enabled:true,locality:\"$4\",hosts:[{host:\"$1.example.invalid\",port:443,purpose:\"api\"}],auth_types:[\"api_key\"],secrets:[\"FAKE_KEY\"],actions:[{id:\"go\",approval_class:\"write\"}],models:[{id:\"$1-model\",capabilities:{tool_calling:null,json_mode:null,context_tokens:null,vision:null,streaming:null},probed_at:null,probe_source:null}],data_policy:{retention:null,training_use:null,region:null,zero_retention_available:null,data_classes_allowed:[\"public\",\"internal\",\"client\"]},tos:{status:\"unverified\",subscription_login_by_agent:\"unverified\"},allowed_roles:$AR,risk_class:\"read\",$(ids)}"
+conn() {  # <id> <kind> <subkind> <locality>: a complete connections entry (type api) as jq text; it allows every assignable role, so a case fails for its own cause
+  echo "{id:\"$1\",kind:\"$2\",subkind:\"$3\",type:\"api\",label:\"Fake $1\",enabled:true,locality:\"$4\",hosts:[{host:\"$1.example.invalid\",port:443,purpose:\"api\"}],auth_types:[\"api_key\"],secrets:[\"FAKE_KEY\"],actions:[{id:\"go\",approval_class:\"write\"}],models:[{id:\"$1-model\",capabilities:{tool_calling:null,json_mode:null,context_tokens:null,vision:null,streaming:null},probed_at:null,probe_source:null}],data_policy:{retention:null,training_use:null,region:null,zero_retention_available:null,data_classes_allowed:[\"public\",\"internal\",\"client\"]},tos:{status:\"unverified\",subscription_login_by_agent:\"unverified\"},allowed_roles:$AR,risk_class:\"read\",$(ids)}"
 }
 refuses() { local r=$1; shift; ! sd "$r" "$@" >"$T/o" 2>&1; }                 # <root name> <args...>: exits non-zero, output in $T/o
 alerts() { cat "$T/sup/logs/alerts.log" 2>/dev/null | wc -l; }
@@ -764,7 +764,7 @@ w2 241i ".entries += [($(conn qa-chcli channel chat cloud) + $CLI)]" "qa-chcli.*
 w2 242a "$(E qa-agg) |= del(.broker_entries)" "qa-agg.*broker_entries" "an aggregator that names no broker entries is refused"
 w2 242b "$(E qa-cli) += {aggregator:true,broker_entries:($AGG | .broker_entries)}" "qa-cli.*aggregator" "a cli-login entry cannot be an aggregator"
 w2 242c "$(E qa-api).broker_entries = ($AGG | .broker_entries)" "qa-api.*broker_entries" "broker entries on an entry that is no aggregator are refused"
-w2 242d "$(E qa-ghcli) += $AGG" "qa-ghcli.*aggregator" "an app cannot be an aggregator (an app fronting many apps is an integration aggregator)"
+w2 242d "$(E qa-comp) += {aggregator:true,broker_entries:($AGG | .broker_entries)}" "qa-comp: an aggregator is an api provider" "an app cannot be an aggregator (an app fronting many apps is an integration aggregator)"
 w2 242e "$(E qa-agg).broker_entries.admin = \"$V\"" "admin" "a broker entry that is not a NAME is refused (never printed)"
 ok '! grep -q qafake "$T/o"' "242f and the refusal never prints the value"
 w2 243a "$(E qa-comp).realtime = {audio:true,video:true}" "qa-comp.*realtime" "realtime on an app is refused (only a provider takes live audio or video)"
