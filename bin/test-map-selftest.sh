@@ -6,7 +6,7 @@ BIN=$(dirname "$(readlink -f "$0")"); TM="$BIN/test-map.py"
 T=$(mktemp -d -t tm-self.XXXXXX); trap 'rm -rf "$T"' EXIT
 fails=0
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
-MAP='{"schema_version": 1, "runner": "bin/selftests.sh", "test_file": "bin/{name}-selftest.sh", "test_like": ["*test*"], "not_tests": ["bin/selftests.sh", ".stella/*", "fixtures/*"], "follow": ["*.sh"], "always": ["a"], "quick": ["a"], "full": ["lock.json"], "map": [{"globs": ["bin/a-selftest.sh", "src/a*"], "targets": ["a"]}, {"globs": ["bin/b-selftest.sh", "src/b/*"], "targets": ["b"]}, {"globs": ["notes/*"], "targets": []}]}'
+MAP='{"schema_version": 1, "runner": "bin/selftests.sh", "test_file": "bin/{name}-selftest.sh", "test_like": ["*test*"], "not_tests": ["bin/selftests.sh", ".stella/*", "fixtures/*"], "follow": ["*.sh"], "always": ["a"], "quick": ["a"], "marks": {"a": {"mark": "hermetic"}, "b": {"mark": "shared", "why": "reads the real home"}}, "full": ["lock.json"], "map": [{"globs": ["bin/a-selftest.sh", "src/a*"], "targets": ["a"]}, {"globs": ["bin/b-selftest.sh", "src/b/*"], "targets": ["b"]}, {"globs": ["notes/*"], "targets": []}]}'
 st() { printf '#!/usr/bin/env bash\n%s\necho "selftest PASS"\n' "${2:-}" >"$1"; chmod 755 "$1"; }   # <file> [a line of code]
 root() {  # <name> [jq filter over MAP] [suite names]: a scratch root with selftests a and b
   local r=$T/$1; mkdir -p "$r/bin" "$r/.stella" "$r/src"; jq "${2:-.}" <<<"$MAP" >"$r/.stella/test-map.json"
@@ -173,7 +173,7 @@ b" ] && ( for f in .stella/test-map.json .stella/schemas/test-map.schema.json bi
 b" ] || exit 1; done )' \
    "27 a change to the map, its schema or the tool selects the targets of its rows, like any other file"
 # a map edit that drops a reaching selftest from a row, with a change to that file: the gate stays selected and check fails
-root drop '.always = ["a"] | .map[1].globs += ["src/h.sh"] | .map += [{"globs": ["bin/c-selftest.sh"], "targets": ["c"]}]' "a b c"
+root drop '.always = ["a"] | .marks.c = {"mark": "hermetic"} | .map[1].globs += ["src/h.sh"] | .map += [{"globs": ["bin/c-selftest.sh"], "targets": ["c"]}]' "a b c"
 st "$T/drop/bin/c-selftest.sh"; st "$T/drop/bin/b-selftest.sh" 'bash "$(dirname "$0")/../src/h.sh"'; st "$T/drop/src/h.sh"
 ok 'chk drop' "27d control: the row for src/h.sh names b, the selftest that runs it: check passes"
 jq '.map[1].targets = ["c"]' "$T/drop/.stella/test-map.json" >"$T/m.json" && mv "$T/m.json" "$T/drop/.stella/test-map.json"
@@ -268,7 +268,7 @@ EOF
 }
 # X1 a row that is not a scan row says where it applies: each of its globs starts with a literal first path component. So no
 # map that check accepts narrows a path under a name the map does not spell (a new folder, a new top-level file, a dot file).
-root x1 '.map += [{"globs": ["bin/c-selftest.sh"], "targets": ["c"]}]' "a b c"; st "$T/x1/bin/c-selftest.sh"; mkdir -p "$T/x1/src/hooks" "$T/x1/docs"
+root x1 '.marks.c = {"mark": "hermetic"} | .map += [{"globs": ["bin/c-selftest.sh"], "targets": ["c"]}]' "a b c"; st "$T/x1/bin/c-selftest.sh"; mkdir -p "$T/x1/src/hooks" "$T/x1/docs"
 st "$T/x1/bin/b-selftest.sh" 'for h in $(jq -r ".hooks[]" "$(dirname "$0")/../src/hooks.json"); do bash "$h"; done'
 echo '{"hooks": ["src/hooks/x"]}' >"$T/x1/src/hooks.json"; echo 'exit 0' >"$T/x1/src/hooks/x"; cp "$T/x1/.stella/test-map.json" "$T/x1.json"
 IFS=$'\t' read -r x_n x_ok x_bad x_first < <(gen x1 '
@@ -386,4 +386,13 @@ ok '! chk parts && [ "$(grep -c "" "$T/out")" -ge 100 ] && allroot parts' "23f a
 # The quick tier (owner decision 2026-11-12): the "quick" list, printed by `quick`; a name outside the suite list fails the lint; a list that cannot be read is never an empty answer.
 root quick '.quick = ["a", "zz"]'; root quickok; root quickgone 'del(.quick)'; root quickempty '.quick = []'
 ok 'bad quick "quick entry zz is not in the suite list of bin/selftests.sh" && [ "$(STELLA_ROOT=$T/quickok python3 -I "$TM" quick 2>&1)" = a ] && for r in quickgone quickempty; do out=$(STELLA_ROOT=$T/$r python3 -I "$TM" quick 2>"$T/err"); [ $? = 1 ] && [ -z "$out" ] && grep -q "the quick list cannot be read" "$T/err" || exit 1; done' "24 quick: a name outside the suite list fails the lint; quick prints the list; a missing or empty list is exit 1 and one plain line, no answer on stdout"
+# Lock scope (owner's rule): every selftest is marked hermetic or shared (a shared one says why); unmarked counts as shared and fails the lint;
+# select --json names the selected targets that need the lock in "shared".
+root nomark 'del(.marks.b)'; root nomarks 'del(.marks)'; root nowhy '.marks.b = {"mark": "shared"}'; root ghostmark '.marks.zz = {"mark": "hermetic"}'; root badmark '.marks.a.mark = "maybe"'
+ok 'bad nomark "bin/b-selftest.sh has no mark" && bad nomarks "bin/a-selftest.sh has no mark" && grep -q "bin/b-selftest.sh has no mark" "$T/out"' "40 a selftest with no mark fails the lint, by name (no marks at all fails for every selftest)"
+ok 'bad nowhy "shared mark of b gives no why"' "41 a shared mark with no reason fails the lint"
+ok 'bad ghostmark "mark for zz: no such selftest"' "42 a mark for a name that is no selftest fails the lint"
+ok 'bad badmark "test-map.json: ValueError"' "43 a mark that is neither hermetic nor shared fails the schema"
+ok '[ "$(sel src/a1.py | jq -c .shared)" = "[]" ] && [ "$(sel src/b/x/y.py | jq -c .shared)" = "[\"b\"]" ]' "44 select --json lists the selected targets that need the lock; a hermetic target is not listed"
+ok '[ "$(STELLA_ROOT=$T/nomark python3 -I "$TM" select --json src/b/x/y.py | jq -c .shared)" = "[\"b\"]" ] && [ "$(STELLA_ROOT=$T/nomark python3 -I "$TM" select --json src/a1.py | jq -c .shared)" = "[]" ] && [ "$(STELLA_ROOT=$T/nomarks python3 -I "$TM" select --json src/a1.py | jq -c .shared)" = "[\"a\"]" ]' "45 an unmarked target counts as shared in select"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
