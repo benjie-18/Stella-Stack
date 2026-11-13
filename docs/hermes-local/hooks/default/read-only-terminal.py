@@ -243,7 +243,7 @@ def secret_why(cmd, cwd):
                                 return why
                 for i, w in enumerate(seg[1:], 1):
                     r = rec and not (name == "git" and seg[i - 1] in ("-C", "-c"))   # git -C <dir> names where, not what it reads
-                    for v in [w] + ([w.split("=", 1)[1]] if w.startswith("-") and "=" in w else []) + ([w[2:]] if re.fullmatch(r"-[A-Za-z][/~.].*", w) else []):   # r7 A7: a short option with its value attached (-f/path) is the path
+                    for v in [w] + ([w.split("=", 1)[1]] if w.startswith("-") and "=" in w else []) + ([w[i:] for i in range(2, len(w))] if re.fullmatch(r"-[A-Za-z0-9].+", w) else []):   # r7 A7, r8 B: the value attached to a short option (-f/path, -ifname) is the path, wherever it starts in the word
                         why = None if v.startswith("-") or not v else path_why(v, base, names, r)
                         if why:
                             return why
@@ -252,16 +252,17 @@ def secret_why(cmd, cwd):
                     # program text (also from a program file) names import, include or modulemeta, a library path option in any spelling, or a JQ_ variable.
                     jtext = " ".join(seg[1:])
                     if any(re.fullmatch(r"-[A-Za-z]*f[A-Za-z]*|--fr[a-z-]*(?:=.*)?", w) for w in seg[1:]):   # the program is a file: its text counts
-                        for w in seg[1:]:
-                            v = w.split("=", 1)[-1]; pf = _where(v, base, names)
-                            # r7 A3 (W4-CV4-02): a standard stream, a name the shell still expands, or anything that exists and is no regular file is a program this guard cannot read
-                            if (re.search(r"[*?\[{$]", v) or re.fullmatch(r"/(?:dev|proc/[^/]+)/(?:std(?:in|out|err)|fd/\d+)", os.path.normpath(pf))
+                        for v in {x for w in seg[1:] for x in (w, w.split("=", 1)[-1])}:   # r8 C: a name with = is looked up whole and after the =
+                            pf = _where(v, base, names)
+                            # r7 A3 (W4-CV4-02): a standard stream, a name the shell still expands (r8 C: ~+/ and ~-/ too), or anything that exists and is no regular file is a program this guard cannot read
+                            if (re.search(r"[*?\[{$]|^~[^/]", v) or re.fullmatch(r"/(?:dev|proc/[^/]+)/(?:std(?:in|out|err)|fd/\d+)", os.path.normpath(pf))
                                     or (os.path.lexists(pf) and not os.path.isfile(pf))):
                                 jtext += " import"
                             elif os.path.isfile(pf):
                                 try:
                                     with open(pf, errors="replace") as fh:
-                                        jtext += " " + fh.read(1 << 20)
+                                        t = fh.read((1 << 20) + 1)
+                                    jtext += " import" if len(t) > 1 << 20 else " " + t   # r8 C: a file this guard does not read whole is taken as one that imports
                                 except OSError:
                                     jtext += " import"   # a program file that cannot be read is taken as one that imports
                     if (re.search(r"\b(?:import|include|modulemeta)\b", jtext) or any(k.startswith("JQ_") for k in names) or "JQ_" in jtext

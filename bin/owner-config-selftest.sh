@@ -80,6 +80,24 @@ ok 'k5_silent "$gone"' "K5: the #alerts text for a missing file names no line an
 rm -rf "$T/k5-thr"; mkdir -p "$T/k5-thr/state" "$T/k5-thr/logs"
 ESCALATE_SUP_DIR="$T/k5-thr" OWNER_CONFIG="$T/k5-mal.env" /workspace/bin/escalation-thread.sh t_aaaaaaaa "Title" "Decision needed: A or B." >/dev/null 2>&1; k5_trc=$?
 ok '[ "$k5_trc" = 3 ] && k5_names "$(cat "$T/k5-thr/sends" 2>/dev/null)" "$(wc -l < "$T/k5-mal.env")"' "K5: escalation-thread.sh on a malformed line exits 3 and its #alerts send names the line and the forms"
+# r8 D (ORCH-04, W5-VER6-02): the hourly stamp and the log append do not write through a planted name (a symbolic link, a second hard link).
+# FAKE canary only; its bytes, size and times are compared before and after. Each case has its own state dir.
+d_sig() { stat -c '%s %Y %Z %h' "$1" 2>/dev/null; cksum <"$1" 2>/dev/null; }
+d_dir() { rm -rf "${1:?}"; mkdir -p "$1/state"; printf 'FAKE-CANARY-R8D\n' >"$1/canary"; touch -d '3 hours ago' "$1/canary"; }
+d_stamp() { ( export ESCALATE_SUP_DIR="$1"; . /workspace/bin/owner-config.sh; once_per_hour zz ) 2>"$1/err"; echo $?; }
+d_dir "$T/d1"; ln -s "$T/d1/canary" "$T/d1/state/alert-zz.stamp"; touch -h -d '2 hours ago' "$T/d1/state/alert-zz.stamp"; sig=$(d_sig "$T/d1/canary")
+ok '[ "$(d_stamp "$T/d1")" = 1 ] && [ "$(wc -l <"$T/d1/err")" = 1 ] && [ "$(d_sig "$T/d1/canary")" = "$sig" ]' "r8 D: a stale stamp that is a symbolic link is not touched through: not now, one stderr line, the canary's bytes, size and times unchanged"
+d_dir "$T/d2"; ln -s "$T/d2/nowhere" "$T/d2/state/alert-zz.stamp"; touch -h -d '2 hours ago' "$T/d2/state/alert-zz.stamp"
+ok '[ "$(d_stamp "$T/d2")" = 1 ] && [ "$(wc -l <"$T/d2/err")" = 1 ] && [ ! -e "$T/d2/nowhere" ]' "r8 D: a stale stamp that is a dangling link does not create its target"
+d_dir "$T/d3"; ln "$T/d3/canary" "$T/d3/state/alert-zz.stamp"; sig=$(d_sig "$T/d3/canary")
+ok '[ "$(d_stamp "$T/d3")" = 1 ] && [ "$(wc -l <"$T/d3/err")" = 1 ] && [ "$(d_sig "$T/d3/canary")" = "$sig" ]' "r8 D: a stale stamp with a second hard link is not touched: the canary's times unchanged"
+d_dir "$T/d4"; : >"$T/d4/state/alert-zz.stamp"; touch -d '2 hours ago' "$T/d4/state/alert-zz.stamp"
+ok '[ "$(d_stamp "$T/d4")" = 0 ] && [ ! -s "$T/d4/err" ] && [ "$(d_stamp "$T/d4")" = 1 ] && mkdir -p "$T/d5" && [ "$(d_stamp "$T/d5")" = 0 ]' "r8 D control: a plain stale stamp and a first call are true once, silently, then not now"
+for how in "-s" ""; do
+  d_dir "$T/d6"; ln $how "$T/d6/canary" "$T/d6/escalations.log"; sig=$(d_sig "$T/d6/canary")
+  ( export ESCALATE_SUP_DIR="$T/d6" OWNER_CONFIG="$T/k5-missing.env"; . /workspace/bin/owner-config.sh; owner_config_load ) >/dev/null 2>"$T/d6/err"
+  ok '[ "$(d_sig "$T/d6/canary")" = "$sig" ] && [ "$(grep -c "is a link" "$T/d6/err")" = 1 ] && grep -q STL-CFG-301 "$T/d6/sends"' "r8 D: a log that is a link (ln ${how:-, a second hard link}) is not appended to: the canary's bytes, size and times unchanged, one stderr line, the alert still sent"
+done   # end r8 D
 # K5 follow-up (the verifier's findings): lines end at "\n" only; after a value only space, tab or CR may follow; the unquoted
 # class excludes shell operators, glob and tilde characters; a blank line is spaces, tabs or CRs; the file is UTF-8 (a BOM is
 # ignored, a bad byte names its line and never crashes). Every fixture is a scratch file, the bad line is always the last one.
