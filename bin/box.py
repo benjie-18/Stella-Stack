@@ -14,8 +14,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import roles
 
 HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs/hermes-local/hooks/builder/secret-guard.py")
+NO_NEST = "--disable-userns"   # no namespace inside a box; only the merge test of a stack card runs without it (merge_exec nest)
 BASE = ["bwrap", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup-try",
-        "--disable-userns", "--die-with-parent", "--new-session", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"]
+        NO_NEST, "--die-with-parent", "--new-session", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"]
 
 
 class BoxError(Exception):
@@ -648,7 +649,8 @@ def run(spec, cmd):
         enc = json.dumps({k: (base64.b64encode(v).decode() if v is not None else None) for k, v in snap.items()})
         helper = subprocess.Popen([sys.executable, "-I", os.path.abspath(__file__), "sweep", json.dumps(spec), enc, str(os.getpid())], start_new_session=True,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
-    child.append(subprocess.Popen(cmd))
+    sfd = os.environ.get("BOX_START_FD", "")   # r6: merge_exec's start pipe goes on to the box; nothing else is inherited
+    child.append(subprocess.Popen(cmd, pass_fds=[int(sfd)] if sfd.isdigit() else ()))
     for n in early:   # a signal that came before the box existed
         child[0].send_signal(n)
     ppid0 = os.getppid()   # a launcher already reparented to init (parent 1) at start is orphaned from the first moment
@@ -665,9 +667,10 @@ def run(spec, cmd):
                     child[0].kill()
                     rc = child[0].wait()
                 break
-    if rc < 0 and spec.get("gd"):   # B.1 (r5): the box itself was ended by a signal: stated for the caller (merge_exec) next to the start marker, never read as the tests' verdict
+    gfd = os.environ.get("BOX_SIGNAL_FD", "")
+    if rc < 0 and gfd.isdigit():   # r6: the box itself was ended by a signal: told to merge_exec on a pipe the box never held (a file in the git dir is the test's to write)
         with contextlib.suppress(OSError):
-            open(os.path.join(spec["gd"], "box-signal"), "w").write(str(-rc))
+            os.write(int(gfd), str(-rc).encode())
     rc = rc if rc >= 0 else 128 - rc
     try:
         _sanitise(spec, snap)
@@ -706,10 +709,12 @@ def _sweep_after(spec, enc, pid):
         pass
 
 
-def merge_exec(top, wt, branch, card, script):
+def merge_exec(top, wt, branch, card, script, nest=False):
     """K2 (F1 W4): run `script` (the card's test command, in bash) in the OS box with the plan a builder's worker gets: the card worktree
     writable, the rest read-only, the owner settings files and the state paths not mounted, the worker markers set. The profile is the first
     of sandbox.boxed_profiles whose role has a writable card worktree (one without broker variables first): from the table, never named here.
+    nest (r6 B2, owner decision 4): the box of a STACK card's merge test may make namespaces of its own (the suite runner isolates each selftest in one); that
+    box alone drops the launcher's no-nested-namespaces switch, every mount and hidden path stays as planned, and no worker's box ever takes this route.
     The box is the only way: there is no unboxed run. Raises BoxError when the box cannot start. Returns the script's exit code."""
     d = roles.load()
     sb = roles.sandbox(d)
@@ -721,32 +726,45 @@ def merge_exec(top, wt, branch, card, script):
     home = pwd.getpwuid(os.getuid()).pw_dir
     root = os.environ.get("BOX_HERMES_ROOT") or f"{home}/.hermes"
     argv, over = box_argv(d, ps[0], {"card": card, "workspace": wt, "branch": branch}, hermes_root=root, home=home, roots=[top])
+    if nest:
+        argv = [a for a in argv if a != NO_NEST]
     env = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "LC_ALL", "LC_CTYPE")}
     env.update({m: card for m in roles.worker_markers(d)})
     env.update(over)
-    _, gd, _ = _worktree(wt)   # r5 (QA R11): the box's first act writes a marker in the worktree's git dir (bound read-write at the same path); no
-    marker, sigf = os.path.join(gd, "box-started"), os.path.join(gd, "box-signal")   # no marker after the run = the box never started (bwrap failed at set-up)
-    for f in (marker, sigf):
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(f)
-    rc = subprocess.run(argv + ["--chdir", wt, "bash", "-c", ': >"$0" || exit 125; exec bash -c "$1"', marker, script], env=env, stdin=subprocess.DEVNULL).returncode
-    started, sig = os.path.exists(marker), (open(sigf).read().strip() if os.path.exists(sigf) else "" if rc >= 0 else str(-rc))
-    for f in (marker, sigf):
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(f)
+    # r6 (R14): whether the box started and whether it was killed are told on two pipes, never by an exit code or a file the test can write. The box's
+    # first act writes the start pipe and closes it before the test is exec'd; the signal pipe stays with the launcher (run) and never enters the box.
+    (sr, sw), (gr, gw) = os.pipe(), os.pipe()
+    env.update(BOX_START_FD=str(sw), BOX_SIGNAL_FD=str(gw))
+    try:
+        rc = subprocess.run(argv + ["--chdir", wt, "bash", "-c", 'echo started >&"$0" || exit 1; eval "exec $0>&-"; exec bash -c "$1"', str(sw), script], env=env,
+                            stdin=subprocess.DEVNULL, pass_fds=(sw,) if argv[0] == BASE[0] else (sw, gw)).returncode
+        os.close(sw); os.close(gw)
+        os.set_blocking(sr, False); os.set_blocking(gr, False)
+        def got(fd):
+            try:
+                return os.read(fd, 64).decode(errors="replace").strip()
+            except BlockingIOError:   # a stray process still holds the write end and wrote nothing
+                return ""
+        started, sig = got(sr).startswith("started"), got(gr) if rc >= 0 else str(-rc)
+    finally:
+        for fd in (sr, gr):
+            os.close(fd)
     if not started:
         raise BoxError(f"the box did not start (exit {rc}): the tests never ran")
     if sig:
-        raise BoxError(f"the box was ended by signal {sig}: the tests did not finish")
+        raise BoxError(f"the box was ended by signal {sig[:8]}: the tests did not finish")
     return rc
 
 
-if __name__ == "__main__" and sys.argv[1:2] == ["exec"]:   # exec <top> <worktree> <branch> <card> <script>: exit 70 and a coded line when the box could not start (a test's own exit code otherwise, 126 included)
+if __name__ == "__main__" and sys.argv[1:2] == ["exec"]:   # exec <top> <worktree> <branch> <card> <script>: the verdict is ONE line on descriptor 3, which the box never holds:
+    # "ran <the script's exit code>" or nothing (the box could not start: the coded line is on stderr). The exit code repeats it for a reader, it is not the verdict.
     try:
-        rc = merge_exec(*sys.argv[2:6], sys.argv[6])
-        sys.exit(70 if rc == 70 else rc)   # run() could not read the branch: the same could-not-start code
+        rc = merge_exec(*sys.argv[2:6], sys.argv[6], nest=sys.argv[7:8] == ["nest"])
+        with contextlib.suppress(OSError):
+            os.write(3, f"ran {rc}\n".encode())
+        sys.exit(rc)
     except (BoxError, roles.RolesError, OSError) as e:
-        print(roles.plain("STL-CFG-312", problem=f"the box for the card's tests could not start: {str(e)[:200]}"), file=sys.stderr)
+        print(roles.plain("STL-GRD-605", problem=f"the box could not start: {str(e)[:200]}"), file=sys.stderr)
         sys.exit(70)
 if __name__ == "__main__" and sys.argv[1:2] == ["run"]:
     sys.exit(run(json.loads(sys.argv[2]), sys.argv[4:]))

@@ -53,6 +53,8 @@
     "docs/hermes-local/alert-catalog.json",
     "package.json",
     "bin/selftests.sh",
+    "bin/test-map.py",
+    ".stella/test-map.json",
     "bin/escalation-reply-poll.sh",
     "docs/alert-codes.md",
     "docs/hermes-local/board.md",

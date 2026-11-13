@@ -247,6 +247,26 @@ def secret_why(cmd, cwd):
                         why = None if v.startswith("-") or not v else path_why(v, base, names, r)
                         if why:
                             return why
+                if name == "jq":   # r6 C1 (R14, W4-CV3-03): jq resolves a module name against its search folders (../ included), so the file it opens is no word of
+                    # the command. No everyday call of any role uses jq's module system, so a jq command that can load a module at all is refused: the
+                    # program text (also from a program file) names import, include or modulemeta, a library path option in any spelling, or a JQ_ variable.
+                    jtext = " ".join(seg[1:])
+                    if any(re.fullmatch(r"-[A-Za-z]*f[A-Za-z]*|--fr[a-z-]*(?:=.*)?", w) for w in seg[1:]):   # the program is a file: its text counts
+                        for w in seg[1:]:
+                            pf = _where(w.split("=", 1)[-1], base, names)
+                            if os.path.isfile(pf):
+                                try:
+                                    with open(pf, errors="replace") as fh:
+                                        jtext += " " + fh.read(1 << 20)
+                                except OSError:
+                                    jtext += " import"   # a program file that cannot be read is taken as one that imports
+                    if (re.search(r"\b(?:import|include|modulemeta)\b", jtext) or any(k.startswith("JQ_") for k in names) or "JQ_" in jtext
+                            or any(re.match(r"-[A-Za-z]*L", w) or (len(w.split("=", 1)[0]) >= 5 and "--library-path".startswith(w.split("=", 1)[0])) for w in seg[1:])):
+                        return "jq's module system (import, include, modulemeta, a library path) opens files this guard cannot judge: it is not used here"
+                if any(w.startswith("--f") and "--files0-from".startswith(w.split("=", 1)[0]) for w in seg[1:]):   # r6 C1: any prefix spelling, any command (wc, sort, du)
+                    return f"{name} --files0-from reads the names of the files it opens from a file or a pipe, which this guard cannot judge"
+                # shortcut: a file name built at run time and fed by xargs (echo -e '<escaped>' | xargs cat) is not seen here; the read-only terminal refuses
+                # xargs and the box does not mount these paths for a boxed role. Upgrade if an unboxed role ever gets xargs.
                 if rec and name in SEARCH and not _search_paths(name, seg[1:], base, names):
                     why = path_why(".", base, names, True)
                     if why:

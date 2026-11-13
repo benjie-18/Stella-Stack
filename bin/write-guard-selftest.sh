@@ -539,6 +539,20 @@ for p in $BUILDERS; do
   # B.2 point 14 (r5, W4-CV3-07): a copy of any owner command is refused by its BYTES (a renamed copy); a like-named file with other bytes is not
   cp /workspace/bin/settings.py "$T/x-settings.py"; cp /workspace/bin/event_log.py "$T/qa-copy.py"; printf 'print(1)\n' >"$T/mine-settings.py"
   ok '[ "$(wg "python3 $T/x-settings.py get X")" = 2 ] && grep -qF "STL-CFG-312" "$T/out" && [ "$(wg "python3 $T/qa-copy.py append")" = 2 ] && [ "$(wg "python3 $T/mine-settings.py")" = 0 ] && [ "$(wg "cat $T/x-settings.py")" = 0 ]' "B.2 point 14 $p: a renamed copy of an owner command (settings.py, event_log.py) is refused by its bytes; a like-named file with other bytes, and a read of the copy, are allowed"
+  # r6 T3 (R14): the copy is judged by what it IS however the run names it (cwd = the folder that holds it): a bare name, an interpreter's script, wrappers,
+  # xargs, a nested command line, a function body, quoted code, stdin, python -m; a reader and rm may name it, but then nothing in the line runs
+  cp /workspace/bin/merge-card.sh "$T/qa-tool.sh" 2>/dev/null; printf 'echo 1\n' >"$T/mine.sh"
+  for c in "python3 qa-copy.py append" "bash qa-tool.sh" "sh -c 'bash qa-tool.sh'" "env X=1 python3 qa-copy.py" "exec python3 qa-copy.py" "command python3 qa-copy.py" "timeout 5 python3 qa-copy.py" \
+           "echo qa-copy.py | xargs python3" "f() { python3 \"\$@\"; }; f qa-copy.py" "alias r='python3 qa-copy.py'; r" "python3 -m qa-copy" "python3 -c 'import runpy; runpy.run_path(\"qa-copy.py\")'" \
+           "python3 < qa-copy.py" "cat qa-copy.py | python3 -" "cat qa-copy.py | python3" "bash < qa-tool.sh" ". qa-tool.sh" "source ./qa-tool.sh" "chmod +x qa-copy.py" "cp qa-copy.py other.py" \
+           "cat /workspace/bin/settings.py > n.py; python3 n.py" "dd if=/workspace/bin/settings.py of=n.py; python3 n.py" "sed -n p /workspace/bin/settings.py > n.py && python3 n.py" \
+           "git show HEAD:bin/settings.py > n.py; python3 n.py" "cat /workspace/bin/settings.py > n; chmod +x n; ./n"; do
+    ok '[ "$(wg "$c" "$T")" = 2 ] && grep -qF "STL-CFG-312" "$T/out"' "r6 T3 $p: refused: $c"
+  done
+  for c in "cat qa-copy.py" "head -3 qa-tool.sh" "rm qa-nothing-here.py" "bash mine.sh" "python3 mine-settings.py" "cat /workspace/bin/settings.py" "git -C /workspace diff -- bin/settings.py"; do
+    ok '[ "$(wg "$c" "$T")" = 0 ]' "r6 T3 $p: allowed (a read of a copy or of the command, a file with other bytes): $c"
+  done
+  ok '[ "$(wg "rm qa-tool.sh" "$T")" = 0 ]' "r6 T3 $p: allowed: a copy may be removed (rm)"
   B40=$(printf '{a,b}%.0s' $(seq 1 40))   # T4: built outside the quoted case (its quotes ended the case's own string)
   ok '[ "$(wg "tee /tmp/zz ${B40}x")" = 2 ]' "K5 $p: a brace-bomb word is refused (more than 64 words), not expanded"
 done

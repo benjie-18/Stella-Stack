@@ -140,7 +140,7 @@ matrix() {
   while read -r lab role; do setw "$lab"; for t in read_file search_files vision_analyze skill_view terminal process_manage write_file patch; do for h in $(hooks_for "$MT" "$role" $t); do hf "$h" >/dev/null; done; done; done < <(pairs)
   local pids=() bad=0
   while read -r lab role; do
-    n=$((n+1)); { matrix_role "$n"; echo "ROWSDONE $n"; } >"$T/m1/$n.out" 2>&1 & pids+=($!)
+    n=$((n+1)); { matrix_role "$n"; } >"$T/m1/$n.out" 2>&1 & pids+=($!)
   done < <(pairs)
   for pid in "${pids[@]}"; do wait "$pid" || bad=1; done   # W4-VER3-06: a subshell that aborts fails the selftest
   for f in $(ls "$T"/m1/*.out | sort -V); do cat "$f"; fails=$((fails + $(grep -c '^FAIL' "$f"))); done
@@ -208,6 +208,7 @@ matrix_role() {   # matrix_role <n>: matrix's cases for one role ($lab, $role an
       say "$([ "$(hk "$(hf "$h")" "$(pl terminal "$(js --arg c "cat $ex" '{command: $c}')")")" = 0 ]; echo $?)" "$L terminal control: cat of the owner example file allowed by $(basename "$h")"
     done
     jstop
+  echo "ROWSDONE $1"   # r6 (W4-VER3-06): the last act of the role's cases, so a subshell that returns early from them fails the batch's count
 }
 
 jq -e . "$SRC" >/dev/null 2>&1 || { echo "FAIL the role table $SRC is not readable"; echo "selftest FAIL (1)"; exit 1; }
@@ -356,13 +357,14 @@ cp /tmp/x $f" "echo x >& $f" ": <> $f" "x=$f; echo y > \"\$x\"" "echo y > \$(ech
 " '{action: "write", session_id: "p1", data: $d}')" "owner command on stdin: $c"
   done
   jstop
+  echo "ROWSDONE $6"   # r6 (W4-VER3-06): the last act of the role's cases, so a subshell that returns early from them fails the batch's count
 }
 matrix2() {   # matrix2 <tag> <owner data list> <owner commands list> [light data list]: every profile and role without one, six at a time, output kept in order
   local tag=$1 lab role n=0 f t h
   while read -r lab role; do setw "$lab"; for t in write_file patch terminal process_manage read_file search_files; do for h in $(hooks_for "$MT" "$role" $t); do hf "$h" >/dev/null; done; done; done < <(pairs)
   local pids=() bad=0
   while read -r lab role; do
-    n=$((n+1)); { m2role "$tag" "$lab" "$role" "$2" "$3" "$n" "${4:-}"; echo "ROWSDONE $n"; } >"$M2/$n.out" 2>&1 & pids+=($!)
+    n=$((n+1)); { m2role "$tag" "$lab" "$role" "$2" "$3" "$n" "${4:-}"; } >"$M2/$n.out" 2>&1 & pids+=($!)
   done < <(pairs)
   for pid in "${pids[@]}"; do wait "$pid" || bad=1; done   # W4-VER3-06: a subshell that aborts fails the selftest
   for f in $(ls "$M2"/*.out | sort -V); do cat "$f"; fails=$((fails + $(grep -c '^FAIL' "$f"))); done
@@ -459,6 +461,8 @@ done
 M4BAD=0; for pid in "${M4PIDS[@]}"; do wait "$pid" || M4BAD=1; done   # W4-VER3-06
 for f in $(ls "$T"/m4/*.out | sort -V); do cat "$f"; fails=$((fails + $(grep -c '^FAIL' "$f"))); done
 say "$([ "$M4BAD" = 0 ] && [ "$(grep -lc '^ROWSDONE ' "$T"/m4/*.out | grep -c .)" = "$n4" ]; echo $?)" "4 fail-closed: all $n4 broken-table subshells finished (no silent abort)"
+want4=$((2 * $(pairs | grep -c .))); short4=0; for f in "$T"/m4/*.out; do [ "$(grep -cE '^(ok|FAIL)' "$f")" = "$want4" ] || short4=$((short4+1)); done
+say "$([ "$want4" -gt 0 ] && [ "$short4" = 0 ]; echo $?)" "4 fail-closed: every broken-table subshell printed its $want4 rows (two per role; r6, W4-VER3-06: $short4 short)"
 export ROLES_FILE=$T/probe.json
 
 # 5 real path: a fake worker bound to a running card on a stub board; the hook runs below it, from its main thread and from a second thread

@@ -1898,6 +1898,93 @@
     },
     {
       "globs": [
+        ".stella/schemas/test-map.schema.json"
+      ],
+      "targets": [
+        "approval-evidence",
+        "complete-gate",
+        "delegation",
+        "merge-card",
+        "profile-hooks",
+        "roles",
+        "routing",
+        "write-guard"
+      ],
+      "scan": true,
+      "why": "from reach: these selftests read the role table, whose boundary list names bin/test-map.py and the test map since F1 W4 round 6 (a stack card's merge test is selected by them); bin/test-map.py reach"
+    },
+    {
+      "globs": [
+        ".stella/test-map.json"
+      ],
+      "targets": [
+        "approval-evidence",
+        "complete-gate",
+        "delegation",
+        "profile-hooks",
+        "routing"
+      ],
+      "scan": true,
+      "why": "from reach: these selftests read the role table, whose boundary list names the test map since F1 W4 round 6; bin/test-map.py reach"
+    },
+    {
+      "globs": [
+        "bench/tasks/deploy-recovery/repo/deploy.conf",
+        "bench/tasks/deploy-recovery/repo/deploy.sh",
+        "bench/tasks/deploy-recovery/repo/test.sh",
+        "bench/tasks/deploy-recovery/solution/deploy.conf"
+      ],
+      "targets": [
+        "approval-evidence",
+        "complete-gate",
+        "delegation",
+        "profile-hooks",
+        "roles",
+        "routing"
+      ],
+      "scan": true,
+      "why": "from reach: these selftests read the role table, whose boundary list names the test map, which names these files, since F1 W4 round 6; bin/test-map.py reach"
+    },
+    {
+      "globs": [
+        "bin/hardcode-lint.sh",
+        "bin/model_watch.py",
+        "bin/selftests.sh",
+        "bin/test-map-selftest.sh",
+        "bin/test-map.py",
+        "bin/watchdog.sh",
+        "bin/watchdog_settings.py",
+        "docs/hermes-local/watchdog-settings.json"
+      ],
+      "targets": [
+        "approval-evidence",
+        "complete-gate",
+        "delegation",
+        "merge-card",
+        "roles",
+        "routing",
+        "write-guard"
+      ],
+      "scan": true,
+      "why": "from reach: these selftests read the role table, whose boundary list names bin/test-map.py since F1 W4 round 6, and merge-card-selftest runs the suite runner in a scratch stack; bin/test-map.py reach"
+    },
+    {
+      "globs": [
+        "docs/hermes-local/hardcode-allow.json"
+      ],
+      "targets": [
+        "approval-evidence",
+        "delegation",
+        "merge-card",
+        "roles",
+        "routing",
+        "write-guard"
+      ],
+      "scan": true,
+      "why": "from reach: these selftests read the role table, whose boundary list names bin/test-map.py since F1 W4 round 6; bin/test-map.py reach"
+    },
+    {
+      "globs": [
         "bin/selftests-selftest.sh"
       ],
       "targets": [

@@ -195,7 +195,18 @@ for g in "$S" "$R"; do
     ok '[ "$(term $g "$c")" = 2 ] && grep -q "STL-CFG-312" "$T/out"' "B.2 point 9: $(basename $g) refuses jq searching the state-path folder: $c"
   done
   ok '[ "$(term $g "jq -L /home/node/.hermes -n '"'"'import \"auth\" as \$a; \$a'"'"'")" = 2 ]' "B.2 point 9: $(basename $g) refuses jq -L of a Hermes home folder (its auth.json is a secret)"
-  ok '[ "$(term $g "jq -n '"'"'.'"'"'")" = 0 ] && [ "$(term $g "jq -L /tmp -n 1")" = 0 ]' "B.2 point 9 control: $(basename $g) allows jq with no library path and jq -L of /tmp"
+  ok '[ "$(term $g "jq -n '"'"'.'"'"'")" = 0 ] && [ "$(term $g "jq -L /tmp -n 1")" = 2 ]' "B.2 point 9 control (r6 C1: the library path rule replaced): $(basename $g) allows jq with no library path; jq -L of /tmp is refused, as any library path"
+  # r6 C1 (R14): jq resolves ../ in a module name outside its library folder, so a jq command that can load a module at all is refused (no everyday call
+  # uses modules); --files0-from in any prefix spelling is refused for every command; everyday jq and wc calls stay allowed
+  printf 'import "x" as $a; $a\n' >"$T/prog.jq"; printf '.a\n' >"$T/plain.jq"
+  for c in "jq -L /tmp -n 'import \"../workspace/README\" as \$a; \$a'" "jq -nL /tmp 1" "jq -L/usr -n 1" "jq --library-path=/tmp -n 1" "jq --lib /tmp -n 1" "jq -n 'import \"a\" as \$a; \$a'" \
+           "jq -n 'include \"a\"; .'" "jq -n '\"a\" | modulemeta'" "JQ_LIBRARY_PATH=/tmp jq -n 1" "jq -n -f $T/prog.jq" "jq -nf $T/prog.jq" "jq --from-file $T/prog.jq -n" \
+           "echo x | wc --files0-from=-" "wc --files0-from /tmp/list" "wc --files0=-" "sort --files0-from=-" "du --files0-from=-"; do
+    ok '[ "$(term $g "$c")" = 2 ] && grep -q "STL-GRD-604" "$T/out"' "r6 C1: $(basename $g) refuses, coded: $c"
+  done
+  for c in "jq -r .name /workspace/package.json" "jq -n -f $T/plain.jq" "jq -c '.scripts | keys' /workspace/package.json" "wc -l /workspace/package.json" "cat /workspace/package.json | jq ." "grep -c include /workspace/package.json"; do
+    ok '[ "$(term $g "$c")" = 0 ]' "r6 C1: $(basename $g) allows the everyday call: $c"
+  done
 done
 ok '[ "$(ROLES_FILE=$T/none run $S read_file "{\"path\": \"/workspace/SUPERVISOR.md\"}")" = 2 ] && [ "$(ROLES_FILE=$T/none term $R "ls")" = 2 ]' "K6: an unreadable role table refuses every read (fail closed)"
 ok '[ "$(tail -c +$((TREE_SIZE + 1)) "$TREE_ALERTS" 2>/dev/null | grep -c .)" = 0 ]' "T7 (r5, W4-VER3-07): the tree's alert log gained no line of any kind during this run"

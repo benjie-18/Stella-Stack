@@ -14,7 +14,7 @@
 # tree that was checked. A path that defines the boundary itself (roles.py boundary: the role table, the hooks, the guards, the box and every file
 # they load, and a new module in bin/ named like a standard-library module) is listed, and refused unless --i-have-read-the-boundary-changes.
 # K2: the card's test command is the card's code: it runs in the OS box (bin/box.py exec: the card worktree writable, the rest read-only, the
-# owner settings files and state paths not mounted, the worker markers set); where the box cannot start the merge is refused (STL-CFG-312, coded),
+# owner settings files and state paths not mounted, the worker markers set); where the box cannot start the merge is refused (STL-GRD-605, coded),
 # there is no unboxed run. The tests run in a throw-away worktree of the branch tip that this script makes (never the card's own worktree, whose
 # .git file and git dir entry a worker can rewrite: the box refuses those, T6). What the box does not stop: the test code still decides its own
 # exit code (the review reads the diff), and it can read
@@ -62,7 +62,7 @@ top=$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null) || refuse "$repo is 
 g() { git -C "$top" "$@"; }
 [ "$(g rev-parse --git-dir)" = "$(g rev-parse --git-common-dir)" ] || refuse "$top is a worktree, not the main checkout"
 [ "$(g symbolic-ref --short -q HEAD)" = main ] || refuse "the main checkout $top is not on main"
-[ -z "$(g status --porcelain)" ] || refuse "the main checkout $top is not clean"
+[ -z "$(g status --porcelain)" ] || coded STL-GRD-607 "it has changes that are not committed or files git does not track ($(g status --porcelain | wc -l) paths; git status lists them)" "the main checkout $top is not clean"
 mapfile -t branches < <(g for-each-ref --format='%(refname:short)' "refs/heads/*/$card-*")   # K12: <project-slug>/<card>-<title>
 [ "${#branches[@]}" = 1 ] || refuse "expected one branch <project>/$card-*, found ${#branches[@]}"
 branch=${branches[0]}
@@ -110,10 +110,10 @@ for n in (x for x in open(zf, "rb").read().decode("utf-8", "surrogateescape").sp
     for i in range(1, len(parts) + 1):
         p = "/".join(parts[:i])
         if p not in tracked and p not in dirs and os.path.lexists(os.path.join(top, p)):
-            out.append(p); break
+            out.append(n if p == n else f"{n} (untracked at {p})"); break   # r6: the path itself, and the untracked folder above it
 print(", ".join(sorted(set(out)))[:240])' "$top" "$zf" "$tz") || coded STL-CFG-303 "the main checkout's untracked files cannot be compared with the merge" "nothing was merged"
   rm -f "$tz"
-  [ -z "$over" ] || coded STL-CFG-312 "$branch would replace files of the main checkout that git does not track there: $over" "Those files (ignored local files, owner files) are never replaced by a merge; nothing was merged"
+  [ -z "$over" ] || coded STL-GRD-607 "$branch would replace files of the main checkout that git does not track there: $over" "Those files (ignored local files, owner files) are never replaced by a merge; nothing was merged"
   hits=$(python3 -I "$here/roles.py" hits "$top" refused "$here/.." <"$zf" 2>/dev/null | tr '\0' '\n'; exit "${PIPESTATUS[0]}") \
     || coded STL-CFG-303 "the owner data list (role table or data index) cannot be read" "so what $branch changes cannot be checked; nothing was merged"
   bhits=$(python3 -I "$here/roles.py" hits "$top" boundary "$here/.." <"$zf" 2>/dev/null | tr '\0' '\n'; exit "${PIPESTATUS[0]}") \
@@ -142,19 +142,35 @@ if [ -z "$owner" ]; then
 fi
 g show "$tip:package.json" 2>/dev/null | jq -e '.scripts.test' >/dev/null 2>&1 || refuse "no test command in $branch:package.json (scripts.test)"
 # K2: the card's test command is the card's code: it runs in the OS box (bin/box.py exec) with the plan a worker gets, never in this shell
+# r6 B2 (owner decision 4 of 2026-11-12, W4-CV3-02): a card of the stack itself (the repository merged is the tree this script lies in: no name here)
+# merges with a reduced test set: the selftests the test map selects for the card's diff against the merge base plus the map's quick tier, through the
+# suite runner, all three read from and run in the tree under test (the throw-away worktree, never the main checkout's files), in the box. `full` from the
+# map, a map tool that fails or an empty answer runs the whole suite; a quick list that cannot be read, or a runner that cannot isolate, fails the tests.
+# The runner makes a namespace per selftest, so this box alone may nest namespaces (box.py merge_exec nest). The full suite still runs on the final hash.
+tscript='timeout 1800 npm test' nest=
+if [ "$(readlink -f "$top")" = "$(readlink -f "$here/..")" ]; then
+  mb=$(g merge-base "$before" "$tip") && fl=$(g diff --name-only --no-renames "$mb" "$tip" | base64 -w0) && [ -n "$fl" ] \
+    || coded STL-CFG-303 "git cannot list what $branch changed since it left main" "so its tests cannot be selected; nothing was merged"
+  nest=nest   # shortcut: one hour for the reduced set or the whole suite in the box, a limit in data when the suite's run time is settled
+  tscript='sel=$(printf %s '"$fl"' | base64 -d | python3 -I bin/test-map.py select -) && [ -n "$sel" ] || sel=full
+if [ "$sel" = full ]; then echo "merge test: the whole suite (the test map selects it)" >&2; exec timeout 3600 bash bin/selftests.sh; fi
+q=$(python3 -I bin/test-map.py quick) && [ -n "$q" ] || { echo "merge test: the quick list of the test map cannot be read" >&2; exit 1; }
+echo "merge test: the selected selftests and the quick tier:" $sel $q >&2
+exec timeout 3600 bash bin/selftests.sh $sel $q'
+fi
 intree() {   # intree <commit> <name>: npm test of <commit> in the box, in a throw-away worktree made here (owner-made git files; T6) and removed
-  # after without running git in it; 125 the worktree cannot be made, 70 the box could not start (the box printed the coded line), else the tests' exit code (126 included)
-  local pw="$top/.worktrees/$2-$card" pb="$2/$card" r
+  # after without running git in it. The verdict is $tres, never an exit code the test can choose (r6, R14): "wt" the worktree cannot be made, "ran <code>" the
+  # test ran and exited with <code> (what bin/box.py exec states on descriptor 3, which the box never holds), anything else: the box did not run it (its coded line is printed)
+  local pw="$top/.worktrees/$2-$card" pb="$2/$card"; tres=wt
   rm -f "$common/worktrees/$2-$card/locked"; g worktree prune   # W4-VAL3-01: a lock a previous test wrote into the entry would keep it; a folder left at $pw is not ours to remove: the add below fails, coded
-  g -c core.hooksPath=/dev/null -c core.fsmonitor= worktree add -q -b "$pb" "$pw" "$1" >/dev/null 2>&1 || return 125
-  python3 -I "$here/box.py" exec "$top" "$pw" "$pb" "$card" 'timeout 1800 npm test' >&2; r=$?
-  rm -rf "$pw"; rm -f "$common/worktrees/$2-$card/locked"; g worktree prune; g branch -D "$pb" >/dev/null 2>&1
-  return "$r"; }
+  g -c core.hooksPath=/dev/null -c core.fsmonitor= worktree add -q -b "$pb" "$pw" "$1" >/dev/null 2>&1 || return 0
+  tres=$(python3 -I "$here/box.py" exec "$top" "$pw" "$pb" "$card" "$tscript" $nest 3>&1 >&2)
+  rm -rf "$pw"; rm -f "$common/worktrees/$2-$card/locked"; g worktree prune; g branch -D "$pb" >/dev/null 2>&1; }
 echo "merge-card.sh: running this branch's own test command in the OS box (the card worktree writable, the rest read-only); review the diff first" >&2
-intree "$tip" merge-check; trc=$?
-[ "$trc" != 125 ] || coded STL-CFG-312 "the throw-away worktree $top/.worktrees/merge-check-$card for the card's tests could not be made" "The tests never run outside the box; remove a leftover of an earlier run (git -C $top worktree remove $top/.worktrees/merge-check-$card), then merge again; nothing was merged"
-[ "$trc" != 70 ] || refuse "the box for the tests could not start, and the tests never run outside it; nothing was merged"
-[ "$trc" = 0 ] || refuse "tests failed on $branch (npm test, in the box); nothing was merged"
+intree "$tip" merge-check
+[ "$tres" != wt ] || coded STL-GRD-605 "the throw-away worktree $top/.worktrees/merge-check-$card for the card's tests could not be made" "The tests never run outside the box; remove a leftover of an earlier run (git -C $top worktree remove $top/.worktrees/merge-check-$card), then merge again; nothing was merged"
+[[ $tres =~ ^ran\ [0-9]+$ ]] || refuse "the box for the tests could not start or did not finish (its coded line is above), and the tests never run outside it; nothing was merged"
+[ "$tres" = "ran 0" ] || coded STL-GRD-606 "the test command of $branch ended with status ${tres#ran }" "tests failed on $branch (npm test, in the box, exit ${tres#ran }); nothing was merged"
 [ "$(g rev-parse --verify "refs/heads/$branch^{commit}")" = "$tip" ] || refuse "$branch moved while its tests ran; nothing was merged"
 # N1: the tests ran for up to 30 minutes with the shared objects folder writable by a box; check the objects again before the merge
 g fsck --no-dangling --no-progress >/dev/null 2>&1 || refuse "git fsck reports a damaged or altered object in $top after the tests; nothing was merged"
@@ -173,14 +189,16 @@ fi
 if ! g commit --no-verify -q --no-edit -m "Merge $branch (card $card)"; then
   g merge --abort 2>/dev/null; echo "merge-card.sh: merge of $branch failed (commit); aborted, main left at ${before:0:12}" >&2; exit 1
 fi
+# W4-CV3-11: --no-verify skips pre-commit and commit-msg; prepare-commit-msg and post-commit of the owner's repo still run, so the result is compared once more
+[ "$(g rev-parse 'HEAD^{tree}')" = "$mtree" ] || { echo "merge-card.sh: [STL-CFG-312] THE COMMITTED MERGE IS NOT THE TREE THAT WAS CHECKED (a commit hook of this repository changed it): main is at $(g rev-parse --short HEAD), was ${before:0:12}; inspect it, undo with git -C $top reset --hard $before; NOT pushed" >&2; exit 1; }
 echo "merged $branch into main: $(g rev-parse --short HEAD)"
 [ -n "$push" ] || exit 0
 # AGENTS.md: never push to main with a failing check, so the merged tree is tested again first (review H4). History is
 # never rewritten here: on failure the merge stays local for the owner to inspect or undo.
-intree "$(g rev-parse HEAD)" merge-test; trc=$?   # K2: main's tests run in the box too, from a throw-away worktree of the merged commit
-[ "$trc" != 125 ] || coded STL-CFG-312 "the throw-away worktree $top/.worktrees/merge-test-$card for the merged main's tests could not be made" "Merged locally, NOT pushed (undo: git -C $top reset --hard $before)"
-[ "$trc" != 70 ] || refuse "the box for the tests of the merged main could not start; merged locally, NOT pushed (undo: git -C $top reset --hard $before)"
-[ "$trc" = 0 ] \
+intree "$(g rev-parse HEAD)" merge-test   # K2: main's tests run in the box too, from a throw-away worktree of the merged commit
+[ "$tres" != wt ] || coded STL-GRD-605 "the throw-away worktree $top/.worktrees/merge-test-$card for the merged main's tests could not be made" "Merged locally, NOT pushed (undo: git -C $top reset --hard $before)"
+[[ $tres =~ ^ran\ [0-9]+$ ]] || refuse "the box for the tests of the merged main could not start or did not finish; merged locally, NOT pushed (undo: git -C $top reset --hard $before)"
+[ "$tres" = "ran 0" ] \
   || { echo "merge-card.sh: tests fail on the merged main: merged locally, NOT pushed (undo: git -C $top reset --hard $before)" >&2; exit 1; }
 g rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1 || { echo "merge-card.sh: main has no upstream; merged, not pushed" >&2; exit 1; }
 g push || { echo "merge-card.sh: push failed; merged locally, not pushed" >&2; exit 1; }
