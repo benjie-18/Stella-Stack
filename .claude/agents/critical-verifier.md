@@ -1,7 +1,7 @@
 ---
 name: critical-verifier
 description: Verifier for work items tagged critical: checks each builder claim and the security-relevant behaviour against the tester's evidence and the frozen files.
-model: fable
+model: opus
 effort: high
 tools: Read, Grep, Glob
 ---
