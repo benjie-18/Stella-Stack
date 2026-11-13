@@ -67,6 +67,7 @@ QUEUE="$STATE/queue.jsonl"
 # shortcut: whoever can write the state folder can put a link in between this test and the open; upgrade to an O_NOFOLLOW open if a less trusted user can write it
 nolink() { { [ ! -L "$1" ] && { [ ! -f "$1" ] || [ "$(stat -c %h "$1")" = 1 ]; }; } || { echo "escalate.sh: warning: ${1#"$SUP"/} is a link: not written through it" >&2; return 1; }; }
 nolink "$LOG" || exit 2   # every call logs: checked once, before the first line is appended
+nolink "$STATE" || refuse STATE_LINK 2 "the state folder is a link: nothing is made in it"
 queue_failed() {  # queue_failed <what>: the call is not in the queue, and every message says so (the prompt goes: nothing points at it)
   flock -u 6 2>/dev/null; rm -f "$prompt"; qid=""   # fd 6 is not open when the lock file was refused
   qnote="NOT queued: $1; fix the file (the call is lost, run it again)"
