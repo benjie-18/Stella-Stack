@@ -672,8 +672,8 @@ def overlap(p, prot):
 
 def hits(d, top, names, kind, root=None):
     """K1/K3: the names (relative to the tree `top`) that are, lie in or hold a path of the list `kind`: "refused" = every path no role may
-    write (owner_paths: owner data, the owner settings, the apply tool's state), "boundary" = boundary(d) and any new file in a folder of
-    modules whose name stands in for a module the boundary imports, its own included, or is the bytecode cache (the hooks import from that folder first). Raises RolesError."""
+    write (owner_paths: owner data, the owner settings, the apply tool's state), "boundary" = boundary(d) and, in a folder the boundary's python imports from (the hooks import from that folder first), any folder, any file
+    python loads (.py, .pyc, .so) whatever its name, and any other file named like a module the boundary imports. Raises RolesError."""
     rel = owner_paths(d, root or top) if kind == "refused" else boundary(d)
     prot = chains(os.path.join(top, x) for x in rel)
     out, shadow = [], None
@@ -683,10 +683,10 @@ def hits(d, top, names, kind, root=None):
         r = overlap(os.path.join(top, n), prot)
         if r:
             out.append(n)
-        elif kind == "boundary":   # any path whose first component under such a folder, its suffix stripped, stands in for a module the boundary imports (a plain module, a package folder, a compiled form, the bytecode cache)
+        elif kind == "boundary":   # r10 (FIN-CRT-02, FIN-CV-01): under such a folder any folder and any file python loads is a hit, whatever its name (a module looked up late is on no list); the name test stays for other suffixes
             dirs, ext = shadow if shadow else (shadow := _outside_imports(d, top))
             for dd in dirs:
-                if n.startswith(dd + "/") and n[len(dd) + 1:].split("/")[0].split(".")[0] in ext:
+                if n.startswith(dd + "/") and ("/" in (t := n[len(dd) + 1:]) or t.endswith((".py", ".pyc", ".so")) or t.split(".")[0] in ext):
                     out.append(n); break
     return out
 
