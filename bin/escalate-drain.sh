@@ -57,7 +57,7 @@ replay() {
   flock 6
   case "$rc" in
     0)    setstate "$id" replayed; rm -f "$pf"; echo "$id: replayed" ;;
-    2|3|75|126|127) setstate "$id" queued; echo "$id: still blocked or not runnable now (exit $rc), left in the queue" ;;   # 2: kanban show failed (review M2), or escalate.sh refused because a setting's registry default is unreadable (STL-CFG-310); 126, 127: the call could not start (a field over the argument limit, no model command): the prompt is kept, the entry goes stale by age (W5-RT6-03)
+    2|3|75|126|127) setstate "$id" queued; echo "$id: still blocked or not runnable now (exit $rc), left in the queue" ;;   # 2: kanban show failed (review M2), or escalate.sh refused because a setting's registry default is unreadable (STL-CFG-310); 126: escalate.sh could not be started (a field over the argument limit); 126, 127 from escalate.sh: its model command did not start, and its note and log line say "left in the queue" too (W5-VER7-01). The prompt is kept, the entry goes stale by age (W5-RT6-03)
     *)    setstate "$id" failed; rm -f "$pf"; echo "$id: failed (exit $rc)" ;;
   esac
   flock -u 6

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The only sanctioned way to run Claude Opus, Haiku or Sonnet: card-scoped, logged, rate-limited.
 # usage: escalate.sh <card-id> <haiku|sonnet|opus> <purpose> <reason...> [--]
-#   prompt on stdin; opus purpose must be in OPUS_PURPOSES (plan runs --model opusplan). Anything after -- is refused (exit 2): no caller passes an extra arg. A reason over 8192 characters is refused (exit 2).
+#   prompt on stdin; opus purpose must be in OPUS_PURPOSES (plan runs --model opusplan). Anything after -- is refused (exit 2): no caller passes an extra arg. A reason over 8192 characters is refused (exit 2; not on a replay).
 # Exit: 0 ok, 2 usage or a refusal (a setting's registry default unreadable: STL-CFG-310; the log or a state file of the call is a link; nothing run), 3 over a limit (never retried), 75 pool exhausted, else claude's exit code.
 # Queue (F15, F28, F29): a call refused by a zeroed or exceeded limit (Opus slots, Haiku per day) and every pool-exhausted
 # call is recorded in state/queue.jsonl with its prompt file, and raises one #alerts line; the caller still gets 3 or 75.
@@ -110,11 +110,13 @@ queue() {  # queue <LIMIT|POOL_EXHAUSTED> <what happened>: one entry and one #al
 }
 limit() { queue LIMIT "$1"; note "escalate.sh LIMIT: $model ($purpose) for '$reason': $1. No result; $qnote."; refuse LIMIT 3 "$1; $qnote"; }
 # shortcut: the limit is a number here (limits.env and the settings registry hold none), move it to the registry when a caller needs another; in characters, so 32 KiB at most, far under the 128 KiB the kernel gives one argument (W5-RT6-03: a longer one cannot be replayed)
-[ ${#reason} -le 8192 ] || { m="reason of ${#reason} characters is longer than 8192: put the detail in the prompt"; reason="${reason:0:80}..."; refuse USAGE 2 "$m"; }
+# Not on a replay (W5-RT7-02): the drain's read can give a queued reason back with more characters, and a reason accepted when it was
+# queued is never refused for its length; one over the kernel's limit cannot be handed over by the drain at all (exit 126, left queued).
+[ -n "${ESCALATE_REPLAY:-}" ] || [ ${#reason} -le 8192 ] || { m="reason of ${#reason} characters is longer than 8192: put the detail in the prompt"; reason="${reason:0:80}..."; refuse USAGE 2 "$m"; }
 # W5-RT6-01: an extra arg is passed on only if a caller of the stack uses it. None does (the drain replays the empty list every
 # caller queues), so every one is refused, here, where a direct call and a replay both pass. To allow one, name it in this test.
 extra_args=("$@")   # always empty past the next line; kept with a queue entry
-[ $# -eq 0 ] || refuse USAGE 2 "extra claude arg $1 is refused: no caller of the stack passes one (it could override escalate.sh's model, budget or permissions, or make the model command read a file or start a command)"
+[ $# -eq 0 ] || refuse USAGE 2 "extra claude arg $(printf %q "$1") is refused: no caller of the stack passes one (it could override escalate.sh's model, budget or permissions, or make the model command read a file or start a command)"
 
 [[ "$card" =~ ^t_[0-9a-f]{8}$ ]] || refuse USAGE 2 "card id required (t_xxxxxxxx), got '${card}'"
 [ -n "$reason" ] || refuse USAGE 2 "reason required"
@@ -230,8 +232,10 @@ cost=$(jq -r '.total_cost_usd // "null"' <<<"$out" 2>/dev/null) || cost=null
 # exit 0 counts only with a parseable, non-error result
 [ "$rc" -eq 0 ] && ! jq -e '.is_error == false' <<<"$out" >/dev/null 2>&1 && rc=1
 if [ "$rc" -ne 0 ]; then
+  # W5-VER7-01: on a replay the drain leaves these two exit codes queued; the note, the log line and stderr say the same
+  ns=FAIL; [ -z "${ESCALATE_REPLAY:-}" ] || [[ $rc != 12[67] ]] || { ns="the model command did not start (exit $rc); left in the queue as $ESCALATE_REPLAY"; err="$ns: $err"; }
   log FAIL "$rc" "${model_used:-unknown}" false "${cost:-null}" "$(head -c 300 <<<"$out$err")"
-  note "escalate.sh FAIL: $model ($purpose) exit $rc for '$reason'. model_used: ${model_used:-unknown}, fallback: false."
+  note "escalate.sh $ns: $model ($purpose) exit $rc for '$reason'. model_used: ${model_used:-unknown}, fallback: false."
   rm -f "$prompt"   # F16: kept only while a queue entry points at it
   printf '%s\n' "$out"; printf '%s\n' "$err" >&2
   exit "$rc"
