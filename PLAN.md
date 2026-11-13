@@ -579,3 +579,41 @@ Left for you: the trap I planted at `.scratch/s6-scratch/.worktrees/t_393087ae/n
 
 - Freeze: the Stage 5/6 freeze was lifted for F1 by the owner, 2026-11-10 (the owner's answers in the session: "Passed, run all of F1"; "Lift it now, run F1"). The manifest `.supervisor/state/stage5-freeze.sha256` was not touched by this phase (owner: "Leave it, report only"); the phase report lists the covered files this branch changes.
 - State of the phase (work items, checks, evidence, findings per QA round) is in `.scratch/F1/`: `progress.md`, `tests.json`, `work-items.json`, `evidence/`, `findings/`, `REPORT.md`. The evidence table below is filled for the final tested hash.
+
+### F1 evidence table (per acceptance check: the result and the hash it was proven on)
+
+The commands, exit codes and trimmed output of each row are in `.scratch/F1/evidence/` (one folder per test pass, each with its hand-back and logs) and are summed up in `.scratch/F1/REPORT.md`. A check keeps the hash it was last proven on when no file it covers changed afterwards (owner rule of 2026-11-11: no passing test is rerun on a hash where nothing it covers changed). The timed full suite on the final hash (checks A6a, A8a, A8b, A8d) is recorded in `REPORT.md`, since this file is part of that hash.
+
+| check | what it proves | result | hash it was proven on |
+|---|---|---|---|
+| A1 | audit.md exists, answers every Part A question from live evidence, and ends with the "what would break" list. | done (audit.md) | - |
+| A2 | Every schema validates. | PASS | 8e878d1 |
+| A3a | A fake provider validates and loads with no code change. | PASS | 8e878d1 |
+| A3b | A fake app validates and loads with no code change. | PASS | 8e878d1 |
+| A3c | A fake channel validates and loads with no code change. | PASS | 8e878d1 |
+| A3d | A fake role validates and loads with no code change. | PASS | 6f1b487 |
+| A3e | A fake capability validates and loads with no code change. | PASS | 8e878d1 |
+| A3f | A fake extension validates and loads with no code change. | PASS | 8e878d1 |
+| A3g | (product rule 5) An unknown entry fails closed with one alert; an override that widens the data policy is refused by --check. | PASS | 8e878d1 |
+| A4a | The lint passes on the baseline. | PASS | 349cf2f |
+| A4b | The lint fails on a planted literal provider, model, host and board name (each one). | PASS | eba56c0 |
+| A5a | Apply contract: a dry run changes no file. | PASS | 21cf47d |
+| A5b | Apply then rollback leaves the files byte-identical to before. | PASS | 21cf47d |
+| A5c | A second apply is a no-op. | PASS | 21cf47d |
+| A5d | --check reports a hand edit as drift. | PASS | 21cf47d |
+| A5e | Each apply and rollback leaves one event-log line with no secret value in it. | PASS | 21cf47d |
+| A5f | Every role is refused when it writes each owner setting (write tool, shell redirect, git, delegated subagent). | PASS | 9977ebb |
+| A5g | The owner path writes one owner setting through the apply contract, and rollback restores it. | PASS | 9977ebb |
+| A6a | Behavior of the live stack is unchanged apart from the protected paths and the cheap fixes. The existing selftests still pass (full suite on the fi... | PASS | 349cf2f |
+| A6b | (baseline) The full suite passes on the run branch before any F1 change other than the git modes: main c75e865 itself is red on five selftests (aud... | PASS (baseline suite 40 of 40) | aeaab3a |
+| A7 | (product rule 8) Every test is registered in .stella/test-map.json; a test missing from the map fails the test-map lint. | PASS | 4199391 |
+| A8a | Each selftest of the suite runs in its own copy of the runner's tree with its own temp folder and its own alert log: after a suite run the source t... | PASS | 349cf2f |
+| A8b | The parallel run gives the same result for every selftest as the one-at-a-time run on the same hash; three parallel runs in a row on the same hash:... | PASS | 349cf2f |
+| A8c | A selftest marked serial never overlaps another; a planted failing selftest makes the runner print its FAIL lines and exit 1; the number run at onc... | PASS | 349cf2f |
+| A8d | The full suite (npm test) on the final hash ends under the watchdog's step limit (1200 s wall), with the time of every selftest recorded. | owed: the timed full suite on the final hash (REPORT.md) | - |
+| A8e | The quick tier is data in the test map (a name outside the suite list is refused by check); the watchdog's test step runs it (which npm script: the... | PASS | 36b8aff |
+| A9a | A stack card merges on the reduced test set (the map's selected selftests for the card's diff plus the quick tier, run boxed, from the tree under t... | PASS | 9977ebb |
+
+- Items stopped or scoped by the owner (not fixed in this phase; listed in `REPORT.md`): the apply contract's open findings (decision of 2026-11-13: flag, do not fix), two runner findings outside the granted scope, the queue script's environment finding (a follow-up card is drafted), and the state and log writes of eight other live scripts (a follow-up card is drafted).
+- Accepted limits (owner decision of 2026-11-13, C): `.scratch/F1/qa/known-limits.json` lists each with its id, its reproducing test (kept, untouched) and the fix it needs.
+- Selftest assertions replaced during the phase (each is listed old/new in the round's report under `.scratch/F1/briefs/` and ruled in `.scratch/F1/findings/`): role requirements, round 3 (three strengthened, one fixture); owner-only write path, round 5 (25 assertion lines replaced; five were weaker and are restored, four in round 6 and one in round 7); merge-card selftest line 176 (a stale assertion, replaced in the item's last ladder round); queue script, round 7 (`bin/escalate-selftest.sh:105`: `check 0` became `check 2` for the same command, because the script now refuses every extra argument).
