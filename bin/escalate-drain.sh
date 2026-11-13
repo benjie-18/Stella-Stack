@@ -7,7 +7,7 @@
 #                                               75): left queued, no alert. Older than QUEUE_MAX_AGE_HOURS, or its card
 #                                               done or archived: marked stale and skipped.
 #        escalate-drain.sh --drop <id>          mark it dropped
-# A prompt file is removed when its entry leaves the queued state. Exit 0, or 2 on a usage error or an unknown id.
+# A prompt file is removed when its entry leaves the queued state. Exit 0, or 2 on a usage error, an unknown id or a link in the state folder (nothing written).
 # A line of the queue file that is not JSON (a cut write) is skipped by every read and kept as it is by every rewrite; --list warns about it.
 set -uo pipefail
 export LC_ALL=C.UTF-8
@@ -17,7 +17,10 @@ Q="$STATE/queue.jsonl"
 . "$SUP/limits.env"
 . /workspace/bin/kanban-board.sh
 usage() { echo "usage: escalate-drain.sh --list | --replay <id> | --all | --drop <id>" >&2; exit 2; }
-mkdir -p "$STATE"; exec 6>"$STATE/queue.lock"
+# nolink <file>: false, with a warning, when a file of the state folder is a symbolic link or has a second hard link; no write of
+# the drain goes through one (the rule and the shortcut of bin/escalate.sh's nolink)
+nolink() { { [ ! -L "$1" ] && { [ ! -f "$1" ] || [ "$(stat -c %h "$1")" = 1 ]; }; } || { echo "escalate-drain.sh: warning: ${1#"$SUP"/} is a link: not written through it" >&2; return 1; }; }
+mkdir -p "$STATE"; nolink "$STATE/queue.lock" || exit 2; exec 6>>"$STATE/queue.lock"   # append: a lock is never emptied
 # A line that is not JSON (a cut write) is skipped by every read here and kept as it is by every rewrite; --list reports it. The
 # entries after it are read and replayed like any other. escalate.sh refuses to queue while the file has such a line (RT2-03).
 rows() { jq -cR 'fromjson? | select(type == "object")' "$Q" 2>/dev/null; }
