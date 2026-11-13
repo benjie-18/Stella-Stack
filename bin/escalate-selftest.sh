@@ -102,7 +102,7 @@ for a in "--model opus" "--model=opus" "--fallback-model haiku" "--max-budget-us
   check 2 "extra arg refused: $a" sh -c "echo hi | $E t_12345678 sonnet review why -- $a"
 done
 ok '[ "$(runs)" = "$n" ]' "H2: no claude run for any of them"
-check 0 "an ordinary extra arg is passed on" sh -c "echo hi | $E t_12345678 sonnet review why -- --verbose"
+check 2 "an extra arg outside that list is refused too: no caller of the stack passes one (W5-RT6-01)" sh -c "echo hi | $E t_12345678 sonnet review why -- --verbose"
 echo "events: $(jq -r .event "$T/sup/escalations.log" | sort | uniq -c | tr -s ' \n' ' ')"
 # D42: `timeout 0` disables the timeout, so CALL_TIMEOUT 0, empty or non-numeric must fall back to 600 with a warning.
 mkdir -p "$T/tbin"; printf '#!/bin/sh\necho "$1" >> "%s/timeout_args"\nshift\nexec "$@"\n' "$T" > "$T/tbin/timeout"; chmod +x "$T/tbin/timeout"
@@ -311,5 +311,26 @@ check 2 "Q6: the state folder is a link: the call is refused" sh -c "echo hi | $
 check 2 "Q6: ... and so is the drain" $D --list
 ok '[ -z "$(ls -A "$T/outside")" ]' "Q6: ... nothing is made in the folder it points at"
 rm -f "$T/sup/state"; mv "$T/state.keep" "$T/sup/state"
+
+# Round 7 (W5-RT6-01), in a state folder of its own: no extra argument reaches the model command, direct or from a
+# queue line.
+S7="$T/sup7"; mkdir -p "$S7/state"; cp /workspace/.supervisor/limits.env "$S7/"; echo canary >"$T/canary"; Q7="$S7/state/queue.jsonl"
+runs7() { cat "$S7/claude_n" 2>/dev/null || echo 0; }
+st7() { jq -r --arg id "$1" 'select(.id == $id) | .state' "$Q7" | tail -1; }
+plant7() {  # plant7 <id> <jq update of a good entry> [file for $r]
+  echo hi >"$S7/state/prompt-$1.txt"
+  jq -nc --arg id "$1" --arg pf "$S7/state/prompt-$1.txt" --arg c "$(date -u +%FT%TZ)" --arg f "$T/canary" --rawfile r "${3:-/dev/null}" '{id: $id, card: "t_aaaa0701",
+    model: "sonnet", purpose: "review", call_reason: "why", claude_args: [], reason: "LIMIT", detail: "x", created: $c, state: "queued", prompt_file: $pf} | '"$2" >>"$Q7"; }
+export ESCALATE_SUP_DIR="$S7"
+for a in "--system-prompt-file $T/canary" "--mcp-config {}" "--verbose" "why2"; do
+  check 2 "S1: a direct call with the extra argument '${a%% *}' is refused" sh -c "echo hi | $E t_12345678 sonnet review why -- $a"
+done
+ok '[ "$(runs7)" = 0 ]' "S1: ... and the model command is not started for any of them"
+plant7 q_s1 '.claude_args = ["--system-prompt-file", $f]'; $D --replay q_s1 >/dev/null 2>&1
+ok '[ "$(runs7)" = 0 ] && [ "$(st7 q_s1)" = queued ] && [ -s "$S7/state/prompt-q_s1.txt" ]' "S1: a queue line's extra argument is refused on a replay: no run, left queued with its prompt"
+plant7 q_s1ok .; $D --replay q_s1ok >/dev/null 2>&1
+ok '[ "$(runs7)" = 1 ] && [ "$(st7 q_s1ok)" = replayed ]' "S1: a queue line without extra arguments (the form every caller queues) is replayed"
+check 0 "S1: a direct call that ends in a bare -- still runs" sh -c "echo hi | $E t_12345678 sonnet review why --"
+export ESCALATE_SUP_DIR="$T/sup"
 
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

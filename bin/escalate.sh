@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The only sanctioned way to run Claude Opus, Haiku or Sonnet: card-scoped, logged, rate-limited.
-# usage: escalate.sh <card-id> <haiku|sonnet|opus> <purpose> <reason...> [-- <extra claude args>]
-#   prompt on stdin; opus purpose must be in OPUS_PURPOSES (plan runs --model opusplan).
+# usage: escalate.sh <card-id> <haiku|sonnet|opus> <purpose> <reason...> [--]
+#   prompt on stdin; opus purpose must be in OPUS_PURPOSES (plan runs --model opusplan). Anything after -- is refused (exit 2): no caller passes an extra arg.
 # Exit: 0 ok, 2 usage or a refusal (a setting's registry default unreadable: STL-CFG-310; the log or a state file of the call is a link; nothing run), 3 over a limit (never retried), 75 pool exhausted, else claude's exit code.
 # Queue (F15, F28, F29): a call refused by a zeroed or exceeded limit (Opus slots, Haiku per day) and every pool-exhausted
 # call is recorded in state/queue.jsonl with its prompt file, and raises one #alerts line; the caller still gets 3 or 75.
@@ -109,13 +109,10 @@ queue() {  # queue <LIMIT|POOL_EXHAUSTED> <what happened>: one entry and one #al
   alert_rc=$?
 }
 limit() { queue LIMIT "$1"; note "escalate.sh LIMIT: $model ($purpose) for '$reason': $1. No result; $qnote."; refuse LIMIT 3 "$1; $qnote"; }
-extra_args=("$@")   # claude args after --, kept with a queue entry
-for a in "${extra_args[@]}"; do   # review H2: claude takes the last of a repeated option, so these would override ours
-  case "${a%%=*}" in
-    --model|--fallback-model|--max-budget-usd|--permission-mode|--dangerously-skip-permissions|--allow-dangerously-skip-permissions|--yolo|--settings|--add-dir|--allowedTools|--allowed-tools)
-      refuse USAGE 2 "extra claude arg $a would override escalate.sh's model, budget or permissions" ;;
-  esac
-done
+# W5-RT6-01: an extra arg is passed on only if a caller of the stack uses it. None does (the drain replays the empty list every
+# caller queues), so every one is refused, here, where a direct call and a replay both pass. To allow one, name it in this test.
+extra_args=("$@")   # always empty past the next line; kept with a queue entry
+[ $# -eq 0 ] || refuse USAGE 2 "extra claude arg $1 is refused: no caller of the stack passes one (it could override escalate.sh's model, budget or permissions, or make the model command read a file or start a command)"
 
 [[ "$card" =~ ^t_[0-9a-f]{8}$ ]] || refuse USAGE 2 "card id required (t_xxxxxxxx), got '${card}'"
 [ -n "$reason" ] || refuse USAGE 2 "reason required"
