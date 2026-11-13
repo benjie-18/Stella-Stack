@@ -281,4 +281,21 @@ check 3 "V4: the queue is full" sh -c "echo hi | $E t_aaaa0406 haiku judge why"
 ok '[ "$(nlog NOT_QUEUED t_aaaa0406)" = 1 ]' "V4: ... the lost call has its own NOT_QUEUED log line"
 rm -f "$Q"; cp "$T/limits.keep" "$T/sup/limits.env"
 
+# W5 r5 (RT4-01): no file of the state folder is opened for writing through a link; the link is refused before the open
+V="$T/victim"; echo keep >"$V"; setlimit HAIKU_MAX_PER_DAY 0; setlimit QUEUE_MAX 5; stamps; ln -s "$V" "$Q"
+check 3 "P1: the queue file is a link" sh -c "echo hi | $E t_aaaa0501 haiku judge why"
+ok '[ "$(cat "$V")" = keep ] && [ "$(nlog NOT_QUEUED t_aaaa0501)" = 1 ] && [ "$(nalerts "\\[STL-LIM-405\\]\\*\\*\$")" = 1 ]' "P1: ... nothing written through it, NOT_QUEUED, one STL-LIM-405 line"
+rm -f "$Q" "$T/sup/state/queue.lock"; ln -s "$V" "$T/sup/state/queue.lock"; stamps
+check 3 "P1: the queue lock is a link" sh -c "echo hi | $E t_aaaa0502 haiku judge why"
+ok '[ "$(cat "$V")" = keep ] && [ ! -e "$Q" ] && [ "$(nlog NOT_QUEUED t_aaaa0502)" = 1 ] && [ "$(nalerts "\\[STL-LIM-405\\]\\*\\*\$")" = 1 ]' "P1: ... not truncated, nothing queued, NOT_QUEUED, one STL-LIM-405 line"
+rm -f "$T/sup/state/queue.lock"; cp "$T/limits.keep" "$T/sup/limits.env"; setlimit OPUS_MAX_CONCURRENT 1; rm -f "$T/sup/state/opus.1.lock"; ln -s "$V" "$T/sup/state/opus.1.lock"
+check 3 "P1: the only slot lock is a link: no slot" sh -c "echo hi | $E t_aaaa0503 opus plan why"
+ok '[ "$(cat "$V")" = keep ]' "P1: ... the slot lock's target is not truncated"
+rm -f "$T/sup/state/opus.1.lock" "$T/sup/state/haiku.lock"; ln -s "$V" "$T/sup/state/haiku.lock"
+check 3 "P1: the Haiku lock is a link" sh -c "echo hi | $E t_aaaa0504 haiku judge why"
+rm -f "$T/sup/state/haiku.lock"; C1="$T/sup/state/haiku-$(date -u +%F).count"; rm -f "$C1"; ln -s "$V" "$C1"
+check 3 "P1: the Haiku counter is a link" sh -c "echo hi | $E t_aaaa0505 haiku judge why"
+ok '[ "$(cat "$V")" = keep ]' "P1: ... neither the Haiku lock's nor the counter's target is written"
+rm -f "$C1" "$Q"; cp "$T/limits.keep" "$T/sup/limits.env"
+
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

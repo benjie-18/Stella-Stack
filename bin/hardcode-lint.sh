@@ -7,10 +7,12 @@
 # and host names, read through bin/stella_data.py) and hardcode-allow.json "watch" (names no data file holds yet).
 # What is scanned: every file git tracks in the root (a walk of the root where there is no git), that matches a "scan" pattern
 # and no "skip" row. A pattern is a whole path: `*` and `?` stop at a folder border, `**` crosses folders; none may start with
-# `/` or hold a `..` segment. The owner settings and the apply tool's state (bin/roles.py owner_settings and state_paths, the
-# functions the guards use) are never listed, read or copied: every entry is judged by what it resolves to before anything opens
+# `/` or hold a `..` segment. The lint lists, reads and copies none of the owner settings and the apply tool's state (bin/roles.py
+# owner_settings and state_paths, the functions the guards use); only when it reports, its alert line is rendered by
+# bin/alert_catalog.py, which reads one owner key (the time zone) as every alert of the stack does. Every entry is judged by what it resolves to before anything opens
 # it, and one that is, lies in or holds such a path, is a hard link to one, or is a link loop, is dropped; a link that points
-# outside the root is refused, and a dangling one is refused when it is read (exit 2). A link to a file that is scanned anyway is
+# outside the root is refused (exit 2: a scanned file, a runner, an input; --list leaves out such a data file, which --check
+# refuses; only the caller's own HARDCODE_ALLOW file may lie outside), and a dangling one is refused when it is read (exit 2). A link to a file that is scanned anyway is
 # read once, under the file's own name. A role table the role tool refuses (an empty owner_settings list) is refused.
 # hardcode-allow.json: "scan" (patterns of files to scan), "skip" (files left out, each with its reason; "run_by" names the file
 # whose `for <name> in <words>;` list must hold the stem the row's first `*` matched, as the suite runner lists the selftests), "plain_words" (role names that
@@ -43,15 +45,6 @@ need() { local w=$1 p n; shift; for p; do n=${p#"$R"/}; [ "$p" = "$H" ] && n="HA
   { [ ! -e "$p" ] && [ ! -L "$p" ]; } || { [ -r "$p" ] && { [ ! -d "$p" ] || [ -x "$p" ]; }; } || die "the $w ($n) is there but cannot be read"; done; }
 case $mode in --check|--dump|--list) ;; *) die "usage: hardcode-lint.sh [--check | --dump | --list]";; esac
 need "allow list" "$A"
-jq -e 'def S: type == "string" and length > 0; def rows(f): type == "array" and all(.[]; type == "object" and f);
-  def P: S and (test("^/|(^|/)\\.\\.(/|$)") | not);
-  (.schema_version == 1) and (.baseline | rows((.file | S) and (.literal | S) and (.phase | S) and (.count | type == "number" and . >= 0 and . == floor)))
-  and ([.baseline[] | [.file, .literal]] | length == (unique | length))
-  and (.allow | rows((.file | S) and (.text | S) and (.phase | S))) and (.own_names | rows((.text | S) and (.phase | S)))
-  and (.plain_words | rows((.word | S) and (.why | S)))
-  and (.skip | rows((.file | P and test("[A-Za-z0-9_]")) and (.why | S) and ((.run_by // "x") | P)))
-  and (.scan | type == "array" and length > 0 and all(.[]; P)) and (.watch | type == "array" and all(.[]; S))' "$A" >/dev/null 2>&1 \
-  || die "$A is not a valid allow list (schema_version 1; baseline, allow, own_names, plain_words, skip, scan and watch are lists of well-formed rows; patterns are paths inside the root; no baseline row twice)"
 BOARD=bin/kanban-board.sh
 # The files: tracked (git) or walked, minus the owner paths, the scan patterns and the skip rows; $PY also lists them (--list) and counts.
 PY=$(cat <<'EOF'
@@ -62,7 +55,6 @@ root, ap, mode, board = Path(sys.argv[1]).resolve(), sys.argv[2], sys.argv[3], s
 sys.path.insert(0, str(root / "bin"))
 try: import roles   # the role tool of the tree scanned: its owner and state paths are the ones its guards refuse
 except Exception as e: err(f"the role tool (bin/roles.py) cannot be loaded ({type(e).__name__})")
-allow = json.load(open(ap))
 def rx(p, cap=False):  # a whole path; ** crosses folders, * and ? stop at a border; cap: the first * is captured
     out, i = "", 0
     while i < len(p):
@@ -122,19 +114,25 @@ def kept(f):
 universe = [f for f in universe if kept(f)]
 # The files the shell and the data tool read by name (and the allow list) are judged the same way; the role table and the index
 # themselves are read first, as JSON, to learn the paths (an env file is not JSON: it is refused, never counted).
+strict = (sys.argv[6:] or [mode])[0] != "--list"   # the list step of a --check or --dump run refuses an input linked outside the root
+caller = Path(ap) != Path(sys.argv[1], "docs/hermes-local/hardcode-allow.json")   # HARDCODE_ALLOW: the caller's own file may lie outside
 for x in ["docs/hermes-local/roles.json", rt["data_index"], board, ".supervisor/limits.env", ap, *(r["path"] for r in idx["files"] if r["id"] == "connections")]:
     rp = os.path.realpath(root / x)
     if any(under(rp, o) or under(o, rp) for o in prot) or ident(rp) in ids: err("an input of the lint is, or points at, an owner or state path: " + json.dumps(x))
+    if strict and not under(rp, rs) and not (caller and x == ap): err("an input of the lint resolves outside the root: " + json.dumps(x))
 for f in universe:
     if "\n" in f or "\t" in f: err("a file name has a tab or a newline: " + json.dumps(f))
-scan = [rx(p) for p in allow["scan"]]; skip = [(rx(s["file"], bool(s.get("run_by"))), s.get("run_by")) for s in allow["skip"]]
+try:   # judged above, opened here; its full shape is checked by the shell after this step
+    with open(ap, encoding="utf-8") as fh: allow = json.load(fh)
+    scan = [rx(p) for p in allow["scan"]]; skip = [(rx(s["file"], bool(s.get("run_by"))), s.get("run_by")) for s in allow["skip"]]
+except (OSError, ValueError, LookupError, TypeError, AttributeError): err("the allow list is not a valid allow list: " + json.dumps(ap))
 runs = {}
 def listed(rb):  # the words of the runner's `for <name> in <words>;` lists: what it runs, not any word of its text
     if rb not in runs:
-        if rb not in real: err("the file a skip row names as its runner is not a file of the root the lint may read: " + rb)
+        if rb not in real or not under(real[rb][0], rs): err("the file a skip row names as its runner is not a file of the root the lint may read: " + rb)
         try: txt = (root / rb).read_text(encoding="utf-8", errors="replace")
         except OSError: err("the file a skip row names as its runner cannot be read: " + rb)
-        runs[rb] = {w for m in re.finditer(r"(?m)^\s*for\s+\w+\s+in\s+([^;\n]*);", txt) for w in m.group(1).split()}
+        runs[rb] = {w for m in re.finditer(r"(?m)^\s*for\s+\w+\s+in\s+([^;\n]*);", txt) for w in m.group(1).split() if re.fullmatch(r"[A-Za-z0-9_-]+", w)}
     return runs[rb]
 def skipped(f):
     for rg, rb in skip:
@@ -143,8 +141,10 @@ def skipped(f):
     return False
 files = sorted(f for f in universe if any(g.match(f) for g in scan) and not skipped(f))
 if not files: err("no file matches the scan list")
-if mode == "--list":
-    print("\n".join(sorted(set(files) | {f for f in universe if any(under(f, d) for d in data)}))); sys.exit(0)
+for f in files:
+    if not under(real[f][0], rs): err("a scanned file resolves outside the root: " + json.dumps(f))
+if mode == "--list":   # a data entry linked outside the root is not listed; --check refuses it above
+    print("\n".join(sorted(set(files) | {f for f in universe if any(under(f, d) for d in data) and under(real[f][0], rs)}))); sys.exit(0)
 lits = [l for l in sys.stdin.read().split("\n") if l]
 flag = lambda l: re.I if l in watch else 0
 own = [a["text"] for a in allow["own_names"]]
@@ -160,7 +160,6 @@ base = {(b["file"], b["literal"]): b["count"] for b in allow["baseline"]}   # a 
 out, first = [], {}
 for f in files:   # a link to a file that is scanned anyway is read once, under the file's own name
     rp, st = real[f]
-    if not under(rp, rs): err("a scanned file resolves outside the root: " + json.dumps(f))
     if st is not None and (st not in first or os.path.islink(root / first[st]) and not os.path.islink(root / f)): first[st] = f
 for f in files:
     if real[f][1] is not None and first[real[f][1]] != f: continue
@@ -192,7 +191,16 @@ EOF
 )
 need "role table" "$R/docs/hermes-local/roles.json"; need "limits file" "$R/.supervisor/limits.env"; need "board file" "$R/$BOARD"
 # The file list first, in every mode: the one step every entry and every input file passes (owner and state paths judged) before the shell reads any
-lst=$(python3 -I -B -c "$PY" "$R" "$A" --list "" "$BOARD") || die "the file list failed: ${lst#ERROR$'\t'}"
+lst=$(python3 -I -B -c "$PY" "$R" "$A" --list "" "$BOARD" "$mode") || die "the file list failed: ${lst#ERROR$'\t'}"
+jq -e 'def S: type == "string" and length > 0; def rows(f): type == "array" and all(.[]; type == "object" and f);
+  def P: S and (test("^/|(^|/)\\.\\.(/|$)") | not);
+  (.schema_version == 1) and (.baseline | rows((.file | S) and (.literal | S) and (.phase | S) and (.count | type == "number" and . >= 0 and . == floor)))
+  and ([.baseline[] | [.file, .literal]] | length == (unique | length))
+  and (.allow | rows((.file | S) and (.text | S) and (.phase | S))) and (.own_names | rows((.text | S) and (.phase | S)))
+  and (.plain_words | rows((.word | S) and (.why | S)))
+  and (.skip | rows((.file | P and test("[A-Za-z0-9_]")) and (.why | S) and ((.run_by // "x") | P)))
+  and (.scan | type == "array" and length > 0 and all(.[]; P)) and (.watch | type == "array" and all(.[]; S))' "$A" >/dev/null 2>&1 \
+  || die "$A is not a valid allow list (schema_version 1; baseline, allow, own_names, plain_words, skip, scan and watch are lists of well-formed rows; patterns are paths inside the root; no baseline row twice)"
 [ "$mode" != --list ] || { printf '%s\n' "$lst"; exit 0; }
 [ -n "$H" ] || die "neither HARDCODE_HOME nor HOME is set: no home folder to read the projects database and the Hermes homes from"
 need "home folder" "$H"; need "Hermes folder" "$H/.hermes" "$H/.hermes/projects.db" "$H/.hermes/profiles"

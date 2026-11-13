@@ -16,6 +16,7 @@ problem). Read with `list`, `get <id> [<entry>]` and `search <words>`; every rea
 5. **Codes from the catalog.** Every failure has a catalog code and a plain message (`docs/alert-codes.md`).
 6. **Selftest, a fake entry, and a hard-code lint.** Each core ships a selftest and a test that adds a fake entry in a
    scratch root and proves it works with no code change. A lint fails on a new literal name in code.
+   It scans only the files git tracks (a walk of the root where there is no git).
    The lint does not scan the instruction documents at the top of the repository (the `*.md` skip row of
    `docs/hermes-local/hardcode-allow.json`): decided by the owner on 2026-11-12, as data the owner may change.
 7. **Unknown fails closed.** An unknown role, provider, app or extension gets the most restrictive treatment plus one

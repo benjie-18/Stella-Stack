@@ -62,8 +62,11 @@ registry() {  # registry <KEY>: sets reg_def reg_min reg_max from the settings r
 }
 note() { kanban comment --author escalate.sh "$card" "$1" >/dev/null 2>&1; }
 QUEUE="$STATE/queue.jsonl"
+# nolink <file>: false, with a warning, when a file of the state folder is a link; no write there opens one (W5-RT4-01).
+# shortcut: whoever can write the state folder can put a link in between this test and the open; upgrade to an O_NOFOLLOW open if a less trusted user can write it
+nolink() { [ ! -L "$1" ] || { echo "escalate.sh: warning: ${1#"$SUP"/} is a link: not written through it" >&2; return 1; }; }
 queue_failed() {  # queue_failed <what>: the call is not in the queue, and every message says so (the prompt goes: nothing points at it)
-  flock -u 6; rm -f "$prompt"; qid=""
+  flock -u 6 2>/dev/null; rm -f "$prompt"; qid=""   # fd 6 is not open when the lock file was refused
   qnote="NOT queued: $1; fix the file (the call is lost, run it again)"
   echo "escalate.sh: warning: $1" >&2
   log NOT_QUEUED null none false null "$1; the call is lost"   # every lost call has its own line; the alert below is once an hour
@@ -72,7 +75,9 @@ queue_failed() {  # queue_failed <what>: the call is not in the queue, and every
 queue() {  # queue <LIMIT|POOL_EXHAUSTED> <what happened>: one entry and one #alerts line; sets qid ("" if not queued), qnote
   qid="" qnote="not queued"
   [ -z "${ESCALATE_REPLAY:-}" ] || { qnote="left in the queue as $ESCALATE_REPLAY"; rm -f "$prompt"; return 0; }
-  exec 6>"$STATE/queue.lock"; flock 6
+  nolink "$STATE/queue.lock" || { queue_failed "the queue lock state/queue.lock is a link"; return 0; }
+  exec 6>>"$STATE/queue.lock"; flock 6
+  nolink "$QUEUE" || { queue_failed "the queue file state/queue.jsonl is a link"; return 0; }
   nq=0   # a missing file is an empty queue; a file that cannot be read or parsed is not (the count is unknown, so nothing is queued past the limit)
   if [ -e "$QUEUE" ] && ! nq=$(jq -s '[.[] | select(.state == "queued")] | length' "$QUEUE" 2>/dev/null); then
     queue_failed "the queue file state/queue.jsonl cannot be read or parsed"; return 0
@@ -137,20 +142,23 @@ elif ! [[ "$QUEUE_MAX" =~ ^[0-9]{1,9}$ ]] || [ "$((10#$QUEUE_MAX))" -lt "$qm_min
 else QUEUE_MAX=$((10#$QUEUE_MAX)); fi
 
 prompt="$STATE/prompt-$(date -u +%Y%m%dT%H%M%SZ)-$card-$$.txt"
+{ nolink "$prompt" && nolink "$prompt.err"; } || refuse STATE_LINK 2 "the prompt file of this call in the state folder is a link"
 cat >"$prompt"
 [ -s "$prompt" ] || { rm -f "$prompt"; refuse USAGE 2 "prompt required on stdin"; }
 
 if [ "$model" = opus ]; then
   got=""
   for i in $(seq 1 "$OPUS_MAX_CONCURRENT"); do
-    exec 8>"$STATE/opus.$i.lock"
+    lk="$STATE/opus.$i.lock"; nolink "$lk" || continue
+    exec 8>>"$lk"
     flock -n 8 && { got=1; break; }
   done
   [ -n "$got" ] || limit "no Opus slot free (OPUS_MAX_CONCURRENT=$OPUS_MAX_CONCURRENT)"
 fi
 if [ "$model" = haiku ]; then
   counter="$STATE/haiku-$(date -u +%F).count"
-  exec 7>"$STATE/haiku.lock"
+  lk="$STATE/haiku.lock"; { nolink "$lk" && nolink "$counter"; } || limit "the lock or counter of the daily limit in the state folder is a link"
+  exec 7>>"$lk"
   flock 7
   n=$(cat "$counter" 2>/dev/null || echo 0)
   [ "$n" -lt "$HAIKU_MAX_PER_DAY" ] || { flock -u 7; limit "Haiku daily limit reached ($n/$HAIKU_MAX_PER_DAY for $(date -u +%F))"; }
