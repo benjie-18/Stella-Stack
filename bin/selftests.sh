@@ -15,6 +15,8 @@
 set -u
 unset STELLA_ROOT   # an inherited scratch root must not re-target the data tools and the gates that run them
 unset HARDCODE_ALLOW HARDCODE_HOME   # likewise the hard-code lint's own switches (another list or home would turn its gate green)
+# a caller's shell function (exported, or defined through these two variables) would beat every hermes on PATH in a selftest
+unset BASH_ENV ENV; while IFS= read -r f; do unset -f -- "$f"; done < <(compgen -A function)
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 STACK=/workspace   # shortcut: the path the stack's scripts name literally; upgrade when they take their root from their own location
 TD=${TMPDIR:-/tmp}
