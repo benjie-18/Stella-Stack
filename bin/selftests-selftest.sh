@@ -20,7 +20,7 @@ s=\$EPOCHREALTIME; F=\${TMPDIR:-/tmp}/fixed; L=/workspace/.supervisor/logs/alert
 mkdir -p "\$(dirname \$L)"; printf 'own-$n' >"\$F"; printf 'alert-$n\n' >>"\$L"; sleep 1
 [ "\$(cat \$F)" = own-$n ] && [ "\$(cat \$L)" = alert-$n ] || { echo "FAIL $n saw bytes of another selftest"; exit 1; }
 [ $n != a ] || { hermes send x 2>/dev/null && { echo "FAIL hermes send was not refused"; exit 1; }; }
-[ $n != a ] || { hermes probe; hermes -p x send y 2>/dev/null; }
+[ $n != a ] || { hermes probe; hermes -p x send y 2>/dev/null; hermes --x send z 2>/dev/null; hermes -- send z 2>/dev/null; }
 echo "\$s \$EPOCHREALTIME" >"\$MARKS/$n"; echo "selftest PASS"
 S
 done
