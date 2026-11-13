@@ -27,6 +27,10 @@
     "broker-put": {
       "mark": "hermetic"
     },
+    "card-schema": {
+      "mark": "hermetic",
+      "why": "fake card and vault files in its own mktemp scratch root; own alert-log folder, no network, no fixed port"
+    },
     "check-guard": {
       "mark": "hermetic"
     },
@@ -903,6 +907,7 @@
         ".stella/schemas/capabilities.schema.json"
       ],
       "targets": [
+        "card-schema",
         "commit-guard",
         "merge-card",
         "owner-settings",
@@ -918,6 +923,7 @@
         ".stella/schemas/connections.schema.json"
       ],
       "targets": [
+        "card-schema",
         "escalate",
         "hardcode-lint",
         "stella-apply",
@@ -935,6 +941,7 @@
         "alert-page",
         "approval-evidence",
         "box",
+        "card-schema",
         "commit-guard",
         "complete-gate",
         "delegation",
@@ -972,6 +979,7 @@
         "alert-page",
         "approval-evidence",
         "box",
+        "card-schema",
         "commit-guard",
         "complete-gate",
         "delegation",
@@ -1026,6 +1034,7 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "card-schema",
         "complete-gate",
         "delegation",
         "escalate",
@@ -1158,6 +1167,7 @@
         "approval-evidence",
         "box",
         "broker-put",
+        "card-schema",
         "check-guard",
         "commit-guard",
         "complete-gate",
@@ -1234,6 +1244,7 @@
         "approval-evidence",
         "box",
         "broker-put",
+        "card-schema",
         "check-guard",
         "commit-guard",
         "complete-gate",
@@ -1346,6 +1357,7 @@
         "approval-evidence",
         "box",
         "broker-put",
+        "card-schema",
         "check-guard",
         "commit-guard",
         "complete-gate",
@@ -1391,6 +1403,7 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "card-schema",
         "complete-gate",
         "delegation",
         "escalate",
@@ -1459,6 +1472,7 @@
         "bench",
         "box",
         "broker-put",
+        "card-schema",
         "check-guard",
         "commit-guard",
         "complete-gate",
@@ -1557,6 +1571,7 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "card-schema",
         "complete-gate",
         "delegation",
         "escalate",
@@ -1589,6 +1604,7 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "card-schema",
         "complete-gate",
         "delegation",
         "escalate",
@@ -1938,7 +1954,8 @@
         "docs/*"
       ],
       "targets": [
-        "alert"
+        "alert",
+        "card-schema"
       ],
       "why": "alert-selftest.sh reads every script and doc for alert codes"
     },
@@ -1948,6 +1965,7 @@
         "bin/*"
       ],
       "targets": [
+        "card-schema",
         "watchdog"
       ],
       "why": "watchdog-selftest.sh runs the watchdog over a folder of links to every bin file"
@@ -1958,6 +1976,7 @@
         "bin/*.sh"
       ],
       "targets": [
+        "card-schema",
         "kanban-board",
         "profile-hooks"
       ],
@@ -1969,6 +1988,7 @@
         "bin/*.py"
       ],
       "targets": [
+        "card-schema",
         "profile-hooks"
       ],
       "why": "profile-hooks-selftest.sh links every Python file into its hook folder"
@@ -2049,6 +2069,7 @@
         "bin/merge-card-selftest.sh"
       ],
       "targets": [
+        "card-schema",
         "write-guard"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py check after F1 W4 round 3)"
@@ -2058,6 +2079,7 @@
         "*"
       ],
       "targets": [
+        "card-schema",
         "selftests"
       ],
       "scan": true,
@@ -2196,6 +2218,18 @@
         "selftests"
       ],
       "why": "the runner's own selftest"
+    },
+    {
+      "globs": [
+        "bin/card-schema-selftest.sh",
+        ".stella/schemas/card.schema.json",
+        ".stella/schemas/vault-entry.schema.json",
+        "docs/contract/cards-and-vault.md"
+      ],
+      "targets": [
+        "card-schema"
+      ],
+      "why": "the selftest validates fake cards and vault entries against the two schemas; the doc describes them"
     }
   ]
 }
