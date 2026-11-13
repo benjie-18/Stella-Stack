@@ -584,16 +584,15 @@ def table_named(d, root=None):
 
 
 def _outside_imports(d, top):
-    """B.3 point 18 (W4-VER3-02, W4-VAL3-10): the module names the boundary's python code imports that are not a module of its own folders (the standard
-    library's and any installed one), plus every standard-library name: a new path in a folder the hooks import from that starts with one shadows it."""
+    """B.3 point 18 (W4-VER3-02, W4-VAL3-10), r8 A (W4-CV5-01): every module name the boundary's python code imports (its own folders' modules
+    included: a package folder or a compiled file beside <module>.py is loaded instead of it), every standard-library name, and the bytecode
+    cache folder: a new path in a folder the hooks import from that starts with one stands in for it."""
     dirs = {os.path.dirname(x) for x in d["boundary_paths"] if x.endswith(".py")}
-    local = {os.path.splitext(f)[0] for dd in dirs if os.path.isdir(os.path.join(top, dd)) for f in os.listdir(os.path.join(top, dd))}
-    names = set(sys.stdlib_module_names)
+    names = set(sys.stdlib_module_names) | {"__pycache__"}
     for x in boundary(d):
         if x.endswith(".py") and os.path.isfile(os.path.join(top, x)):
             for m in re.finditer(r"^\s*(?:import|from)\s+([A-Za-z_]\w*)", open(os.path.join(top, x), encoding="utf-8", errors="replace").read(), re.M):
-                if m[1] not in local:
-                    names.add(m[1])
+                names.add(m[1])
     return dirs, names
 
 
@@ -673,7 +672,7 @@ def overlap(p, prot):
 def hits(d, top, names, kind, root=None):
     """K1/K3: the names (relative to the tree `top`) that are, lie in or hold a path of the list `kind`: "refused" = every path no role may
     write (owner_paths: owner data, the owner settings, the apply tool's state), "boundary" = boundary(d) and any new file in a folder of
-    modules whose name shadows a standard-library module (the hooks import from that folder ahead of the standard library). Raises RolesError."""
+    modules whose name stands in for a module the boundary imports, its own included, or is the bytecode cache (the hooks import from that folder first). Raises RolesError."""
     rel = owner_paths(d, root or top) if kind == "refused" else boundary(d)
     prot = chains(os.path.join(top, x) for x in rel)
     out, shadow = [], None
@@ -683,7 +682,7 @@ def hits(d, top, names, kind, root=None):
         r = overlap(os.path.join(top, n), prot)
         if r:
             out.append(n)
-        elif kind == "boundary":   # any path whose first component under such a folder, its suffix stripped, shadows a module the boundary imports from outside the repo (a plain module, a package folder, a compiled form)
+        elif kind == "boundary":   # any path whose first component under such a folder, its suffix stripped, stands in for a module the boundary imports (a plain module, a package folder, a compiled form, the bytecode cache)
             dirs, ext = shadow if shadow else (shadow := _outside_imports(d, top))
             for dd in dirs:
                 if n.startswith(dd + "/") and n[len(dd) + 1:].split("/")[0].split(".")[0] in ext:
