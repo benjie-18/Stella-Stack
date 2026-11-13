@@ -221,8 +221,9 @@ for g in "$S" "$R"; do
   ok '[ "$(term $g "grep -f$T/plain.jq /workspace/package.json")" = 0 ]' "r7 A7 control: $(basename $g) allows grep -f<an ordinary file>"
 done
 # r8 B (W4-CV5-02): the value attached to a short option is judged wherever it starts in the word (after an option cluster; a bare relative name)
+# r8 C (W4-CV5-03): a jq program file past the first 1 MiB, with = in its name, or written ~+/ or ~-/ is a program this guard cannot read whole
 ln -sfn "$EVD/$(basename "$(jq -r .event_log "/workspace/$(jq -r .data_index /workspace/docs/hermes-local/roles.json)")")" "$T/lnk"
-printf '.a\n' >"$T/plain.jq"
+printf '.a\n' >"$T/plain.jq"; printf 'import "x" as $a; $a\n' >"$T/x=y.jq"; { head -c 1048576 /dev/zero | tr '\0' '#'; printf '\nimport "x" as $a; $a\n'; } >"$T/big.jq"
 there() { jq -nc --arg c "$2" --arg d "$T" '{tool_name: "terminal", tool_input: {command: $c}, cwd: $d}' | "$1" >"$T/out" 2>/dev/null; echo $?; }   # term, asked from the scratch folder (a bare name is looked up there)
 ok '[ "$(term $S "find bin -name '"'"'*.sh'"'"'")" = 0 ]' "r8 B control: the secret guard allows find bin -name '*.sh' (no suffix of an option word names a protected path)"
 for g in "$S" "$R"; do
@@ -236,6 +237,12 @@ for g in "$S" "$R"; do
     ok '[ "$(term $g "$c")" = 0 ]' "r8 B control: $(basename $g) allows: $c"
   done
   ok '[ "$(there $g "grep -fplain.jq /workspace/package.json")" = 0 ]' "r8 B control: $(basename $g) allows grep -f<the bare name of an ordinary file>"
+  for c in "jq -n -f $T/big.jq" "jq -n -f $T/x=y.jq" "jq -nf $T/x=y.jq" "jq -n -f ~+/p.jq" "jq -n -f ~-/p.jq"; do
+    ok '[ "$(term $g "$c")" = 2 ] && grep -q "STL-GRD-604" "$T/out"' "r8 C: $(basename $g) refuses, coded, a jq program file it cannot read whole or by that name: ${c//$T/<tmp>}"
+  done
+  for c in "jq -n -f $T/plain.jq" "jq -f $T/plain.jq /workspace/package.json" "jq -n -f ~/plain.jq"; do
+    ok '[ "$(term $g "$c")" = 0 ]' "r8 C control: $(basename $g) allows: ${c//$T/<tmp>}"
+  done
 done   # end r8
 # r7 B1 (W4-CV4-06, way b: no rule change): an abbreviation of --files0-from is refused for every command, and the printed reason says so
 ok '[ "$(term $S "rg --files")" = 2 ] && grep -q "an abbreviation of --files0-from" "$T/out" && grep -q "not its prefix" "$T/out"' "r7 B1: the secret guard's refusal of rg --files says it is an abbreviation of --files0-from and names the way out"
