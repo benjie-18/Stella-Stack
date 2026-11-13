@@ -590,9 +590,10 @@ def _outside_imports(d, top):
     dirs = {os.path.dirname(x) for x in d["boundary_paths"] if x.endswith(".py")}
     names = set(sys.stdlib_module_names) | {"__pycache__"}
     for x in boundary(d):
-        if x.endswith(".py") and os.path.isfile(os.path.join(top, x)):
-            for m in re.finditer(r"^\s*(?:import|from)\s+([A-Za-z_]\w*)", open(os.path.join(top, x), encoding="utf-8", errors="replace").read(), re.M):
-                names.add(m[1])
+        p = os.path.join(top, x)   # r9 P1 (W4-CV6-01): a boundary entry that is a folder is read too (the python files under it), and every name of an import line counts
+        for f in [p] if x.endswith(".py") and os.path.isfile(p) else [os.path.join(r, n) for r, _, fs in os.walk(p) for n in fs if n.endswith(".py")]:
+            for m in re.finditer(r"^\s*(?:from\s+([A-Za-z_]\w*)|import\s+([^#\n]+))", open(f, encoding="utf-8", errors="replace").read(), re.M):
+                names.update([m[1]] if m[1] else re.findall(r"(?:^|,)\s*([A-Za-z_]\w*)", m[2]))
     return dirs, names
 
 
