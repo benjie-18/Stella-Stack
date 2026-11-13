@@ -7,7 +7,7 @@
 #                                               75): left queued, no alert. Older than QUEUE_MAX_AGE_HOURS, or its card
 #                                               done or archived: marked stale and skipped.
 #        escalate-drain.sh --drop <id>          mark it dropped
-# A prompt file is removed when its entry leaves the queued state. Exit 0, or 2 on a usage error, an unknown id or a link in the state folder (nothing written).
+# A prompt file is removed when its entry leaves the queued state; a prompt_file that is not the queue's own (pfile) is never read or removed. Exit 0, or 2 on a usage error, an unknown id or a link in the state folder (nothing written).
 # A line of the queue file that is not JSON (a cut write) is skipped by every read and kept as it is by every rewrite; --list warns about it.
 set -uo pipefail
 export LC_ALL=C.UTF-8
@@ -31,13 +31,18 @@ setstate() {  # setstate <id> <state>; the caller holds the lock
     "$Q" >"$t" && mv "$t" "$Q" || { rm -f "${t:?}"; return 1; }
 }
 
+# pfile <entry>: its prompt file, only when a regular, unlinked prompt-*.txt directly in the state folder (the name is data: a queue
+# line can name any file); else nothing: the entry goes stale or is dropped and no file is read or removed
+pfile() { local f b; f=$(jq -r '.prompt_file | strings' <<<"$1"); b=${f##*/}
+  [[ $b == prompt-*.txt ]] && [ "${f%/*}" -ef "$STATE" ] && [ -f "$STATE/$b" ] && nolink "$STATE/$b" && printf %s "$STATE/$b"; }
+
 replay() {
   local id=$1 e card pf age cs rc args
   flock 6
   e=$(entry "$id")
   [ -n "$e" ] || { flock -u 6; echo "$id: no such entry" >&2; return 2; }
   [ "$(jq -r .state <<<"$e")" = queued ] || { flock -u 6; echo "$id: $(jq -r .state <<<"$e"), nothing to do"; return 0; }
-  card=$(jq -r .card <<<"$e"); pf=$(jq -r .prompt_file <<<"$e")
+  card=$(jq -r .card <<<"$e"); pf=$(pfile "$e")
   age=$(( ($(date +%s) - $(date -d "$(jq -r .created <<<"$e")" +%s)) / 3600 ))
   cs=$(kanban show "$card" --json 2>/dev/null | jq -r '.task.status // empty')
   if [ "$age" -ge "${QUEUE_MAX_AGE_HOURS:-24}" ] || [ "$cs" = done ] || [ "$cs" = archived ] || [ ! -s "$pf" ]; then
@@ -73,7 +78,7 @@ case "${1:-}" in
     [ -n "${2:-}" ] || usage
     flock 6; e=$(entry "$2")
     [ -n "$e" ] || { echo "$2: no such entry" >&2; exit 2; }
-    if [ "$(jq -r .state <<<"$e")" = queued ]; then setstate "$2" dropped; rm -f "$(jq -r .prompt_file <<<"$e")"; echo "$2: dropped"
+    if [ "$(jq -r .state <<<"$e")" = queued ]; then setstate "$2" dropped; rm -f "$(pfile "$e")"; echo "$2: dropped"
     else echo "$2: $(jq -r .state <<<"$e"), nothing to do"; fi ;;
   *) usage ;;
 esac
