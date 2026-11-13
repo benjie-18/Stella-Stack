@@ -21,17 +21,23 @@ owner_config_read() {
   return 1
 }
 
+# owner_config_nolink <file>: false, with a warning, when the file is a symbolic link or has a second hard link: no write here opens one
+# (ORCH-04, W5-VER6-02; the test escalate.sh's nolink makes).
+# shortcut: whoever can write the folder can put a link in between this test and the write; upgrade to an O_NOFOLLOW open if a less trusted user can write it
+owner_config_nolink() { { [ ! -L "$1" ] && { [ ! -f "$1" ] || [ "$(stat -c %h "$1")" = 1 ]; }; } || { echo "owner-config.sh: warning: $1 is a link: not written through it" >&2; return 1; }; }
+
 # once_per_hour <key>: true at most once an hour per key (a stamp in state/), so a cron loop cannot flood #alerts.
 once_per_hour() {
   local f="${ESCALATE_SUP_DIR:-/workspace/.supervisor}/state/alert-$1.stamp"
   [ -n "$(find "$f" -mmin -60 2>/dev/null)" ] && return 1
+  owner_config_nolink "$f" || return 1
   mkdir -p "${f%/*}" && touch "$f"
 }
 
 owner_config_load() {
   owner_config_read && return 0
   echo "owner config: $OWNER_CONFIG_ERROR" >&2
-  jq -nc --arg time "$(date -u +%FT%TZ)" --arg card "${card:-}" --arg detail "$OWNER_CONFIG_ERROR" \
+  owner_config_nolink "${ESCALATE_SUP_DIR:-/workspace/.supervisor}/escalations.log" && jq -nc --arg time "$(date -u +%FT%TZ)" --arg card "${card:-}" --arg detail "$OWNER_CONFIG_ERROR" \
     '{time: $time, card: $card, event: "OWNER_CONFIG_MISSING", detail: $detail}' \
     >>"${ESCALATE_SUP_DIR:-/workspace/.supervisor}/escalations.log"
   local fix=""   # K5: a malformed line is named with the accepted forms (the parser's own text, never a value)
