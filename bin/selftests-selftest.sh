@@ -26,6 +26,7 @@ done
 printf '#!/usr/bin/env bash\n# selftest: serial\ns=$EPOCHREALTIME; sleep 1; echo "$s $EPOCHREALTIME" >"$MARKS/s"; echo "selftest PASS"\n' >"$T/tree/bin/s-selftest.sh"
 printf '#!/usr/bin/env bash\necho "FAIL boom line"; echo "selftest FAIL"; exit 1\n' >"$T/tree/bin/f-selftest.sh"
 printf '#!/usr/bin/env bash\necho "selftest PASS"\n' >"$T/tree/bin/a_b-selftest.sh"
+printf '#!/usr/bin/env bash\n: >%q/canary 2>/dev/null; echo "selftest PASS"\n' "$T/tree" >"$T/tree/bin/c-selftest.sh"   # writes to its tree's real path
 chmod +x "$T"/tree/bin/*-selftest.sh
 # the runner's temp folder is $T/tmp (TMPDIR), so $T itself stays visible inside the namespace for the marks
 run() { TMPDIR="$T/tmp" MARKS="$T/marks" WATCHDOG_SETTINGS="$T/set.json" "$T/tree/bin/selftests.sh" "$@" >"$T/out" 2>&1; echo $? >"$T/rc"; }
@@ -35,6 +36,8 @@ run a b
 ok 'grep -qx "ok   a-selftest" "$T/out" && grep -qx "ok   b-selftest" "$T/out" && [ "$(tail -1 "$T/out")" = "selftests PASS" ] && [ "$(cat "$T/rc")" = 0 ]' "S1 two selftests that share a fixed temp name and an alert log pass (each sees only its own bytes), hermes send refused inside"
 ok '[ -z "$(ls -A "$T/tmp")" ] && [ ! -e "$T/tree/.supervisor" ] && [ -z "$(git -C "$T/tree" status --short -uall | grep -v "bin/")" ]' "S1 the source tree, its alert log and the shared temp folder hold nothing the fakes wrote"
 ok '[ "$(grep -c "^ok " "$T/out")" = 2 ]' "S1 a named run runs only the named selftests"
+run c
+ok 'grep -qx "ok   c-selftest" "$T/out" && [ ! -e "$T/tree/canary" ]' "S1 a tree outside the stack path: a selftest writing to the tree's real path reaches its copy, never the source tree"
 
 run f a
 ok '[ "$(sed -n 1p "$T/out")" = "FAIL f-selftest" ] && sed -n 2p "$T/out" | grep -qx "     FAIL boom line" && [ "$(sed -n 3p "$T/out")" = "ok   a-selftest" ] && [ "$(tail -1 "$T/out")" = "selftests FAIL (1)" ] && [ "$(cat "$T/rc")" = 1 ]' "S1 a failing selftest: its FAIL line and its detail in list order, selftests FAIL (1), exit 1"

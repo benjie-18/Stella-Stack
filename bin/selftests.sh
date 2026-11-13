@@ -99,8 +99,10 @@ run_one() {
     # that); upgrade: bind a refusing stub over the real path.
     printf '#!/usr/bin/env bash\nfor a; do [ "$a" != send ] || { echo "selftests: hermes send refused in a selftest" >&2; exit 1; }; done\nexec %q "$@"\n' "$real_hermes" >"$q/.bin/hermes"
     chmod +x "$q/.bin/hermes"
+    # a tree outside the stack path: its copy is bound over the tree's own path too, so the source tree and $R are out of reach
+    local own=(); [[ $ROOT = "$STACK" || $ROOT = "$STACK"/* ]] || own=(--bind "$p/tree" "$ROOT")
     # the temp folder is bound last: the other sources may lie under it
-    out=$(nice bwrap --die-with-parent --dev-bind / / --bind "$p/tree" "$STACK" "${binds[@]}" --bind "$q" "$TD" --chdir "$STACK" \
+    out=$(nice bwrap --die-with-parent --dev-bind / / --bind "$p/tree" "$STACK" "${binds[@]}" "${own[@]}" --bind "$q" "$TD" --chdir "$STACK" \
       --setenv PATH "$TD/.bin:$PATH" -- "$STACK/bin/$t-selftest.sh" </dev/null 2>&1 | grep -v setlocale)
     rm -rf "$p" "$q"
     if printf '%s\n' "$out" | tail -1 | grep -q "selftest PASS"; then echo "ok   $t-selftest" >"$R/res-$k"; echo 0 >"$R/rc-$k"
