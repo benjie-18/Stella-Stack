@@ -641,8 +641,8 @@
       "severity": "info",
       "title": "a card was not merged: the main checkout is not ready",
       "message": "A card was not merged because the main checkout is not as a merge needs it: {problem}. Nothing was merged or changed.",
-      "action": "commit, move or remove the files the message names in the main checkout, then merge again. See STL-GRD-607 in docs/alert-codes.md.",
-      "cause": "The main checkout has changes that are not committed or files git does not track, or the merge would replace a file or folder that exists there and that git does not track (an ignored local file, an owner file). A merge never replaces or mixes with such files.",
+      "action": "the files the message names are the main checkout's own local files, and a merge never replaces or removes them: send the card back so that it no longer carries those paths, or move the files aside yourself, then merge again; never add an ignored file to the repository. For a main checkout that is not clean, put its changes aside first (`git status` lists them). See STL-GRD-607 in docs/alert-codes.md.",
+      "cause": "The main checkout has changes that are not committed or files git does not track, or the merge would replace or remove a file or folder that exists there and that git does not track (an ignored or untracked local file). A merge never replaces or mixes with such files.",
       "check": "`git status` in the main checkout; .supervisor/logs/alerts.log (`grep STL-GRD-607`: the paths).",
       "related": "B.3 point 17 (W4-VER3-01), F1 W4 round 6; bin/merge-card.sh",
       "resolvable": false

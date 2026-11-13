@@ -113,7 +113,6 @@ for n in (x for x in open(zf, "rb").read().decode("utf-8", "surrogateescape").sp
             out.append(n if p == n else f"{n} (untracked at {p})"); break   # r6: the path itself, and the untracked folder above it
 print(", ".join(sorted(set(out)))[:240])' "$top" "$zf" "$tz") || coded STL-CFG-303 "the main checkout's untracked files cannot be compared with the merge" "nothing was merged"
   rm -f "$tz"
-  [ -z "$over" ] || coded STL-GRD-607 "$branch would replace files of the main checkout that git does not track there: $over" "Those files (ignored local files, owner files) are never replaced by a merge; nothing was merged"
   hits=$(python3 -I "$here/roles.py" hits "$top" refused "$here/.." <"$zf" 2>/dev/null | tr '\0' '\n'; exit "${PIPESTATUS[0]}") \
     || coded STL-CFG-303 "the owner data list (role table or data index) cannot be read" "so what $branch changes cannot be checked; nothing was merged"
   bhits=$(python3 -I "$here/roles.py" hits "$top" boundary "$here/.." <"$zf" 2>/dev/null | tr '\0' '\n'; exit "${PIPESTATUS[0]}") \
@@ -122,6 +121,8 @@ print(", ".join(sorted(set(out)))[:240])' "$top" "$zf" "$tz") || coded STL-CFG-3
   if [ -n "$hits" ]; then
     coded STL-CFG-312 "$branch changes owner data, an owner settings file or an apply-tool state path" "Owner data changes only through the apply tool (bin/stella-apply.py), never through a card. $branch changes: $(printf '%s' "$hits" | tr -c '[:print:]' '?'); nothing was merged"
   fi
+  # r7 A1 (W4-CV4-03): after the owner-path refusal, so a card that commits an owner or state path reads as that (312), never as a checkout that is not ready
+  [ -z "$over" ] || coded STL-GRD-607 "$branch would replace or remove files of the main checkout that git does not track there: $over" "Those are the main checkout's own local files (ignored or untracked): a merge never replaces or removes them; nothing was merged"
   if [ -n "$bhits" ] && [ -z "$readb" ]; then
     echo "merge-card.sh: $branch changes paths that define the boundary itself (the role table, hook files, guard scripts, the box): $(printf '%s' "$bhits" | tr -c '[:print:]' '?')" >&2
     coded STL-CFG-312 "$branch changes paths that define the boundary itself" "Read those changes, then rerun with --i-have-read-the-boundary-changes; nothing was merged"
