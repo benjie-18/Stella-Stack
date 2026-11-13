@@ -1,10 +1,24 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Approval request",
+  "description": "schema_version 2 (from F1b): every new record has global_id and install_id; whatever writes one stamps both, the install id read through stella_data.install_id(). schema_version 1: a record from before the ids; it is never rewritten, it is read and validated as it is, and it is still found by what identified it then (its id). The schema subset has no conditional, so the schema accepts either version with the ids optional; that a version 2 record has both is the writer's rule.",
   "type": "object",
   "properties": {
     "schema_version": {
-      "const": 1
+      "enum": [
+        1,
+        2
+      ]
+    },
+    "global_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "This record's UUID (lower case, version 4), unique: no two records share one."
+    },
+    "install_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "The UUID of the install that wrote the record."
     },
     "id": {
       "type": "string",

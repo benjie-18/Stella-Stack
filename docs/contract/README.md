@@ -280,7 +280,11 @@ that compiles, an enum with values). Patterns are read with `$` as the very end 
 
 ### Event and approval schemas
 `.stella/schemas/event.schema.json`, `approval-request.schema.json` and `approval-decision.schema.json` are schemas for
-lines and messages, not data files. Check a sample with `stella_data.py validate <schema> <file>`.
+lines and messages, not data files. Check a sample with `stella_data.py validate <schema> <file>`. schema_version 2 (F1b) adds
+`global_id` (a lower-case UUID4) and `install_id` (a UUID) to every new line and record; a version 1 line or record from before
+is never rewritten, validates as it is and is still found by what identified it then (an event line by its place in the log and
+its fields, a request by `id`, a decision by `request_id`). The schema subset has no conditional, so the schemas take the ids as
+optional; that a version 2 line or record has both is its writer's rule (the event log's below; approvals have no writer yet).
 
 ## The apply tool and the event log (`bin/stella-apply.py`, `bin/event_log.py`)
 
@@ -482,7 +486,10 @@ key, or by the key's hash when that name would be longer than a file name may be
   same masking as an apply line, and the hashes unless the row is private), then the older backups of the key are set aside
   (status `superseded`: kept as history, no longer used by rollback, no longer holding the row in the index) and the marker is
   cleared; a kill in between is finished by the next apply of the same bytes.
-- **Event log.** One JSON line per state change, ASCII only (no value can hold a line separator), written whole or not at all
+- **Event log.** One JSON line per state change; each line written is schema_version 2 with a `global_id` (the caller's, else a
+  new UUID4; a line whose global_id is already in the log is refused, 313, nothing written) and this install's `install_id` from
+  `stella_data.install_id()` (if that cannot be read, nothing is written: 310). The ids are set after masking; older lines stay
+  as they are. ASCII only (no value can hold a line separator), written whole or not at all
   under the log's lock: a log that does not end in a newline gets one first, and after a failed or short write the file is cut
   back to its earlier size (318). Readers split on `\n` only; a line that is not a JSON object, is larger than 4 MiB, nests
   deeper than 64 levels, or cannot be parsed, masked or printed for any reason is counted as unreadable and reported
