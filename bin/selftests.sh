@@ -15,6 +15,8 @@
 set -u
 unset STELLA_ROOT   # an inherited scratch root must not re-target the data tools and the gates that run them
 unset HARDCODE_ALLOW HARDCODE_HOME   # likewise the hard-code lint's own switches (another list or home would turn its gate green)
+# a caller's shell function (exported, or defined through these two variables) would beat every hermes on PATH in a selftest
+unset BASH_ENV ENV; while IFS= read -r f; do unset -f -- "$f"; done < <(compgen -A function)
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 STACK=/workspace   # shortcut: the path the stack's scripts name literally; upgrade when they take their root from their own location
 TD=${TMPDIR:-/tmp}
@@ -45,6 +47,7 @@ R= Q=
 # unlock <folder>...: make the folders removable; modes of FOLDERS only (rm needs no write bit on a file; a hard link stays as it is)
 unlock() { [ $# = 0 ] || find "$@" -type d ! -perm -u=rwx -exec chmod u+rwx {} \; 2>/dev/null; }
 trap 'unlock ${R:+"$R"} ${Q:+"$Q"}; rm -rf ${R:+"$R"} ${Q:+"$Q"}' EXIT
+[[ $TD != *:* ]] || setup_fail "the temp folder $TD holds a colon, so the hermes wrapper would be on no PATH entry: nothing started" "$@"
 [ ! -L "$ROOT/.scratch" ] || setup_fail "$ROOT/.scratch is a symbolic link, not a folder of the tree: nothing started" "$@"
 { mkdir -p "$ROOT/.scratch" && exec 8<"$ROOT/.scratch" && flock 8; } 2>/dev/null || setup_fail "cannot make or lock $ROOT/.scratch: nothing started" "$@"
 for d in "$ROOT"/.scratch/selftests.*/; do

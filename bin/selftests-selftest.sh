@@ -20,7 +20,7 @@ s=\$EPOCHREALTIME; F=\${TMPDIR:-/tmp}/fixed; L=/workspace/.supervisor/logs/alert
 mkdir -p "\$(dirname \$L)"; printf 'own-$n' >"\$F"; printf 'alert-$n\n' >>"\$L"; sleep 1
 [ "\$(cat \$F)" = own-$n ] && [ "\$(cat \$L)" = alert-$n ] || { echo "FAIL $n saw bytes of another selftest"; exit 1; }
 [ $n != a ] || { hermes send x 2>/dev/null && { echo "FAIL hermes send was not refused"; exit 1; }; }
-[ $n != a ] || { hermes probe; hermes -p x send y 2>/dev/null; }
+[ $n != a ] || { hermes probe; hermes -p x send y 2>/dev/null; hermes --x send z 2>/dev/null; hermes -- send z 2>/dev/null; }
 echo "\$s \$EPOCHREALTIME" >"\$MARKS/$n"; echo "selftest PASS"
 S
 done
@@ -32,7 +32,7 @@ chmod +x "$T"/tree/bin/*-selftest.sh
 # a stand-in for the real hermes that records its calls: the runner's wrapper passes to it, also when this runs under an outer runner
 mkdir "$T/rh"; printf '#!/usr/bin/env bash\necho "$*" >>%q\n' "$T/hcalls" >"$T/rh/hermes"; chmod +x "$T/rh/hermes"
 # the runner's temp folder is $T/tmp (TMPDIR), so $T itself stays visible inside the namespace for the marks
-run() { PATH="$T/rh:$PATH" TMPDIR="$T/tmp" MARKS="$T/marks" WATCHDOG_SETTINGS="$T/set.json" "$T/tree/bin/selftests.sh" "$@" >"$T/out" 2>&1; echo $? >"$T/rc"; }
+run() { PATH="$T/rh:$PATH" TMPDIR="${TDX:-$T/tmp}" MARKS="$T/marks" WATCHDOG_SETTINGS="$T/set.json" "$T/tree/bin/selftests.sh" "$@" >"$T/out" 2>&1; echo $? >"$T/rc"; }
 echo '{"test_rerun": {"parallel": 1}}' >"$T/set.json"
 
 run a b
@@ -138,5 +138,11 @@ for p in "$T/nobwrap" "$T/badbwrap:$PATH"; do
   rm -f "$T/marks"/*; PATH=$p run a b
   ok 'grep -qx "FAIL a-selftest" "$T/out" && grep -qx "FAIL b-selftest" "$T/out" && grep -q "     FAIL cannot make the private copy or the mount namespace" "$T/out" && [ "$(tail -1 "$T/out")" = "selftests FAIL (2)" ] && [ "$(cat "$T/rc")" = 1 ] && [ -z "$(ls -A "$T/marks")" ]' "S1 fail closed ($(basename "${p%%:*}")): every selftest FAIL with the plain line, nothing ran"
 done
+mkdir "$T/c:d"; TDX="$T/c:d" run a
+ok 'grep -qx "FAIL a-selftest" "$T/out" && grep -q "holds a colon.*nothing started" "$T/out" && [ "$(cat "$T/rc")" = 1 ] && ! grep -qw send "$T/hcalls"' "S1 a temp folder whose path holds a colon: nothing started (the hermes wrapper would be on no PATH entry)"
+printf 'hermes() { echo "fn $*" >>%q; }\n' "$T/hcalls" >"$T/benv"
+( . "$T/benv"; export -f hermes; BASH_ENV="$T/benv" run a )
+ok 'grep -qx "ok   a-selftest" "$T/out" && ! grep -q "^fn " "$T/hcalls"' "S1 a hermes function the caller exports or defines through BASH_ENV reaches no selftest"
+
 
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
