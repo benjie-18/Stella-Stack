@@ -242,6 +242,8 @@ for g in "$S" "$R"; do
   for c in "grep -f-dash /workspace/package.json" "grep -if -dash /workspace/package.json" "cat -- -dash"; do
     ok '[ "$(there $g "$c")" = 2 ] && grep -q "STL-CFG-312" "$T/out"' "r9 P3: $(basename $g) refuses, coded, a link to a state path whose name starts with a dash: $c"
   done
+  c="grep -f\$'ln\\nk' /workspace/package.json"
+  ok '[ "$(there $g "$c")" = 2 ] && grep -q "STL-CFG-312" "$T/out"' "r9 P4: $(basename $g) refuses, coded, a link to a state path whose name holds a newline, attached to a short option: $c"
   for c in "grep -e -n /workspace/package.json" "grep -c -- -x /workspace/package.json" "grep -f\$'pla\\nin' /workspace/package.json"; do
     ok '[ "$(there $g "$c")" = 0 ]' "r9 P3, P4 control: $(basename $g) allows a dash or newline value that names no protected path: $c"
   done
