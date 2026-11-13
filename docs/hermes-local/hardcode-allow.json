@@ -179,5 +179,14 @@
     {"file": "config/owner.example.env", "literal": "#escalations", "count": 1, "phase": "to place (F1 W5 r3: channel names in a comment of the owner example file; the names live in the connections catalog and the owner file)"},
     {"file": "config/owner.example.env", "literal": "#supervisor", "count": 1, "phase": "to place (F1 W5 r3: channel names in a comment of the owner example file; the names live in the connections catalog and the owner file)"}
   ],
+  "lists": [
+    {"kind": "models", "owner": ".stella/connections.json", "path": "entries[].models", "id": "id"},
+    {"kind": "providers", "owner": ".stella/connections.json", "path": "entries", "id": "id"},
+    {"kind": "hosts", "owner": ".stella/connections.json", "path": "entries[].hosts", "id": "host"},
+    {"kind": "roles", "owner": "docs/hermes-local/roles.json", "path": "roles", "id": "id"},
+    {"kind": "boards", "owner": null},
+    {"kind": "presets", "owner": null},
+    {"kind": "templates", "owner": null}
+  ],
   "watch": ["#escalations", "#supervisor", "opus", "sonnet", "haiku"]
 }

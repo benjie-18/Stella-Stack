@@ -248,4 +248,32 @@ ok 'fails_on "\"$fp\"" && grep -qF -- "$f" <<<"$out"' "VER4-03: a provider id in
 # W5 r6 (VER5-06): the root's own allow list as a tracked link to outside the root is refused in every mode, --list too
 gitroot; cp "$S/$AL" "$T/al-out.json"; rm -f "$S/$AL"; ln -s "$T/al-out.json" "$S/$AL"; track "$AL"
 ok 'refused --list && refused --check' "Q7: the default allow list linked outside the root is refused by --list and --check (exit 2, the code)"
+# W5 (D8): one list, one owner. A list kept in a second data file fails; a list of plain ids is a reference and passes.
+V=.stella/versions.json; C=.stella/capabilities.json
+setkey() { jq --argjson v "$1" '.zzdup = $v' "$S/$V" >"$T/x" && cp "$T/x" "$S/$V"; }   # setkey <json>: a planted list in the second data file
+dup_ids() {  # dup_ids <kind>: two ids the owner of that kind holds, as JSON
+  case $1 in
+    models) jq -c '[.entries[].models[]?.id][:2]' "$S/.stella/connections.json";;
+    providers) jq -c '[.entries[].id][:2]' "$S/.stella/connections.json";;
+    hosts) jq -c '[.entries[].hosts[]?.host] | unique | .[:2]' "$S/.stella/connections.json";;
+    roles) jq -c '.roles | keys | .[:2]' "$S/docs/hermes-local/roles.json";;
+  esac; }
+dups_fail() { out=$(lint); [ $? = 1 ] && grep -q "STL-CFG-320" <<<"$out" && grep -qF -- "$V: keeps the $1 list" <<<"$out" && [ "$(grep -c "$V: " <<<"$out")" = 1 ]; }
+for k in $(jq -r '.lists[] | select(.owner != null) | .kind' "$A"); do
+  fresh; ids=$(dup_ids "$k"); ok '[ "$(jq length <<<"$ids")" = 2 ]' "D8: the scratch data holds two $k ids to plant"
+  setkey "$(jq -c '[.[] | {id: ., host: ., name: .}]' <<<"$ids")"
+  ok 'dups_fail "$k"' "D8: a $k list kept as objects in a second data file fails (STL-CFG-320, one line for the file)"
+  fresh; setkey "$(jq -c 'map({(.): {}}) | add' <<<"$ids")"
+  ok 'dups_fail "$k"' "D8: a $k list kept as a map of objects in a second data file fails"
+  fresh; setkey "$ids"
+  ok 'lint >/dev/null' "D8: the $k ids as plain strings (a reference) pass"
+  fresh; setkey "$(jq -c '[.[0] | {id: ., host: .}]' <<<"$ids")"
+  ok 'lint >/dev/null' "D8: one $k id as an object is no list kept twice and passes"
+done
+for k in $(jq -r '.lists[] | select(.owner == null) | .kind' "$A"); do
+  fresh; jq --arg k "$k" '.[$k] = [{"id": "zza"}]' "$S/$V" >"$T/x" && cp "$T/x" "$S/$V"
+  ok 'lint >/dev/null' "D8: a $k list in one data file passes (no owner yet, defined once)"
+  jq --arg k "$k" '.[$k] = {"zzb": {}}' "$S/$C" >"$T/x" && cp "$T/x" "$S/$C"
+  ok 'out=$(lint); [ $? = 1 ] && grep -q "STL-CFG-320" <<<"$out" && grep -qF -- "$V: keeps a $k list" <<<"$out" && grep -qF -- "$C: keeps a $k list" <<<"$out"' "D8: a $k list in two data files fails, one line per file"
+done
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
