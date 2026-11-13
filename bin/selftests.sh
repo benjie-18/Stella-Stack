@@ -27,17 +27,29 @@ fi
 [ $# = 0 ] && set -- "${suite[@]}"
 set -- "${@%-selftest}"   # the watchdog reruns a failed check by the name it printed (<name>-selftest)
 mapfile -t u < <(printf '%s\n' "$@" | awk '!seen[$0]++'); set -- "${u[@]}"   # a name given twice runs once (first-seen order): job folders are per name
-R=$(mktemp -d) || { echo "selftests FAIL (1)"; echo "     FAIL cannot make a temp folder"; exit 1; }
+# The copies lie on the tree's own filesystem (a selftest that checks the filesystem the stack lives on must see it), in the
+# tree's ignored .scratch. Each runner holds a lock on its folder's .alive file (a KILLed runner's children keep it while they
+# run); the next run sweeps folders whose lock is free. The gate (a lock on .scratch itself) makes make-and-lock one step.
+times=${SELFTESTS_TIMES:-}; unset SELFTESTS_TIMES   # the caller's times file is the runner's; a started selftest (a nested runner) never sees it
+mkdir -p "$ROOT/.scratch" && exec 8<"$ROOT/.scratch" && flock 8 || { echo "selftests FAIL (1)"; echo "     FAIL cannot make or lock $ROOT/.scratch"; exit 1; }
+for d in "$ROOT"/.scratch/selftests.*/; do
+  { [ ! -f "$d.alive" ] || flock -n "$d.alive" true; } && { chmod -R u+rwX "$d" 2>/dev/null; rm -rf "$d"; }
+done
+R=$(mktemp -d "$ROOT/.scratch/selftests.XXXXXX") && exec 9>"$R/.alive" && flock -n 9 || { echo "selftests FAIL (1)"; echo "     FAIL cannot make a folder in $ROOT/.scratch"; exit 1; }
+exec 8<&-
+set -m   # each job is its own process group: a TERM to the runner stops what it started, then the EXIT trap removes the folder
 trap 'chmod -R u+rwX "$R" 2>/dev/null; rm -rf "$R"' EXIT
+trap 'trap "" TERM INT HUP; for j in $(jobs -p); do kill -TERM -- "-$j" 2>/dev/null; done; wait; exit 143' TERM INT HUP
 
 # The copy is made once; a job duplicates it. Sets binds (the read-only mounts); returns 1 with the reason on stdout.
 prep() {
   command -v bwrap >/dev/null || { echo "bwrap (bubblewrap) is not installed"; return 1; }
   ( set -o pipefail
-    git -C "$ROOT" ls-files -z --cached --others --exclude-standard | sed -z 's|^|./|' >"$R/files" &&   # names, never options
+    git -C "$ROOT" ls-files -z --cached --others --exclude-standard -- . ':!.scratch' | sed -z 's|^|./|' >"$R/files" &&   # names, never options
+    git -C "$ROOT" ls-files -z --cached -- . ':!.scratch' >"$R/tracked" &&   # the copy's one commit holds exactly these
     mkdir "$R/base" && tar -c -C "$ROOT" --null -T "$R/files" -f - | tar -x -C "$R/base" -f - &&
-    git -C "$R/base" init -q -b qa && git -C "$R/base" add -A &&
-    git -C "$R/base" -c user.name=selftests -c user.email=selftests@scratch.invalid -c commit.gpgsign=false commit -q --no-verify -m "scratch copy"
+    git -C "$R/base" init -q -b qa && { [ ! -s "$R/tracked" ] || GIT_LITERAL_PATHSPECS=1 git -C "$R/base" add --pathspec-from-file="$R/tracked" --pathspec-file-nul; } &&
+    git -C "$R/base" -c user.name=selftests -c user.email=selftests@scratch.invalid -c commit.gpgsign=false commit -q --allow-empty --no-verify -m "scratch copy"
   ) 2>&1 || { echo "cannot copy $ROOT"; return 1; }
   binds=(); local f
   while IFS= read -r f; do
@@ -61,7 +73,7 @@ run_one() {
     printf '#!/usr/bin/env bash\n[ "${1:-}" = send ] && { echo "selftests: hermes send refused in a selftest" >&2; exit 1; }\nexec %q "$@"\n' "$real_hermes" >"$p/tmp/.bin/hermes"
     chmod +x "$p/tmp/.bin/hermes"
     # the temp folder is bound last: the other sources may lie under it
-    out=$(nice bwrap --dev-bind / / --bind "$p/tree" "$STACK" "${binds[@]}" --bind "$p/tmp" "$TD" --chdir "$STACK" \
+    out=$(nice bwrap --die-with-parent --dev-bind / / --bind "$p/tree" "$STACK" "${binds[@]}" --bind "$p/tmp" "$TD" --chdir "$STACK" \
       --setenv PATH "$TD/.bin:$PATH" -- "$STACK/bin/$t-selftest.sh" </dev/null 2>&1 | grep -v setlocale)
     rm -rf "$p"
     if printf '%s\n' "$out" | tail -1 | grep -q "selftest PASS"; then echo "ok   $t-selftest" >"$R/res-$k"; echo 0 >"$R/rc-$k"
@@ -83,6 +95,6 @@ fails=0   # printed in list order, whatever order they finished in
 for n in "$@"; do
   k=${n//[^A-Za-z0-9._-]/_}; cat "$R/res-$k"; [ "$(cat "$R/rc-$k")" = 0 ] || fails=$((fails+1))
   # SELFTESTS_TIMES=<file>: one line "<seconds>	<name>	<ok|skip|FAIL>" per selftest
-  [ -z "${SELFTESTS_TIMES:-}" ] || printf '%d.%03d\t%s\t%s\n' $(( $(<"$R/ms-$k") / 1000 )) $(( $(<"$R/ms-$k") % 1000 )) "$n" "$(head -1 "$R/res-$k" | cut -d' ' -f1)" >>"$SELFTESTS_TIMES"
+  [ -z "$times" ] || printf '%d.%03d\t%s\t%s\n' $(( $(<"$R/ms-$k") / 1000 )) $(( $(<"$R/ms-$k") % 1000 )) "$n" "$(head -1 "$R/res-$k" | cut -d' ' -f1)" >>"$times"
 done
 [ "$fails" = 0 ] && echo "selftests PASS" || { echo "selftests FAIL ($fails)"; exit 1; }

@@ -3,8 +3,9 @@
 # selftests (a, b: the same fixed temp name and alert log; s: serial; f: fails). Checks isolation per selftest, the output
 # lines, a named run, an unknown name, and fail closed when bubblewrap is missing or refuses. Takes a few seconds.
 set -u
-T=$(mktemp -d); trap 'chmod -R u+rwX "$T" 2>/dev/null; rm -rf "$T"' EXIT
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+T=$(mktemp -d); mkdir -p "$SRC/.scratch"; T2=$(mktemp -d "$SRC/.scratch/selftests-self.XXXXXX")   # a second tree on the stack tree's filesystem (ignored folder), not the temp folder's
+trap 'chmod -R u+rwX "$T" "$T2" 2>/dev/null; rm -rf "$T" "$T2"; [ -z "${SLP:-}" ] || kill $SLP 2>/dev/null' EXIT
 fails=0; export LC_ALL=C   # no locale warning lines in the runner output
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); [ -s "$T/out" ] && sed 's/^/     /' "$T/out" | tail -6; fi; }
 mkdir -p "$T/tree/bin" "$T/tmp" "$T/marks"
@@ -67,6 +68,29 @@ rm "$T/tree/bin/qfail"; touch "$T/tree/bin/qempty"; run --quick
 ok 'grep -q "FAIL the quick list cannot be read" "$T/out" && [ "$(cat "$T/rc")" = 1 ] && [ -z "$(ls -A "$T/marks")" ]' "S4 --quick with an empty list: one FAIL, exit 1, nothing ran"
 run a-selftest
 ok '[ "$(cat "$T/out")" = "$(printf "ok   a-selftest\nselftests PASS")" ]' "S2 a failed check named as the watchdog sees it (a-selftest) reruns that selftest, isolated"
+
+# R16 faults of the runner, on a second tree (the stack tree's filesystem, not the temp folder's):
+# F1 the copy lies on the tree's own filesystem; F2 a tracked file is tracked in the copy and an untracked one is not (odd names too); F3 a started selftest never sees SELFTESTS_TIMES;
+# F4 a folder of a runner that is no longer alive is swept, one of a live runner is not.
+mkdir -p "$T2/bin" "$T2/tmp"; sed 's/^for t in [a-z].*; do$/for t in t; do/' "$SRC/bin/selftests.sh" >"$T2/bin/selftests.sh"; cp "$SRC/bin/watchdog_settings.py" "$T2/bin/"; chmod +x "$T2/bin/selftests.sh"
+cat >"$T2/bin/t-selftest.sh" <<'S'
+#!/usr/bin/env bash
+n=$(git -C /workspace ls-files | grep -c 'untracked'); k=$(git -C /workspace ls-files -- bin/tracked.txt ./-tracked.txt | wc -l)
+[ "$(stat -f -c %T /workspace)" = "$FSWANT" ] || { echo "FAIL the copy is on a $(stat -f -c %T /workspace) filesystem, the source tree on $FSWANT"; echo "selftest FAIL"; exit 1; }
+[ "$n" = 0 ] && [ "$k" = 2 ] && [ -e /workspace/bin/untracked.txt ] && [ -e "/workspace/-untracked name.txt" ] || { echo "FAIL tracked/untracked files differ in the copy (untracked tracked: $n, tracked seen: $k)"; echo "selftest FAIL"; exit 1; }
+[ -z "${SELFTESTS_TIMES:-}" ] || { echo "FAIL a started selftest sees SELFTESTS_TIMES"; echo "selftest FAIL"; exit 1; }
+echo "selftest PASS"
+S
+chmod +x "$T2/bin/t-selftest.sh"; echo tracked >"$T2/bin/tracked.txt"; echo tracked >"$T2/-tracked.txt"
+git -C "$T2" init -q; git -C "$T2" add -- bin ./-tracked.txt; git -C "$T2" -c user.name=t -c user.email=t@scratch.invalid commit -qm t
+echo u >"$T2/bin/untracked.txt"; echo u >"$T2/-untracked name.txt"
+mkdir -p "$T2/.scratch/selftests.dead" "$T2/.scratch/selftests.live"; : >"$T2/.scratch/selftests.dead/.alive"; : >"$T2/.scratch/selftests.live/.alive"
+flock "$T2/.scratch/selftests.live/.alive" sleep 60 & SLP=$!; sleep 0.3
+FSWANT=$(stat -f -c %T "$T2") SELFTESTS_TIMES="$T/times2" TMPDIR="$T/tmp" WATCHDOG_SETTINGS="$T/set.json" "$T2/bin/selftests.sh" >"$T/out" 2>&1; echo $? >"$T/rc"
+ok '[ "$(cat "$T/out")" = "$(printf "ok   t-selftest\nselftests PASS")" ]' "F1 F2 F3 the copy is on the tree's own filesystem, tracks what the tree tracks (odd names too), and the selftest sees no SELFTESTS_TIMES"
+ok '[ "$(cut -f2,3 "$T/times2")" = "$(printf "t\tok")" ]' "F3 the caller's times file holds only the runner's own line"
+ok '[ ! -e "$T2/.scratch/selftests.dead" ] && [ -e "$T2/.scratch/selftests.live" ] && [ "$(ls -A "$T2/.scratch" | wc -l)" = 1 ]' "F4 a folder of a runner that is gone is swept, one of a live runner and the runner's own are not left/removed"
+kill $SLP 2>/dev/null; SLP=
 
 # fail closed: no bubblewrap on PATH, and a bubblewrap that refuses: every selftest FAIL with a plain line, nothing ran
 mkdir -p "$T/nobwrap" "$T/badbwrap"
