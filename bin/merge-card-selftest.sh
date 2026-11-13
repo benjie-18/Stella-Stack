@@ -430,6 +430,7 @@ done
 II=__init''__.py; scard t_0000b2a8 "bin/roles/$II" '# a comment'; h=$(head_of "$SR")   # r8 A (W4-CV5-01): python loads the package folder instead of the module beside it
 ok '[ "$(smc t_0000b2a8 --owner-approved)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -q "define the boundary" "$T/out" && grep -qF "bin/roles/$II" "$T/out" && [ "$(head_of "$SR")" = "$h" ]' "r8 A (W4-CV5-01): a stack card that adds a package folder named like a module of the boundary's own folder is refused STL-CFG-312 without the flag, main untouched"
 ok '[ "$(smc t_0000b2a8 --owner-approved --i-have-read-the-boundary-changes)" = 0 ] && [ "$(head_of "$SR")" != "$h" ]' "r8 A: the same card merges with the flag"
+git -C "$SR" rm -rq bin/roles; git -C "$SR" -c core.hooksPath=/dev/null commit -qm "the scratch stack takes the stand-in out again"   # the later rows import from this stack's bin
 # r6 C4: what the nest costs. In the box of a stack card's merge test, code that makes its own user and mount namespace and then tries to unmount and to remount
 # read-write every mount it can see still cannot write the read-only main checkout, see the hidden owner settings path or read a broker file. The probe is the
 # card's own map tool (run in that box before the runner; behind the owner's flag); the owner settings path is only tested for existence, never read.
