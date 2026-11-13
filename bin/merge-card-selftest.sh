@@ -335,6 +335,11 @@ ok '[ "$(mc t_0000f302 --owner-approved)" = 3 ] && grep -q "tests failed.*exit 7
 jq '. as $d | reduce (.sandbox.boxed_profiles[] | select($d.roles[$d.profiles[.].role].workspace == "git-worktree")) as $p (.; .sandbox.profile_overrides[$p].broker_env = {QA_TOKEN: "qa-broker"})' "$RF" >"$T/brokeronly.json"
 card t_0000f303 f303.txt f303 'echo QA-RAN-BROKER; exit 0'; h=$(head_of "$T/repo"); a0=$(nal)
 ok '[ "$(ROLES_FILE=$T/brokeronly.json mc t_0000f303 --owner-approved)" = 3 ] && grep -q "without broker variables" "$T/out" && grep -q "STL-GRD-605" "$T/out" && ! grep -q QA-RAN-BROKER "$T/out" && [ "$(nal)" = $((a0+1)) ] && [ "$(head_of "$T/repo")" = "$h" ]' "B.2 point 11: only broker-carrying profiles: refused with one coded line, the test never ran, main untouched"
+# r6 C5 (W4-CV3-11): a commit hook of the owner's repository that still runs (post-commit) and changes the merge commit is said loudly, exit 1
+card t_0000f304 f304.txt f304; h=$(head_of "$T/repo")
+printf '#!/bin/sh\necho hooked >zz-hooked.txt; git add zz-hooked.txt; git -c core.hooksPath=/dev/null commit -q --amend --no-edit\n' >"$T/repo/.git/hooks/post-commit"; chmod +x "$T/repo/.git/hooks/post-commit"
+ok '[ "$(mc t_0000f304 --owner-approved)" = 1 ] && grep -q "NOT THE TREE THAT WAS CHECKED" "$T/out" && ! grep -q "^merged " "$T/out"' "r6 C5 (W4-CV3-11): a merge commit changed by a commit hook is not the checked tree: said loudly, exit 1, no 'merged' line"
+rm -f "$T/repo/.git/hooks/post-commit"; g reset -q --hard "$h"
 # K8: the boundary refusal and an unreadable list are coded, with one alert line each
 HOOK=$(jq -r '[.roles[].hooks[]? | .file // empty] | first' "$RF"); mkdir -p "$T/repo/${HOOK%/*}"; printf '#!/bin/sh\n' >"$T/repo/$HOOK"; g add -f "$HOOK"; g -c core.hooksPath=/dev/null commit -qm "a hook file"
 wcard t_0000d0a8; printf '#!/bin/sh\nexit 0\n' >"$T/repo/.worktrees/t_0000d0a8/$HOOK"; git -C "$T/repo/.worktrees/t_0000d0a8" add -f -A; wcommit t_0000d0a8
@@ -407,6 +412,29 @@ ok '[ "$(smc t_0000b205 --owner-approved)" = 3 ] && grep -q "quick list of the t
 k=5; for bp in bin/test-map.py bin/selftests.sh .stella/test-map.json; do k=$((k+1)); c=t_0000b20$k; scard $c "$bp" '# a card edits it'; h=$(head_of "$SR")
   ok '[ "$(smc $c --owner-approved)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -q "define the boundary" "$T/out" && grep -qF "$bp" "$T/out" && [ "$(head_of "$SR")" = "$h" ]' "B2: a card that changes $bp (what selects or runs its own tests) is behind the owner's flag"
 done
-card t_0000b209 b209.txt b209 'echo QA-NPM-RAN; unshare -Ur true 2>/dev/null && exit 1; exit 0'; h=$(head_of "$T/repo")
+# r6 C4: what the nest costs. In the box of a stack card's merge test, code that makes its own user and mount namespace and then tries to unmount and to remount
+# read-write every mount it can see still cannot write the read-only main checkout, see the hidden owner settings path or read a broker file. The probe is the
+# card's own map tool (run in that box before the runner; behind the owner's flag); the owner settings path is only tested for existence, never read.
+OSF4=/workspace/$(jq -r '.owner_settings[0]' "$RF"); mkdir -p "$T/hermes/broker"; printf 'C4-BROKER-CANARY-AAAAAAAAAAAAAAAA' >"$T/hermes/broker/qa-canary"; chmod 600 "$T/hermes/broker/qa-canary"
+cat >"$T/c4-map.py" <<S
+#!/usr/bin/env python3
+import subprocess, sys
+PROBE = r'''
+echo "C4 in-ns uid=\$(id -u)"
+tac /proc/self/mountinfo | cut -d" " -f5 | while read -r m; do umount "\$m" 2>/dev/null && echo "C4 unmounted \$m"; mount -o remount,rw,bind "\$m" 2>/dev/null && echo "C4 remounted \$m"; done
+( : >"$SR/zz-c4-written" ) 2>/dev/null && echo "C4 BAD wrote the read-only main checkout" || echo "C4 ok read-only"
+[ -e "$OSF4" ] && echo "C4 BAD the hidden owner settings path is visible" || echo "C4 ok hidden"
+cat "$T/hermes/broker/qa-canary" 2>/dev/null | grep -q . && echo "C4 BAD the broker file is readable" || echo "C4 ok broker"
+'''
+if sys.argv[1:] == ["quick"]:
+    print("zz-beta")
+else:
+    sys.stdin.read()
+    subprocess.run(["unshare", "-Urm", "bash", "-c", PROBE], stdout=sys.stderr)
+    print("zz-alpha")
+S
+scard t_0000b20a zz-c4.txt x; cp "$T/c4-map.py" "$SR/.worktrees/t_0000b20a/bin/test-map.py"; git -C "$SR/.worktrees/t_0000b20a" add -A; git -C "$SR/.worktrees/t_0000b20a" -c core.hooksPath=/dev/null commit -qm "a probing map tool"
+ok '[ -e "$OSF4" ] && [ "$(smc t_0000b20a --owner-approved --i-have-read-the-boundary-changes)" = 0 ] && grep -q "^C4 in-ns uid=0" "$T/out" && grep -q "^C4 ok read-only" "$T/out" && grep -q "^C4 ok hidden" "$T/out" && grep -q "^C4 ok broker" "$T/out" && ! grep -q "C4 BAD\|C4-BROKER-CANARY" "$T/out" && [ ! -e "$SR/zz-c4-written" ]' "r6 C4: in the nested-namespace box of a stack card's merge test, code in its own user and mount namespace cannot write the read-only checkout, see the hidden owner settings path or read a broker file"; grep "^C4 " "$T/out" | sed 's/^/     info /' | head -12
+card t_0000b209 b209.txt b209'echo QA-NPM-RAN; unshare -Ur true 2>/dev/null && exit 1; exit 0'; h=$(head_of "$T/repo")
 ok '[ "$(mc t_0000b209 --owner-approved)" = 0 ] && grep -q QA-NPM-RAN "$T/out" && ! grep -q "merge test:" "$T/out" && [ "$(head_of "$T/repo")" != "$h" ]' "B2: a project card is unchanged: its own test command runs, in a box that still forbids nested namespaces"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
