@@ -9,6 +9,8 @@
 # temp names; the source tree, the live alert log and the shared temp folder get nothing. Fail closed: a selftest is only
 # ever started inside the namespace; if the copy or the namespace cannot be made, every selftest is FAIL with one plain line
 # (inside a box that forbids nested namespaces the suite therefore fails: an open owner decision, not designed around).
+# Cost on this mount (v9fs, measured): the base copy about 10 s once, then about 5 s per selftest for its copy; that is the price of
+# testing on the filesystem the stack lives on (the same copy on /tmp took about 0.13 s per selftest).
 # The owner settings files the copy's role table lists and node_modules are bound read-only from the source tree.
 set -u
 unset STELLA_ROOT   # an inherited scratch root must not re-target the data tools and the gates that run them
@@ -49,7 +51,8 @@ prep() {
     git -C "$ROOT" ls-files -z --cached -- . ':!.scratch' >"$R/tracked" &&   # the copy's one commit holds exactly these
     mkdir "$R/base" && tar -c -C "$ROOT" --null -T "$R/files" -f - | tar -x -C "$R/base" -f - &&
     git -C "$R/base" init -q -b qa && { [ ! -s "$R/tracked" ] || GIT_LITERAL_PATHSPECS=1 git -C "$R/base" add --pathspec-from-file="$R/tracked" --pathspec-file-nul; } &&
-    git -C "$R/base" -c user.name=selftests -c user.email=selftests@scratch.invalid -c commit.gpgsign=false commit -q --allow-empty --no-verify -m "scratch copy"
+    git -C "$R/base" -c user.name=selftests -c user.email=selftests@scratch.invalid -c commit.gpgsign=false commit -q --allow-empty --no-verify -m "scratch copy" &&
+    git -C "$R/base" repack -adq   # one pack instead of a loose object per file: a job copy (cp -a) has fewer files to copy
   ) 2>&1 || { echo "cannot copy $ROOT"; return 1; }
   binds=(); local f
   while IFS= read -r f; do
