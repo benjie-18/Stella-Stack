@@ -1898,6 +1898,37 @@
     },
     {
       "globs": [
+        ".stella/schemas/test-map.schema.json",
+        ".stella/test-map.json",
+        "bench/tasks/deploy-recovery/repo/deploy.conf",
+        "bench/tasks/deploy-recovery/repo/deploy.sh",
+        "bench/tasks/deploy-recovery/repo/test.sh",
+        "bench/tasks/deploy-recovery/solution/deploy.conf",
+        "bin/hardcode-lint.sh",
+        "bin/model_watch.py",
+        "bin/selftests.sh",
+        "bin/test-map-selftest.sh",
+        "bin/test-map.py",
+        "bin/watchdog.sh",
+        "bin/watchdog_settings.py",
+        "docs/hermes-local/hardcode-allow.json",
+        "docs/hermes-local/watchdog-settings.json"
+      ],
+      "targets": [
+        "approval-evidence",
+        "complete-gate",
+        "delegation",
+        "merge-card",
+        "profile-hooks",
+        "roles",
+        "routing",
+        "write-guard"
+      ],
+      "scan": true,
+      "why": "from reach: these selftests read the role table, whose boundary list names bin/test-map.py and the test map since F1 W4 round 6 (a stack card's merge test is selected by them), and merge-card-selftest runs the suite runner in a scratch stack (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
         "bin/selftests-selftest.sh"
       ],
       "targets": [
