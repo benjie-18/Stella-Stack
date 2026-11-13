@@ -72,7 +72,11 @@
     "approval-evidence",
     "reviewer-claude",
     "post-edit-check",
-    "selftests"
+    "selftests",
+    "role-guard",
+    "check-guard",
+    "complete-gate",
+    "watchdog"
   ],
   "full": [],
   "map": [
