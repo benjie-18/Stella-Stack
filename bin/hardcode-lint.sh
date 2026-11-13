@@ -7,8 +7,9 @@
 # and host names, read through bin/stella_data.py) and hardcode-allow.json "watch" (names no data file holds yet).
 # What is scanned: every file git tracks in the root (a walk of the root where there is no git), that matches a "scan" pattern
 # and no "skip" row. A pattern is a whole path: `*` and `?` stop at a folder border, `**` crosses folders; none may start with
-# `/` or hold a `..` segment. The owner settings and the apply tool's state (bin/roles.py owner_settings and state_paths, the
-# functions the guards use) are never listed, read or copied: every entry is judged by what it resolves to before anything opens
+# `/` or hold a `..` segment. The lint lists, reads and copies none of the owner settings and the apply tool's state (bin/roles.py
+# owner_settings and state_paths, the functions the guards use); only when it reports, its alert line is rendered by
+# bin/alert_catalog.py, which reads one owner key (the time zone) as every alert of the stack does. Every entry is judged by what it resolves to before anything opens
 # it, and one that is, lies in or holds such a path, is a hard link to one, or is a link loop, is dropped; a link that points
 # outside the root is refused, and a dangling one is refused when it is read (exit 2). A link to a file that is scanned anyway is
 # read once, under the file's own name. A role table the role tool refuses (an empty owner_settings list) is refused.
