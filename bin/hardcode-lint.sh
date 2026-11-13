@@ -132,7 +132,7 @@ def listed(rb):  # the words of the runner's `for <name> in <words>;` lists: wha
         if rb not in real or not under(real[rb][0], rs): err("the file a skip row names as its runner is not a file of the root the lint may read: " + rb)
         try: txt = (root / rb).read_text(encoding="utf-8", errors="replace")
         except OSError: err("the file a skip row names as its runner cannot be read: " + rb)
-        runs[rb] = {w for m in re.finditer(r"(?m)^\s*for\s+\w+\s+in\s+([^;\n]*);", txt) for w in m.group(1).split()}
+        runs[rb] = {w for m in re.finditer(r"(?m)^\s*for\s+\w+\s+in\s+([^;\n]*);", txt) for w in m.group(1).split() if re.fullmatch(r"[A-Za-z0-9_-]+", w)}
     return runs[rb]
 def skipped(f):
     for rg, rb in skip:
