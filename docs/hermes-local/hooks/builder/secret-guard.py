@@ -243,7 +243,7 @@ def secret_why(cmd, cwd):
                                 return why
                 for i, w in enumerate(seg[1:], 1):
                     r = rec and not (name == "git" and seg[i - 1] in ("-C", "-c"))   # git -C <dir> names where, not what it reads
-                    for v in [w] + ([w.split("=", 1)[1]] if w.startswith("-") and "=" in w else []):
+                    for v in [w] + ([w.split("=", 1)[1]] if w.startswith("-") and "=" in w else []) + ([w[2:]] if re.fullmatch(r"-[A-Za-z][/~.].*", w) else []):   # r7 A7: a short option with its value attached (-f/path) is the path
                         why = None if v.startswith("-") or not v else path_why(v, base, names, r)
                         if why:
                             return why
