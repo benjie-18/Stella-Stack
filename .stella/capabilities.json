@@ -12,7 +12,10 @@
         "catalog",
         "capability",
         "search",
-        "contract"
+        "contract",
+        "x-ref",
+        "x-owner-only",
+        "global_id"
       ],
       "inputs": "a data id, an entry id or search words",
       "outputs": "JSON or text; exit 1 with a catalog code when a file is invalid or an id is unknown",
@@ -28,7 +31,66 @@
       "source": "bin/stella_data.py",
       "triage": {
         "result": "shipped"
-      }
+      },
+      "global_id": "54840665-3c5f-469a-8db0-0f269516ff0a",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "stella-data-ids-migrate",
+      "kind": "command",
+      "summary": "Write a candidate of one data file with global_id and install_id added to every record that lacks them, nothing else changed; apply it with stella-apply.py",
+      "keywords": [
+        "ids-migrate",
+        "global_id",
+        "install_id",
+        "migration",
+        "record"
+      ],
+      "inputs": "an index row id (<id>/<file>.json for a folder row) and --out <new file>",
+      "outputs": "the candidate file; exit 1 with a catalog code when the row is unknown or the file cannot be written",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/stella_data.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "a6246a2b-19c7-4b09-9976-a91299b42a95",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "stella-data-owner-only",
+      "kind": "command",
+      "summary": "List the field paths each schema marks x-owner-only (only the owner's path writes them)",
+      "keywords": [
+        "owner-only",
+        "x-owner-only",
+        "schema",
+        "protected"
+      ],
+      "inputs": "none (--json for JSON)",
+      "outputs": "schema and JSON pointer per line, or {schema: [paths]}; exit 1 with STL-CFG-310 when a schema cannot be read",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/stella_data.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "9894712d-99bc-435c-90a9-37dc1f8e9c85",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "test-map",
@@ -54,7 +116,9 @@
       "source": "bin/test-map.py",
       "triage": {
         "result": "shipped"
-      }
+      },
+      "global_id": "01ce8cc9-b3b1-4f14-a178-17821fdcae45",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "alert-catalog",
@@ -80,7 +144,9 @@
       "source": "bin/alert_catalog.py",
       "triage": {
         "result": "shipped"
-      }
+      },
+      "global_id": "ca42e8ce-87c6-4090-8802-15189a184967",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "role-requirements",
@@ -109,7 +175,9 @@
       "source": "bin/roles.py",
       "triage": {
         "result": "shipped"
-      }
+      },
+      "global_id": "33fd05e6-0cca-4f43-97e0-54f16c9e8761",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "hardcode-lint",
@@ -135,7 +203,9 @@
       "source": "bin/hardcode-lint.sh",
       "triage": {
         "result": "shipped"
-      }
+      },
+      "global_id": "890888dc-9797-4cbe-892d-a18b96d5ee3b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "event-log",
@@ -161,7 +231,9 @@
       "source": "bin/event_log.py",
       "triage": {
         "result": "shipped"
-      }
+      },
+      "global_id": "c328ea08-448c-4abc-80aa-88fd61b11dc0",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "apply-check",
@@ -188,7 +260,9 @@
       "source": "bin/stella-apply.py",
       "triage": {
         "result": "shipped"
-      }
+      },
+      "global_id": "b50db809-afbd-4b4c-a5c6-2f899bc326cc",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "apply",
@@ -211,7 +285,9 @@
       "source": "bin/stella-apply.py",
       "triage": {
         "result": "shipped"
-      }
+      },
+      "global_id": "59087449-40ce-41a9-b407-3cfb698544cc",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "settings",
@@ -234,7 +310,9 @@
       "source": "bin/settings.py",
       "triage": {
         "result": "shipped"
-      }
+      },
+      "global_id": "7b83aef7-cb96-4c58-80d0-7fb3e48ae921",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "owner-boundary",
@@ -262,7 +340,9 @@
       "source": "bin/roles.py",
       "triage": {
         "result": "shipped"
-      }
+      },
+      "global_id": "ad9e7db7-16c4-48dd-a758-95bb23193656",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

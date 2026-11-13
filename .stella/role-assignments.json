@@ -42,7 +42,9 @@
           "model": "qwen3.5:9b-64k",
           "parameters": {}
         }
-      ]
+      ],
+      "global_id": "35e8485f-9f52-46f7-93c8-9bcd11eced20",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "global-builder",
@@ -57,7 +59,9 @@
           "model": "qwen3.5:9b-64k",
           "parameters": {}
         }
-      ]
+      ],
+      "global_id": "4763be84-c234-4082-a350-ee6dba9fb2d3",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "global-reviewer",
@@ -72,7 +76,9 @@
           "model": "qwen3.5:9b-64k",
           "parameters": {}
         }
-      ]
+      ],
+      "global_id": "bffe5b3f-3dc3-49b7-a494-458a43c8b156",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

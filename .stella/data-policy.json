@@ -4,7 +4,11 @@
     "public",
     "internal",
     "client",
-    "secret"
+    "secret",
+    "camera",
+    "microphone",
+    "sensor",
+    "host-screen"
   ],
   "default": {
     "mode": "open",
@@ -13,5 +17,116 @@
   "projects": {},
   "local_hosts": [
     "host.docker.internal"
-  ]
+  ],
+  "sync_classes": [
+    {
+      "id": "local-only",
+      "cloud": false,
+      "description": "Kept on this install only (the default). Moving the primary copy to the owner's own paired device, end-to-end encrypted, is a move-primary transfer, not a sync."
+    }
+  ],
+  "record_kinds": {
+    "approval": {
+      "sync_class": "local-only"
+    },
+    "approved-host": {
+      "sync_class": "local-only"
+    },
+    "capability": {
+      "sync_class": "local-only"
+    },
+    "card": {
+      "sync_class": "local-only"
+    },
+    "connection": {
+      "sync_class": "local-only"
+    },
+    "data-file": {
+      "sync_class": "local-only"
+    },
+    "device": {
+      "sync_class": "local-only"
+    },
+    "event": {
+      "sync_class": "local-only"
+    },
+    "extension": {
+      "sync_class": "local-only"
+    },
+    "feature": {
+      "sync_class": "local-only"
+    },
+    "project": {
+      "sync_class": "local-only"
+    },
+    "role-assignment": {
+      "sync_class": "local-only"
+    },
+    "secret": {
+      "sync_class": "local-only",
+      "data_class": "secret",
+      "never_cloud": true
+    },
+    "setting": {
+      "sync_class": "local-only"
+    },
+    "vault-entry": {
+      "sync_class": "local-only",
+      "never_cloud": true
+    },
+    "version-pin": {
+      "sync_class": "local-only"
+    }
+  },
+  "class_rules": {
+    "public": {
+      "sync": "allowed",
+      "store": "allowed",
+      "hosted": "allowed",
+      "context": "allowed"
+    },
+    "internal": {
+      "sync": "allowed",
+      "store": "allowed",
+      "hosted": "allowed",
+      "context": "allowed"
+    },
+    "client": {
+      "sync": "allowed",
+      "store": "allowed",
+      "hosted": "allowed",
+      "context": "allowed"
+    },
+    "secret": {
+      "sync": "never",
+      "store": "allowed",
+      "hosted": "never",
+      "context": "allowed"
+    },
+    "camera": {
+      "sync": "never",
+      "store": "owner_asks",
+      "hosted": "grant",
+      "context": "text_only"
+    },
+    "microphone": {
+      "sync": "never",
+      "store": "owner_asks",
+      "hosted": "grant",
+      "context": "text_only"
+    },
+    "sensor": {
+      "sync": "never",
+      "store": "owner_asks",
+      "hosted": "grant",
+      "context": "text_only"
+    },
+    "host-screen": {
+      "sync": "never",
+      "store": "owner_asks",
+      "hosted": "grant",
+      "context": "text_only"
+    }
+  },
+  "privacy_grants": []
 }

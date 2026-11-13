@@ -56,6 +56,25 @@
               "type": "string",
               "pattern": "^[a-z0-9][a-z0-9._:-]*$"
             }
+          },
+          "private": {
+            "type": "boolean",
+            "description": "Owner-marked private: the project never reaches a cloud store (its sync class must have cloud false)."
+          },
+          "sync_class": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+            "description": "The project's own sync class; absent: the sync class of its row's record_kind. A private or local_only project may only have one whose cloud is false."
+          },
+          "global_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            "description": "The record's global id: a lower-case version 4 UUID, unique across every data file (product rule 14). The record's old id stays its alias: every read that takes an entry id accepts either."
+          },
+          "install_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "description": "The UUID of the install that made the record (its .stella/install.json); a record moved from another install keeps it."
           }
         },
         "required": [
@@ -77,6 +96,155 @@
       },
       "uniqueItems": true,
       "description": "Host names that count as local: a provider with locality local may list only these."
+    },
+    "sync_classes": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Where records may be copied. cloud false keeps them on this install; local-only (cloud false) is the default every shipped kind uses. A move-primary transfer of the primary copy to the owner's own paired device, end-to-end encrypted (U1), is not a sync class: it is the only way a never-cloud record leaves this install.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "cloud": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        "required": [
+          "id",
+          "cloud",
+          "description"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "record_kinds": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/record_kind"
+      },
+      "properties": {
+        "vault-entry": {
+          "$ref": "#/$defs/never_cloud_kind"
+        },
+        "secret": {
+          "$ref": "#/$defs/never_cloud_kind"
+        }
+      },
+      "required": [
+        "card",
+        "project",
+        "vault-entry",
+        "secret",
+        "event",
+        "device",
+        "approval"
+      ],
+      "description": "Every kind of record and its sync class. The kinds of data-file records are named by their index row's record_kind; the kinds kept outside the data files (cards, projects, vault entries, secrets, events, devices, approvals) are required here. A kind with never_cloud, or whose data_class is never synced, may only have a sync class whose cloud is false; vault entries and secrets always carry never_cloud."
+    },
+    "class_rules": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+      },
+      "description": "Per data class: sync (never: no cloud sync class), store (owner_asks: kept only when the owner asks), hosted (grant: a hosted model only under a privacy grant; never: not at all), context (text_only: only text results enter a worker's or the supervisor's context). A data class with no row here gets the most restrictive rules: never, owner_asks, never, text_only.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "sync": {
+            "enum": [
+              "never",
+              "allowed"
+            ]
+          },
+          "store": {
+            "enum": [
+              "owner_asks",
+              "allowed"
+            ]
+          },
+          "hosted": {
+            "enum": [
+              "grant",
+              "allowed",
+              "never"
+            ]
+          },
+          "context": {
+            "enum": [
+              "text_only",
+              "allowed"
+            ]
+          }
+        },
+        "required": [
+          "sync",
+          "store",
+          "hosted",
+          "context"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "privacy_grants": {
+      "type": "array",
+      "x-owner-only": true,
+      "description": "The owner's privacy grants: a data class whose rule is hosted grant may reach the named connection while the grant runs. Only the owner's path writes them; ships empty.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "global_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            "description": "The record's global id: a lower-case version 4 UUID, unique across every data file (product rule 14). The record's old id stays its alias: every read that takes an entry id accepts either."
+          },
+          "install_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "description": "The UUID of the install that made the record (its .stella/install.json); a record moved from another install keeps it."
+          },
+          "data_class": {
+            "type": "string"
+          },
+          "connection": {
+            "type": "string",
+            "x-ref": "connections"
+          },
+          "granted_at": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+          }
+        },
+        "required": [
+          "id",
+          "global_id",
+          "install_id",
+          "data_class",
+          "connection",
+          "granted_at"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [
@@ -84,7 +252,43 @@
     "data_classes",
     "default",
     "projects",
-    "local_hosts"
+    "local_hosts",
+    "sync_classes",
+    "record_kinds",
+    "class_rules",
+    "privacy_grants"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "record_kind": {
+      "type": "object",
+      "properties": {
+        "sync_class": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+        },
+        "data_class": {
+          "type": "string"
+        },
+        "never_cloud": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sync_class"
+      ],
+      "additionalProperties": false
+    },
+    "never_cloud_kind": {
+      "$ref": "#/$defs/record_kind",
+      "properties": {
+        "never_cloud": {
+          "const": true
+        }
+      },
+      "required": [
+        "never_cloud"
+      ]
+    }
+  }
 }
