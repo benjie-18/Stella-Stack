@@ -20,6 +20,7 @@ s=\$EPOCHREALTIME; F=\${TMPDIR:-/tmp}/fixed; L=/workspace/.supervisor/logs/alert
 mkdir -p "\$(dirname \$L)"; printf 'own-$n' >"\$F"; printf 'alert-$n\n' >>"\$L"; sleep 1
 [ "\$(cat \$F)" = own-$n ] && [ "\$(cat \$L)" = alert-$n ] || { echo "FAIL $n saw bytes of another selftest"; exit 1; }
 [ $n != a ] || { hermes send x 2>/dev/null && { echo "FAIL hermes send was not refused"; exit 1; }; }
+[ $n != a ] || { hermes probe; hermes -p x send y 2>/dev/null; }
 echo "\$s \$EPOCHREALTIME" >"\$MARKS/$n"; echo "selftest PASS"
 S
 done
@@ -28,12 +29,15 @@ printf '#!/usr/bin/env bash\necho "FAIL boom line"; echo "selftest FAIL"; exit 1
 printf '#!/usr/bin/env bash\necho "selftest PASS"\n' >"$T/tree/bin/a_b-selftest.sh"
 printf '#!/usr/bin/env bash\n: >%q/canary 2>/dev/null; echo "selftest PASS"\n' "$T/tree" >"$T/tree/bin/c-selftest.sh"   # writes to its tree's real path
 chmod +x "$T"/tree/bin/*-selftest.sh
+# a stand-in for the real hermes that records its calls: the runner's wrapper passes to it, also when this runs under an outer runner
+mkdir "$T/rh"; printf '#!/usr/bin/env bash\necho "$*" >>%q\n' "$T/hcalls" >"$T/rh/hermes"; chmod +x "$T/rh/hermes"
 # the runner's temp folder is $T/tmp (TMPDIR), so $T itself stays visible inside the namespace for the marks
-run() { TMPDIR="$T/tmp" MARKS="$T/marks" WATCHDOG_SETTINGS="$T/set.json" "$T/tree/bin/selftests.sh" "$@" >"$T/out" 2>&1; echo $? >"$T/rc"; }
+run() { PATH="$T/rh:$PATH" TMPDIR="$T/tmp" MARKS="$T/marks" WATCHDOG_SETTINGS="$T/set.json" "$T/tree/bin/selftests.sh" "$@" >"$T/out" 2>&1; echo $? >"$T/rc"; }
 echo '{"test_rerun": {"parallel": 1}}' >"$T/set.json"
 
 run a b
 ok 'grep -qx "ok   a-selftest" "$T/out" && grep -qx "ok   b-selftest" "$T/out" && [ "$(tail -1 "$T/out")" = "selftests PASS" ] && [ "$(cat "$T/rc")" = 0 ]' "S1 two selftests that share a fixed temp name and an alert log pass (each sees only its own bytes), hermes send refused inside"
+ok 'grep -qx probe "$T/hcalls" && ! grep -qw send "$T/hcalls"' "S1 the real hermes gets the other call and no call holding send (also after -p)"
 ok '[ -z "$(ls -A "$T/tmp")" ] && [ ! -e "$T/tree/.supervisor" ] && [ -z "$(git -C "$T/tree" status --short -uall | grep -v "bin/")" ]' "S1 the source tree, its alert log and the shared temp folder hold nothing the fakes wrote"
 ok '[ "$(grep -c "^ok " "$T/out")" = 2 ]' "S1 a named run runs only the named selftests"
 run c
