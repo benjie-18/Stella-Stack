@@ -117,6 +117,11 @@ for k in link file; do
   rm -f "$T2/.scratch"
 done
 mv "$T/s.keep" "$T2/.scratch"
+# G3 a dead run folder whose twin's .alive is a FIFO: the sweep never opens it (it would block under the gate): the run ends, the FIFO stays untouched
+mkdir "$T2/.scratch/selftests.fifo" "$T/tmp/selftests.fifo"; : >"$T2/.scratch/selftests.fifo/.alive"; mkfifo "$T/tmp/selftests.fifo/.alive"
+FSWANT=$(stat -f -c %T "$T2") FSMARK="$T/fs" TMPDIR="$T/tmp" WATCHDOG_SETTINGS="$T/set.json" timeout -k 5 60 "$T2/bin/selftests.sh" t >"$T/out" 2>&1; echo $? >"$T/rc"
+ok '[ "$(cat "$T/rc")" = 0 ] && [ -p "$T/tmp/selftests.fifo/.alive" ] && [ ! -e "$T2/.scratch/selftests.fifo" ]' "G3 a twin whose .alive is a FIFO: the run ends and passes, the FIFO is untouched, the dead run folder is swept"
+rm -rf "$T/tmp/selftests.fifo"
 
 # fail closed: no bubblewrap on PATH, and a bubblewrap that refuses: every selftest FAIL with a plain line, nothing ran
 mkdir -p "$T/nobwrap" "$T/badbwrap"

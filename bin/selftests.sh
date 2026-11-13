@@ -48,7 +48,10 @@ trap 'unlock ${R:+"$R"} ${Q:+"$Q"}; rm -rf ${R:+"$R"} ${Q:+"$Q"}' EXIT
 { mkdir -p "$ROOT/.scratch" && exec 8<"$ROOT/.scratch" && flock 8; } 2>/dev/null || setup_fail "cannot make or lock $ROOT/.scratch: nothing started" "$@"
 for d in "$ROOT"/.scratch/selftests.*/; do
   d=${d%/}; [ ! -L "$d" ] && { [ ! -f "$d/.alive" ] || flock -n "$d/.alive" true; } || continue
-  q=$TD/${d##*/}; [ -d "$q" ] && [ ! -L "$q" ] && [ "$(cat "$q/.alive" 2>/dev/null)" = "$d" ] && { unlock "$q"; rm -rf "$q"; }
+  q=$TD/${d##*/}   # a twin's .alive is read only as a plain file, at most 4096 bytes (a FIFO would block under the gate); an empty twin (KILL before its .alive) goes with rmdir
+  if [ -d "$q" ] && [ ! -L "$q" ]; then
+    if [ -f "$q/.alive" ] && [ ! -L "$q/.alive" ] && [ "$(head -c 4096 "$q/.alive" 2>/dev/null)" = "$d" ]; then unlock "$q"; rm -rf "$q"; else rmdir "$q" 2>/dev/null; fi
+  fi
   unlock "$d"; rm -rf "$d"
 done
 { R=$(mktemp -d "$ROOT/.scratch/selftests.XXXXXX") && exec 9>"$R/.alive" && flock -n 9 && mkdir "$TD/${R##*/}" && Q=$TD/${R##*/} && echo "$R" >"$Q/.alive"; } 2>/dev/null ||
