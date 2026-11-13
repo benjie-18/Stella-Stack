@@ -29,7 +29,8 @@ if [ "${1:-}" = --quick ]; then   # the quick tier (the "quick" list of the test
 fi
 [ $# = 0 ] && set -- "${suite[@]}"
 set -- "${@%-selftest}"   # the watchdog reruns a failed check by the name it printed (<name>-selftest)
-mapfile -t u < <(printf '%s\n' "$@" | awk '!seen[$0]++'); set -- "${u[@]}"   # a name given twice runs once (first-seen order): job folders are per name
+# a name given twice runs once (first-seen order); compared whole, in the shell: a name holding a newline stays one (invalid) name
+declare -A seen; u=(); for n; do [ -n "${seen[_$n]:-}" ] || { seen[_$n]=1; u+=("$n"); }; done; set -- "${u[@]}"
 # The tree copies lie on the tree's own filesystem (a selftest that checks the filesystem the stack lives on must see it), in the
 # tree's ignored .scratch (a real folder of the tree, never a link); the selftests' temp folders lie in a twin of the run folder,
 # same name, in the caller's temp folder (fast), whose .alive names the run folder. Each runner holds a lock on its run folder's
