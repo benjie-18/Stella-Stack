@@ -85,9 +85,11 @@ run_one() {
   elif [ -n "$bad" ]; then out="cannot make the private copy or the mount namespace ($bad)"
   elif ! mkdir -p "$q/.bin" "$p" || ! cp -a "$R/base" "$p/tree"; then out="cannot make the private copy or the mount namespace (cp failed)"
   else
-    # K11: no selftest posts to Discord. A `hermes` first on PATH refuses `send` and passes every other call to the real one;
-    # a selftest's own stub, put before it, still wins. It lives in the private temp folder, which the selftest sees as $TD.
-    printf '#!/usr/bin/env bash\n[ "${1:-}" = send ] && { echo "selftests: hermes send refused in a selftest" >&2; exit 1; }\nexec %q "$@"\n' "$real_hermes" >"$q/.bin/hermes"
+    # K11: no selftest posts to Discord. A `hermes` first on PATH refuses any call with a `send` argument (also after -p <profile>)
+    # and passes every other call to the real one; a selftest's own stub, put before it, still wins. It lives in the private temp
+    # folder, which the selftest sees as $TD. shortcut: the real binary called by its path is not refused (no stack script does
+    # that); upgrade: bind a refusing stub over the real path.
+    printf '#!/usr/bin/env bash\nfor a; do [ "$a" != send ] || { echo "selftests: hermes send refused in a selftest" >&2; exit 1; }; done\nexec %q "$@"\n' "$real_hermes" >"$q/.bin/hermes"
     chmod +x "$q/.bin/hermes"
     # the temp folder is bound last: the other sources may lie under it
     out=$(nice bwrap --die-with-parent --dev-bind / / --bind "$p/tree" "$STACK" "${binds[@]}" --bind "$q" "$TD" --chdir "$STACK" \
