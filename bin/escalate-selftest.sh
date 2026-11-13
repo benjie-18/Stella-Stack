@@ -312,8 +312,8 @@ check 2 "Q6: ... and so is the drain" $D --list
 ok '[ -z "$(ls -A "$T/outside")" ]' "Q6: ... nothing is made in the folder it points at"
 rm -f "$T/sup/state"; mv "$T/state.keep" "$T/sup/state"
 
-# Round 7 (W5-RT6-01), in a state folder of its own: no extra argument reaches the model command, direct or from a
-# queue line.
+# Round 7 (W5-RT6-01, W5-RT6-03), in a state folder of its own: no extra argument reaches the model command, direct or from a
+# queue line, and no queued call is lost because a field is long.
 S7="$T/sup7"; mkdir -p "$S7/state"; cp /workspace/.supervisor/limits.env "$S7/"; echo canary >"$T/canary"; Q7="$S7/state/queue.jsonl"
 runs7() { cat "$S7/claude_n" 2>/dev/null || echo 0; }
 st7() { jq -r --arg id "$1" 'select(.id == $id) | .state' "$Q7" | tail -1; }
@@ -331,6 +331,12 @@ ok '[ "$(runs7)" = 0 ] && [ "$(st7 q_s1)" = queued ] && [ -s "$S7/state/prompt-q
 plant7 q_s1ok .; $D --replay q_s1ok >/dev/null 2>&1
 ok '[ "$(runs7)" = 1 ] && [ "$(st7 q_s1ok)" = replayed ]' "S1: a queue line without extra arguments (the form every caller queues) is replayed"
 check 0 "S1: a direct call that ends in a bare -- still runs" sh -c "echo hi | $E t_12345678 sonnet review why --"
+head -c 8192 /dev/zero | tr '\0' r >"$T/r8192"; n=$(runs7)
+check 0 "S2: a reason of 8192 characters runs" sh -c "echo hi | $E t_12345678 sonnet review $(cat "$T/r8192")"
+check 2 "S2: a longer reason is refused, also where the call would be queued" env ESCALATE_FORCE_POOL_EXHAUSTED=1 sh -c "echo hi | $E t_aaaa0702 sonnet review $(cat "$T/r8192")r"
+ok '[ "$(runs7)" = $((n + 1)) ] && ! grep -q t_aaaa0702 "$Q7" && [ -z "$(ls "$S7/state" | grep -- "-t_aaaa0702-")" ] && [ "$(tail -1 "$S7/escalations.log" | jq -r "[.event, (.reason | length < 200)] | join(\" \")")" = "USAGE true" ]' "S2: ... nothing queued, no prompt file left, one short log line"
+head -c 200000 /dev/zero | tr '\0' r >"$T/r200k"; plant7 q_s2 '.call_reason = $r' "$T/r200k"; n=$(runs7); out=$($D --replay q_s2 2>&1)
+ok '[ "$(runs7)" = "$n" ] && [ "$(st7 q_s2)" = queued ] && [ -s "$S7/state/prompt-q_s2.txt" ] && grep -q "left in the queue" <<<"$out"' "S2: a replay that cannot start (a field over the argument limit) is left queued with its prompt, and says so"
 export ESCALATE_SUP_DIR="$T/sup"
 
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
