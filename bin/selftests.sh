@@ -58,7 +58,9 @@ done
   setup_fail "cannot make a run folder in $ROOT/.scratch and its twin in $TD: nothing started" "$@"
 exec 8<&-
 set -m   # each job is its own process group: a TERM to the runner stops what it started, then the EXIT trap removes the folders
-trap 'trap "" TERM INT HUP; for j in $(jobs -p); do kill -TERM -- "-$j" 2>/dev/null; done; wait; echo "selftests FAIL (stopped by a signal)"; exit 143' TERM INT HUP
+# the stop line goes to the caller's stdout (fd 7) also while prep's output is redirected; job notices are silenced so it stays last
+exec 7>&1
+trap 'trap "" TERM INT HUP; exec 2>/dev/null; for j in $(jobs -p); do kill -TERM -- "-$j"; done; wait; echo "selftests FAIL (stopped by a signal)" >&7; exit 143' TERM INT HUP
 
 # The copy is made once; a job duplicates it. Sets binds (the read-only mounts); returns 1 with the reason on stdout.
 prep() {
@@ -111,7 +113,7 @@ run_one() {
 }
 # N at once, from the watchdog settings (test_rerun.parallel; 1 = serial, the same path); shortcut: 4 when unreadable, a data file of its own if more knobs come.
 N=$(python3 -I "$ROOT/bin/watchdog_settings.py" get test_rerun.parallel 2>/dev/null); [[ $N =~ ^[1-9][0-9]*$ ]] || N=4
-run_set() { local n=$1 t; shift; for t; do while [ "$(jobs -rp | wc -l)" -ge "$n" ]; do wait -n; done; run_one "$t" & done; wait; }
+run_set() { local n=$1 t; shift; for t; do while [ "$(jobs -rp | wc -l)" -ge "$n" ]; do wait -n; done; run_one "$t" 7>&- & done; wait; }
 par=(); ser=()   # a selftest that must not share the machine says so in its own file: a line "# selftest: serial"; those run after the batch, alone
 for n in "$@"; do if grep -qs '^# selftest: serial$' "$ROOT/bin/$n-selftest.sh"; then ser+=("$n"); else par+=("$n"); fi; done
 run_set "$N" "${par[@]}"; run_set 1 "${ser[@]}"
