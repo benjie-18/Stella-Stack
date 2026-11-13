@@ -13,7 +13,7 @@ ACAT=${ACAT:-/workspace/docs/hermes-local/alert-catalog.json}; SWF=${SWF:-/works
 ORIG_PATH=$PATH; fails=0
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 mkdir -p "$T/bin" "$T/cards" "$T/sup/logs"
-export ESCALATE_SUP_DIR=$T/sup ALERT_CATALOG=$ACAT FAKE_CARDS=$T/cards SENDS=$T/sends.log FAKE_FAIL=$T/fail PATH="$T/bin:$PATH"
+export PYTHONDONTWRITEBYTECODE=1 ESCALATE_SUP_DIR=$T/sup ALERT_CATALOG=$ACAT FAKE_CARDS=$T/cards SENDS=$T/sends.log FAKE_FAIL=$T/fail PATH="$T/bin:$PATH"
 sleep 600 & STR=$!   # a live process that is no ancestor of any hook: a card bound to it has a failed proof
 trap 'kill $STR 2>/dev/null; rm -rf "$T"' EXIT
 cat >"$T/bin/hermes" <<'SH'
