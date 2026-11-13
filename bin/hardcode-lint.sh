@@ -23,6 +23,8 @@
 # phase that removes it; a file and literal once). An own_names or allow text that equals a literal, or an own_names text that
 # holds a literal glued to other letters, is refused. The line the board value is read from is left out of its file.
 # A short or common literal (an id that is also an English word) is counted like any other, never dropped.
+# hardcode-allow.json "lists" (kind, owner file or null, path, id): the one data file that owns each list kind; another data file
+# that defines two or more of its entries (an array or map of objects, by id) fails with STL-CFG-320, one line per file and kind.
 # usage: hardcode-lint.sh [--check | --dump | --list]   --check (default): exit 0, or 1 with STL-CFG-320 and one line per file
 #        and literal over its baseline; --dump: "file<TAB>literal<TAB>count" for every use; --list: the files a scratch root needs
 #        to run the lint (the scanned files and the data it reads), one per line; reads no home folder and no literal source.
@@ -196,6 +198,52 @@ except ValueError: h = None
 if h: print(h)
 EOF
 )
+# One list, one owner (D8): a data file that defines entries of a list another file owns (an array or a map of objects whose ids
+# match two or more owned ids) is a duplicate; a list of plain id strings is a reference. Allow list "lists": kind; owner (a data
+# file, or null when none holds the kind yet: then two files with a non-empty list under the key <kind> are the duplicate); path
+# (the owner's list, "[]" flattens); id (the id field, default "id").
+PYD=$(cat <<'EOF'
+import json, sys
+from pathlib import Path
+def err(m): print("ERROR\t" + m); sys.exit(3)
+root = Path(sys.argv[1])
+def load(rel):
+    p = root / rel
+    if p.is_symlink() or not p.is_file(): err("a data file is a link or not a regular file: " + rel)
+    try: return json.load(open(p, encoding="utf-8"))
+    except (OSError, ValueError): err("a data file cannot be read as JSON: " + rel)
+allow = json.load(open(sys.argv[2], encoding="utf-8"))
+rt = load("docs/hermes-local/roles.json"); idx = load(rt["data_index"])
+src = {r["path"]: str(r.get("id_field") or "id").split(",")[0] for r in idx["files"] if r.get("format") == "json" and (root / r["path"]).is_file()}
+if idx.get("role_table"): src.setdefault(idx["role_table"], "id")
+docs = {f: load(f) for f in src}
+def rows(v, f):  # ids of a definition: an array of objects (field f) or a map of objects (its keys)
+    if isinstance(v, list) and v and all(isinstance(x, dict) for x in v): return {x[f] for x in v if isinstance(x.get(f), str)}
+    if isinstance(v, dict) and v and all(isinstance(x, dict) for x in v.values()): return set(v)
+    return set()
+def walk(v):
+    yield v
+    for x in v.values() if isinstance(v, dict) else v if isinstance(v, list) else (): yield from walk(x)
+out = []
+for l in allow.get("lists", []):
+    k, o, idf = l["kind"], l.get("owner"), l.get("id", "id")
+    if o is None:
+        have = [f for f, d in docs.items() if any(isinstance(n, dict) and any(rows(v, i) for i in {src[f], "id", idf} for v in [n.get(k)]) for n in walk(d))]
+        if len(have) > 1: out += [f"{f}: keeps a {k} list that {', '.join(x for x in have if x != f)} also keeps; one file owns it, the others refer by id" for f in have]
+        continue
+    if o not in docs: err(f"the owner file of the {k} list is not a data file of the index: {o}")
+    vs = [docs[o]]
+    for q in l["path"].split("."):
+        flat = q.endswith("[]"); q = q.removesuffix("[]")
+        vs = [x.get(q) for x in vs if isinstance(x, dict)]
+        if flat: vs = [y for x in vs if isinstance(x, list) for y in x]
+    mine = set().union(*[rows(x, idf) for x in vs])
+    for f, d in docs.items():
+        hit = set() if f == o else set().union(*[rows(n, i) & mine for n in walk(d) for i in {src[f], "id", idf}])
+        if len(hit) > 1: out.append(f"{f}: keeps the {k} list that {o} owns (ids {', '.join(sorted(hit))[:120]}); refer to them by id")
+print("\n".join(out))
+EOF
+)
 need "role table" "$R/docs/hermes-local/roles.json"; need "limits file" "$R/.supervisor/limits.env"; need "board file" "$R/$BOARD"
 # The file list first, in every mode: the one step every entry and every input file passes (owner and state paths judged) before the shell reads any
 lst=$(python3 -I -B -c "$PY" "$R" "$A" --list "" "$BOARD" "$mode") || die "the file list failed: ${lst#ERROR$'\t'}"
@@ -206,8 +254,9 @@ jq -e 'def S: type == "string" and length > 0; def rows(f): type == "array" and 
   and (.allow | rows((.file | S) and (.text | S) and (.phase | S))) and (.own_names | rows((.text | S) and (.phase | S)))
   and (.plain_words | rows((.word | S) and (.why | S)))
   and (.skip | rows((.file | P and test("[A-Za-z0-9_]")) and (.why | S) and ((.run_by // "x") | P)))
+  and ((.lists // []) | rows((.kind | S) and (.owner == null or (.owner | P)) and (.owner == null or (.path | S)) and ((.id // "x") | S)))
   and (.scan | type == "array" and length > 0 and all(.[]; P)) and (.watch | type == "array" and all(.[]; S))' "$A" >/dev/null 2>&1 \
-  || die "$A is not a valid allow list (schema_version 1; baseline, allow, own_names, plain_words, skip, scan and watch are lists of well-formed rows; patterns are paths inside the root; no baseline row twice)"
+  || die "$A is not a valid allow list (schema_version 1; baseline, allow, own_names, plain_words, skip, scan, watch and lists are lists of well-formed rows; patterns are paths inside the root; no baseline row twice)"
 [ "$mode" != --list ] || { printf '%s\n' "$lst"; exit 0; }
 [ -n "$H" ] || die "neither HARDCODE_HOME nor HOME is set: no home folder to read the projects database and the Hermes homes from"
 need "home folder" "$H"; need "Hermes folder" "$H/.hermes" "$H/.hermes/projects.db" "$H/.hermes/profiles"
@@ -250,4 +299,7 @@ if [ $crc != 0 ]; then   # only a single ERROR line is a message; anything else 
   die "the counting step failed (it ended without a result)"
 fi
 [ "$mode" = --dump ] && { [ -z "$counts" ] || printf '%s\n' "$counts"; exit 0; }
+dups=$(python3 -I -B -c "$PYD" "$R" "$A"); drc=$?
+if [ $drc != 0 ]; then case $dups in "ERROR"$'\t'*) [ "$(wc -l <<<"$dups")" = 1 ] && die "the duplicate-list check failed: ${dups#ERROR$'\t'}";; esac; die "the duplicate-list check failed (it ended without a result)"; fi
+[ -z "$dups" ] || { say STL-CFG-320 "the same list is kept in two data files" problem="$(wc -l <<<"$dups") file and list pairs"; printf '%s\n' "$dups"; [ -z "$counts" ] || printf '%s\n' "$counts"; exit 1; }
 [ -z "$counts" ] || { say STL-CFG-320 "a hard-coded name is used more often than its baseline allows" problem="$(wc -l <<<"$counts") file and name pairs"; printf '%s\n' "$counts"; exit 1; }
