@@ -245,4 +245,7 @@ kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null; rm -f "$S/$ow"
 # VER4-03: run_by keeps only the words of the runner's lists that are selftest names; a stem that is another word is scanned
 fresh; withcat; f='bin/"$@"-selftest.sh'; printf '# x\n' >"$S/$f"; plant "$f" "$fp"
 ok 'fails_on "\"$fp\"" && grep -qF -- "$f" <<<"$out"' "VER4-03: a provider id in $f (its stem is a word of a runner's for line, not a selftest name) is counted"
+# W5 r6 (VER5-06): the root's own allow list as a tracked link to outside the root is refused in every mode, --list too
+gitroot; cp "$S/$AL" "$T/al-out.json"; rm -f "$S/$AL"; ln -s "$T/al-out.json" "$S/$AL"; track "$AL"
+ok 'refused --list && refused --check' "Q7: the default allow list linked outside the root is refused by --list and --check (exit 2, the code)"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
