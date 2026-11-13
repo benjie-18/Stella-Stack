@@ -298,4 +298,18 @@ check 3 "P1: the Haiku counter is a link" sh -c "echo hi | $E t_aaaa0505 haiku j
 ok '[ "$(cat "$V")" = keep ]' "P1: ... neither the Haiku lock's nor the counter's target is written"
 rm -f "$C1" "$Q"; cp "$T/limits.keep" "$T/sup/limits.env"
 
+# W5 r6 (VER5-02): the prompt_file of a queue line is used only when it is a regular, unlinked prompt-*.txt directly in the state folder
+pline() { printf '{"id":"q_%s","card":"t_aaaa0000","model":"haiku","purpose":"judge","call_reason":"why","claude_args":[],"reason":"LIMIT","created":"%s","state":"queued","prompt_file":"%s"}\n' "$1" "$(date -u +%FT%TZ)" "$2"; }
+ln -s "$V" "$T/sup/state/prompt-link.txt"; { pline p1 "$V"; pline p2 "$V"; pline p3 "$T/sup/state/prompt-link.txt"; pline p4 "$V"; } >"$Q"; n=$(runs)
+$D --replay q_p1 >/dev/null 2>&1; $D --drop q_p2 >/dev/null 2>&1; $D --all >/dev/null 2>&1
+ok '[ "$(cat "$V")" = keep ] && [ "$(runs)" = "$n" ] && [ "$(jq -r .state "$Q" | tr "\n" ,)" = "stale,dropped,stale,stale," ]' "Q3: a prompt_file outside the state folder, or a link in it (--replay, --drop, --all): not read, not removed, no model call, the entries stale or dropped"
+rm -f "$T/sup/state/prompt-link.txt" "$Q"
+
+# W5 r6 (VER5-05): a state folder that is itself a link is refused by both scripts before anything is made in it
+mkdir "$T/outside"; mv "$T/sup/state" "$T/state.keep"; ln -s "$T/outside" "$T/sup/state"
+check 2 "Q6: the state folder is a link: the call is refused" sh -c "echo hi | $E t_aaaa0601 haiku judge why"
+check 2 "Q6: ... and so is the drain" $D --list
+ok '[ -z "$(ls -A "$T/outside")" ]' "Q6: ... nothing is made in the folder it points at"
+rm -f "$T/sup/state"; mv "$T/state.keep" "$T/sup/state"
+
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

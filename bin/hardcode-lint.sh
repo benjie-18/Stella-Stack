@@ -9,10 +9,12 @@
 # and no "skip" row. A pattern is a whole path: `*` and `?` stop at a folder border, `**` crosses folders; none may start with
 # `/` or hold a `..` segment. The lint lists, reads and copies none of the owner settings and the apply tool's state (bin/roles.py
 # owner_settings and state_paths, the functions the guards use); only when it reports, its alert line is rendered by
-# bin/alert_catalog.py, which reads one owner key (the time zone) as every alert of the stack does. Every entry is judged by what it resolves to before anything opens
+# bin/alert_catalog.py, which reads one owner key (the time zone) as every alert of the stack does. The role table and the data
+# index it names are read first, to learn those paths: each is refused unopened (exit 2) when it is a link or not a regular file.
+# Every other entry is judged by what it resolves to before anything opens
 # it, and one that is, lies in or holds such a path, is a hard link to one, or is a link loop, is dropped; a link that points
 # outside the root is refused (exit 2: a scanned file, a runner, an input; --list leaves out such a data file, which --check
-# refuses; only the caller's own HARDCODE_ALLOW file may lie outside), and a dangling one is refused when it is read (exit 2). A link to a file that is scanned anyway is
+# refuses, but refuses such an allow list itself; only the caller's own HARDCODE_ALLOW file may lie outside), and a dangling one is refused when it is read (exit 2). A link to a file that is scanned anyway is
 # read once, under the file's own name. A role table the role tool refuses (an empty owner_settings list) is refused.
 # hardcode-allow.json: "scan" (patterns of files to scan), "skip" (files left out, each with its reason; "run_by" names the file
 # whose `for <name> in <words>;` list must hold the stem the row's first `*` matched, as the suite runner lists the selftests), "plain_words" (role names that
@@ -64,12 +66,17 @@ def rx(p, cap=False):  # a whole path; ** crosses folders, * and ? stop at a bor
         elif p[i] == "?": out += "[^/]"; i += 1
         else: out += re.escape(p[i]); i += 1
     return re.compile(out + r"\Z")
+def plain(x, what):  # the two files read before the owner paths are known: judged by kind alone, a link or a non-regular file is never opened
+    p = root / x
+    if p.is_symlink() or (p.exists() and not p.is_file()): err(f"the {what} ({x}) is a link or not a regular file: not opened")
+plain("docs/hermes-local/roles.json", "role table")
 try:
     with open(root / "docs/hermes-local/roles.json", encoding="utf-8") as fh: rt = json.load(fh, object_pairs_hook=roles._pairs)
 except (OSError, ValueError) as e: err(f"the role table (docs/hermes-local/roles.json) cannot be read ({type(e).__name__})")
 bad = roles.validate(rt, str(root))   # as the role tool refuses it (the hook-file rule included, B.2 point 8) (an empty owner_settings list among the rest)
 if bad: err("the role table (docs/hermes-local/roles.json) is refused by bin/roles.py: " + "; ".join(bad)[:400])
 try:
+    plain(str(rt["data_index"]), "data index")
     idx = roles.index(rt, str(root))
     owner = [os.path.relpath(p, roles.ROOT) for p in roles.owner_settings(rt)] + roles.state_paths(rt, str(root))
     data = [rt["data_index"], *(f["path"] for f in idx["files"]), idx["role_table"]]
@@ -113,13 +120,13 @@ def kept(f):
     real[f] = (rp, st); return True
 universe = [f for f in universe if kept(f)]
 # The files the shell and the data tool read by name (and the allow list) are judged the same way; the role table and the index
-# themselves are read first, as JSON, to learn the paths (an env file is not JSON: it is refused, never counted).
+# themselves are read first, as JSON, to learn the paths (plain() above: never through a link; an env file is not JSON: it is refused, never counted).
 strict = (sys.argv[6:] or [mode])[0] != "--list"   # the list step of a --check or --dump run refuses an input linked outside the root
 caller = Path(ap) != Path(sys.argv[1], "docs/hermes-local/hardcode-allow.json")   # HARDCODE_ALLOW: the caller's own file may lie outside
 for x in ["docs/hermes-local/roles.json", rt["data_index"], board, ".supervisor/limits.env", ap, *(r["path"] for r in idx["files"] if r["id"] == "connections")]:
     rp = os.path.realpath(root / x)
     if any(under(rp, o) or under(o, rp) for o in prot) or ident(rp) in ids: err("an input of the lint is, or points at, an owner or state path: " + json.dumps(x))
-    if strict and not under(rp, rs) and not (caller and x == ap): err("an input of the lint resolves outside the root: " + json.dumps(x))
+    if (strict or x == ap) and not under(rp, rs) and not (caller and x == ap): err("an input of the lint resolves outside the root: " + json.dumps(x))
 for f in universe:
     if "\n" in f or "\t" in f: err("a file name has a tab or a newline: " + json.dumps(f))
 try:   # judged above, opened here; its full shape is checked by the shell after this step
