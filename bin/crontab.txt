@@ -1,5 +1,5 @@
 # build watchdog (Stage 4 item 3): test, lint, build every 15 min; alerts discord:#alerts on failure
-# WATCHDOG_STEP_TIMEOUT=1200: the watchdog's test step runs the quick tier (the npm script named in the watchdog settings), measured 277.5 s at 4 in parallel with 34 names (2026-11-13); one name was added since and the tier was not timed again; the full suite runs at merge. The value stays above the 600 s default (RU-07, D69); a run still active at the next tick makes that tick skip
+# WATCHDOG_STEP_TIMEOUT=1200: the watchdog's test step runs the quick tier (the npm script named in the watchdog settings), measured 452.2 s at 4 in parallel with 35 names (2026-11-13); the full suite runs at merge. The value stays above the 600 s default (RU-07, D69); a run still active at the next tick makes that tick skip
 */15 * * * * WATCHDOG_STEP_TIMEOUT=1200 WATCHDOG_TRIGGER=cron /workspace/bin/watchdog.sh >/dev/null 2>&1
 # T16 #escalations thread replies: record and unblock (D28), every minute
 * * * * * /workspace/bin/escalation-reply-poll.sh >/dev/null 2>&1
