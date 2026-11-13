@@ -4,6 +4,9 @@
 # read (Read, Grep, Glob; model sonnet). The 9B "reviewer" keeps its old hook. No Claude call, no login, no board.
 set -u
 R=/workspace; H=$R/docs/hermes-local/hooks/reviewer/claude-review-terminal.sh; T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; fails=0
+# r6 T8b: every alert and once-file a refusing hook writes goes to this run's own folder, never the tree's (on the live tree each line may page)
+TREE_SUP=$R/.supervisor; tree_sup() { find "$TREE_SUP" -type f 2>/dev/null | sort | xargs -r stat -c '%n %s' 2>/dev/null; }; TREE_BEFORE=$(tree_sup)
+export ESCALATE_SUP_DIR=$T/sup; mkdir -p "$T/sup/logs"
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 jq() { env -u HOME jq "$@"; }
 run() { jq -nc --arg c "$1" --arg t "${2:-terminal}" '{hook_event_name: "pre_tool_call", tool_name: $t, tool_input: {command: $c}}' | bash "$H" >"$T/out" 2>&1; echo $?; }
@@ -151,4 +154,5 @@ ok '! EXPORT_DIR="" sendit "$T/review-prompt.txt" 2>/dev/null && ! EXPORT_DIR="$
 printf '#!/bin/sh\npwd > "$FAKE_PWD"\necho "APPROVE (fake)"\n' >"$T/fakebin/claude"; chmod +x "$T/fakebin/claude"
 ok 'FAKE_PWD="$T/pwd.out" sendit "$T/review-prompt.txt" >/dev/null && [ "$(cat "$T/pwd.out")" = "$T/export" ]' "Claude runs inside the exported committed tree, whatever folder the terminal started in (red-team S6L-RT-09)"
 : >"$T/empty.txt"; ok '! sendit "$T/empty.txt" 2>/dev/null' "it refuses an empty prompt file"
+ok '[ "$(tree_sup)" = "$TREE_BEFORE" ] && [ -s "$T/sup/logs/alerts.log" ]' "T8b: the tree's own .supervisor holds nothing new after the run (no file added, none grown); the refusals' alert lines are in this run's folder"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
