@@ -43,15 +43,6 @@ need() { local w=$1 p n; shift; for p; do n=${p#"$R"/}; [ "$p" = "$H" ] && n="HA
   { [ ! -e "$p" ] && [ ! -L "$p" ]; } || { [ -r "$p" ] && { [ ! -d "$p" ] || [ -x "$p" ]; }; } || die "the $w ($n) is there but cannot be read"; done; }
 case $mode in --check|--dump|--list) ;; *) die "usage: hardcode-lint.sh [--check | --dump | --list]";; esac
 need "allow list" "$A"
-jq -e 'def S: type == "string" and length > 0; def rows(f): type == "array" and all(.[]; type == "object" and f);
-  def P: S and (test("^/|(^|/)\\.\\.(/|$)") | not);
-  (.schema_version == 1) and (.baseline | rows((.file | S) and (.literal | S) and (.phase | S) and (.count | type == "number" and . >= 0 and . == floor)))
-  and ([.baseline[] | [.file, .literal]] | length == (unique | length))
-  and (.allow | rows((.file | S) and (.text | S) and (.phase | S))) and (.own_names | rows((.text | S) and (.phase | S)))
-  and (.plain_words | rows((.word | S) and (.why | S)))
-  and (.skip | rows((.file | P and test("[A-Za-z0-9_]")) and (.why | S) and ((.run_by // "x") | P)))
-  and (.scan | type == "array" and length > 0 and all(.[]; P)) and (.watch | type == "array" and all(.[]; S))' "$A" >/dev/null 2>&1 \
-  || die "$A is not a valid allow list (schema_version 1; baseline, allow, own_names, plain_words, skip, scan and watch are lists of well-formed rows; patterns are paths inside the root; no baseline row twice)"
 BOARD=bin/kanban-board.sh
 # The files: tracked (git) or walked, minus the owner paths, the scan patterns and the skip rows; $PY also lists them (--list) and counts.
 PY=$(cat <<'EOF'
@@ -62,7 +53,6 @@ root, ap, mode, board = Path(sys.argv[1]).resolve(), sys.argv[2], sys.argv[3], s
 sys.path.insert(0, str(root / "bin"))
 try: import roles   # the role tool of the tree scanned: its owner and state paths are the ones its guards refuse
 except Exception as e: err(f"the role tool (bin/roles.py) cannot be loaded ({type(e).__name__})")
-allow = json.load(open(ap))
 def rx(p, cap=False):  # a whole path; ** crosses folders, * and ? stop at a border; cap: the first * is captured
     out, i = "", 0
     while i < len(p):
@@ -127,7 +117,10 @@ for x in ["docs/hermes-local/roles.json", rt["data_index"], board, ".supervisor/
     if any(under(rp, o) or under(o, rp) for o in prot) or ident(rp) in ids: err("an input of the lint is, or points at, an owner or state path: " + json.dumps(x))
 for f in universe:
     if "\n" in f or "\t" in f: err("a file name has a tab or a newline: " + json.dumps(f))
-scan = [rx(p) for p in allow["scan"]]; skip = [(rx(s["file"], bool(s.get("run_by"))), s.get("run_by")) for s in allow["skip"]]
+try:   # judged above, opened here; its full shape is checked by the shell after this step
+    with open(ap, encoding="utf-8") as fh: allow = json.load(fh)
+    scan = [rx(p) for p in allow["scan"]]; skip = [(rx(s["file"], bool(s.get("run_by"))), s.get("run_by")) for s in allow["skip"]]
+except (OSError, ValueError, LookupError, TypeError, AttributeError): err("the allow list is not a valid allow list: " + json.dumps(ap))
 runs = {}
 def listed(rb):  # the words of the runner's `for <name> in <words>;` lists: what it runs, not any word of its text
     if rb not in runs:
@@ -193,6 +186,15 @@ EOF
 need "role table" "$R/docs/hermes-local/roles.json"; need "limits file" "$R/.supervisor/limits.env"; need "board file" "$R/$BOARD"
 # The file list first, in every mode: the one step every entry and every input file passes (owner and state paths judged) before the shell reads any
 lst=$(python3 -I -B -c "$PY" "$R" "$A" --list "" "$BOARD") || die "the file list failed: ${lst#ERROR$'\t'}"
+jq -e 'def S: type == "string" and length > 0; def rows(f): type == "array" and all(.[]; type == "object" and f);
+  def P: S and (test("^/|(^|/)\\.\\.(/|$)") | not);
+  (.schema_version == 1) and (.baseline | rows((.file | S) and (.literal | S) and (.phase | S) and (.count | type == "number" and . >= 0 and . == floor)))
+  and ([.baseline[] | [.file, .literal]] | length == (unique | length))
+  and (.allow | rows((.file | S) and (.text | S) and (.phase | S))) and (.own_names | rows((.text | S) and (.phase | S)))
+  and (.plain_words | rows((.word | S) and (.why | S)))
+  and (.skip | rows((.file | P and test("[A-Za-z0-9_]")) and (.why | S) and ((.run_by // "x") | P)))
+  and (.scan | type == "array" and length > 0 and all(.[]; P)) and (.watch | type == "array" and all(.[]; S))' "$A" >/dev/null 2>&1 \
+  || die "$A is not a valid allow list (schema_version 1; baseline, allow, own_names, plain_words, skip, scan and watch are lists of well-formed rows; patterns are paths inside the root; no baseline row twice)"
 [ "$mode" != --list ] || { printf '%s\n' "$lst"; exit 0; }
 [ -n "$H" ] || die "neither HARDCODE_HOME nor HOME is set: no home folder to read the projects database and the Hermes homes from"
 need "home folder" "$H"; need "Hermes folder" "$H/.hermes" "$H/.hermes/projects.db" "$H/.hermes/profiles"
