@@ -76,7 +76,8 @@
     "role-guard",
     "check-guard",
     "complete-gate",
-    "watchdog"
+    "watchdog",
+    "write-guard"
   ],
   "full": [],
   "map": [
