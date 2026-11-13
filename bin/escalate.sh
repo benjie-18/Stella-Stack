@@ -62,9 +62,10 @@ registry() {  # registry <KEY>: sets reg_def reg_min reg_max from the settings r
 }
 note() { kanban comment --author escalate.sh "$card" "$1" >/dev/null 2>&1; }
 QUEUE="$STATE/queue.jsonl"
-# nolink <file>: false, with a warning, when a file of the state folder is a link; no write there opens one (W5-RT4-01).
+# nolink <file>: false, with a warning, when a file of the state folder (or the log) is a symbolic link or has a second hard link;
+# no write there opens one (W5-RT4-01).
 # shortcut: whoever can write the state folder can put a link in between this test and the open; upgrade to an O_NOFOLLOW open if a less trusted user can write it
-nolink() { [ ! -L "$1" ] || { echo "escalate.sh: warning: ${1#"$SUP"/} is a link: not written through it" >&2; return 1; }; }
+nolink() { { [ ! -L "$1" ] && { [ ! -f "$1" ] || [ "$(stat -c %h "$1")" = 1 ]; }; } || { echo "escalate.sh: warning: ${1#"$SUP"/} is a link: not written through it" >&2; return 1; }; }
 nolink "$LOG" || exit 2   # every call logs: checked once, before the first line is appended
 queue_failed() {  # queue_failed <what>: the call is not in the queue, and every message says so (the prompt goes: nothing points at it)
   flock -u 6 2>/dev/null; rm -f "$prompt"; qid=""   # fd 6 is not open when the lock file was refused
