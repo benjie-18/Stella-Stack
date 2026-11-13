@@ -3,8 +3,8 @@
 # usage: escalate-drain.sh --list               every entry: id, state, reason, card, model (purpose), created
 #        escalate-drain.sh --replay <id>|--all  run queued entries again through bin/escalate.sh, which checks limits.env
 #                                               and the pool again. An entry is claimed under the queue lock before the run,
-#                                               so a second replay of the same id does nothing. Still blocked (exit 3 or
-#                                               75): left queued, no alert. Older than QUEUE_MAX_AGE_HOURS, or its card
+#                                               so a second replay of the same id does nothing. Still blocked, refused or
+#                                               not started (exit 2, 3, 75, 126, 127): left queued, no alert. Older than QUEUE_MAX_AGE_HOURS, or its card
 #                                               done or archived: marked stale and skipped.
 #        escalate-drain.sh --drop <id>          mark it dropped
 # A prompt file is removed when its entry leaves the queued state; a prompt_file that is not the queue's own (pfile) is never read or removed. Exit 0, or 2 on a usage error, an unknown id or a link in the state folder (nothing written).
@@ -57,7 +57,7 @@ replay() {
   flock 6
   case "$rc" in
     0)    setstate "$id" replayed; rm -f "$pf"; echo "$id: replayed" ;;
-    2|3|75) setstate "$id" queued; echo "$id: still blocked or not runnable now (exit $rc), left in the queue" ;;   # 2: kanban show failed (review M2), or escalate.sh refused because a setting's registry default is unreadable (STL-CFG-310)
+    2|3|75|126|127) setstate "$id" queued; echo "$id: still blocked or not runnable now (exit $rc), left in the queue" ;;   # 2: kanban show failed (review M2), or escalate.sh refused because a setting's registry default is unreadable (STL-CFG-310); 126, 127: the call could not start (a field over the argument limit, no model command): the prompt is kept, the entry goes stale by age (W5-RT6-03)
     *)    setstate "$id" failed; rm -f "$pf"; echo "$id: failed (exit $rc)" ;;
   esac
   flock -u 6
