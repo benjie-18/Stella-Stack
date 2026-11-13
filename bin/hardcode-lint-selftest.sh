@@ -236,4 +236,10 @@ for f in bin/hermes-selftest.sh bin/grep-selftest.sh; do fresh; withcat; printf 
 # V6: the labels and the about text say what is true
 ok 'jq -r ".baseline[] | select(.phase | test(\"build-team preset\")) | .file" "$A" | sort -u | while read -r f; do grep -q "build-team preset" "$W/$f" || exit 1; done' "V6: a baseline row that says its file is generated from the build-team preset names a file that says so"
 ok 'jq -e ".about | test(\"joined\") and test(\"for <name> in\")" "$A" >/dev/null' "V6: the about text states the joined-literal rule of own_names and that run_by reads the runner's list"
+# ---- W5 r5: written before the fix ----
+# VER4-01: the allow list is judged against the owner and state paths before anything opens it (a FIFO owner file with a writer that marks an open)
+fresh; withcat; git -C "$S" init -q; rm "$S/$AL"; ln -s "$(realpath -m --relative-to="$(dirname "$S/$AL")" "$S/$ow")" "$S/$AL"; git -C "$S" add -A
+mkdir -p "$S/$(dirname "$ow")"; rm -f "$S/$ow" "$T/opened"; mkfifo "$S/$ow"; ( exec 3>"$S/$ow"; touch "$T/opened" ) & wp=$!
+ok 'out=$(lint --list); [ $? = 2 ] && grep -q "is, or points at, an owner or state path" <<<"$out" && [ ! -e "$T/opened" ]' "VER4-01: an allow list that is a tracked link to the owner file is refused before it is opened (exit 2, no open)"
+kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null; rm -f "$S/$ow"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
