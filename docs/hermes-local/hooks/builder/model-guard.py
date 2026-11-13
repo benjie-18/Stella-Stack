@@ -5,8 +5,8 @@ Claude Code runs here only as Sonnet: every `claude` that runs a model (-p/--pri
 --model sonnet (or claude-sonnet-*), and no claude call may skip permissions (--dangerously-skip-permissions,
 --allow-dangerously-skip-permissions, --permission-mode bypassPermissions, --yolo) or fall back to another model.
 A bare claude -p is refused because the builder's default model is not Sonnet (~/.claude/settings.json: opus).
-Opus and Haiku go only through bin/escalate.sh (allowed; its extra claude args after -- are checked for the
-permission flags). Nested quoted command lines are tokenized as git-guard.py does. Exit 2 = block; any error blocks."""
+Opus and Haiku go only through bin/escalate.sh (allowed; it refuses every extra claude arg after --, so none
+reaches the model command). Nested quoted command lines are tokenized as git-guard.py does. Exit 2 = block; any error blocks."""
 import json, re, shlex, sys
 
 SEP = {"&&", "||", ";", "|", "&"}
