@@ -26,8 +26,9 @@ mkdir -p "$STATE"; nolink "$STATE/queue.lock" || exit 2; exec 6>>"$STATE/queue.l
 rows() { jq -cR 'fromjson? | select(type == "object")' "$Q" 2>/dev/null; }
 entry() { rows | jq -c --arg id "$1" 'select(.id == $id)' | tail -1; }
 setstate() {  # setstate <id> <state>; the caller holds the lock
+  local t; t=$(mktemp "$Q.XXXXXX") || return   # a new file under a name nobody planted: mktemp never opens a link
   jq -rR --arg id "$1" --arg s "$2" --arg t "$(date -u +%FT%TZ)" '. as $l | (try (fromjson | if type == "object" and .id == $id then .state = $s | .updated = $t else . end | tojson) catch $l)' \
-    "$Q" >"$Q.tmp" && mv "$Q.tmp" "$Q"
+    "$Q" >"$t" && mv "$t" "$Q" || { rm -f "${t:?}"; return 1; }
 }
 
 replay() {
