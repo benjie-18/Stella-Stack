@@ -85,11 +85,10 @@ prep() {
 bad=""; prep >"$R/why" 2>&1 || bad=$(head -c 300 "$R/why" | head -3 | tr '\n' ' ')
 real_hermes=$(command -v hermes || echo /bin/false)
 
-# key <name>: sets k, the name's result-file key: a valid name itself; any other name an escaped form starting with %, which no valid name can take
-key() { if [[ $1 =~ ^[A-Za-z0-9._-]+$ ]]; then k=$1; else k=${1//%/%25}; k=%${k//\//%2F}; fi; }
-# run_one <name>: writes $R/res-<key> (the result lines), rc-<key> (0 pass or skip, 1 FAIL), ms-<key> (milliseconds)
+# run_one <k>: runs names[k]; writes $R/res-<k> (the result lines), rc-<k> (0 pass or skip, 1 FAIL), ms-<k> (milliseconds). The key is
+# the name's position in the list: two names can be one file name (a filesystem that ignores case), two positions never are.
 run_one() {
-  local t=$1 out s=${EPOCHREALTIME//[.,]/} k; key "$t"; local p=$R/job-$k q=$Q/job-$k
+  local k=$1 t=${names[$1]} out s=${EPOCHREALTIME//[.,]/}; local p=$R/job-$k q=$Q/job-$k
   if [[ ! $t =~ ^[A-Za-z0-9._-]+$ || ! -f $ROOT/bin/$t-selftest.sh ]]; then out="no such selftest: bin/$t-selftest.sh"
   elif [ -n "$bad" ]; then out="cannot make the private copy or the mount namespace ($bad)"
   elif ! mkdir -p "$q/.bin" "$p" || ! cp -a "$R/base" "$p/tree"; then out="cannot make the private copy or the mount namespace (cp failed)"
@@ -118,12 +117,12 @@ run_one() {
 N=$(python3 -I "$ROOT/bin/watchdog_settings.py" get test_rerun.parallel 2>/dev/null); [[ $N =~ ^[1-9][0-9]*$ ]] || N=4
 run_set() { local n=$1 t; shift; for t; do while [ "$(jobs -rp | wc -l)" -ge "$n" ]; do wait -n; done; run_one "$t" 7>&- & done; wait; }
 par=(); ser=()   # a selftest that must not share the machine says so in its own file: a line "# selftest: serial"; those run after the batch, alone
-for n in "$@"; do if grep -qs '^# selftest: serial$' "$ROOT/bin/$n-selftest.sh"; then ser+=("$n"); else par+=("$n"); fi; done
+names=("$@"); for k in "${!names[@]}"; do if grep -qs '^# selftest: serial$' "$ROOT/bin/${names[k]}-selftest.sh"; then ser+=("$k"); else par+=("$k"); fi; done
 run_set "$N" "${par[@]}"; run_set 1 "${ser[@]}"
 
 fails=0   # printed in list order, whatever order they finished in
-for n in "$@"; do
-  key "$n"; cat "$R/res-$k"; [ "$(cat "$R/rc-$k")" = 0 ] || fails=$((fails+1))
+for k in "${!names[@]}"; do n=${names[k]}
+  cat "$R/res-$k"; [ "$(cat "$R/rc-$k")" = 0 ] || fails=$((fails+1))
   # SELFTESTS_TIMES=<file>: one line "<seconds>	<name>	<ok|skip|FAIL>" per selftest
   [ -z "$times" ] || printf '%d.%03d\t%s\t%s\n' $(( $(<"$R/ms-$k") / 1000 )) $(( $(<"$R/ms-$k") % 1000 )) "$n" "$(head -1 "$R/res-$k" | cut -d' ' -f1)" >>"$times"
 done
