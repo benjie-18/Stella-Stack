@@ -253,8 +253,12 @@ def secret_why(cmd, cwd):
                     jtext = " ".join(seg[1:])
                     if any(re.fullmatch(r"-[A-Za-z]*f[A-Za-z]*|--fr[a-z-]*(?:=.*)?", w) for w in seg[1:]):   # the program is a file: its text counts
                         for w in seg[1:]:
-                            pf = _where(w.split("=", 1)[-1], base, names)
-                            if os.path.isfile(pf):
+                            v = w.split("=", 1)[-1]; pf = _where(v, base, names)
+                            # r7 A3 (W4-CV4-02): a standard stream, a name the shell still expands, or anything that exists and is no regular file is a program this guard cannot read
+                            if (re.search(r"[*?\[{$]", v) or re.fullmatch(r"/(?:dev|proc/[^/]+)/(?:std(?:in|out|err)|fd/\d+)", os.path.normpath(pf))
+                                    or (os.path.lexists(pf) and not os.path.isfile(pf))):
+                                jtext += " import"
+                            elif os.path.isfile(pf):
                                 try:
                                     with open(pf, errors="replace") as fh:
                                         jtext += " " + fh.read(1 << 20)
