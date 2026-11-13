@@ -172,8 +172,12 @@ wcard t_0000c006; mkdir -p "$T/repo/.worktrees/t_0000c006/docs/hermes-local/hook
 ok '[ "$(FAKE_APPROVED=t_0000c006 mc t_0000c006)" = 3 ] && grep -q "define the boundary" "$T/out" && grep -q "docs/hermes-local/hooks/zz-guard.sh" "$T/out" && grep -q "i-have-read-the-boundary-changes" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "B3: a branch that edits a hook is refused without the flag, the paths listed"
 ok '[ "$(FAKE_APPROVED=t_0000c006 mc t_0000c006 --i-have-read-the-boundary-changes)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ]' "B3: the same branch merges with the flag"
 h=$(head_of "$T/repo")
-wcard t_0000c007; mkdir -p "$T/repo/.worktrees/t_0000c007/.stella"; echo '{"x": 2}' >"$T/repo/.worktrees/t_0000c007/.stella/capabilities.json"; echo '{}' >"$T/repo/.worktrees/t_0000c007/.stella/test-map.json"; git -C "$T/repo/.worktrees/t_0000c007" add -f -A; wcommit t_0000c007
-ok '[ "$(FAKE_APPROVED=t_0000c007 mc t_0000c007)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ]' "B3/G1: the capability registry and the test map (not owner-only rows) merge as before (product rules 4 and 8)"
+wcard t_0000c007; mkdir -p "$T/repo/.worktrees/t_0000c007/.stella"; echo '{"x": 2}' >"$T/repo/.worktrees/t_0000c007/.stella/capabilities.json"; git -C "$T/repo/.worktrees/t_0000c007" add -f -A; wcommit t_0000c007
+ok '[ "$(FAKE_APPROVED=t_0000c007 mc t_0000c007)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ]' "B3/G1: the capability registry (not an owner-only row) merges as before (product rule 4)"
+# r7 A4: the test map selects a stack card's own merge tests, so it is a boundary path since round 6: a card that changes only the map needs the owner's flag
+h=$(head_of "$T/repo"); wcard t_0000c008; mkdir -p "$T/repo/.worktrees/t_0000c008/.stella"; echo '{}' >"$T/repo/.worktrees/t_0000c008/.stella/test-map.json"; git -C "$T/repo/.worktrees/t_0000c008" add -f -A; wcommit t_0000c008; a0=$(wc -l <"$T/sup/logs/alerts.log")
+ok '[ "$(FAKE_APPROVED=t_0000c008 mc t_0000c008)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -q "define the boundary.*\.stella/test-map\.json" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ] && [ "$(wc -l <"$T/sup/logs/alerts.log")" = $((a0+1)) ]' "r7 A4 (B3/G1): a card that changes only the test map is refused without the owner's flag (boundary code, the map named, one alert line), main untouched"
+ok '[ "$(FAKE_APPROVED=t_0000c008 mc t_0000c008 --i-have-read-the-boundary-changes)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ]' "r7 A4 (B3/G1): the same card merges with --i-have-read-the-boundary-changes"
 # K8/K12: the approval is read from runs of the profiles the role table lists as reviewing (roles.py reviewers), not from the
 # literal name "reviewer". Fixture change: the stub's reviewer run takes its profile from FAKE_REVIEWER (default unchanged).
 RT=${ROLES_FILE:-/workspace/docs/hermes-local/roles.json}
@@ -360,6 +364,17 @@ ok '[ "$(FAKE_APPROVED='$c' mc '$c' --owner-approved)" = 3 ] && grep -q "STL-GRD
 rm -f "$T/repo/zz-untracked-local.txt"
 c=t_0000f0a0; wcard $c; printf 'new\n' >"$T/repo/.worktrees/$c/zz-new-tracked.txt"; git -C "$T/repo/.worktrees/$c" add zz-new-tracked.txt; wcommit $c; h=$(head_of "$T/repo")
 ok '[ "$(FAKE_APPROVED='$c' mc '$c' --owner-approved)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ]' "B.3 point 17 control: a card adding a new tracked path where nothing exists merges"
+# r7 A2 (W4-CV4-01): a card that turns a TRACKED folder of main into a file or a link: git's checkout would remove the folder with every ignored file in it, so
+# an untracked file below it refuses the merge before anything is written; with no such file the same card merges
+printf 'zz-td/keep.local\n' >>"$T/repo/.gitignore"; mkdir -p "$T/repo/zz-td"; printf 'tracked\n' >"$T/repo/zz-td/a.txt"; g add .gitignore zz-td/a.txt; g -c core.hooksPath=/dev/null commit -qm "a tracked folder with an ignored local file rule"
+printf 'OWNER-LOCAL\n' >"$T/repo/zz-td/keep.local"
+for kd in file link; do c=t_0000f7a4; [ $kd = file ] || c=t_0000f7a6; wcard $c; rm -rf "$T/repo/.worktrees/$c/zz-td"
+  if [ $kd = file ]; then printf 'CARD\n' >"$T/repo/.worktrees/$c/zz-td"; else ln -s /tmp "$T/repo/.worktrees/$c/zz-td"; fi
+  git -C "$T/repo/.worktrees/$c" add -A; wcommit $c; h=$(head_of "$T/repo")
+  ok '[ "$(mc '$c' --owner-approved)" = 3 ] && grep -q "STL-GRD-607" "$T/out" && grep -qF "zz-td/keep.local" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ] && [ "$(cat "$T/repo/zz-td/keep.local")" = OWNER-LOCAL ]' "r7 A2: a card that turns the tracked folder zz-td into a $kd is refused (607 names the untracked file below it), head unchanged, the file byte-identical"
+done
+rm -f "$T/repo/zz-td/keep.local"; h=$(head_of "$T/repo")
+ok '[ "$(mc t_0000f7a4 --owner-approved)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ] && [ -f "$T/repo/zz-td" ]' "r7 A2 control: the same folder-to-file card merges when the folder holds no untracked file"
 # B.1 point 6 (r5, W1-RT6-01): a card branch that replaces a folder holding an owner path (the owner settings' folder, owner data's, the apply tool's
 # state's) by a symbolic link is refused, and the main checkout's folder stays a folder
 for hd in "$(jq -r '.owner_settings[0]' "$RF" | cut -d/ -f1)" "$(jq -r '.owner_data[0]' "$RF" | cut -d/ -f1)" "$(jq -r .applied_state "$IDX" | cut -d/ -f1)"; do
@@ -402,7 +417,7 @@ ok 'grep -q "zz-alpha zz-beta" "$SR/bin/selftests.sh" && [ "$(readlink -f "$SR/b
 scard t_0000b201 zz-mapped.txt x; h=$(head_of "$SR")
 ok '[ "$(smc t_0000b201 --owner-approved)" = 0 ] && grep -q "^ok   zz-alpha-selftest" "$T/out" && grep -q "^ok   zz-beta-selftest" "$T/out" && ! grep -q "the whole suite" "$T/out" && [ "$(head_of "$SR")" != "$h" ]' "B2: a stack card touching one mapped file runs the selected selftest and the quick tier through the runner (isolated, in the box) and merges"
 scard t_0000b202 zz-red.txt x; h=$(head_of "$SR")
-ok '[ "$(smc t_0000b202 --owner-approved)" = 3 ] && grep -q "FAIL zz-red-selftest" "$T/out" && grep -q "^ok   zz-beta-selftest" "$T/out" && grep -q "tests failed" "$T/out" && [ "$(head_of "$SR")" = "$h" ]' "B2: a stack card whose selected selftest fails is refused (tests failed), main untouched"
+ok '[ "$(smc t_0000b202 --owner-approved)" = 3 ] && grep -q "FAIL zz-red-selftest" "$T/out" && grep -q "^ok   zz-beta-selftest" "$T/out" && grep -q "tests failed" "$T/out" && ! grep -q "(npm test" "$T/out" && [ "$(head_of "$SR")" = "$h" ]' "B2: a stack card whose selected selftest fails is refused (tests failed; r7 B6: the line does not call the selected selftests npm test), main untouched"
 scard t_0000b203 zz-full.txt x; h=$(head_of "$SR")
 ok '[ "$(smc t_0000b203 --owner-approved)" = 0 ] && grep -q "the whole suite" "$T/out" && grep -q "^ok   zz-alpha-selftest" "$T/out" && grep -q "^ok   zz-beta-selftest" "$T/out" && [ "$(head_of "$SR")" != "$h" ]' "B2: select answers full: the whole suite of the tree under test runs"
 scard t_0000b204 zz-mapped.txt y bin/zz-alpha-selftest.sh 'echo "FAIL the card changed this selftest"; exit 1'; h=$(head_of "$SR")
@@ -437,4 +452,11 @@ scard t_0000b20a zz-c4.txt x; cp "$T/c4-map.py" "$SR/.worktrees/t_0000b20a/bin/t
 ok '[ -e "$OSF4" ] && [ "$(smc t_0000b20a --owner-approved --i-have-read-the-boundary-changes)" = 0 ] && grep -q "^C4 in-ns uid=0" "$T/out" && grep -q "^C4 ok read-only" "$T/out" && grep -q "^C4 ok hidden" "$T/out" && grep -q "^C4 ok broker" "$T/out" && ! grep -q "C4 BAD\|C4-BROKER-CANARY" "$T/out" && [ ! -e "$SR/zz-c4-written" ]' "r6 C4: in the nested-namespace box of a stack card's merge test, code in its own user and mount namespace cannot write the read-only checkout, see the hidden owner settings path or read a broker file"; grep "^C4 " "$T/out" | sed 's/^/     info /' | head -12
 card t_0000b209 b209.txt b209 'echo QA-NPM-RAN; unshare -Ur true 2>/dev/null && exit 1; exit 0'; h=$(head_of "$T/repo")
 ok '[ "$(mc t_0000b209 --owner-approved)" = 0 ] && grep -q QA-NPM-RAN "$T/out" && ! grep -q "merge test:" "$T/out" && [ "$(head_of "$T/repo")" != "$h" ]' "B2: a project card is unchanged: its own test command runs, in a box that still forbids nested namespaces"
+# r7 B3 (W4-CV4-08): a merge-check/<card> branch left by an interrupted merge does not block the next merge of that card
+card t_0000f7b3 f7b3.txt f7b3 'exit 0'; g branch merge-check/t_0000f7b3 main; h=$(head_of "$T/repo")
+ok '[ "$(mc t_0000f7b3 --owner-approved)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ] && ! g rev-parse -q --verify merge-check/t_0000f7b3 >/dev/null' "r7 B3: a leftover merge-check/<card> branch is reused, the card merges and the branch is gone after"
+# r7 A5 (W4-VER4-02): with --push the card is merged locally before the merged main's tests run: a box or worktree fault there (STL-GRD-605) never says "nothing was merged"
+card t_0000f7a5 f7a5.txt f7a5 'exit 0'; mkdir -p "$T/repo/.worktrees/merge-test-t_0000f7a5"; : >"$T/repo/.worktrees/merge-test-t_0000f7a5/leftover"; h=$(head_of "$T/repo"); r0=$(head_of "$T/remote.git" main); a0=$(nal)
+ok '[ "$(mc t_0000f7a5 --owner-approved --push)" = 3 ] && grep -q "STL-GRD-605" "$T/out" && grep -q "Merged locally, NOT pushed" "$T/out" && ! grep -qi "nothing was merged" "$T/out" && [ "$(nal)" = $((a0+1)) ] && tail -n 1 "$T/sup/logs/alerts.log" | grep -q "^STL-GRD-605 " && ! tail -n 1 "$T/sup/logs/alerts.log" | grep -qi "nothing was merged" && [ "$(head_of "$T/repo")" != "$h" ] && [ "$(head_of "$T/remote.git" main)" = "$r0" ]' "r7 A5: --push, the throw-away worktree of the merged main cannot be made: STL-GRD-605 says merged locally, not pushed; neither the output nor the one alert line says 'nothing was merged'"
+rm -rf "$T/repo/.worktrees/merge-test-t_0000f7a5"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

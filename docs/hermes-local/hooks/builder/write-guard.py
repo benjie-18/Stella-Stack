@@ -72,11 +72,8 @@ try:
         OWNER_CMDS = roles.owner_commands(RT)
         import hashlib
         CMD_BYTES = {}   # W4-CV3-07: a copy is known by what it IS: (size -> {sha256}) of the owner command files; a run word that resolves to a file with these bytes is one
-        for _c in OWNER_CMDS:
-            try:
-                _b = open(_c, "rb").read(); CMD_BYTES.setdefault(len(_b), set()).add(hashlib.sha256(_b).hexdigest())
-            except OSError:
-                pass
+        for _c in OWNER_CMDS:   # r7 A6 (W4-CV4-05): a command file that cannot be read is not skipped: the by-bytes rule cannot be proven, so every call is refused (below, STL-CFG-303)
+            _b = open(_c, "rb").read(); CMD_BYTES.setdefault(len(_b), set()).add(hashlib.sha256(_b).hexdigest())
         BY_NAME = [os.path.splitext(os.path.basename(c))[0].casefold() for c in OWNER_CMDS if c[len(ROOT) + 1:] in RT["owner_commands_by_name"]]   # K9: the stem, so a copy without its extension is the same name
         LM = {}   # one memo for the lists built when the guard starts (T1, r5)
         OWNER_CH = roles.chains([f"{ROOT}/{d}" for d in OWNER_REL], LM)   # K1b: the main checkout's; a card worktree's own copies are added when a path lies in it (worktree_chains, T1)

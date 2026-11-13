@@ -243,7 +243,7 @@ def secret_why(cmd, cwd):
                                 return why
                 for i, w in enumerate(seg[1:], 1):
                     r = rec and not (name == "git" and seg[i - 1] in ("-C", "-c"))   # git -C <dir> names where, not what it reads
-                    for v in [w] + ([w.split("=", 1)[1]] if w.startswith("-") and "=" in w else []):
+                    for v in [w] + ([w.split("=", 1)[1]] if w.startswith("-") and "=" in w else []) + ([w[2:]] if re.fullmatch(r"-[A-Za-z][/~.].*", w) else []):   # r7 A7: a short option with its value attached (-f/path) is the path
                         why = None if v.startswith("-") or not v else path_why(v, base, names, r)
                         if why:
                             return why
@@ -253,8 +253,12 @@ def secret_why(cmd, cwd):
                     jtext = " ".join(seg[1:])
                     if any(re.fullmatch(r"-[A-Za-z]*f[A-Za-z]*|--fr[a-z-]*(?:=.*)?", w) for w in seg[1:]):   # the program is a file: its text counts
                         for w in seg[1:]:
-                            pf = _where(w.split("=", 1)[-1], base, names)
-                            if os.path.isfile(pf):
+                            v = w.split("=", 1)[-1]; pf = _where(v, base, names)
+                            # r7 A3 (W4-CV4-02): a standard stream, a name the shell still expands, or anything that exists and is no regular file is a program this guard cannot read
+                            if (re.search(r"[*?\[{$]", v) or re.fullmatch(r"/(?:dev|proc/[^/]+)/(?:std(?:in|out|err)|fd/\d+)", os.path.normpath(pf))
+                                    or (os.path.lexists(pf) and not os.path.isfile(pf))):
+                                jtext += " import"
+                            elif os.path.isfile(pf):
                                 try:
                                     with open(pf, errors="replace") as fh:
                                         jtext += " " + fh.read(1 << 20)
@@ -264,7 +268,8 @@ def secret_why(cmd, cwd):
                             or any(re.match(r"-[A-Za-z]*L", w) or (len(w.split("=", 1)[0]) >= 5 and "--library-path".startswith(w.split("=", 1)[0])) for w in seg[1:])):
                         return "jq's module system (import, include, modulemeta, a library path) opens files this guard cannot judge: it is not used here"
                 if any(w.startswith("--f") and "--files0-from".startswith(w.split("=", 1)[0]) for w in seg[1:]):   # r6 C1: any prefix spelling, any command (wc, sort, du)
-                    return f"{name} --files0-from reads the names of the files it opens from a file or a pipe, which this guard cannot judge"
+                    return (f"{name}: an option of this command is an abbreviation of --files0-from (which reads the names of the files to open from a file or a pipe; this guard "
+                            "cannot judge those); write the option in a form that is not its prefix, e.g. `rg --files-with-matches`, `-f`, `-F`")   # r7 B1 (way b): the rule stands, the reason is true
                 # shortcut: a file name built at run time and fed by xargs (echo -e '<escaped>' | xargs cat) is not seen here; the read-only terminal refuses
                 # xargs and the box does not mount these paths for a boxed role. Upgrade if an unboxed role ever gets xargs.
                 if rec and name in SEARCH and not _search_paths(name, seg[1:], base, names):

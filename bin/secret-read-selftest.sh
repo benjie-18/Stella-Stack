@@ -207,7 +207,21 @@ for g in "$S" "$R"; do
   for c in "jq -r .name /workspace/package.json" "jq -n -f $T/plain.jq" "jq -c '.scripts | keys' /workspace/package.json" "wc -l /workspace/package.json" "cat /workspace/package.json | jq ." "grep -c include /workspace/package.json"; do
     ok '[ "$(term $g "$c")" = 0 ]' "r6 C1: $(basename $g) allows the everyday call: $c"
   done
+  # r7 A3 (W4-CV4-02): a jq program read from a standard stream is not a file this guard can read: it counts as a program that imports
+  for c in "echo 'import \"a\" as \$a; \$a' | jq -n -f /dev/stdin" "echo 'import \"a\" as \$a; \$a' | jq -n -f /dev/fd/0" "jq -n -f /dev/fd/0"; do
+    ok '[ "$(term $g "$c")" = 2 ] && grep -q "STL-GRD-604" "$T/out"' "r7 A3: $(basename $g) refuses, coded, a jq program from a standard stream: $c"
+  done
+  for c in "jq -f $T/plain.jq /workspace/package.json" "echo '{}' | jq ."; do
+    ok '[ "$(term $g "$c")" = 0 ]' "r7 A3 control: $(basename $g) allows: $c"
+  done
+  # r7 A7 (W4-CV4-09): a short option with its value attached is judged as the path it is (a link to the event log, a state path)
+  ln -sfn "$EVD/$(basename "$(jq -r .event_log "/workspace/$(jq -r .data_index /workspace/docs/hermes-local/roles.json)")")" "$T/lnk"
+  ok '[ "$(term $g "grep -f $T/lnk /workspace/package.json")" = 2 ]' "r7 A7 premise: $(basename $g) refuses grep -f <a link to a state path>"
+  ok '[ "$(term $g "grep -f$T/lnk /workspace/package.json")" = 2 ] && grep -q "STL-CFG-312" "$T/out"' "r7 A7: $(basename $g) refuses grep -f<the same link> (the value attached to the option)"
+  ok '[ "$(term $g "grep -f$T/plain.jq /workspace/package.json")" = 0 ]' "r7 A7 control: $(basename $g) allows grep -f<an ordinary file>"
 done
+# r7 B1 (W4-CV4-06, way b: no rule change): an abbreviation of --files0-from is refused for every command, and the printed reason says so
+ok '[ "$(term $S "rg --files")" = 2 ] && grep -q "an abbreviation of --files0-from" "$T/out" && grep -q "not its prefix" "$T/out"' "r7 B1: the secret guard's refusal of rg --files says it is an abbreviation of --files0-from and names the way out"
 ok '[ "$(ROLES_FILE=$T/none run $S read_file "{\"path\": \"/workspace/SUPERVISOR.md\"}")" = 2 ] && [ "$(ROLES_FILE=$T/none term $R "ls")" = 2 ]' "K6: an unreadable role table refuses every read (fail closed)"
 ok '[ "$(tail -c +$((TREE_SIZE + 1)) "$TREE_ALERTS" 2>/dev/null | grep -c .)" = 0 ]' "T7 (r5, W4-VER3-07): the tree's alert log gained no line of any kind during this run"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

@@ -292,6 +292,12 @@ for p in $(python3 -c 'import sys; sys.path.insert(0, "/workspace/bin"); import 
 done
 ok '! grep -nE "^(PROTECTED|CONFIG) = \[" "$G"' "the write guard keeps no protected list of its own"
 ok '[ "$(ROLES_FILE=/nonexistent wf "$W/a.md")" = 2 ] && said "STL-CFG-303"' "a missing role table: every write refused (STL-CFG-303)"
+# r7 A6 (W4-CV4-05): an owner command file that cannot be read turns the by-bytes rule off, so the guard refuses every call instead (a scratch table names a scratch file)
+UR=/workspace/.scratch/wgst-unread-$C; mkdir -p "$UR"; printf '#!/bin/sh\n' >"$UR/cmd.sh"; jq --arg c "${UR#/workspace/}/cmd.sh" '.owner_commands += [$c]' /workspace/docs/hermes-local/roles.json >"$T/unread.json"
+ok '[ "$(ROLES_FILE=$T/unread.json wf "$W/a.md")" = 0 ]' "r7 A6 control: a table naming one more owner command, readable: a write in the worktree is allowed"
+chmod 000 "$UR/cmd.sh"
+ok '[ "$(ROLES_FILE=$T/unread.json wf "$W/a.md")" = 2 ] && said "STL-CFG-303"' "r7 A6: an owner command file that cannot be read: every call refused (STL-CFG-303), the by-bytes rule is never silently off"
+rm -rf "$UR"
 ok '[ "$(hookrun bind "$C" x-unlisted "/workspace/.worktrees/$C" write_file "$(wjson "/workspace/.worktrees/$C/a.md")" /tmp)" = 2 ] && grep -q "has no card worktree" "$T/out" && [ "$(jq -nc --arg p "$HOME/.hermes/profiles/x-unlisted/cache/scratch/a" '"'"'{tool_name: "write_file", tool_input: {path: $p, content: "x"}, cwd: "/tmp", profile: "x-unlisted", extra: {}}'"'"' | python3 "$G" >/dev/null 2>&1; echo $?)" = 0 ] && [ "$(jq -nc '"'"'{tool_name: "write_file", tool_input: {path: "/tmp/x"}, cwd: "/tmp", profile: "x-unlisted", extra: {}}'"'"' | python3 "$G" >/dev/null 2>&1; echo $?)" = 0 ]' "a profile with no row: no card worktree (refused there), /tmp still allowed"
 # K1 (real tree): for every builder profile of the role table, the card is proven by a fake worker bound to a running card.
 # OWN is the card's own worktree inside /workspace (F8: that path is what counts); it need not exist, nothing is written.
@@ -393,7 +399,7 @@ for p in $BUILDERS; do
   : >"$AL"
   ok '[ "$(hookrun stranger $C $p $OWN write_file "$(wjson "$OWN/a.md")" $OWN)" = 2 ] && grep -qF "[STL-GRD-603]" "$T/out" && grep -qF "the stack could not identify this card" "$T/out" && grep -qF "fault in the stack, not a rule about" "$T/out" && ! grep -qF "(D40)" "$T/out" && [ "$(grep -c "^STL-GRD-603 " "$AL")" = 1 ] && grep -qF "$CQ" "$AL"' "$p: a card runs for this profile and its proof fails (bound to no ancestor): refused with STL-GRD-603 (a fault in the stack, no (D40) tail), one alerts.log line naming the card"
   : >"$AL"
-  ok '[ "$(hookrun none "" $p $OWN write_file "$(wjson "$OWN/a.md")" $OWN)" = 2 ] && grep -qF "builders write only inside their own worktree" "$T/out" && ! grep -q "^STL-GRD-603 " "$AL"' "$p: no running card for the profile: the old rule message and no STL-GRD-603 (B.1 r5: its STL-GRD-604 line is expected now)"
+  ok '[ "$(hookrun none "" $p $OWN write_file "$(wjson "$OWN/a.md")" $OWN)" = 2 ] && grep -qF "builders write only inside their own worktree" "$T/out" && [ "$(grep -c "^STL-GRD-604 " "$AL")" = 1 ] && [ "$(wc -l <"$AL")" = 1 ]' "$p: no running card for the profile: the old rule message and exactly one alert line, the role-rule code STL-GRD-604 (r7 A8: no STL-GRD-603, no other line)"
   : >"$AL"
   ok '[ "$(hookrun bind $C $p $OWN write_file "$(wjson "$OWN/a.md")" $OWN PATH=/usr/bin:/bin)" = 2 ] && grep -qF "[STL-GRD-603]" "$T/out" && [ "$(grep -c "^STL-GRD-603 " "$AL")" = 1 ]' "$p: the board cannot be read: refused with STL-GRD-603, one alerts.log line"
   : >"$AL"   # K2, terminal path (verifier round 4): a terminal write under the same stack fault names STL-GRD-603 too
