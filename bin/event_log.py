@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """The one writer of the event log (core contract item 4, spec E6), stdlib only. The log path is data: `event_log` in
-.stella/data-files.json. One line = one JSON object that validates against .stella/schemas/event.schema.json (schema_version 2: every line written
-gets a global_id, the caller's or a new UUID4, refused when a line of the log already has it, and this install's install_id from
-stella_data.install_id(); when that cannot be read nothing is written, STL-CFG-310; lines from before are never rewritten), ASCII only
+.stella/data-files.json. One line = one JSON object that validates against .stella/schemas/event.schema.json (schema_version
+2: every line written gets a global_id, the caller's or a new UUID4, refused when a line of the log already has it, and this
+install's install_id from stella_data.install_id(); when that cannot be read nothing is written, STL-CFG-310; lines from before
+are never rewritten), ASCII only
 (non-ASCII is escaped, so no value can hold a line separator), appended whole or not at all under a lock: a log that does
 not end in a newline gets one first, and after a failed or short write the file is cut back to the size it had. Existing
 lines are never rewritten. Values of keys that match a `redact_keys` pattern of the index, and of settings the registry
@@ -309,7 +310,7 @@ def repeated(data, gid):
 def append(line, row_id=None, scrub_detail=True):
     """Mask, validate, append one line under the lock and sync it; returns the line written. EventError 313 (invalid, nothing
     written, also for a global_id already in the log) or 318 (not written). The line goes out in one write; if that fails or is
-short, the file is cut back."""
+    short, the file is cut back."""
     line, data = prepare(line, row_id, scrub_detail)
     try:
         p = log_path()
