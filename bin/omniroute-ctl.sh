@@ -22,7 +22,7 @@ status() {
   local pids; pids=$(pgrep -P "$p" 2>/dev/null; echo "$p")
   local wide; wide=$(ss -ltnp 2>/dev/null | grep -E "pid=($(echo $pids | tr ' ' '|'))[,)]" | grep -vE ' 127\.0\.0\.1:| \[::1\]:' || true)
   [ -z "$wide" ] && echo "ok   every listener of the process is on loopback" || { echo "FAIL non-loopback listener: $wide"; bad=1; }
-  c=$(python3 - "$H/data/storage.sqlite" <<'P'
+  c=$(python3 -I - "$H/data/storage.sqlite" <<'P'
 import sqlite3, sys
 c = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
 print(",".join(f"{k}={v}" for k, v in c.execute("select key, value from key_value where namespace='compression' and key in ('enabled','defaultMode')")))

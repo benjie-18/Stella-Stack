@@ -17,7 +17,7 @@
 # usage: register-escalation-hook.sh           register
 #        register-escalation-hook.sh --check   change nothing; report missing hooks or approvals, and a guard registered without fail_closed (exit 1 if any)
 set -euo pipefail
-python3 - "${1:-apply}" <<'PY'
+python3 -I - "${1:-apply}" <<'PY'
 import json, os, re, sys, time
 check = sys.argv[1] == "--check"
 drift = 0

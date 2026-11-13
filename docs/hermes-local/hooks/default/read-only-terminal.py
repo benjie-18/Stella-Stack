@@ -243,8 +243,8 @@ def secret_why(cmd, cwd):
                                 return why
                 for i, w in enumerate(seg[1:], 1):
                     r = rec and not (name == "git" and seg[i - 1] in ("-C", "-c"))   # git -C <dir> names where, not what it reads
-                    for v in [w] + ([w.split("=", 1)[1]] if w.startswith("-") and "=" in w else []) + ([w[i:] for i in range(2, len(w))] if re.fullmatch(r"-[A-Za-z0-9].+", w) else []):   # r7 A7, r8 B: the value attached to a short option (-f/path, -ifname) is the path, wherever it starts in the word
-                        why = None if v.startswith("-") or not v else path_why(v, base, names, r)
+                    for v in [w] + ([w.split("=", 1)[1]] if w.startswith("-") and "=" in w else []) + ([w[i:] for i in range(2, len(w))] if re.fullmatch(r"(?s)-[A-Za-z0-9].+", w) else []):   # r7 A7, r8 B: the value attached to a short option (-f/path, -ifname) is the path, wherever it starts in the word
+                        why = path_why(v, base, names, r) if v else None   # r9 P3 (W4-CV6-03): a value that starts with a dash is a name too
                         if why:
                             return why
                 if name == "jq":   # r6 C1 (R14, W4-CV3-03): jq resolves a module name against its search folders (../ included), so the file it opens is no word of

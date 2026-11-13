@@ -237,6 +237,17 @@ for g in "$S" "$R"; do
     ok '[ "$(term $g "$c")" = 0 ]' "r8 B control: $(basename $g) allows: $c"
   done
   ok '[ "$(there $g "grep -fplain.jq /workspace/package.json")" = 0 ]' "r8 B control: $(basename $g) allows grep -f<the bare name of an ordinary file>"
+  # r9 P3 (W4-CV6-03), P4 (W4-CV6-05): an option value that starts with a dash or holds a newline is judged like any other (links made and removed here)
+  ln -sfn "$T/lnk" "$T/-dash"; ln -sfn "$T/lnk" "$T/ln"$'\n'"k"
+  for c in "grep -f-dash /workspace/package.json" "grep -if -dash /workspace/package.json" "cat -- -dash"; do
+    ok '[ "$(there $g "$c")" = 2 ] && grep -q "STL-CFG-312" "$T/out"' "r9 P3: $(basename $g) refuses, coded, a link to a state path whose name starts with a dash: $c"
+  done
+  c="grep -f\$'ln\\nk' /workspace/package.json"
+  ok '[ "$(there $g "$c")" = 2 ] && grep -q "STL-CFG-312" "$T/out"' "r9 P4: $(basename $g) refuses, coded, a link to a state path whose name holds a newline, attached to a short option: $c"
+  for c in "grep -e -n /workspace/package.json" "grep -c -- -x /workspace/package.json" "grep -f\$'pla\\nin' /workspace/package.json"; do
+    ok '[ "$(there $g "$c")" = 0 ]' "r9 P3, P4 control: $(basename $g) allows a dash or newline value that names no protected path: $c"
+  done
+  rm -f "$T/-dash" "$T/ln"$'\n'"k"
   for c in "jq -n -f $T/big.jq" "jq -n -f $T/x=y.jq" "jq -nf $T/x=y.jq" "jq -n -f ~+/p.jq" "jq -n -f ~-/p.jq"; do
     ok '[ "$(term $g "$c")" = 2 ] && grep -q "STL-GRD-604" "$T/out"' "r8 C: $(basename $g) refuses, coded, a jq program file it cannot read whole or by that name: ${c//$T/<tmp>}"
   done

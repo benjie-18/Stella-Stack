@@ -27,7 +27,7 @@ export PATH="$PATH:/home/node/.local/bin:/home/node/.hermes/hermes-agent/.hermes
 mode="${1:-apply}"
 rc=0
 /workspace/bin/owner-config.sh --check || rc=1   # D39; in both modes, so container start reports it too
-python3 - "$mode" <<'PY' || rc=$?
+python3 -I - "$mode" <<'PY' || rc=$?
 import json, os, re, sys
 sys.path.insert(0, "/workspace/bin")
 import owner_config
