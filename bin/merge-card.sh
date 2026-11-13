@@ -12,7 +12,7 @@
 # short 8.3 name or a case variant of a protected folder is that folder); nothing is merged and every offending path is listed. If the merged
 # tree cannot be computed the merge is refused, never guessed. The merge is then made in the index (--no-commit) and its tree must equal the
 # tree that was checked. A path that defines the boundary itself (roles.py boundary: the role table, the hooks, the guards, the box and every file
-# they load, and in bin/ any folder, any file python loads whatever its name, and any other file named like a module the boundary imports) is listed, and refused unless --i-have-read-the-boundary-changes.
+# they load, and in bin/ any folder, any name without a suffix, any file python loads whatever its name, and any other file named like a module the boundary imports) is listed, and refused unless --i-have-read-the-boundary-changes.
 # K2: the card's test command is the card's code: it runs in the OS box (bin/box.py exec: the card worktree writable, the rest read-only, the
 # owner settings files and state paths not mounted, the worker markers set); where the box cannot start the merge is refused (STL-GRD-605, coded),
 # there is no unboxed run. The tests run in a throw-away worktree of the branch tip that this script makes (never the card's own worktree, whose

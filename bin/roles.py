@@ -672,7 +672,7 @@ def overlap(p, prot):
 
 def hits(d, top, names, kind, root=None):
     """K1/K3: the names (relative to the tree `top`) that are, lie in or hold a path of the list `kind`: "refused" = every path no role may
-    write (owner_paths: owner data, the owner settings, the apply tool's state), "boundary" = boundary(d) and, in a folder the boundary's python imports from (the hooks import from that folder first), any folder, any file
+    write (owner_paths: owner data, the owner settings, the apply tool's state), "boundary" = boundary(d) and, in a folder the boundary's python imports from (the hooks import from that folder first), any folder, any name without a suffix (a link to a package folder elsewhere), any file
     python loads (.py, .pyc, .so) whatever its name, and any other file named like a module the boundary imports. Raises RolesError."""
     rel = owner_paths(d, root or top) if kind == "refused" else boundary(d)
     prot = chains(os.path.join(top, x) for x in rel)
@@ -683,10 +683,10 @@ def hits(d, top, names, kind, root=None):
         r = overlap(os.path.join(top, n), prot)
         if r:
             out.append(n)
-        elif kind == "boundary":   # r10 (FIN-CRT-02, FIN-CV-01): under such a folder any folder and any file python loads is a hit, whatever its name (a module looked up late is on no list); the name test stays for other suffixes
+        elif kind == "boundary":   # r10 (FIN-CRT-02, FIN-CV-01): under such a folder any folder, any name without a suffix (W4-CV10-01: a link to a package folder) and any file python loads is a hit, whatever its name (a module looked up late is on no list); the name test stays for other suffixes
             dirs, ext = shadow if shadow else (shadow := _outside_imports(d, top))
             for dd in dirs:
-                if n.startswith(dd + "/") and ("/" in (t := n[len(dd) + 1:]) or t.endswith((".py", ".pyc", ".so")) or t.split(".")[0] in ext):
+                if n.startswith(dd + "/") and ("/" in (t := n[len(dd) + 1:]) or "." not in t or t.endswith((".py", ".pyc", ".so")) or t.split(".")[0] in ext):
                     out.append(n); break
     return out
 
