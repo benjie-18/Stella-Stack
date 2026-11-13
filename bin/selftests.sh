@@ -23,7 +23,8 @@ for t in alert alert-page delegation escalate escalation-thread escalation-reply
   suite+=("$t")
 done
 if [ "${1:-}" = --quick ]; then   # the quick tier (the "quick" list of the test map): the watchdog's; no argument stays the full suite
-  q=$(python3 -I "$ROOT/bin/test-map.py" quick 2>&1) && [ -n "$q" ] || { printf 'FAIL quick-tier\n     FAIL the quick list cannot be read: %s\nselftests FAIL (1)\n' "${q:-empty answer}"; exit 1; }
+  # outside the namespace: no bytecode written into the tree (-B) and none read from it (the cache prefix is no folder at all)
+  q=$(python3 -I -B -X pycache_prefix=/dev/null "$ROOT/bin/test-map.py" quick 2>&1) && [ -n "$q" ] || { printf 'FAIL quick-tier\n     FAIL the quick list cannot be read: %s\nselftests FAIL (1)\n' "${q:-empty answer}"; exit 1; }
   mapfile -t q <<<"$q"; set -- "${q[@]}"
 fi
 [ $# = 0 ] && set -- "${suite[@]}"
