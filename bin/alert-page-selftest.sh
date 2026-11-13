@@ -115,7 +115,7 @@ echo "where=\$(command -v hermes)"
 echo "version=\$(hermes --version 2>/dev/null | head -1)"
 WRAP
 W=; : >"$T/wrap.err"; [ -z "$WL" ] || W=$(env PATH="$ORIG_PATH" bash "$T/wrap.sh" 2>"$T/wrap.err")
-REAL_VERSION=$(env PATH="$ORIG_PATH" hermes --version 2>/dev/null | head -1)
+REAL_VERSION=; [ -z "$WL" ] || REAL_VERSION=$(env PATH="$ORIG_PATH" hermes --version 2>/dev/null | head -1)
 ok 'printf "%s\n" "$W" | grep -qx "send_rc=1" && printf "%s\n" "$W" | grep -q "^where=.*/hermes$" && grep -qF "hermes send refused in a selftest" "$T/wrap.err"' "the wrapper refuses hermes send (exit 1, names the refusal) and comes first on PATH"
 ok '[ "$(printf "%s\n" "$W" | sed -n "s/^version=//p")" = "$REAL_VERSION" ] && [ -n "$REAL_VERSION" ]' "the wrapper passes every other call through (hermes --version is the real one)"
 ok 'grep -q "alert-page" "$SWF"' "the selftests.sh list runs alert-page"
