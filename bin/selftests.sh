@@ -4,7 +4,7 @@
 # usage: selftests.sh [name...|--quick]   no name = the whole list below (merge, final hash); --quick = the quick tier the
 # watchdog runs (decided by the owner 2026-11-12; list: "quick" in .stella/test-map.json); a name without a selftest file is FAIL.
 # Each selftest runs ISOLATED: the tree this script lies in is copied as it is on disk (tracked files plus untracked files
-# git does not ignore) into a one-commit repository, and the selftest runs in a bubblewrap mount namespace with that copy
+# git does not ignore; a tracked file deleted on disk is in neither the copy nor its commit) into a one-commit repository, and the selftest runs in a bubblewrap mount namespace with that copy
 # bound at the stack's path and a private folder bound over the system temp folder. So it has its own tree, alert log and
 # temp names; the source tree, the live alert log and the shared temp folder get nothing. Fail closed: a selftest is only
 # ever started inside the namespace; if the copy or the namespace cannot be made, every selftest is FAIL with one plain line
@@ -23,7 +23,8 @@ for t in alert alert-page delegation escalate escalation-thread escalation-reply
   suite+=("$t")
 done
 if [ "${1:-}" = --quick ]; then   # the quick tier (the "quick" list of the test map): the watchdog's; no argument stays the full suite
-  q=$(python3 -I "$ROOT/bin/test-map.py" quick 2>&1) && [ -n "$q" ] || { printf 'FAIL quick-tier\n     FAIL the quick list cannot be read: %s\nselftests FAIL (1)\n' "${q:-empty answer}"; exit 1; }
+  # outside the namespace: no bytecode written into the tree (-B) and none read from it (the cache prefix is no folder at all)
+  q=$(python3 -I -B -X pycache_prefix=/dev/null "$ROOT/bin/test-map.py" quick 2>&1) && [ -n "$q" ] || { printf 'FAIL quick-tier\n     FAIL the quick list cannot be read: %s\nselftests FAIL (1)\n' "${q:-empty answer}"; exit 1; }
   mapfile -t q <<<"$q"; set -- "${q[@]}"
 fi
 [ $# = 0 ] && set -- "${suite[@]}"
@@ -40,26 +41,34 @@ times=${SELFTESTS_TIMES:-}; unset SELFTESTS_TIMES   # the caller's times file is
 # setup_fail <reason> <name>...: the same output form as a failed prep(), so the watchdog's parser names the checks
 setup_fail() { local n; for n in "${@:2}"; do printf 'FAIL %s-selftest\n     FAIL %s\n' "$n" "$1"; done; echo "selftests FAIL ($(($# - 1)))"; exit 1; }
 R= Q=
-trap 'chmod -R u+rwX ${R:+"$R"} ${Q:+"$Q"} 2>/dev/null; rm -rf ${R:+"$R"} ${Q:+"$Q"}' EXIT
+# unlock <folder>...: make the folders removable; modes of FOLDERS only (rm needs no write bit on a file; a hard link stays as it is)
+unlock() { [ $# = 0 ] || find "$@" -type d ! -perm -u=rwx -exec chmod u+rwx {} \; 2>/dev/null; }
+trap 'unlock ${R:+"$R"} ${Q:+"$Q"}; rm -rf ${R:+"$R"} ${Q:+"$Q"}' EXIT
 [ ! -L "$ROOT/.scratch" ] || setup_fail "$ROOT/.scratch is a symbolic link, not a folder of the tree: nothing started" "$@"
 { mkdir -p "$ROOT/.scratch" && exec 8<"$ROOT/.scratch" && flock 8; } 2>/dev/null || setup_fail "cannot make or lock $ROOT/.scratch: nothing started" "$@"
 for d in "$ROOT"/.scratch/selftests.*/; do
   d=${d%/}; [ ! -L "$d" ] && { [ ! -f "$d/.alive" ] || flock -n "$d/.alive" true; } || continue
-  q=$TD/${d##*/}; [ -d "$q" ] && [ ! -L "$q" ] && [ "$(cat "$q/.alive" 2>/dev/null)" = "$d" ] && { chmod -R u+rwX "$q" 2>/dev/null; rm -rf "$q"; }
-  chmod -R u+rwX "$d" 2>/dev/null; rm -rf "$d"
+  q=$TD/${d##*/}   # a twin's .alive is read only as a plain file, at most 4096 bytes (a FIFO would block under the gate); an empty twin (KILL before its .alive) goes with rmdir
+  if [ -d "$q" ] && [ ! -L "$q" ]; then
+    if [ -f "$q/.alive" ] && [ ! -L "$q/.alive" ] && [ "$(head -c 4096 "$q/.alive" 2>/dev/null)" = "$d" ]; then unlock "$q"; rm -rf "$q"; else rmdir "$q" 2>/dev/null; fi
+  fi
+  unlock "$d"; rm -rf "$d"
 done
 { R=$(mktemp -d "$ROOT/.scratch/selftests.XXXXXX") && exec 9>"$R/.alive" && flock -n 9 && mkdir "$TD/${R##*/}" && Q=$TD/${R##*/} && echo "$R" >"$Q/.alive"; } 2>/dev/null ||
   setup_fail "cannot make a run folder in $ROOT/.scratch and its twin in $TD: nothing started" "$@"
 exec 8<&-
 set -m   # each job is its own process group: a TERM to the runner stops what it started, then the EXIT trap removes the folders
-trap 'trap "" TERM INT HUP; for j in $(jobs -p); do kill -TERM -- "-$j" 2>/dev/null; done; wait; echo "selftests FAIL (stopped by a signal)"; exit 143' TERM INT HUP
+# the stop line goes to the caller's stdout (fd 7) also while prep's output is redirected; job notices are silenced so it stays last
+exec 7>&1
+trap 'trap "" TERM INT HUP; exec 2>/dev/null; for j in $(jobs -p); do kill -TERM -- "-$j"; done; wait; echo "selftests FAIL (stopped by a signal)" >&7; exit 143' TERM INT HUP
 
 # The copy is made once; a job duplicates it. Sets binds (the read-only mounts); returns 1 with the reason on stdout.
 prep() {
   command -v bwrap >/dev/null || { echo "bwrap (bubblewrap) is not installed"; return 1; }
   ( set -o pipefail
-    git -C "$ROOT" ls-files -z --cached --others --exclude-standard -- . ':!.scratch' | sed -z 's|^|./|' >"$R/files" &&   # names, never options
-    git -C "$ROOT" ls-files -z --cached -- . ':!.scratch' >"$R/tracked" &&   # the copy's one commit holds exactly these
+    git -C "$ROOT" ls-files -z --deleted -- . ':!.scratch' | sort -z >"$R/gone" &&   # tracked, deleted on disk: in neither list
+    git -C "$ROOT" ls-files -z --cached --others --exclude-standard -- . ':!.scratch' | sort -z | comm -z -23 - "$R/gone" | sed -z 's|^|./|' >"$R/files" &&   # names, never options
+    git -C "$ROOT" ls-files -z --cached -- . ':!.scratch' | sort -z | comm -z -23 - "$R/gone" >"$R/tracked" &&   # the copy's one commit holds exactly these
     mkdir "$R/base" && tar -c -C "$ROOT" --null -T "$R/files" -f - | tar -x -C "$R/base" -f - &&
     git -C "$R/base" init -q -b qa && { [ ! -s "$R/tracked" ] || GIT_LITERAL_PATHSPECS=1 git -C "$R/base" add --pathspec-from-file="$R/tracked" --pathspec-file-nul; } &&
     git -C "$R/base" -c user.name=selftests -c user.email=selftests@scratch.invalid -c commit.gpgsign=false commit -q --allow-empty --no-verify -m "scratch copy" &&
@@ -75,19 +84,25 @@ prep() {
 bad=""; prep >"$R/why" 2>&1 || bad=$(head -c 300 "$R/why" | head -3 | tr '\n' ' ')
 real_hermes=$(command -v hermes || echo /bin/false)
 
-# run_one <name>: writes $R/res-<name> (the result lines), rc-<name> (0 pass or skip, 1 FAIL), ms-<name> (milliseconds)
+# key <name>: sets k, the name's result-file key: a valid name itself; any other name an escaped form starting with %, which no valid name can take
+key() { if [[ $1 =~ ^[A-Za-z0-9._-]+$ ]]; then k=$1; else k=${1//%/%25}; k=%${k//\//%2F}; fi; }
+# run_one <name>: writes $R/res-<key> (the result lines), rc-<key> (0 pass or skip, 1 FAIL), ms-<key> (milliseconds)
 run_one() {
-  local t=$1 out s=${EPOCHREALTIME//[.,]/}; local k=${t//[^A-Za-z0-9._-]/_}; local p=$R/job-$k q=$Q/job-$k
+  local t=$1 out s=${EPOCHREALTIME//[.,]/} k; key "$t"; local p=$R/job-$k q=$Q/job-$k
   if [[ ! $t =~ ^[A-Za-z0-9._-]+$ || ! -f $ROOT/bin/$t-selftest.sh ]]; then out="no such selftest: bin/$t-selftest.sh"
   elif [ -n "$bad" ]; then out="cannot make the private copy or the mount namespace ($bad)"
   elif ! mkdir -p "$q/.bin" "$p" || ! cp -a "$R/base" "$p/tree"; then out="cannot make the private copy or the mount namespace (cp failed)"
   else
-    # K11: no selftest posts to Discord. A `hermes` first on PATH refuses `send` and passes every other call to the real one;
-    # a selftest's own stub, put before it, still wins. It lives in the private temp folder, which the selftest sees as $TD.
-    printf '#!/usr/bin/env bash\n[ "${1:-}" = send ] && { echo "selftests: hermes send refused in a selftest" >&2; exit 1; }\nexec %q "$@"\n' "$real_hermes" >"$q/.bin/hermes"
+    # K11: no selftest posts to Discord. A `hermes` first on PATH refuses any call with a `send` argument (also after -p <profile>)
+    # and passes every other call to the real one; a selftest's own stub, put before it, still wins. It lives in the private temp
+    # folder, which the selftest sees as $TD. shortcut: the real binary called by its path is not refused (no stack script does
+    # that); upgrade: bind a refusing stub over the real path.
+    printf '#!/usr/bin/env bash\nfor a; do [ "$a" != send ] || { echo "selftests: hermes send refused in a selftest" >&2; exit 1; }; done\nexec %q "$@"\n' "$real_hermes" >"$q/.bin/hermes"
     chmod +x "$q/.bin/hermes"
+    # a tree outside the stack path: its copy is bound over the tree's own path too, so the source tree and $R are out of reach
+    local own=(); [[ $ROOT = "$STACK" || $ROOT = "$STACK"/* ]] || own=(--bind "$p/tree" "$ROOT")
     # the temp folder is bound last: the other sources may lie under it
-    out=$(nice bwrap --die-with-parent --dev-bind / / --bind "$p/tree" "$STACK" "${binds[@]}" --bind "$q" "$TD" --chdir "$STACK" \
+    out=$(nice bwrap --die-with-parent --dev-bind / / --bind "$p/tree" "$STACK" "${binds[@]}" "${own[@]}" --bind "$q" "$TD" --chdir "$STACK" \
       --setenv PATH "$TD/.bin:$PATH" -- "$STACK/bin/$t-selftest.sh" </dev/null 2>&1 | grep -v setlocale)
     rm -rf "$p" "$q"
     if printf '%s\n' "$out" | tail -1 | grep -q "selftest PASS"; then echo "ok   $t-selftest" >"$R/res-$k"; echo 0 >"$R/rc-$k"
@@ -100,14 +115,14 @@ run_one() {
 }
 # N at once, from the watchdog settings (test_rerun.parallel; 1 = serial, the same path); shortcut: 4 when unreadable, a data file of its own if more knobs come.
 N=$(python3 -I "$ROOT/bin/watchdog_settings.py" get test_rerun.parallel 2>/dev/null); [[ $N =~ ^[1-9][0-9]*$ ]] || N=4
-run_set() { local n=$1 t; shift; for t; do while [ "$(jobs -rp | wc -l)" -ge "$n" ]; do wait -n; done; run_one "$t" & done; wait; }
+run_set() { local n=$1 t; shift; for t; do while [ "$(jobs -rp | wc -l)" -ge "$n" ]; do wait -n; done; run_one "$t" 7>&- & done; wait; }
 par=(); ser=()   # a selftest that must not share the machine says so in its own file: a line "# selftest: serial"; those run after the batch, alone
 for n in "$@"; do if grep -qs '^# selftest: serial$' "$ROOT/bin/$n-selftest.sh"; then ser+=("$n"); else par+=("$n"); fi; done
 run_set "$N" "${par[@]}"; run_set 1 "${ser[@]}"
 
 fails=0   # printed in list order, whatever order they finished in
 for n in "$@"; do
-  k=${n//[^A-Za-z0-9._-]/_}; cat "$R/res-$k"; [ "$(cat "$R/rc-$k")" = 0 ] || fails=$((fails+1))
+  key "$n"; cat "$R/res-$k"; [ "$(cat "$R/rc-$k")" = 0 ] || fails=$((fails+1))
   # SELFTESTS_TIMES=<file>: one line "<seconds>	<name>	<ok|skip|FAIL>" per selftest
   [ -z "$times" ] || printf '%d.%03d\t%s\t%s\n' $(( $(<"$R/ms-$k") / 1000 )) $(( $(<"$R/ms-$k") % 1000 )) "$n" "$(head -1 "$R/res-$k" | cut -d' ' -f1)" >>"$times"
 done

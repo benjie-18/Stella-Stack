@@ -25,6 +25,8 @@ S
 done
 printf '#!/usr/bin/env bash\n# selftest: serial\ns=$EPOCHREALTIME; sleep 1; echo "$s $EPOCHREALTIME" >"$MARKS/s"; echo "selftest PASS"\n' >"$T/tree/bin/s-selftest.sh"
 printf '#!/usr/bin/env bash\necho "FAIL boom line"; echo "selftest FAIL"; exit 1\n' >"$T/tree/bin/f-selftest.sh"
+printf '#!/usr/bin/env bash\necho "selftest PASS"\n' >"$T/tree/bin/a_b-selftest.sh"
+printf '#!/usr/bin/env bash\n: >%q/canary 2>/dev/null; echo "selftest PASS"\n' "$T/tree" >"$T/tree/bin/c-selftest.sh"   # writes to its tree's real path
 chmod +x "$T"/tree/bin/*-selftest.sh
 # the runner's temp folder is $T/tmp (TMPDIR), so $T itself stays visible inside the namespace for the marks
 run() { TMPDIR="$T/tmp" MARKS="$T/marks" WATCHDOG_SETTINGS="$T/set.json" "$T/tree/bin/selftests.sh" "$@" >"$T/out" 2>&1; echo $? >"$T/rc"; }
@@ -34,6 +36,8 @@ run a b
 ok 'grep -qx "ok   a-selftest" "$T/out" && grep -qx "ok   b-selftest" "$T/out" && [ "$(tail -1 "$T/out")" = "selftests PASS" ] && [ "$(cat "$T/rc")" = 0 ]' "S1 two selftests that share a fixed temp name and an alert log pass (each sees only its own bytes), hermes send refused inside"
 ok '[ -z "$(ls -A "$T/tmp")" ] && [ ! -e "$T/tree/.supervisor" ] && [ -z "$(git -C "$T/tree" status --short -uall | grep -v "bin/")" ]' "S1 the source tree, its alert log and the shared temp folder hold nothing the fakes wrote"
 ok '[ "$(grep -c "^ok " "$T/out")" = 2 ]' "S1 a named run runs only the named selftests"
+run c
+ok 'grep -qx "ok   c-selftest" "$T/out" && [ ! -e "$T/tree/canary" ]' "S1 a tree outside the stack path: a selftest writing to the tree's real path reaches its copy, never the source tree"
 
 run f a
 ok '[ "$(sed -n 1p "$T/out")" = "FAIL f-selftest" ] && sed -n 2p "$T/out" | grep -qx "     FAIL boom line" && [ "$(sed -n 3p "$T/out")" = "ok   a-selftest" ] && [ "$(tail -1 "$T/out")" = "selftests FAIL (1)" ] && [ "$(cat "$T/rc")" = 1 ]' "S1 a failing selftest: its FAIL line and its detail in list order, selftests FAIL (1), exit 1"
@@ -41,6 +45,8 @@ run nope
 ok 'grep -qx "FAIL nope-selftest" "$T/out" && grep -q "no such selftest" "$T/out" && [ "$(tail -1 "$T/out")" = "selftests FAIL (1)" ] && [ "$(cat "$T/rc")" = 1 ]' "S1 an unknown name is FAIL, not skipped"
 run ../x
 ok 'grep -qx "FAIL ../x-selftest" "$T/out" && [ "$(cat "$T/rc")" = 1 ]' "S1 a name that is not plain characters is FAIL"
+run 'a b' a_b
+ok '[ "$(sed -n 1p "$T/out")" = "FAIL a b-selftest" ] && grep -qx "ok   a_b-selftest" "$T/out" && [ "$(tail -1 "$T/out")" = "selftests FAIL (1)" ] && [ "$(cat "$T/rc")" = 1 ]' "S1 a refused name never shares result files with a valid one (a b and a_b)"
 
 # S2 up to N at once (N is data: test_rerun.parallel in the watchdog settings); a selftest marked serial runs alone, after the batch
 overlap() { awk 'FNR==1{s[++n]=$1; e[n]=$2} END{exit !(s[1] < e[2] && s[2] < e[1])}' "$T/marks/$1" "$T/marks/$2"; }
@@ -79,20 +85,21 @@ n=$(git -C /workspace ls-files | grep -c 'untracked'); k=$(git -C /workspace ls-
 [ "$(stat -f -c %T /workspace)" = "$FSWANT" ] || { echo "FAIL the copy is on a $(stat -f -c %T /workspace) filesystem, the source tree on $FSWANT"; echo "selftest FAIL"; exit 1; }
 [ "$n" = 0 ] && [ "$k" = 2 ] && [ -e /workspace/bin/untracked.txt ] && [ -e "/workspace/-untracked name.txt" ] || { echo "FAIL tracked/untracked files differ in the copy (untracked tracked: $n, tracked seen: $k)"; echo "selftest FAIL"; exit 1; }
 [ -z "${SELFTESTS_TIMES:-}" ] || { echo "FAIL a started selftest sees SELFTESTS_TIMES"; echo "selftest FAIL"; exit 1; }
+[ ! -e /workspace/gone.txt ] && [ -z "$(git -C /workspace ls-files -- gone.txt)" ] || { echo "FAIL a tracked file deleted on disk is in the copy or its commit"; echo "selftest FAIL"; exit 1; }
 echo "$(stat -f -c %T "${TMPDIR:-/tmp}") $(stat -f -c %T /workspace)" >"$FSMARK"
 echo "selftest PASS"
 S
 printf '#!/usr/bin/env bash\n: >"$FSMARK.w"; sleep 30; echo "selftest PASS"\n' >"$T2/bin/w-selftest.sh"; chmod +x "$T2/bin/w-selftest.sh"
-chmod +x "$T2/bin/t-selftest.sh"; echo tracked >"$T2/bin/tracked.txt"; echo tracked >"$T2/-tracked.txt"
-git -C "$T2" init -q; git -C "$T2" add -- bin ./-tracked.txt; git -C "$T2" -c user.name=t -c user.email=t@scratch.invalid commit -qm t
-echo u >"$T2/bin/untracked.txt"; echo u >"$T2/-untracked name.txt"
+chmod +x "$T2/bin/t-selftest.sh"; echo tracked >"$T2/bin/tracked.txt"; echo tracked >"$T2/-tracked.txt"; echo gone >"$T2/gone.txt"
+git -C "$T2" init -q; git -C "$T2" add -- bin ./-tracked.txt gone.txt; git -C "$T2" -c user.name=t -c user.email=t@scratch.invalid commit -qm t
+rm "$T2/gone.txt"; echo u >"$T2/bin/untracked.txt"; echo u >"$T2/-untracked name.txt"
 # each run folder has a twin of the same name in the temp folder whose .alive names it; a twin naming another tree's folder is not this tree's
 for n in dead live other; do mkdir -p "$T2/.scratch/selftests.$n" "$T/tmp/selftests.$n"; : >"$T2/.scratch/selftests.$n/.alive"; echo "$T2/.scratch/selftests.$n" >"$T/tmp/selftests.$n/.alive"; done
 echo "/elsewhere/.scratch/selftests.other" >"$T/tmp/selftests.other/.alive"
 flock "$T2/.scratch/selftests.live/.alive" sleep 60 & SLP=$!; sleep 0.3
 t2run() { FSWANT=$(stat -f -c %T "$T2") FSMARK="$T/fs" SELFTESTS_TIMES="$T/times2" TMPDIR="$T/tmp" WATCHDOG_SETTINGS="$T/set.json" "$T2/bin/selftests.sh" "$@" >"$T/out" 2>&1; echo $? >"$T/rc"; }
 t2run
-ok '[ "$(cat "$T/out")" = "$(printf "ok   t-selftest\nselftests PASS")" ]' "F1 F2 F3 the copy is on the tree's own filesystem, tracks what the tree tracks (odd names too), and the selftest sees no SELFTESTS_TIMES"
+ok '[ "$(cat "$T/out")" = "$(printf "ok   t-selftest\nselftests PASS")" ]' "F1 F2 F3 the copy is on the tree's own filesystem, tracks what the tree tracks (odd names too; a tracked file deleted on disk is in neither), and the selftest sees no SELFTESTS_TIMES"
 ok '[ "$(cut -f2,3 "$T/times2")" = "$(printf "t\tok")" ]' "F3 the caller's times file holds only the runner's own line"
 ok '[ ! -e "$T2/.scratch/selftests.dead" ] && [ -e "$T2/.scratch/selftests.live" ] && [ "$(ls -A "$T2/.scratch" | wc -l)" = 1 ]' "F4 a folder of a runner that is gone is swept, one of a live runner and the runner's own are not left/removed"
 left() { [ "$(ls -A "$T2/.scratch" | tr '\n' ' ')" = "selftests.live " ] && [ "$(ls -A "$T/tmp" | tr '\n' ' ')" = "selftests.live selftests.other " ]; }
@@ -113,6 +120,11 @@ for k in link file; do
   rm -f "$T2/.scratch"
 done
 mv "$T/s.keep" "$T2/.scratch"
+# G3 a dead run folder whose twin's .alive is a FIFO: the sweep never opens it (it would block under the gate): the run ends, the FIFO stays untouched
+mkdir "$T2/.scratch/selftests.fifo" "$T/tmp/selftests.fifo"; : >"$T2/.scratch/selftests.fifo/.alive"; mkfifo "$T/tmp/selftests.fifo/.alive"
+FSWANT=$(stat -f -c %T "$T2") FSMARK="$T/fs" TMPDIR="$T/tmp" WATCHDOG_SETTINGS="$T/set.json" timeout -k 5 60 "$T2/bin/selftests.sh" t >"$T/out" 2>&1; echo $? >"$T/rc"
+ok '[ "$(cat "$T/rc")" = 0 ] && [ -p "$T/tmp/selftests.fifo/.alive" ] && [ ! -e "$T2/.scratch/selftests.fifo" ]' "G3 a twin whose .alive is a FIFO: the run ends and passes, the FIFO is untouched, the dead run folder is swept"
+rm -rf "$T/tmp/selftests.fifo"
 
 # fail closed: no bubblewrap on PATH, and a bubblewrap that refuses: every selftest FAIL with a plain line, nothing ran
 mkdir -p "$T/nobwrap" "$T/badbwrap"
