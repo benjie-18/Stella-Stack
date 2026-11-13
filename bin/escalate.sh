@@ -232,8 +232,10 @@ cost=$(jq -r '.total_cost_usd // "null"' <<<"$out" 2>/dev/null) || cost=null
 # exit 0 counts only with a parseable, non-error result
 [ "$rc" -eq 0 ] && ! jq -e '.is_error == false' <<<"$out" >/dev/null 2>&1 && rc=1
 if [ "$rc" -ne 0 ]; then
+  # W5-VER7-01: on a replay the drain leaves these two exit codes queued; the note, the log line and stderr say the same
+  ns=FAIL; [ -z "${ESCALATE_REPLAY:-}" ] || [[ $rc != 12[67] ]] || { ns="the model command did not start (exit $rc); left in the queue as $ESCALATE_REPLAY"; err="$ns: $err"; }
   log FAIL "$rc" "${model_used:-unknown}" false "${cost:-null}" "$(head -c 300 <<<"$out$err")"
-  note "escalate.sh FAIL: $model ($purpose) exit $rc for '$reason'. model_used: ${model_used:-unknown}, fallback: false."
+  note "escalate.sh $ns: $model ($purpose) exit $rc for '$reason'. model_used: ${model_used:-unknown}, fallback: false."
   rm -f "$prompt"   # F16: kept only while a queue entry points at it
   printf '%s\n' "$out"; printf '%s\n' "$err" >&2
   exit "$rc"
