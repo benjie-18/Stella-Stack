@@ -25,6 +25,7 @@ S
 done
 printf '#!/usr/bin/env bash\n# selftest: serial\ns=$EPOCHREALTIME; sleep 1; echo "$s $EPOCHREALTIME" >"$MARKS/s"; echo "selftest PASS"\n' >"$T/tree/bin/s-selftest.sh"
 printf '#!/usr/bin/env bash\necho "FAIL boom line"; echo "selftest FAIL"; exit 1\n' >"$T/tree/bin/f-selftest.sh"
+printf '#!/usr/bin/env bash\necho "selftest PASS"\n' >"$T/tree/bin/a_b-selftest.sh"
 chmod +x "$T"/tree/bin/*-selftest.sh
 # the runner's temp folder is $T/tmp (TMPDIR), so $T itself stays visible inside the namespace for the marks
 run() { TMPDIR="$T/tmp" MARKS="$T/marks" WATCHDOG_SETTINGS="$T/set.json" "$T/tree/bin/selftests.sh" "$@" >"$T/out" 2>&1; echo $? >"$T/rc"; }
@@ -41,6 +42,8 @@ run nope
 ok 'grep -qx "FAIL nope-selftest" "$T/out" && grep -q "no such selftest" "$T/out" && [ "$(tail -1 "$T/out")" = "selftests FAIL (1)" ] && [ "$(cat "$T/rc")" = 1 ]' "S1 an unknown name is FAIL, not skipped"
 run ../x
 ok 'grep -qx "FAIL ../x-selftest" "$T/out" && [ "$(cat "$T/rc")" = 1 ]' "S1 a name that is not plain characters is FAIL"
+run 'a b' a_b
+ok '[ "$(sed -n 1p "$T/out")" = "FAIL a b-selftest" ] && grep -qx "ok   a_b-selftest" "$T/out" && [ "$(tail -1 "$T/out")" = "selftests FAIL (1)" ] && [ "$(cat "$T/rc")" = 1 ]' "S1 a refused name never shares result files with a valid one (a b and a_b)"
 
 # S2 up to N at once (N is data: test_rerun.parallel in the watchdog settings); a selftest marked serial runs alone, after the batch
 overlap() { awk 'FNR==1{s[++n]=$1; e[n]=$2} END{exit !(s[1] < e[2] && s[2] < e[1])}' "$T/marks/$1" "$T/marks/$2"; }

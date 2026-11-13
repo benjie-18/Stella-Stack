@@ -76,9 +76,11 @@ prep() {
 bad=""; prep >"$R/why" 2>&1 || bad=$(head -c 300 "$R/why" | head -3 | tr '\n' ' ')
 real_hermes=$(command -v hermes || echo /bin/false)
 
-# run_one <name>: writes $R/res-<name> (the result lines), rc-<name> (0 pass or skip, 1 FAIL), ms-<name> (milliseconds)
+# key <name>: sets k, the name's result-file key: a valid name itself; any other name an escaped form starting with %, which no valid name can take
+key() { if [[ $1 =~ ^[A-Za-z0-9._-]+$ ]]; then k=$1; else k=${1//%/%25}; k=%${k//\//%2F}; fi; }
+# run_one <name>: writes $R/res-<key> (the result lines), rc-<key> (0 pass or skip, 1 FAIL), ms-<key> (milliseconds)
 run_one() {
-  local t=$1 out s=${EPOCHREALTIME//[.,]/}; local k=${t//[^A-Za-z0-9._-]/_}; local p=$R/job-$k q=$Q/job-$k
+  local t=$1 out s=${EPOCHREALTIME//[.,]/} k; key "$t"; local p=$R/job-$k q=$Q/job-$k
   if [[ ! $t =~ ^[A-Za-z0-9._-]+$ || ! -f $ROOT/bin/$t-selftest.sh ]]; then out="no such selftest: bin/$t-selftest.sh"
   elif [ -n "$bad" ]; then out="cannot make the private copy or the mount namespace ($bad)"
   elif ! mkdir -p "$q/.bin" "$p" || ! cp -a "$R/base" "$p/tree"; then out="cannot make the private copy or the mount namespace (cp failed)"
@@ -108,7 +110,7 @@ run_set "$N" "${par[@]}"; run_set 1 "${ser[@]}"
 
 fails=0   # printed in list order, whatever order they finished in
 for n in "$@"; do
-  k=${n//[^A-Za-z0-9._-]/_}; cat "$R/res-$k"; [ "$(cat "$R/rc-$k")" = 0 ] || fails=$((fails+1))
+  key "$n"; cat "$R/res-$k"; [ "$(cat "$R/rc-$k")" = 0 ] || fails=$((fails+1))
   # SELFTESTS_TIMES=<file>: one line "<seconds>	<name>	<ok|skip|FAIL>" per selftest
   [ -z "$times" ] || printf '%d.%03d\t%s\t%s\n' $(( $(<"$R/ms-$k") / 1000 )) $(( $(<"$R/ms-$k") % 1000 )) "$n" "$(head -1 "$R/res-$k" | cut -d' ' -f1)" >>"$times"
 done
