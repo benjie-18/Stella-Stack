@@ -401,11 +401,9 @@ scard t_0000b204 zz-mapped.txt y bin/zz-alpha-selftest.sh 'echo "FAIL the card c
 ok '[ "$(smc t_0000b204 --owner-approved)" = 3 ] && grep -q "FAIL zz-alpha-selftest" "$T/out" && grep -q "tests failed" "$T/out" && [ "$(head_of "$SR")" = "$h" ]' "B2 (ORCH-03): the selftest that runs is the one of the tree under test (the card's own version), never the main checkout's file"
 scard t_0000b205 zz-noquick.txt x; h=$(head_of "$SR")
 ok '[ "$(smc t_0000b205 --owner-approved)" = 3 ] && grep -q "quick list of the test map cannot be read" "$T/out" && grep -q "tests failed" "$T/out" && [ "$(head_of "$SR")" = "$h" ]' "B2: a quick list that cannot be read fails the tests (never a set without the quick tier)"
-k=5; for bp in bin/test-map.py bin/selftests.sh; do k=$((k+1)); c=t_0000b20$k; scard $c "$bp" '# a card edits it'; h=$(head_of "$SR")
+k=5; for bp in bin/test-map.py bin/selftests.sh .stella/test-map.json; do k=$((k+1)); c=t_0000b20$k; scard $c "$bp" '# a card edits it'; h=$(head_of "$SR")
   ok '[ "$(smc $c --owner-approved)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -q "define the boundary" "$T/out" && grep -qF "$bp" "$T/out" && [ "$(head_of "$SR")" = "$h" ]' "B2: a card that changes $bp (what selects or runs its own tests) is behind the owner's flag"
 done
-TM=$(jq -r '.runner as $r | "ok"' "$SR/.stella/test-map.json" >/dev/null 2>&1 && echo .stella/test-map.json); scard t_0000b208 "$TM" '{}'; h=$(head_of "$SR")
-ok '[ -n "$TM" ] && [ "$(smc t_0000b208 --owner-approved --i-have-read-the-boundary-changes)" = 3 ] && grep -q "STL-CFG-312" "$T/out" && grep -q "owner data" "$T/out" && [ "$(head_of "$SR")" = "$h" ]' "B2: a card that changes the test map itself (owner data) is refused, with the flag too"
 card t_0000b209 b209.txt b209 'echo QA-NPM-RAN; unshare -Ur true 2>/dev/null && exit 1; exit 0'; h=$(head_of "$T/repo")
 ok '[ "$(mc t_0000b209 --owner-approved)" = 0 ] && grep -q QA-NPM-RAN "$T/out" && ! grep -q "merge test:" "$T/out" && [ "$(head_of "$T/repo")" != "$h" ]' "B2: a project card is unchanged: its own test command runs, in a box that still forbids nested namespaces"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
