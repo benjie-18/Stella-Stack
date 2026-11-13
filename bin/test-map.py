@@ -321,6 +321,10 @@ def check():
     if not tests:
         return probs + [f"no selftest ({path('<name>')}) found under {ROOT}"]
     targets = {t for row in m["map"] for t in row["targets"]}
+    marks = m.get("marks", {})   # lock scope: an unmarked selftest counts as shared, and the lint refuses it
+    probs += [f"{tests[t]} has no mark: add it to marks as hermetic, or as shared with its why" for t in sorted(tests.keys() - marks.keys())]
+    probs += [f"mark for {t}: no such selftest ({path(t)})" for t in sorted(marks.keys() - tests.keys())]
+    probs += [f"shared mark of {t} gives no why" for t in sorted(marks) if marks[t]["mark"] == "shared" and not marks[t].get("why", "").strip()]
     probs += [f"{tests[t]} is not a target of any map row" for t in sorted(tests.keys() - targets)]
     probs += [f"target {t}: {path(t)} does not exist" for t in sorted((targets | set(m["always"])) - tests.keys())]
     # shortcut: a test is known by its name only (test_like globs), a test named otherwise is not seen; upgrade when a second test runner arrives
@@ -406,7 +410,7 @@ def main(argv):
         files = files[as_json:]
         ended = files[:1] == ["--"]
         files = files[ended:]   # "--" ends the options; every later argument is a name, "-" too
-        what, notes = "the file names on stdin cannot be read", []   # what was being done, for the reason; the diagnostics
+        what, notes, m = "the file names on stdin cannot be read", [], {}   # what was being done, for the reason; the diagnostics
         try:   # the one rule: whatever stops select before it has an answer IS the answer full, never an empty selection
             if files == ["-"] and not ended:   # bytes: no CR translation, no strip (white space at either end selects full); a non-UTF-8 byte stays visible
                 files = [f for f in sys.stdin.buffer.read().decode("utf-8", "surrogateescape").split("\n") if f]
@@ -430,6 +434,8 @@ def main(argv):
         except Exception as e:
             sel = {"full": True, "reason": [str(e) if isinstance(e, Unusable) else f"{what}: {type(e).__name__}: {e}"], "targets": []}
             notes += sel["reason"]
+        marks = m.get("marks", {})
+        sel["shared"] = [t for t in sel["targets"] if marks.get(t, {}).get("mark") != "hermetic"]   # the targets that need the lock
         if os.environ.get("STELLA_ROOT"):
             sel["root"] = ROOT
         print(json.dumps(sel) if as_json else "full" if sel["full"] else "\n".join(sel["targets"]))

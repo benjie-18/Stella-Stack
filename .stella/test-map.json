@@ -1,8 +1,157 @@
 {
   "schema_version": 1,
-  "about": "Which selftests a changed file can affect (product rule 8). bin/test-map.py reads this: `check` is the lint (in npm test through bin/test-map-selftest.sh), `select` picks the targets. The map is finished: every tracked file has a row whose targets are the selftests that use it (from reach, or from reading, said in the row's why; \"unsure: the folder's tests\" where no use was found), and `check` refuses a tracked file no row matches. The full list ships empty: it stays in the schema and the tool for a stack that wants one (a file on it selects the full suite). The full suite runs once, at the end, on the final hash. `check` refuses a map whose rows leave out a selftest that can reach the file (see reach in bin/test-map.py); the error names what to add. `scan` rows are for selftests that read a whole folder; every glob of any other row starts with a literal folder or top-level file name (no wildcard in the first path component), so a file under a name no row spells selects the full suite. A row that, for a file, adds no target beyond the always gates and the scan rows matching it may match only prose: no code, executable, test-like file (its gate's own selftest and tool excepted), or file a code or data file (`data`; empty means every file) names. Removing a glob from `data` loosens that rule, and `check` accepts it (a known limit: nothing forces a review of such an edit; what holds is that every edit of this map runs `check`). This map, its schema and bin/test-map.py select their users like any other file, and `select` adds the tool's own selftest, which runs `check`, to every narrow answer whatever this map says. `select` answers full only for an input or a map it cannot trust: a name no row matches or that is not one plain file name, no name, names it cannot read, a map, schema or tool module that is missing, unreadable or broken, a map that breaks a rule needing no file list, an empty selection.",
+  "about": "Which selftests a changed file can affect (product rule 8). bin/test-map.py reads this: `check` is the lint (in npm test through bin/test-map-selftest.sh), `select` picks the targets. The map is finished: every tracked file has a row whose targets are the selftests that use it (from reach, or from reading, said in the row's why; \"unsure: the folder's tests\" where no use was found), and `check` refuses a tracked file no row matches. The full list ships empty: it stays in the schema and the tool for a stack that wants one (a file on it selects the full suite). The full suite runs once, at the end, on the final hash. `check` refuses a map whose rows leave out a selftest that can reach the file (see reach in bin/test-map.py); the error names what to add. `scan` rows are for selftests that read a whole folder; every glob of any other row starts with a literal folder or top-level file name (no wildcard in the first path component), so a file under a name no row spells selects the full suite. A row that, for a file, adds no target beyond the always gates and the scan rows matching it may match only prose: no code, executable, test-like file (its gate's own selftest and tool excepted), or file a code or data file (`data`; empty means every file) names. Removing a glob from `data` loosens that rule, and `check` accepts it (a known limit: nothing forces a review of such an edit; what holds is that every edit of this map runs `check`). This map, its schema and bin/test-map.py select their users like any other file, and `select` adds the tool's own selftest, which runs `check`, to every narrow answer whatever this map says. `select` answers full only for an input or a map it cannot trust: a name no row matches or that is not one plain file name, no name, names it cannot read, a map, schema or tool module that is missing, unreadable or broken, a map that breaks a rule needing no file list, an empty selection. Lock scope (owner's rule): `marks` gives every selftest hermetic or shared. Hermetic = runs fully inside its own scratch copy, with its own home, temp folders and free ports or stubs, and touches no live resource (the live stack, fixed ports, the real home folder, global config, the live alert log): it needs no lock and may run in parallel. Shared = touches one of those, and says which in `why`. An unmarked selftest counts as shared, and `check` refuses it. `select --json` lists the selected targets that need the lock in `shared`. A mark is judged from the selftest's code, not yet proved by a run under a hidden home and no network.",
   "runner": "bin/selftests.sh",
   "test_file": "bin/{name}-selftest.sh",
+  "marks": {
+    "alert": {
+      "mark": "hermetic"
+    },
+    "alert-page": {
+      "mark": "hermetic"
+    },
+    "approval-evidence": {
+      "mark": "hermetic"
+    },
+    "approval-sim": {
+      "mark": "shared",
+      "why": "runs the installed Hermes venv and hermes-agent source from the real ~/.hermes"
+    },
+    "bench": {
+      "mark": "hermetic"
+    },
+    "box": {
+      "mark": "shared",
+      "why": "real bwrap boxes on live-shaped trees; runs serial and its header says to run it under the test lock"
+    },
+    "broker-put": {
+      "mark": "hermetic"
+    },
+    "check-guard": {
+      "mark": "hermetic"
+    },
+    "commit-guard": {
+      "mark": "shared",
+      "why": "asserts the live .supervisor alert log gained no line during the run, which a live stack writing there breaks"
+    },
+    "complete-gate": {
+      "mark": "hermetic"
+    },
+    "container-start": {
+      "mark": "hermetic"
+    },
+    "delegation": {
+      "mark": "shared",
+      "why": "runs the installed Hermes python and hermes-agent source from the real $HOME/.hermes"
+    },
+    "escalate": {
+      "mark": "hermetic"
+    },
+    "escalation-complete": {
+      "mark": "hermetic"
+    },
+    "escalation-reply-hook": {
+      "mark": "hermetic"
+    },
+    "escalation-reply-poll": {
+      "mark": "hermetic"
+    },
+    "escalation-thread": {
+      "mark": "hermetic"
+    },
+    "event-log": {
+      "mark": "hermetic"
+    },
+    "false-close-guard": {
+      "mark": "hermetic"
+    },
+    "firewall-probe": {
+      "mark": "hermetic"
+    },
+    "hardcode-lint": {
+      "mark": "hermetic"
+    },
+    "init-firewall": {
+      "mark": "hermetic"
+    },
+    "kanban-board": {
+      "mark": "hermetic"
+    },
+    "kanban-guard": {
+      "mark": "hermetic"
+    },
+    "matcher-audit": {
+      "mark": "hermetic"
+    },
+    "merge-card": {
+      "mark": "hermetic"
+    },
+    "model-watch": {
+      "mark": "hermetic"
+    },
+    "omniroute-run": {
+      "mark": "hermetic"
+    },
+    "owner-config": {
+      "mark": "hermetic"
+    },
+    "owner-leak": {
+      "mark": "shared",
+      "why": "reads the real owner config (config/owner.env), the one selftest that does"
+    },
+    "owner-settings": {
+      "mark": "hermetic"
+    },
+    "post-edit-check": {
+      "mark": "hermetic"
+    },
+    "profile-hooks": {
+      "mark": "hermetic"
+    },
+    "reviewer-claude": {
+      "mark": "hermetic"
+    },
+    "role-guard": {
+      "mark": "hermetic"
+    },
+    "roles": {
+      "mark": "hermetic"
+    },
+    "roles-complete": {
+      "mark": "hermetic"
+    },
+    "routing": {
+      "mark": "shared",
+      "why": "roles.py check reads the real $HOME/.hermes tree"
+    },
+    "secret-read": {
+      "mark": "shared",
+      "why": "asserts the live .supervisor alert log gained no line during the run, which a live stack writing there breaks"
+    },
+    "selftests": {
+      "mark": "shared",
+      "why": "tests the runner itself: nested bwrap namespaces, flock on .scratch and timing asserts that parallel load can break"
+    },
+    "settings": {
+      "mark": "hermetic"
+    },
+    "stella-apply": {
+      "mark": "hermetic"
+    },
+    "stella-data": {
+      "mark": "hermetic"
+    },
+    "test-map": {
+      "mark": "hermetic"
+    },
+    "watchdog": {
+      "mark": "hermetic"
+    },
+    "write-guard": {
+      "mark": "shared",
+      "why": "asserts the live /workspace/.worktrees folder and alert log did not change during the run, which a live stack breaks"
+    }
+  },
   "test_like": [
     "*test*",
     "*.spec.*",
@@ -655,6 +804,7 @@
     {
       "globs": [
         ".claude/agents/builder.md",
+        ".claude/agents/scout.md",
         ".claude/agents/checker.md",
         ".claude/agents/critical-red-team.md",
         ".claude/agents/critical-verifier.md",
