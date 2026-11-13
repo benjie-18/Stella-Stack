@@ -2,7 +2,8 @@
 # Hermetic self-test for bin/event_log.py (F1 W3): the one writer of the event log. Runs in a scratch root (STELLA_ROOT: a copy of
 # .stella/ and the role table); never the live log. Proves: a valid line is appended, masked (index redact_keys, registry
 # `secret` settings) before it is written or printed; an invalid line is refused and nothing is written; the log is only ever
-# appended to; tail --json; an unwritable log refuses with STL-CFG-318; concurrent appends do not interleave.
+# appended to; tail --json; an unwritable log refuses with STL-CFG-318; concurrent appends do not interleave; (F1b W6, T7d) every
+# new line has global_id and install_id, a repeated global_id or an unreadable install id is refused, old lines still read.
 set -u
 H=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 T=$(mktemp -d -t event-log-selftest.XXXXXX); trap 'rm -rf "$T"' EXIT
