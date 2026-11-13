@@ -29,19 +29,30 @@ fi
 [ $# = 0 ] && set -- "${suite[@]}"
 set -- "${@%-selftest}"   # the watchdog reruns a failed check by the name it printed (<name>-selftest)
 mapfile -t u < <(printf '%s\n' "$@" | awk '!seen[$0]++'); set -- "${u[@]}"   # a name given twice runs once (first-seen order): job folders are per name
-# The copies lie on the tree's own filesystem (a selftest that checks the filesystem the stack lives on must see it), in the
-# tree's ignored .scratch. Each runner holds a lock on its folder's .alive file (a KILLed runner's children keep it while they
-# run); the next run sweeps folders whose lock is free. The gate (a lock on .scratch itself) makes make-and-lock one step.
+# The tree copies lie on the tree's own filesystem (a selftest that checks the filesystem the stack lives on must see it), in the
+# tree's ignored .scratch (a real folder of the tree, never a link); the selftests' temp folders lie in a twin of the run folder,
+# same name, in the caller's temp folder (fast), whose .alive names the run folder. Each runner holds a lock on its run folder's
+# .alive (a KILLed runner's children keep it while they run); the next run sweeps run folders whose lock is free, and their twins.
+# The gate (a lock on .scratch itself) makes make-and-lock one step.
+# Twin rule: whoever can write <tree>/.scratch can only plant names; a twin goes only if its .alive names this tree's dead run
+# folder, so the worst is a name clash (a FAIL of somebody's run), never a pass, never a removal outside the two places.
 times=${SELFTESTS_TIMES:-}; unset SELFTESTS_TIMES   # the caller's times file is the runner's; a started selftest (a nested runner) never sees it
-mkdir -p "$ROOT/.scratch" && exec 8<"$ROOT/.scratch" && flock 8 || { echo "selftests FAIL (1)"; echo "     FAIL cannot make or lock $ROOT/.scratch"; exit 1; }
+# setup_fail <reason> <name>...: the same output form as a failed prep(), so the watchdog's parser names the checks
+setup_fail() { local n; for n in "${@:2}"; do printf 'FAIL %s-selftest\n     FAIL %s\n' "$n" "$1"; done; echo "selftests FAIL ($(($# - 1)))"; exit 1; }
+R= Q=
+trap 'chmod -R u+rwX ${R:+"$R"} ${Q:+"$Q"} 2>/dev/null; rm -rf ${R:+"$R"} ${Q:+"$Q"}' EXIT
+[ ! -L "$ROOT/.scratch" ] || setup_fail "$ROOT/.scratch is a symbolic link, not a folder of the tree: nothing started" "$@"
+{ mkdir -p "$ROOT/.scratch" && exec 8<"$ROOT/.scratch" && flock 8; } 2>/dev/null || setup_fail "cannot make or lock $ROOT/.scratch: nothing started" "$@"
 for d in "$ROOT"/.scratch/selftests.*/; do
-  { [ ! -f "$d.alive" ] || flock -n "$d.alive" true; } && { chmod -R u+rwX "$d" 2>/dev/null; rm -rf "$d"; }
+  d=${d%/}; [ ! -L "$d" ] && { [ ! -f "$d/.alive" ] || flock -n "$d/.alive" true; } || continue
+  q=$TD/${d##*/}; [ -d "$q" ] && [ ! -L "$q" ] && [ "$(cat "$q/.alive" 2>/dev/null)" = "$d" ] && { chmod -R u+rwX "$q" 2>/dev/null; rm -rf "$q"; }
+  chmod -R u+rwX "$d" 2>/dev/null; rm -rf "$d"
 done
-R=$(mktemp -d "$ROOT/.scratch/selftests.XXXXXX") && exec 9>"$R/.alive" && flock -n 9 || { echo "selftests FAIL (1)"; echo "     FAIL cannot make a folder in $ROOT/.scratch"; exit 1; }
+{ R=$(mktemp -d "$ROOT/.scratch/selftests.XXXXXX") && exec 9>"$R/.alive" && flock -n 9 && mkdir "$TD/${R##*/}" && Q=$TD/${R##*/} && echo "$R" >"$Q/.alive"; } 2>/dev/null ||
+  setup_fail "cannot make a run folder in $ROOT/.scratch and its twin in $TD: nothing started" "$@"
 exec 8<&-
-set -m   # each job is its own process group: a TERM to the runner stops what it started, then the EXIT trap removes the folder
-trap 'chmod -R u+rwX "$R" 2>/dev/null; rm -rf "$R"' EXIT
-trap 'trap "" TERM INT HUP; for j in $(jobs -p); do kill -TERM -- "-$j" 2>/dev/null; done; wait; exit 143' TERM INT HUP
+set -m   # each job is its own process group: a TERM to the runner stops what it started, then the EXIT trap removes the folders
+trap 'trap "" TERM INT HUP; for j in $(jobs -p); do kill -TERM -- "-$j" 2>/dev/null; done; wait; echo "selftests FAIL (stopped by a signal)"; exit 143' TERM INT HUP
 
 # The copy is made once; a job duplicates it. Sets binds (the read-only mounts); returns 1 with the reason on stdout.
 prep() {
@@ -66,19 +77,19 @@ real_hermes=$(command -v hermes || echo /bin/false)
 
 # run_one <name>: writes $R/res-<name> (the result lines), rc-<name> (0 pass or skip, 1 FAIL), ms-<name> (milliseconds)
 run_one() {
-  local t=$1 out s=${EPOCHREALTIME//[.,]/}; local k=${t//[^A-Za-z0-9._-]/_}; local p=$R/job-$k
+  local t=$1 out s=${EPOCHREALTIME//[.,]/}; local k=${t//[^A-Za-z0-9._-]/_}; local p=$R/job-$k q=$Q/job-$k
   if [[ ! $t =~ ^[A-Za-z0-9._-]+$ || ! -f $ROOT/bin/$t-selftest.sh ]]; then out="no such selftest: bin/$t-selftest.sh"
   elif [ -n "$bad" ]; then out="cannot make the private copy or the mount namespace ($bad)"
-  elif ! mkdir -p "$p/tmp/.bin" || ! cp -a "$R/base" "$p/tree"; then out="cannot make the private copy or the mount namespace (cp failed)"
+  elif ! mkdir -p "$q/.bin" "$p" || ! cp -a "$R/base" "$p/tree"; then out="cannot make the private copy or the mount namespace (cp failed)"
   else
     # K11: no selftest posts to Discord. A `hermes` first on PATH refuses `send` and passes every other call to the real one;
     # a selftest's own stub, put before it, still wins. It lives in the private temp folder, which the selftest sees as $TD.
-    printf '#!/usr/bin/env bash\n[ "${1:-}" = send ] && { echo "selftests: hermes send refused in a selftest" >&2; exit 1; }\nexec %q "$@"\n' "$real_hermes" >"$p/tmp/.bin/hermes"
-    chmod +x "$p/tmp/.bin/hermes"
+    printf '#!/usr/bin/env bash\n[ "${1:-}" = send ] && { echo "selftests: hermes send refused in a selftest" >&2; exit 1; }\nexec %q "$@"\n' "$real_hermes" >"$q/.bin/hermes"
+    chmod +x "$q/.bin/hermes"
     # the temp folder is bound last: the other sources may lie under it
-    out=$(nice bwrap --die-with-parent --dev-bind / / --bind "$p/tree" "$STACK" "${binds[@]}" --bind "$p/tmp" "$TD" --chdir "$STACK" \
+    out=$(nice bwrap --die-with-parent --dev-bind / / --bind "$p/tree" "$STACK" "${binds[@]}" --bind "$q" "$TD" --chdir "$STACK" \
       --setenv PATH "$TD/.bin:$PATH" -- "$STACK/bin/$t-selftest.sh" </dev/null 2>&1 | grep -v setlocale)
-    rm -rf "$p"
+    rm -rf "$p" "$q"
     if printf '%s\n' "$out" | tail -1 | grep -q "selftest PASS"; then echo "ok   $t-selftest" >"$R/res-$k"; echo 0 >"$R/rc-$k"
     elif printf '%s\n' "$out" | tail -1 | grep -q "selftest SKIP"; then echo "skip $t-selftest: $(printf '%s\n' "$out" | grep -m1 '^SKIP' | cut -c6-)" >"$R/res-$k"; echo 0 >"$R/rc-$k"
     else { echo "FAIL $t-selftest"; printf '%s\n' "$out" | grep -E "^FAIL" | sed 's/^/     /'; } >"$R/res-$k"; echo 1 >"$R/rc-$k"
