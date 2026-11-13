@@ -79,20 +79,21 @@ n=$(git -C /workspace ls-files | grep -c 'untracked'); k=$(git -C /workspace ls-
 [ "$(stat -f -c %T /workspace)" = "$FSWANT" ] || { echo "FAIL the copy is on a $(stat -f -c %T /workspace) filesystem, the source tree on $FSWANT"; echo "selftest FAIL"; exit 1; }
 [ "$n" = 0 ] && [ "$k" = 2 ] && [ -e /workspace/bin/untracked.txt ] && [ -e "/workspace/-untracked name.txt" ] || { echo "FAIL tracked/untracked files differ in the copy (untracked tracked: $n, tracked seen: $k)"; echo "selftest FAIL"; exit 1; }
 [ -z "${SELFTESTS_TIMES:-}" ] || { echo "FAIL a started selftest sees SELFTESTS_TIMES"; echo "selftest FAIL"; exit 1; }
+[ ! -e /workspace/gone.txt ] && [ -z "$(git -C /workspace ls-files -- gone.txt)" ] || { echo "FAIL a tracked file deleted on disk is in the copy or its commit"; echo "selftest FAIL"; exit 1; }
 echo "$(stat -f -c %T "${TMPDIR:-/tmp}") $(stat -f -c %T /workspace)" >"$FSMARK"
 echo "selftest PASS"
 S
 printf '#!/usr/bin/env bash\n: >"$FSMARK.w"; sleep 30; echo "selftest PASS"\n' >"$T2/bin/w-selftest.sh"; chmod +x "$T2/bin/w-selftest.sh"
-chmod +x "$T2/bin/t-selftest.sh"; echo tracked >"$T2/bin/tracked.txt"; echo tracked >"$T2/-tracked.txt"
-git -C "$T2" init -q; git -C "$T2" add -- bin ./-tracked.txt; git -C "$T2" -c user.name=t -c user.email=t@scratch.invalid commit -qm t
-echo u >"$T2/bin/untracked.txt"; echo u >"$T2/-untracked name.txt"
+chmod +x "$T2/bin/t-selftest.sh"; echo tracked >"$T2/bin/tracked.txt"; echo tracked >"$T2/-tracked.txt"; echo gone >"$T2/gone.txt"
+git -C "$T2" init -q; git -C "$T2" add -- bin ./-tracked.txt gone.txt; git -C "$T2" -c user.name=t -c user.email=t@scratch.invalid commit -qm t
+rm "$T2/gone.txt"; echo u >"$T2/bin/untracked.txt"; echo u >"$T2/-untracked name.txt"
 # each run folder has a twin of the same name in the temp folder whose .alive names it; a twin naming another tree's folder is not this tree's
 for n in dead live other; do mkdir -p "$T2/.scratch/selftests.$n" "$T/tmp/selftests.$n"; : >"$T2/.scratch/selftests.$n/.alive"; echo "$T2/.scratch/selftests.$n" >"$T/tmp/selftests.$n/.alive"; done
 echo "/elsewhere/.scratch/selftests.other" >"$T/tmp/selftests.other/.alive"
 flock "$T2/.scratch/selftests.live/.alive" sleep 60 & SLP=$!; sleep 0.3
 t2run() { FSWANT=$(stat -f -c %T "$T2") FSMARK="$T/fs" SELFTESTS_TIMES="$T/times2" TMPDIR="$T/tmp" WATCHDOG_SETTINGS="$T/set.json" "$T2/bin/selftests.sh" "$@" >"$T/out" 2>&1; echo $? >"$T/rc"; }
 t2run
-ok '[ "$(cat "$T/out")" = "$(printf "ok   t-selftest\nselftests PASS")" ]' "F1 F2 F3 the copy is on the tree's own filesystem, tracks what the tree tracks (odd names too), and the selftest sees no SELFTESTS_TIMES"
+ok '[ "$(cat "$T/out")" = "$(printf "ok   t-selftest\nselftests PASS")" ]' "F1 F2 F3 the copy is on the tree's own filesystem, tracks what the tree tracks (odd names too; a tracked file deleted on disk is in neither), and the selftest sees no SELFTESTS_TIMES"
 ok '[ "$(cut -f2,3 "$T/times2")" = "$(printf "t\tok")" ]' "F3 the caller's times file holds only the runner's own line"
 ok '[ ! -e "$T2/.scratch/selftests.dead" ] && [ -e "$T2/.scratch/selftests.live" ] && [ "$(ls -A "$T2/.scratch" | wc -l)" = 1 ]' "F4 a folder of a runner that is gone is swept, one of a live runner and the runner's own are not left/removed"
 left() { [ "$(ls -A "$T2/.scratch" | tr '\n' ' ')" = "selftests.live " ] && [ "$(ls -A "$T/tmp" | tr '\n' ' ')" = "selftests.live selftests.other " ]; }

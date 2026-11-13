@@ -4,7 +4,7 @@
 # usage: selftests.sh [name...|--quick]   no name = the whole list below (merge, final hash); --quick = the quick tier the
 # watchdog runs (decided by the owner 2026-11-12; list: "quick" in .stella/test-map.json); a name without a selftest file is FAIL.
 # Each selftest runs ISOLATED: the tree this script lies in is copied as it is on disk (tracked files plus untracked files
-# git does not ignore) into a one-commit repository, and the selftest runs in a bubblewrap mount namespace with that copy
+# git does not ignore; a tracked file deleted on disk is in neither the copy nor its commit) into a one-commit repository, and the selftest runs in a bubblewrap mount namespace with that copy
 # bound at the stack's path and a private folder bound over the system temp folder. So it has its own tree, alert log and
 # temp names; the source tree, the live alert log and the shared temp folder get nothing. Fail closed: a selftest is only
 # ever started inside the namespace; if the copy or the namespace cannot be made, every selftest is FAIL with one plain line
@@ -58,8 +58,9 @@ trap 'trap "" TERM INT HUP; for j in $(jobs -p); do kill -TERM -- "-$j" 2>/dev/n
 prep() {
   command -v bwrap >/dev/null || { echo "bwrap (bubblewrap) is not installed"; return 1; }
   ( set -o pipefail
-    git -C "$ROOT" ls-files -z --cached --others --exclude-standard -- . ':!.scratch' | sed -z 's|^|./|' >"$R/files" &&   # names, never options
-    git -C "$ROOT" ls-files -z --cached -- . ':!.scratch' >"$R/tracked" &&   # the copy's one commit holds exactly these
+    git -C "$ROOT" ls-files -z --deleted -- . ':!.scratch' | sort -z >"$R/gone" &&   # tracked, deleted on disk: in neither list
+    git -C "$ROOT" ls-files -z --cached --others --exclude-standard -- . ':!.scratch' | sort -z | comm -z -23 - "$R/gone" | sed -z 's|^|./|' >"$R/files" &&   # names, never options
+    git -C "$ROOT" ls-files -z --cached -- . ':!.scratch' | sort -z | comm -z -23 - "$R/gone" >"$R/tracked" &&   # the copy's one commit holds exactly these
     mkdir "$R/base" && tar -c -C "$ROOT" --null -T "$R/files" -f - | tar -x -C "$R/base" -f - &&
     git -C "$R/base" init -q -b qa && { [ ! -s "$R/tracked" ] || GIT_LITERAL_PATHSPECS=1 git -C "$R/base" add --pathspec-from-file="$R/tracked" --pathspec-file-nul; } &&
     git -C "$R/base" -c user.name=selftests -c user.email=selftests@scratch.invalid -c commit.gpgsign=false commit -q --allow-empty --no-verify -m "scratch copy" &&
