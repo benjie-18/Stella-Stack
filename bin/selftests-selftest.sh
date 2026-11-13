@@ -140,6 +140,8 @@ for p in "$T/nobwrap" "$T/badbwrap:$PATH"; do
 done
 mkdir "$T/c:d"; TDX="$T/c:d" run a
 ok 'grep -qx "FAIL a-selftest" "$T/out" && grep -q "holds a colon.*nothing started" "$T/out" && [ "$(cat "$T/rc")" = 1 ] && ! grep -qw send "$T/hcalls"' "S1 a temp folder whose path holds a colon: nothing started (the hermes wrapper would be on no PATH entry)"
+mkdir "$T/rel"; ( cd "$T" && TDX=rel run a )
+ok 'grep -qx "FAIL a-selftest" "$T/out" && grep -q "     FAIL the temp folder rel is not an absolute path.*nothing started" "$T/out" && [ "$(cat "$T/rc")" = 1 ] && ! grep -qw send "$T/hcalls" && [ -z "$(ls -A "$T/rel")" ]' "S1 a temp folder that is not an absolute path: nothing started, with the reason (the hermes wrapper would be on no PATH entry)"
 printf 'hermes() { echo "fn $*" >>%q; }\n' "$T/hcalls" >"$T/benv"
 ( . "$T/benv"; export -f hermes; BASH_ENV="$T/benv" run a )
 ok 'grep -qx "ok   a-selftest" "$T/out" && ! grep -q "^fn " "$T/hcalls"' "S1 a hermes function the caller exports or defines through BASH_ENV reaches no selftest"

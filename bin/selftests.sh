@@ -48,6 +48,7 @@ R= Q=
 unlock() { [ $# = 0 ] || find "$@" -type d ! -perm -u=rwx -exec chmod u+rwx {} \; 2>/dev/null; }
 trap 'unlock ${R:+"$R"} ${Q:+"$Q"}; rm -rf ${R:+"$R"} ${Q:+"$Q"}' EXIT
 [[ $TD != *:* ]] || setup_fail "the temp folder $TD holds a colon, so the hermes wrapper would be on no PATH entry: nothing started" "$@"
+[[ $TD = /* ]] || setup_fail "the temp folder $TD is not an absolute path, so the hermes wrapper would be on no PATH entry: nothing started" "$@"
 [ ! -L "$ROOT/.scratch" ] || setup_fail "$ROOT/.scratch is a symbolic link, not a folder of the tree: nothing started" "$@"
 { mkdir -p "$ROOT/.scratch" && exec 8<"$ROOT/.scratch" && flock 8; } 2>/dev/null || setup_fail "cannot make or lock $ROOT/.scratch: nothing started" "$@"
 for d in "$ROOT"/.scratch/selftests.*/; do
