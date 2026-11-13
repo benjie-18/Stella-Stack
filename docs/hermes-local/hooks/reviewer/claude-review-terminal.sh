@@ -9,10 +9,10 @@ jq() { env -u HOME jq "$@"; }  # RT-RTA-02: ~/.jq is worker-writable and jq has 
 refuse() {   # B.1 (r5) refuse <problem> <message>: the one way a hook refuses (bin/roles.py hook-refusal: the catalog code, one alert line per call naming the role)
   local m t=$2; [[ $t == '{'* ]] && t=$(jq -r .message <<<"$t")   # this hook's messages are written as their JSON line
   m=$(printf '%s' "$payload" | python3 -I /workspace/bin/roles.py hook-refusal STL-GRD-604 "$1" 2>/dev/null) || m=
-  jq -nc --arg m "${m:-[STL-GRD-604]} $t" '{action: "block", message: $m}'; exit 2; }
+  printf '{"action": "block", "message": %s}\n' "$(jq -n --arg m "${m:-[STL-GRD-604]} $t" '$m')"; exit 2; }   # the form the hooks printed before round 5 (a space after each colon): readers match it
 allow() {   # r6: an allow needs a valid role table, as every guard (bin/roles.py hook-allow); a broken table or a role tool that cannot start refuses
   local m; m=$(printf '%s' "$payload" | python3 -I /workspace/bin/roles.py hook-allow 2>/dev/null) && exit 0
-  jq -nc --arg m "${m:-[STL-CFG-303] the role table could not be checked by this hook}" '{action: "block", message: $m}'; exit 2; }
+  printf '{"action": "block", "message": %s}\n' "$(jq -n --arg m "${m:-[STL-CFG-303] the role table could not be checked by this hook}" '$m')"; exit 2; }   # the form the hooks printed before round 5 (a space after each colon): readers match it
 cmd=$(jq -r 'if .tool_name == "terminal" then .tool_input.command // "" else "" end' <<<"$payload" 2>/dev/null) || cmd=""
 allowed="bash /workspace/bin/claude-review.sh"
 bg=$(jq -r 'if (.tool_input.background == true or .tool_input.pty == true) then "yes" else "" end' <<<"$payload" 2>/dev/null) || bg=""
