@@ -24,7 +24,7 @@
       },
       "uniqueItems": true,
       "maxItems": 32,
-      "description": "Connections of kind app the card may use. The catalog row is checked, not yet its kind (see docs/contract/cards-and-vault.md)."
+      "description": "Connections of kind app the card may use. The catalog row is checked, not yet its kind; the kind check is a later rule (cards-and-vault doc in the contract folder)."
     },
     "skills": {
       "type": "array",

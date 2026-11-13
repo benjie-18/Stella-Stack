@@ -2223,8 +2223,7 @@
       "globs": [
         "bin/card-schema-selftest.sh",
         ".stella/schemas/card.schema.json",
-        ".stella/schemas/vault-entry.schema.json",
-        "docs/contract/cards-and-vault.md"
+        ".stella/schemas/vault-entry.schema.json"
       ],
       "targets": [
         "card-schema"
