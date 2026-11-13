@@ -66,7 +66,8 @@ trap 'trap "" TERM INT HUP; exec 2>/dev/null; for j in $(jobs -p); do kill -TERM
 prep() {
   command -v bwrap >/dev/null || { echo "bwrap (bubblewrap) is not installed"; return 1; }
   ( set -o pipefail
-    git -C "$ROOT" ls-files -z --deleted -- . ':!.scratch' | sort -z >"$R/gone" &&   # tracked, deleted on disk: in neither list
+    # tracked, not on disk: in neither list (asked of the disk: git's own deleted list leaves out skip-worktree entries)
+    git -C "$ROOT" ls-files -z --cached -- . ':!.scratch' | (cd "$ROOT" && while IFS= read -r -d '' n; do [ -e "$n" ] || [ -L "$n" ] || printf '%s\0' "$n"; done) | sort -z >"$R/gone" &&
     git -C "$ROOT" ls-files -z --cached --others --exclude-standard -- . ':!.scratch' | sort -z | comm -z -23 - "$R/gone" | sed -z 's|^|./|' >"$R/files" &&   # names, never options
     git -C "$ROOT" ls-files -z --cached -- . ':!.scratch' | sort -z | comm -z -23 - "$R/gone" >"$R/tracked" &&   # the copy's one commit holds exactly these
     mkdir "$R/base" && tar -c -C "$ROOT" --null -T "$R/files" -f - | tar -x -C "$R/base" -f - &&
