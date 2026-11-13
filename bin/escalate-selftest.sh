@@ -337,6 +337,13 @@ check 2 "S2: a longer reason is refused, also where the call would be queued" en
 ok '[ "$(runs7)" = $((n + 1)) ] && ! grep -q t_aaaa0702 "$Q7" && [ -z "$(ls "$S7/state" | grep -- "-t_aaaa0702-")" ] && [ "$(tail -1 "$S7/escalations.log" | jq -r "[.event, (.reason | length < 200)] | join(\" \")")" = "USAGE true" ]' "S2: ... nothing queued, no prompt file left, one short log line"
 head -c 200000 /dev/zero | tr '\0' r >"$T/r200k"; plant7 q_s2 '.call_reason = $r' "$T/r200k"; n=$(runs7); out=$($D --replay q_s2 2>&1)
 ok '[ "$(runs7)" = "$n" ] && [ "$(st7 q_s2)" = queued ] && [ -s "$S7/state/prompt-q_s2.txt" ] && grep -q "left in the queue" <<<"$out"' "S2: a replay that cannot start (a field over the argument limit) is left queued with its prompt, and says so"
+# Round 8 (W5-RT7-02, W5-VER7-01). A two-byte letter 8192 times: the drain's read of that line gives back more characters.
+n=$(runs7); check 75 "T1: a reason of 8192 two-byte letters is queued" env ESCALATE_FORCE_POOL_EXHAUSTED=1 sh -c "echo hi | $E t_aaaa0801 sonnet review $(sed "s/r/$(printf '\xd0\x96')/g" "$T/r8192")"
+id=$(jq -r 'select(.card == "t_aaaa0801") | .id' "$Q7" | tail -1); $D --replay "$id" >/dev/null 2>&1
+ok '[ -n "$id" ] && [ "$(runs7)" = $((n + 1)) ] && [ "$(st7 "$id")" = replayed ]' "T1: ... and replayed (a reason accepted when queued is not refused for its length on the replay)"
+# the stub stands in for a model command that did not start: escalate.sh sees only the exit code
+plant7 q_t3 .; FAKE_OUT=' ' FAKE_RC=127 $D --replay q_t3 >/dev/null 2>&1; w="the model command did not start (exit 127); left in the queue as q_t3"
+ok '[ "$(st7 q_t3)" = queued ] && [ "$(tail -1 "$S7/escalations.log" | jq -r --arg w "$w" ".detail | contains(\$w)")" = true ] && tail -1 "$S7/comments" | grep -qF "$w"' "T3: a replay whose model command did not start: the log line and the card note say it is left in the queue"
 export ESCALATE_SUP_DIR="$T/sup"
 
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
