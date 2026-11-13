@@ -41,13 +41,15 @@ times=${SELFTESTS_TIMES:-}; unset SELFTESTS_TIMES   # the caller's times file is
 # setup_fail <reason> <name>...: the same output form as a failed prep(), so the watchdog's parser names the checks
 setup_fail() { local n; for n in "${@:2}"; do printf 'FAIL %s-selftest\n     FAIL %s\n' "$n" "$1"; done; echo "selftests FAIL ($(($# - 1)))"; exit 1; }
 R= Q=
-trap 'chmod -R u+rwX ${R:+"$R"} ${Q:+"$Q"} 2>/dev/null; rm -rf ${R:+"$R"} ${Q:+"$Q"}' EXIT
+# unlock <folder>...: make the folders removable; modes of FOLDERS only (rm needs no write bit on a file; a hard link stays as it is)
+unlock() { [ $# = 0 ] || find "$@" -type d ! -perm -u=rwx -exec chmod u+rwx {} \; 2>/dev/null; }
+trap 'unlock ${R:+"$R"} ${Q:+"$Q"}; rm -rf ${R:+"$R"} ${Q:+"$Q"}' EXIT
 [ ! -L "$ROOT/.scratch" ] || setup_fail "$ROOT/.scratch is a symbolic link, not a folder of the tree: nothing started" "$@"
 { mkdir -p "$ROOT/.scratch" && exec 8<"$ROOT/.scratch" && flock 8; } 2>/dev/null || setup_fail "cannot make or lock $ROOT/.scratch: nothing started" "$@"
 for d in "$ROOT"/.scratch/selftests.*/; do
   d=${d%/}; [ ! -L "$d" ] && { [ ! -f "$d/.alive" ] || flock -n "$d/.alive" true; } || continue
-  q=$TD/${d##*/}; [ -d "$q" ] && [ ! -L "$q" ] && [ "$(cat "$q/.alive" 2>/dev/null)" = "$d" ] && { chmod -R u+rwX "$q" 2>/dev/null; rm -rf "$q"; }
-  chmod -R u+rwX "$d" 2>/dev/null; rm -rf "$d"
+  q=$TD/${d##*/}; [ -d "$q" ] && [ ! -L "$q" ] && [ "$(cat "$q/.alive" 2>/dev/null)" = "$d" ] && { unlock "$q"; rm -rf "$q"; }
+  unlock "$d"; rm -rf "$d"
 done
 { R=$(mktemp -d "$ROOT/.scratch/selftests.XXXXXX") && exec 9>"$R/.alive" && flock -n 9 && mkdir "$TD/${R##*/}" && Q=$TD/${R##*/} && echo "$R" >"$Q/.alive"; } 2>/dev/null ||
   setup_fail "cannot make a run folder in $ROOT/.scratch and its twin in $TD: nothing started" "$@"
