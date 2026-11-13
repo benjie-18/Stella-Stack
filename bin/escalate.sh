@@ -116,7 +116,7 @@ limit() { queue LIMIT "$1"; note "escalate.sh LIMIT: $model ($purpose) for '$rea
 # W5-RT6-01: an extra arg is passed on only if a caller of the stack uses it. None does (the drain replays the empty list every
 # caller queues), so every one is refused, here, where a direct call and a replay both pass. To allow one, name it in this test.
 extra_args=("$@")   # always empty past the next line; kept with a queue entry
-[ $# -eq 0 ] || refuse USAGE 2 "extra claude arg $1 is refused: no caller of the stack passes one (it could override escalate.sh's model, budget or permissions, or make the model command read a file or start a command)"
+[ $# -eq 0 ] || refuse USAGE 2 "extra claude arg $(printf %q "$1") is refused: no caller of the stack passes one (it could override escalate.sh's model, budget or permissions, or make the model command read a file or start a command)"
 
 [[ "$card" =~ ^t_[0-9a-f]{8}$ ]] || refuse USAGE 2 "card id required (t_xxxxxxxx), got '${card}'"
 [ -n "$reason" ] || refuse USAGE 2 "reason required"
