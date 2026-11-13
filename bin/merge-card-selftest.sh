@@ -324,7 +324,7 @@ ok '[ "$(mc t_0000e126 --owner-approved)" = 3 ] && grep -q "tests failed" "$T/ou
 card t_0000e127 e127.txt e127 'mkdir -p "$(git rev-parse --git-dir)/worktrees"; d="$(git rev-parse --git-common-dir)/worktrees/merge-check-t_0000e127"; touch "$d/locked" 2>/dev/null || true; exit 0'; h=$(head_of "$T/repo")
 ok '[ "$(mc t_0000e127 --owner-approved)" = 0 ] && [ "$(head_of "$T/repo")" != "$h" ] && [ "$(mc t_0000e127 --owner-approved)" = 3 ]' "B.2 point 11: a test that locks its throw-away worktree entry still merges, and the entry is cleared (the next merge of the same card is not refused by a stale lock; second run refused because it is no longer ahead)"
 # r6 (R14): the verdict of the boxed run comes on a pipe the test never holds, so every exit code a test can choose is "tests failed" with that code
-for x in 1 70 124 125 137 255; do c=t_0000f$(printf %03x $x); card $c f$x.txt f$x "echo QA-RAN-$x; exit $x"; h=$(head_of "$T/repo")
+for x in 1 70 124 125 137 255; do c=t_0000c6$(printf %02x $x); card $c f$x.txt f$x "echo QA-RAN-$x; exit $x"; h=$(head_of "$T/repo")
   ok '[ "$(mc $c --owner-approved)" = 3 ] && grep -q "QA-RAN-$x" "$T/out" && grep -q "STL-GRD-606.*tests failed.*exit $x)" "$T/out" && ! grep -q "could not" "$T/out" && [ "$(head_of "$T/repo")" = "$h" ]' "r6: a card test that ran and exited $x is 'tests failed' with that code, never a box or worktree fault"
 done
 card t_0000f301 f301.txt f301 'd=$(git rev-parse --absolute-git-dir); rm -f "$d/box-started"; echo 9 >"$d/box-signal"; exit 0'; h=$(head_of "$T/repo")
@@ -435,6 +435,6 @@ else:
 S
 scard t_0000b20a zz-c4.txt x; cp "$T/c4-map.py" "$SR/.worktrees/t_0000b20a/bin/test-map.py"; git -C "$SR/.worktrees/t_0000b20a" add -A; git -C "$SR/.worktrees/t_0000b20a" -c core.hooksPath=/dev/null commit -qm "a probing map tool"
 ok '[ -e "$OSF4" ] && [ "$(smc t_0000b20a --owner-approved --i-have-read-the-boundary-changes)" = 0 ] && grep -q "^C4 in-ns uid=0" "$T/out" && grep -q "^C4 ok read-only" "$T/out" && grep -q "^C4 ok hidden" "$T/out" && grep -q "^C4 ok broker" "$T/out" && ! grep -q "C4 BAD\|C4-BROKER-CANARY" "$T/out" && [ ! -e "$SR/zz-c4-written" ]' "r6 C4: in the nested-namespace box of a stack card's merge test, code in its own user and mount namespace cannot write the read-only checkout, see the hidden owner settings path or read a broker file"; grep "^C4 " "$T/out" | sed 's/^/     info /' | head -12
-card t_0000b209 b209.txt b209'echo QA-NPM-RAN; unshare -Ur true 2>/dev/null && exit 1; exit 0'; h=$(head_of "$T/repo")
+card t_0000b209 b209.txt b209 'echo QA-NPM-RAN; unshare -Ur true 2>/dev/null && exit 1; exit 0'; h=$(head_of "$T/repo")
 ok '[ "$(mc t_0000b209 --owner-approved)" = 0 ] && grep -q QA-NPM-RAN "$T/out" && ! grep -q "merge test:" "$T/out" && [ "$(head_of "$T/repo")" != "$h" ]' "B2: a project card is unchanged: its own test command runs, in a box that still forbids nested namespaces"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
