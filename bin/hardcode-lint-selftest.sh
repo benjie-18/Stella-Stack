@@ -43,6 +43,7 @@ ok 'lint --dump | grep -q "	"' "--dump prints the counts"
 fresh; python3 - "$S/.stella/connections.json" "$fp" "$fm" "$fh" <<'P'
 import json, sys
 p, i, m, h = sys.argv[1:]; d = json.load(open(p)); e = json.loads(json.dumps(next(x for x in d["entries"] if x["kind"] == "provider" and x["locality"] != "local")))   # a remote provider: a local one must name a local host
+e["global_id"] = str(__import__("uuid").uuid4())   # a copy is a new record: its own global id (F1b W1)
 e["id"], e["hosts"], e["models"] = i, [{"host": h, "port": 1, "purpose": "test"}], [dict(e["models"][0], id=m)]
 d["entries"].append(e); json.dump(d, open(p, "w"))
 P

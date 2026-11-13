@@ -10,7 +10,7 @@ R=$T/root; mkdir -p "$R/docs/hermes-local" "$R/config" "$R/.supervisor/logs"
 cp -r "$H/.stella" "$R/"; cp "$H/docs/hermes-local/roles.json" "$R/docs/hermes-local/"
 cp -r "$H/docs/hermes-local/hooks" "$R/docs/hermes-local/hooks"   # the table check looks hook files up under the root
 # a registry setting marked secret, in a data file that has no redact_keys of its own
-jq '.entries += [(.entries[2] | .key = "PLANTED_SETTING" | .sensitivity = "secret" | .type = "string" | .validation = {} | .default = null | .store.key = "PLANTED_SETTING")]' \
+jq --arg g "$(python3 -I -c "import uuid; print(uuid.uuid4())")" '.entries += [(.entries[2] | .global_id = $g | .key = "PLANTED_SETTING" | .sensitivity = "secret" | .type = "string" | .validation = {} | .default = null | .store.key = "PLANTED_SETTING")]' \
   "$R/.stella/settings.json" > "$T/s" && mv "$T/s" "$R/.stella/settings.json"
 printf "OWNER_TIMEZONE='UTC'\n" >"$T/owner-fake.env"   # a fake owner file: no failure message makes the alert code read the real one
 export STELLA_ROOT=$R ESCALATE_SUP_DIR=$T/sup OWNER_CONFIG=$T/owner-fake.env
