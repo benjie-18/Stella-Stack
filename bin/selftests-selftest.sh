@@ -79,18 +79,40 @@ n=$(git -C /workspace ls-files | grep -c 'untracked'); k=$(git -C /workspace ls-
 [ "$(stat -f -c %T /workspace)" = "$FSWANT" ] || { echo "FAIL the copy is on a $(stat -f -c %T /workspace) filesystem, the source tree on $FSWANT"; echo "selftest FAIL"; exit 1; }
 [ "$n" = 0 ] && [ "$k" = 2 ] && [ -e /workspace/bin/untracked.txt ] && [ -e "/workspace/-untracked name.txt" ] || { echo "FAIL tracked/untracked files differ in the copy (untracked tracked: $n, tracked seen: $k)"; echo "selftest FAIL"; exit 1; }
 [ -z "${SELFTESTS_TIMES:-}" ] || { echo "FAIL a started selftest sees SELFTESTS_TIMES"; echo "selftest FAIL"; exit 1; }
+echo "$(stat -f -c %T "${TMPDIR:-/tmp}") $(stat -f -c %T /workspace)" >"$FSMARK"
 echo "selftest PASS"
 S
+printf '#!/usr/bin/env bash\n: >"$FSMARK.w"; sleep 30; echo "selftest PASS"\n' >"$T2/bin/w-selftest.sh"; chmod +x "$T2/bin/w-selftest.sh"
 chmod +x "$T2/bin/t-selftest.sh"; echo tracked >"$T2/bin/tracked.txt"; echo tracked >"$T2/-tracked.txt"
 git -C "$T2" init -q; git -C "$T2" add -- bin ./-tracked.txt; git -C "$T2" -c user.name=t -c user.email=t@scratch.invalid commit -qm t
 echo u >"$T2/bin/untracked.txt"; echo u >"$T2/-untracked name.txt"
-mkdir -p "$T2/.scratch/selftests.dead" "$T2/.scratch/selftests.live"; : >"$T2/.scratch/selftests.dead/.alive"; : >"$T2/.scratch/selftests.live/.alive"
+# each run folder has a twin of the same name in the temp folder whose .alive names it; a twin naming another tree's folder is not this tree's
+for n in dead live other; do mkdir -p "$T2/.scratch/selftests.$n" "$T/tmp/selftests.$n"; : >"$T2/.scratch/selftests.$n/.alive"; echo "$T2/.scratch/selftests.$n" >"$T/tmp/selftests.$n/.alive"; done
+echo "/elsewhere/.scratch/selftests.other" >"$T/tmp/selftests.other/.alive"
 flock "$T2/.scratch/selftests.live/.alive" sleep 60 & SLP=$!; sleep 0.3
-FSWANT=$(stat -f -c %T "$T2") SELFTESTS_TIMES="$T/times2" TMPDIR="$T/tmp" WATCHDOG_SETTINGS="$T/set.json" "$T2/bin/selftests.sh" >"$T/out" 2>&1; echo $? >"$T/rc"
+t2run() { FSWANT=$(stat -f -c %T "$T2") FSMARK="$T/fs" SELFTESTS_TIMES="$T/times2" TMPDIR="$T/tmp" WATCHDOG_SETTINGS="$T/set.json" "$T2/bin/selftests.sh" "$@" >"$T/out" 2>&1; echo $? >"$T/rc"; }
+t2run
 ok '[ "$(cat "$T/out")" = "$(printf "ok   t-selftest\nselftests PASS")" ]' "F1 F2 F3 the copy is on the tree's own filesystem, tracks what the tree tracks (odd names too), and the selftest sees no SELFTESTS_TIMES"
 ok '[ "$(cut -f2,3 "$T/times2")" = "$(printf "t\tok")" ]' "F3 the caller's times file holds only the runner's own line"
 ok '[ ! -e "$T2/.scratch/selftests.dead" ] && [ -e "$T2/.scratch/selftests.live" ] && [ "$(ls -A "$T2/.scratch" | wc -l)" = 1 ]' "F4 a folder of a runner that is gone is swept, one of a live runner and the runner's own are not left/removed"
+left() { [ "$(ls -A "$T2/.scratch" | tr '\n' ' ')" = "selftests.live " ] && [ "$(ls -A "$T/tmp" | tr '\n' ' ')" = "selftests.live selftests.other " ]; }
+ok 'left' "G1 the same in the temp folder: the dead runner's twin is swept, the live runner's twin and another tree's are kept, the runner's own is removed"
+fs=$(stat -f -c %T "$T/tmp"); [ "$fs" = "$(stat -f -c %T "$T2")" ] && echo "skip G1 the temp folder and the tree are both $fs here: cannot tell where a selftest's temp folder lies" ||
+  ok '[ "$(cat "$T/fs")" = "$fs $(stat -f -c %T "$T2")" ]' "G1 a started selftest's temp folder lies on the caller's temp filesystem, its tree on the tree's"
+# TERM: the runner stops its selftest, removes its folders in both places, and says why it stopped
+FSWANT=x FSMARK="$T/fs" TMPDIR="$T/tmp" WATCHDOG_SETTINGS="$T/set.json" "$T2/bin/selftests.sh" w >"$T/out" 2>&1 & r=$!
+for i in $(seq 100); do [ -e "$T/fs.w" ] && break; sleep 0.1; done; kill -TERM $r; wait $r; echo $? >"$T/rc"
+ok '[ -e "$T/fs.w" ] && [ "$(cat "$T/rc")" = 143 ] && [ "$(tail -1 "$T/out")" = "selftests FAIL (stopped by a signal)" ] && ! pgrep -f "/workspace/bin/w-selftest.sh" >/dev/null && left' "G1 G2c TERM: the selftest is stopped, nothing left in either place, the last line names the signal"
 kill $SLP 2>/dev/null; SLP=
+# G2a G2b the run folder cannot be made (.scratch a symbolic link out of the tree, a file): every name FAIL with the reason, summary last, nothing made anywhere
+mkdir -p "$T/out-of-tree"; mv "$T2/.scratch" "$T/s.keep"
+for k in link file; do
+  [ $k = link ] && ln -s "$T/out-of-tree" "$T2/.scratch" || echo x >"$T2/.scratch"
+  t2run t w
+  ok '[ "$(cat "$T/out" | grep -c "^FAIL [tw]-selftest$")" = 2 ] && [ "$(grep -c "^     FAIL .*\.scratch" "$T/out")" = 2 ] && [ "$(tail -1 "$T/out")" = "selftests FAIL (2)" ] && [ "$(wc -l <"$T/out")" = 5 ] && [ "$(cat "$T/rc")" = 1 ] && [ -z "$(ls -A "$T/out-of-tree")" ] && [ "$(ls -A "$T/tmp" | tr "\n" " ")" = "selftests.live selftests.other " ]' "G2a G2b .scratch a $k: every name FAIL with a reason naming .scratch, the summary last, nothing made"
+  rm -f "$T2/.scratch"
+done
+mv "$T/s.keep" "$T2/.scratch"
 
 # fail closed: no bubblewrap on PATH, and a bubblewrap that refuses: every selftest FAIL with a plain line, nothing ran
 mkdir -p "$T/nobwrap" "$T/badbwrap"
