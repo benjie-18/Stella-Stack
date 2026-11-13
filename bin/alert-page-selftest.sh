@@ -103,6 +103,7 @@ echo "## the selftests.sh wrapper: no selftest posts to Discord"
 # is called. The send runs only when the wrapper is the first hermes on PATH, and the wrapper's "real" one is a stop that
 # never passes a send on, so a broken wrapper fails the row instead of posting.
 WL=$(grep -m1 '^ *printf .*hermes send refused in a selftest.*>"\$q/\.bin/hermes"$' "$SWF")
+[ "$(grep -c '>"\$q/\.bin/hermes"' "$SWF")" = 1 ] || WL=   # the line found must be the only one that writes the wrapper, so it is the one the runner runs
 cat >"$T/wrap.sh" <<WRAP
 set -u
 q=$(printf %q "$T/g"); mkdir -p "\$q/.bin"; real_hermes=\$q/real
