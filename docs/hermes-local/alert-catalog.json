@@ -616,9 +616,9 @@
       "area": "GRD",
       "severity": "warning",
       "title": "a card's tests could not be run in their box",
-      "message": "A card was not merged because its tests could not be run in their box: {problem}. The tests never run outside the box, and nothing was merged.",
-      "action": "merge the card again; if it happens again, ask Claude Code to check the box (STL-GRD-605 in docs/alert-codes.md).",
-      "cause": "The merge runs a card's tests in the OS box, in a throw-away worktree it makes. The box could not start (bubblewrap failed at set-up, no boxed profile without broker variables, a profile folder is missing), the box was ended by a signal, or the throw-away worktree could not be made (a leftover of an earlier run).",
+      "message": "The tests of a card could not be run in their box: {problem}. The tests never run outside the box, so the step that needed them did not happen.",
+      "action": "the merge output says which step stopped: the merge itself (nothing was merged: merge the card again) or, with --push, the push of a main that is already merged locally (the output names the undo). If it happens again, ask Claude Code to check the box (STL-GRD-605 in docs/alert-codes.md).",
+      "cause": "The merge runs a card's tests in the OS box, in a throw-away worktree it makes, and with --push the merged main's tests the same way before the push. The box could not start (bubblewrap failed at set-up, no boxed profile without broker variables, a profile folder is missing), the box was ended by a signal, or the throw-away worktree could not be made (a leftover of an earlier run).",
       "check": ".supervisor/logs/alerts.log (`grep STL-GRD-605`: what could not start); `git worktree list` in the repository (a leftover merge-check or merge-test worktree).",
       "related": "K2, F1 W4 round 6; bin/merge-card.sh, bin/box.py merge_exec",
       "resolvable": false
