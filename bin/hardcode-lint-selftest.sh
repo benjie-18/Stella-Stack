@@ -242,4 +242,7 @@ fresh; withcat; git -C "$S" init -q; rm "$S/$AL"; ln -s "$(realpath -m --relativ
 mkdir -p "$S/$(dirname "$ow")"; rm -f "$S/$ow" "$T/opened"; mkfifo "$S/$ow"; ( exec 3>"$S/$ow"; touch "$T/opened" ) & wp=$!
 ok 'out=$(lint --list); [ $? = 2 ] && grep -q "is, or points at, an owner or state path" <<<"$out" && [ ! -e "$T/opened" ]' "VER4-01: an allow list that is a tracked link to the owner file is refused before it is opened (exit 2, no open)"
 kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null; rm -f "$S/$ow"
+# VER4-03: run_by keeps only the words of the runner's lists that are selftest names; a stem that is another word is scanned
+fresh; withcat; f='bin/"$@"-selftest.sh'; printf '# x\n' >"$S/$f"; plant "$f" "$fp"
+ok 'fails_on "\"$fp\"" && grep -qF -- "$f" <<<"$out"' "VER4-03: a provider id in $f (its stem is a word of a runner's for line, not a selftest name) is counted"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
