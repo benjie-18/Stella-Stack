@@ -97,14 +97,22 @@ ok '[ "$(ALERT_CATALOG=$T/bad-catalog.json python3 -c "import sys; sys.path.inse
 ok '[ "$(python3 -c "import sys; sys.path.insert(0, sys.argv[1]); import alert_catalog; print(alert_catalog.validate())" "$AS" 2>/dev/null)" = "[]" ]' "the staged catalog validates (every page value is log, hourly or card_streak)"
 
 echo "## the selftests.sh wrapper: no selftest posts to Discord"
+# The runner's own wrapper line (its printf), built with the runner's variable names. Not found: both rows fail and no hermes
+# is called. The send runs only when the wrapper is the first hermes on PATH, and the wrapper's "real" one is a stop that
+# never passes a send on, so a broken wrapper fails the row instead of posting.
+WL=$(grep -m1 '^ *printf .*hermes send refused in a selftest.*>"\$q/\.bin/hermes"$' "$SWF")
 cat >"$T/wrap.sh" <<WRAP
 set -u
-$(sed -n '/^G=\$(mktemp -d)/,/export PATH=/p' "$SWF")
+q=$T/g; mkdir -p "\$q/.bin"; real_hermes=\$q/real
+printf '#!/usr/bin/env bash\nfor a; do [ "\$a" != send ] || exit 7; done\nexec %q "\$@"\n' "\$(command -v hermes || echo /bin/false)" >"\$real_hermes"
+$WL
+chmod +x "\$real_hermes" "\$q/.bin/hermes"; export PATH="\$q/.bin:\$PATH"
+[ "\$(command -v hermes)" = "\$q/.bin/hermes" ] || exit 9
 hermes send --to discord:#alerts --quiet body; echo "send_rc=\$?"
 echo "where=\$(command -v hermes)"
 echo "version=\$(hermes --version 2>/dev/null | head -1)"
 WRAP
-W=$(env PATH="$ORIG_PATH" bash "$T/wrap.sh" 2>"$T/wrap.err")
+W=; : >"$T/wrap.err"; [ -z "$WL" ] || W=$(env PATH="$ORIG_PATH" bash "$T/wrap.sh" 2>"$T/wrap.err")
 REAL_VERSION=$(env PATH="$ORIG_PATH" hermes --version 2>/dev/null | head -1)
 ok 'printf "%s\n" "$W" | grep -qx "send_rc=1" && printf "%s\n" "$W" | grep -q "^where=.*/hermes$" && grep -qF "hermes send refused in a selftest" "$T/wrap.err"' "the wrapper refuses hermes send (exit 1, names the refusal) and comes first on PATH"
 ok '[ "$(printf "%s\n" "$W" | sed -n "s/^version=//p")" = "$REAL_VERSION" ] && [ -n "$REAL_VERSION" ]' "the wrapper passes every other call through (hermes --version is the real one)"
