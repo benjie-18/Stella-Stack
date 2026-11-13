@@ -97,7 +97,8 @@ elif [ "$mrc" != 1 ]; then   # 1 = a conflict: the merge below fails and is abor
 fi
 if [ -n "$mtree" ]; then
   # B.3 point 17 (W4-VER3-01): git's merge overwrites an ignored file without a word. Every path the merged tree changes, and each folder above it, that
-  # exists in the main checkout but is not tracked in main is refused before anything is written (ignored or not, any name)
+  # exists in the main checkout but is not tracked in main is refused before anything is written (ignored or not, any name); so is a tracked folder
+  # the merged tree turns into a file or a link while a file below it is not tracked (r7 A2)
   tz=$(mktemp) && g ls-tree -r -z --name-only "$before" >"$tz" || coded STL-CFG-303 "git cannot list what main tracks" "nothing was merged"
   over=$(python3 -I -c '
 import os, sys
@@ -111,6 +112,9 @@ for n in (x for x in open(zf, "rb").read().decode("utf-8", "surrogateescape").sp
         p = "/".join(parts[:i])
         if p not in tracked and p not in dirs and os.path.lexists(os.path.join(top, p)):
             out.append(n if p == n else f"{n} (untracked at {p})"); break   # r6: the path itself, and the untracked folder above it
+    if n in dirs:   # r7 A2 (W4-CV4-01): a tracked folder of main becomes a file or a link: the checkout would remove every file below it that git does not track
+        low = (os.path.relpath(os.path.join(r, f), top) for r, ds, fs in os.walk(os.path.join(top, n)) for f in fs + [d for d in ds if os.path.islink(os.path.join(r, d))])
+        out += [f"{n} (it would remove the untracked {x})" for x in low if x not in tracked][:1]
 print(", ".join(sorted(set(out)))[:240])' "$top" "$zf" "$tz") || coded STL-CFG-303 "the main checkout's untracked files cannot be compared with the merge" "nothing was merged"
   rm -f "$tz"
   hits=$(python3 -I "$here/roles.py" hits "$top" refused "$here/.." <"$zf" 2>/dev/null | tr '\0' '\n'; exit "${PIPESTATUS[0]}") \
