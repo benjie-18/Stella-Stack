@@ -168,7 +168,7 @@ intree() {   # intree <commit> <name>: npm test of <commit> in the box, in a thr
   # test ran and exited with <code> (what bin/box.py exec states on descriptor 3, which the box never holds), anything else: the box did not run it (its coded line is printed)
   local pw="$top/.worktrees/$2-$card" pb="$2/$card"; tres=wt
   rm -f "$common/worktrees/$2-$card/locked"; g worktree prune   # W4-VAL3-01: a lock a previous test wrote into the entry would keep it; a folder left at $pw is not ours to remove: the add below fails, coded
-  g -c core.hooksPath=/dev/null -c core.fsmonitor= worktree add -q -b "$pb" "$pw" "$1" >/dev/null 2>&1 || return 0
+  g -c core.hooksPath=/dev/null -c core.fsmonitor= worktree add -q -B "$pb" "$pw" "$1" >/dev/null 2>&1 || return 0   # -B (r7 B3): the branch an interrupted merge left is ours by its name and is reused
   tres=$(python3 -I "$here/box.py" exec "$top" "$pw" "$pb" "$card" "$tscript" $nest 3>&1 >&2)
   rm -rf "$pw"; rm -f "$common/worktrees/$2-$card/locked"; g worktree prune; g branch -D "$pb" >/dev/null 2>&1; }
 echo "merge-card.sh: running this branch's own test command in the OS box (the card worktree writable, the rest read-only); review the diff first" >&2
