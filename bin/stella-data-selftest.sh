@@ -18,8 +18,8 @@ INS=$(jq -r '.files[] | select(.schema == "install") | .path' "$ROOT/.stella/dat
 ids() { echo "global_id:\"$(cat /proc/sys/kernel/random/uuid)\",install_id:\"$IID\""; }   # F1b D1: the two ids of a new fake record, as jq text
 rid() { echo "record_kind:(.files[] | select(.id == \"$1\") | .record_kind),$(ids)"; }   # F1b D1/D2: a fake index row of the kind of row <id>, with its two ids
 AR=$(jq -c '.fallback_role as $fb | [.roles | keys[] | select(. != $fb)]' "$ROOT/docs/hermes-local/roles.json")   # every assignable role
-conn() {  # <id> <kind> <subkind> <locality>: a complete connections entry as jq text; it allows every assignable role, so a case fails for its own cause
-  echo "{id:\"$1\",kind:\"$2\",subkind:\"$3\",label:\"Fake $1\",enabled:true,locality:\"$4\",hosts:[{host:\"$1.example.invalid\",port:443,purpose:\"api\"}],auth_types:[\"api_key\"],secrets:[\"FAKE_KEY\"],actions:[{id:\"go\",approval_class:\"write\"}],models:[{id:\"$1-model\",capabilities:{tool_calling:null,json_mode:null,context_tokens:null,vision:null,streaming:null},probed_at:null,probe_source:null}],data_policy:{retention:null,training_use:null,region:null,zero_retention_available:null,data_classes_allowed:[\"public\",\"internal\",\"client\"]},tos:{status:\"unverified\",subscription_login_by_agent:\"unverified\"},allowed_roles:$AR,risk_class:\"read\",$(ids)}"
+conn() {  # <id> <kind> <subkind> <locality>: a complete connections entry (type api) as jq text; it allows every assignable role, so a case fails for its own cause
+  echo "{id:\"$1\",kind:\"$2\",subkind:\"$3\",type:\"api\",label:\"Fake $1\",enabled:true,locality:\"$4\",hosts:[{host:\"$1.example.invalid\",port:443,purpose:\"api\"}],auth_types:[\"api_key\"],secrets:[\"FAKE_KEY\"],actions:[{id:\"go\",approval_class:\"write\"}],models:[{id:\"$1-model\",capabilities:{tool_calling:null,json_mode:null,context_tokens:null,vision:null,streaming:null},probed_at:null,probe_source:null}],data_policy:{retention:null,training_use:null,region:null,zero_retention_available:null,data_classes_allowed:[\"public\",\"internal\",\"client\"]},tos:{status:\"unverified\",subscription_login_by_agent:\"unverified\"},allowed_roles:$AR,risk_class:\"read\",$(ids)}"
 }
 refuses() { local r=$1; shift; ! sd "$r" "$@" >"$T/o" 2>&1; }                 # <root name> <args...>: exits non-zero, output in $T/o
 alerts() { cat "$T/sup/logs/alerts.log" 2>/dev/null | wc -l; }
@@ -731,4 +731,70 @@ ok 'jq -e "[.entries[] | select(.source == \"bin/stella_data.py\") | .keywords[]
 # the install id is readable through one function (W6's event lines read it there)
 mk ii; ed ii install.json '.install_id = "x"'
 ok '[ -n "$IID" ] && [ "$(python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; print(s.install_id())" "$BIN")" = "$IID" ] && ! STELLA_ROOT=$T/ii python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; s.install_id()" "$BIN" 2>/dev/null' "238 stella_data.install_id() returns this install's id and refuses a bad install file"
+# F1b D5 connection types (items 1, 5, 9): fake entries of each new shape validate and load with no code change (T1a-c, T9a)
+API='{type:"api"}'
+CLI='{type:"cli-login",cli:"qa-cli",quota_source:["cli_usage","limit_errors"],concurrency_limit:2,credential_store:"engine_cli_store",terms_ok:null}'
+AGG='{type:"api",aggregator:true,broker_entries:{unified:"QA_AGG_TOKEN",admin:"QA_AGG_ADMIN_KEY",upstream:["QA_UP_ONE_KEY","QA_UP_TWO_KEY"]}}'
+SRC() { echo "($(conn "$1" input_source "$2" "$3") + $API | .hosts = [] | .models = [] | .data_policy.data_classes_allowed = [\"$2\"])"; }   # <id> <subkind> <locality>: an input source
+HOSTED='.data_policy.hosted = true'
+mk w2f; ed w2f connections.json ".entries += [($(conn qa-api provider hosted cloud) + $API), ($(conn qa-agg provider openai-compatible-aggregator cloud) + $AGG), ($(conn qa-cli provider direct-subscription cloud) + $CLI), ($(conn qa-ghcli app code-hosting cloud) + $CLI), $(SRC qa-cam camera local), $(SRC qa-hub sensor hub), ($(conn qa-rt provider realtime cloud) + $API | .realtime = {audio:true,video:true}), ($(conn qa-comp app integration-aggregator cloud) + $API + {integration_aggregator:true} | $HOSTED)]"
+ok 'sd w2f check >"$T/o" 2>&1' "240 a scratch root with a fake api, aggregator, cli-login (provider and app), input source (local and hub), realtime provider and integration aggregator passes check"
+ok '[ "$(sd w2f get connections qa-api --json | jq -r .type)" = api ]' "240a T1a get returns the fake api connection"
+ok 'sd w2f get connections qa-agg --json | jq -e ".type == \"api\" and .aggregator == true and .broker_entries.upstream == [\"QA_UP_ONE_KEY\",\"QA_UP_TWO_KEY\"]" >/dev/null' "240b T1b get returns the fake aggregator with its broker entry names"
+ok 'sd w2f get connections qa-cli --json | jq -e ".type == \"cli-login\" and .terms_ok == null and .concurrency_limit == 2" >/dev/null && sd w2f get connections qa-ghcli --json | jq -e ".kind == \"app\" and .type == \"cli-login\"" >/dev/null' "240c T1c get returns the fake cli-login provider and a cli-login app"
+ok 'sd w2f get connections qa-cam --json | jq -e ".kind == \"input_source\" and .subkind == \"camera\"" >/dev/null && sd w2f get connections qa-hub --json | jq -e ".locality == \"hub\"" >/dev/null && sd w2f get connections qa-rt --json | jq -e ".realtime == {audio:true,video:true}" >/dev/null' "240d T9a get returns the fake input sources and the realtime provider"
+ok 'sd w2f get connections qa-comp --json | jq -e ".integration_aggregator == true and .data_policy.hosted == true" >/dev/null' "240e T1d get returns the fake integration aggregator, marked hosted"
+# each rule of a shape refuses its own fault: one root per fault, from the passing fake set above, the line names the entry and the field
+w2() {  # <case> <jq filter on the w2f connections> <grep pattern> <what>
+  rm -rf "$T/w2x"; cp -r "$T/w2f" "$T/w2x"; ed w2x connections.json "$2"
+  ok 'refuses w2x check && grep -q "^STL-CFG-310 .*connections: .*'"$3"'" "$T/o" && ! grep -q Traceback "$T/o"' "$1 $4"
+}
+E() { echo "(.entries[] | select(.id == \"$1\"))"; }
+w2 241a "del($(E qa-api).type)" "missing type" "an entry with no type is refused"
+w2 241b "$(E qa-api).type = \"oauth\"" "type" "a type that is neither api nor cli-login is refused"
+for f in cli quota_source concurrency_limit credential_store terms_ok; do
+  w2 241c "$(E qa-cli) |= del(.$f)" "qa-cli.*$f" "a cli-login entry with no $f is refused"
+  w2 241d "$(E qa-api).$f = ($CLI | .$f)" "qa-api.*$f" "an api entry carrying the cli-login field $f is refused"
+done
+w2 241e "$(E qa-cli).concurrency_limit = 0" "concurrency_limit" "a concurrency limit below 1 is refused"
+w2 241f "$(E qa-cli).credential_store = \"home_dir\"" "credential_store" "a credential store that is neither the engine's CLI store nor the VM vault is refused"
+w2 241g "$(E qa-cli).quota_source = []" "quota_source" "a cli-login entry naming no quota source is refused"
+w2 241h "$(E qa-cli).terms_ok = \"yes\"" "terms_ok" "terms_ok that is not null, true or false is refused"
+w2 241i ".entries += [($(conn qa-chcli channel chat cloud) + $CLI)]" "qa-chcli.*cli-login" "a channel cannot be cli-login (only providers and apps)"
+w2 242a "$(E qa-agg) |= del(.broker_entries)" "qa-agg.*broker_entries" "an aggregator that names no broker entries is refused"
+w2 242b "$(E qa-cli) += {aggregator:true,broker_entries:($AGG | .broker_entries)}" "qa-cli.*aggregator" "a cli-login entry cannot be an aggregator"
+w2 242c "$(E qa-api).broker_entries = ($AGG | .broker_entries)" "qa-api.*broker_entries" "broker entries on an entry that is no aggregator are refused"
+w2 242d "$(E qa-comp) += {aggregator:true,broker_entries:($AGG | .broker_entries)}" "qa-comp: an aggregator is an api provider" "an app cannot be an aggregator (an app fronting many apps is an integration aggregator)"
+w2 242e "$(E qa-agg).broker_entries.admin = \"$V\"" "admin" "a broker entry that is not a NAME is refused (never printed)"
+ok '! grep -q qafake "$T/o"' "242f and the refusal never prints the value"
+w2 243a "$(E qa-comp).realtime = {audio:true,video:true}" "qa-comp.*realtime" "realtime on an app is refused (only a provider takes live audio or video)"
+w2 243b "$(E qa-rt).realtime = {audio:true}" "realtime" "a realtime attribute that does not say both audio and video is refused"
+w2 243c "$(E qa-cam).subkind = \"qa-no-class\"" "qa-cam.*subkind" "an input source whose subkind is no data class of the data policy is refused"
+w2 243d "$(E qa-cam).locality = \"cloud\"" "qa-cam.*locality" "an input source in the cloud is refused (local or hub only)"
+w2 243e "$(E qa-api).locality = \"hub\"" "qa-api.*hub" "only an input source may be on a hub"
+w2 243f "$(E qa-cam) += $CLI" "qa-cam.*cli-login" "an input source cannot be cli-login"
+# T1d the integration aggregator is hosted, and a hosted connection is refused for secret classes, vault content and private projects
+w2 244a "$(E qa-comp).data_policy |= del(.hosted)" "qa-comp.*hosted" "an integration aggregator not marked hosted is refused"
+w2 244b "$(E qa-api) += {integration_aggregator:true} | $(E qa-api).data_policy.hosted = true" "qa-api.*integration_aggregator" "only an app may be an integration aggregator"
+w2 244c "$(E qa-comp).data_policy.data_classes_allowed += [\"secret\"]" "qa-comp.*secret" "a hosted connection allowing the secret class is refused"
+w2 244d "$(E qa-comp).data_policy.data_classes_allowed += [\"camera\"]" "qa-comp.*camera" "a hosted connection allowing a class that is never synced (camera) is refused"
+VK=$(jq -r '[.record_kinds | to_entries[] | select(.value.never_cloud == true and .value.data_class == null) | .key][0]' "$ROOT/.stella/data-policy.json")   # the vault-entry kind: never_cloud, no class of its own
+rm -rf "$T/w2v"; cp -r "$T/w2f" "$T/w2v"; ed w2v data-policy.json ".data_classes += [\"qa-vault\"] | .class_rules[\"qa-vault\"] = .class_rules.public | .record_kinds[\"$VK\"].data_class = \"qa-vault\""
+ed w2v connections.json "$(E qa-api).data_policy.data_classes_allowed += [\"qa-vault\"]"
+ok '[ "$VK" != null ] && sd w2v check >"$T/o" 2>&1' "244e control: a class held by the $VK kind, allowed on a connection that is not hosted, passes"
+ed w2v connections.json "$(E qa-comp).data_policy.data_classes_allowed += [\"qa-vault\"]"
+ok 'refuses w2v check && grep -q "^STL-CFG-310 .*connections: .*qa-comp.*qa-vault" "$T/o"' "244f a hosted connection allowing the class of $VK content (a never_cloud kind) is refused"
+rm -rf "$T/w2p"; cp -r "$T/w2f" "$T/w2p"; ed w2p data-policy.json ".projects.qa1 = $(PJ allowed_providers ',private:true') | .projects.qa1.allowed_providers = [\"qa-comp\"]"
+ok 'refuses w2p check && grep -q "^STL-CFG-310 .*data-policy: .*qa1.*qa-comp.*hosted" "$T/o"' "244g a private project naming a hosted connection is refused"
+ed w2p data-policy.json '.projects.qa1.private = false'
+ok 'sd w2p check >"$T/o" 2>&1' "244h control: the same project, not private, passes"
+ed w2p connections.json "$(E qa-api).data_policy.hosted = true"
+ed w2p data-policy.json ".projects.qa1 = $(PJ open ',private:true')"
+ed w2p role-assignments.json ".assignments += [{id:\"qa1-builder\",scope:{level:\"project\",project:\"qa1\"},role:\"builder\",effort_mode:\"standard\",chain:[{provider:\"qa-api\",model:\"qa-api-model\",parameters:{}}],$(ids)}]"
+ok 'refuses w2p check && grep -q "^STL-CFG-310 .*role-assignments: .*qa1-builder.*qa-api.*not allowed by the data policy" "$T/o"' "244i a private project open to every provider still never routes to a hosted one"
+ed w2p data-policy.json '.projects.qa1.private = false'
+ok 'sd w2p check >"$T/o" 2>&1' "244j control: the same route for a project that is not private passes"
+# T-CLI every CLI login of the F1 audit is a cli-login connection with terms_ok unset; terms_ok is owner-only
+ok 'jq -e "(.entries | all(.type == \"api\" or .type == \"cli-login\")) and ([.entries[] | select(.type == \"cli-login\") | .cli] | index(\"claude-code\")) and ([.entries[] | select(.type == \"cli-login\")] | all(.terms_ok == null and .credential_store == \"engine_cli_store\"))" "$ROOT/.stella/connections.json" >/dev/null' "245 the shipped catalog: every entry is api or cli-login; the Claude Code login is cli-login, its token in the engine's CLI store, terms_ok unset"
+ok 'python3 -I "$SD" owner-only --json | jq -e ".connections | index(\"/entries/*/terms_ok\")" >/dev/null' "246 owner-only lists terms_ok of the connections schema"
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

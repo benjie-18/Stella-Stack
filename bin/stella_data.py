@@ -47,6 +47,7 @@ MASK_LIMIT = 1024   # a value pattern never runs on a longer string (it is maske
 UUID4 = r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"   # global_id
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"   # install_id: any UUID (a record may come from another install)
 INSTALL = "install"   # the schema of the install's one document (install_id, ids_required)
+CLI_LOGIN = ("cli", "quota_source", "concurrency_limit", "credential_store", "terms_ok")   # every cli-login entry has these, no api entry
 STRICTEST = {"sync": "never", "store": "owner_asks", "hosted": "never", "context": "text_only"}   # a data class with no rule row
 TYPES = {"object": dict, "array": list, "string": str, "integer": int, "number": (int, float), "boolean": bool, "null": type(None)}
 
@@ -607,6 +608,8 @@ def why(e):
 
 
 def policy_allows(pol, prov):
+    if pol.get("private") and prov["data_policy"].get("hosted"):   # a private project never uses a hosted connection, whatever its mode
+        return False
     return pol["mode"] == "open" or (pol["mode"] == "local_only" and prov["locality"] == "local") \
         or (pol["mode"] == "allowed_providers" and prov["id"] in pol["allowed_providers"])
 
@@ -662,21 +665,33 @@ def D(c, sch, k=None):
 
 
 def rule_policy(c):
-    """The data policy and the catalog against each other: providers it names exist, classes exist, local providers are local."""
+    """The data policy and the catalog against each other: providers it names exist, classes exist, local providers are local; a hosted
+    connection takes no class that never reaches a cloud store and no private project names it; an input source's subkind is a class."""
     conn, pols, P = c["by"].get("connections", {}), c["whole"].get("data-policy", []), c["P"]
     if not pols:   # a folder row with no file: nothing to judge against (the assignments say so)
         return
     classes = set.intersection(*(set(d["data_classes"]) for _, d in pols))
     local = set.intersection(*(set(d["local_hosts"]) for _, d in pols))
+    # what a hosted connection (the provider's cloud keeps it) may never take: a class never synced or never hosted, and the
+    # class of a never_cloud record kind (secrets, vault content)
+    barred = {k for _, d in pols for k in d["data_classes"] if class_rule(d, k)["sync"] == "never" or class_rule(d, k)["hosted"] == "never"} \
+        | {kd["data_class"] for _, d in pols for kd in d["record_kinds"].values() if kd.get("never_cloud") and "data_class" in kd}
     for rid, pol in pols:
         for proj, p in [("default", pol["default"])] + list(pol["projects"].items()):
             for i, prov in enumerate(p["allowed_providers"]):
                 if prov not in conn:
                     P(rid, f"{'default' if proj == 'default' else kname(proj)}: allowed_providers[{i}] ({desc(prov)}) is not in the connections catalog")
+                elif p.get("private") and conn[prov]["data_policy"].get("hosted"):
+                    P(rid, f"{kname(proj)}: allowed_providers[{i}] {idn(prov, True)} is hosted, and a private project never uses a hosted connection")
     for c_ in conn.values():
+        hosted = c_["data_policy"].get("hosted")
         for i, k in enumerate(c_["data_policy"]["data_classes_allowed"]):
             if k not in classes:
                 P(D(c, "connections", c_["id"]), f"{idn(c_['id'])}: data_classes_allowed[{i}] ({desc(k)}) is not in data-policy data_classes")
+            elif hosted and k in barred:
+                P(D(c, "connections", c_["id"]), f"{idn(c_['id'])}: data_classes_allowed[{i}] {idn(k, True)} never reaches a cloud store, and this connection is hosted")
+        if c_["kind"] == "input_source" and c_["subkind"] not in classes:   # an input source's subkind is the class of what it produces
+            P(D(c, "connections", c_["id"]), f"{idn(c_['id'])}: an input source's subkind ({desc(c_['subkind'])}) is not in data-policy data_classes")
         hosts = [h["host"] for h in c_["hosts"]]
         if c_["kind"] == "provider" and c_["locality"] == "local" and (not hosts or not set(hosts) <= local):
             P(D(c, "connections", c_["id"]), f"{idn(c_['id'])}: locality is local, but it lists no host or a host outside the data policy local_hosts")
@@ -823,10 +838,36 @@ def rule_extensions_on(c):
 
 
 def rule_catalog(c):
-    """A provider or channel states allowed_roles and risk_class; every redaction pattern compiles."""
+    """A provider or channel states allowed_roles and risk_class; the fields of each type, aggregator, integration aggregator, realtime
+    and input source go with their kind (F1b D5, what the schema subset cannot say); every redaction pattern compiles."""
     for k, e in c["by"].get("connections", {}).items():
+        say_ = lambda m: c["P"](D(c, "connections", k), f"{idn(e['id'])}: {m}")
         if e["kind"] != "app" and not {"allowed_roles", "risk_class"} <= set(e):
-            c["P"](D(c, "connections", k), f"{idn(e['id'])}: a provider or channel states its allowed_roles and risk_class")
+            say_("a provider or channel states its allowed_roles and risk_class")
+        cli = e["type"] == "cli-login"
+        for f in CLI_LOGIN:
+            if cli and f not in e:
+                say_(f"a cli-login entry names its {f}")
+            elif not cli and f in e:
+                say_(f"{f} is a field of a cli-login entry, and this one is {e['type']}")
+        if cli and e["kind"] not in ("provider", "app"):
+            say_("only a provider or an app may be cli-login")
+        if e.get("aggregator") and (cli or e["kind"] != "provider"):
+            say_("an aggregator is an api provider")
+        if e.get("aggregator") and "broker_entries" not in e:
+            say_("an aggregator names its broker_entries (names only)")
+        if "broker_entries" in e and not e.get("aggregator"):
+            say_("broker_entries belong to an aggregator only")
+        if e.get("integration_aggregator") and e["kind"] != "app":
+            say_("only an app may be an integration_aggregator")
+        if e.get("integration_aggregator") and not e["data_policy"].get("hosted"):
+            say_("an integration_aggregator keeps its tokens in its provider's cloud: its data_policy says hosted true")
+        if "realtime" in e and e["kind"] != "provider":
+            say_("realtime is for a provider (its models take live audio or video)")
+        if e["locality"] == "hub" and e["kind"] != "input_source":
+            say_("locality hub is for an input source only")
+        if e["kind"] == "input_source" and e["locality"] == "cloud":
+            say_("an input source's locality is local or hub")
         for p in e.get("redaction_patterns", []):
             try:
                 re.compile(p)

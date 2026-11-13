@@ -1178,5 +1178,21 @@ for c in "apply extensions/$n300 --from $C/c1a.json" "apply extensions/$n300 --f
   ok '[ $rc = 1 ] && [ "$(grep -c "^STL-CFG-3" "$T/o")" = 1 ] && [ "$(grep -vc "^STL-CFG-3\|^whole text: " "$T/o")" = 0 ] && grep -q "shorter name.*255 bytes" "$T/o" && ! grep -q Traceback "$T/o" && [ "$(whole)" = "$w0" ]' "C a name of 300 characters, which the file system refuses, is refused before any write with one coded line (and its whole text where the name makes it longer than the catalog's cut), the root byte-identical: ${c%% *} ($rc: $(head -c 160 "$T/o"))"
 done
 
+# T-TERMS (F1b D5): terms_ok is owner-only in the schema; the owner sets it through apply (dry run first) and rollback restores the
+# bytes, one event line each; the connections row keeps its shipped owner_only flag here, so a simulated worker is refused
+mkr terms; cp "$H/.stella/data-files.json" "$R/.stella/data-files.json"; git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qam shipped-flags
+SD="python3 -I $H/bin/stella_data.py"; CF=$R/.stella/connections.json; cp "$CF" "$T/terms.orig"
+jq '(.entries[] | select(.type == "cli-login")).terms_ok = true' "$CF" >"$C/terms.json"
+ok '$SD owner-only --json | jq -e ".connections | index(\"/entries/*/terms_ok\")" >/dev/null && [ "$(jq "[.files[] | select(.schema == \"connections\")] | all(.owner_only)" "$R/.stella/data-files.json")" = true ]' "T-TERMS the schema marks terms_ok owner-only, on a row that is owner-only"
+ok '[ "$(jq "[.entries[] | select(.type == \"cli-login\")] | length" "$CF")" -ge 1 ] && ! cmp -s "$C/terms.json" "$CF"' "T-TERMS the candidate sets terms_ok on every cli-login entry"
+B=$(tree); e0=$(nev); ap apply connections --from "$C/terms.json" --dry-run >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && grep -q terms_ok "$T/o" && [ "$(tree)" = "$B" ] && [ "$(nev)" = "$e0" ]' "T-TERMS dry run: the diff names terms_ok, nothing changed, no event"
+export STUB_WORKER_MARK=1; ap apply connections --from "$C/terms.json" >"$T/o" 2>&1; rc=$?; unset STUB_WORKER_MARK
+ok '[ $rc = 1 ] && grep -q STL-CFG-312 "$T/o" && [ "$(tree)" = "$B" ] && [ "$(nev)" = "$e0" ]' "T-TERMS a simulated worker cannot set it: STL-CFG-312, nothing changed"
+ap apply connections --from "$C/terms.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$C/terms.json" "$CF" && [ "$(nev)" = $((e0+1)) ] && $SD get connections --json | jq -e "[.entries[] | select(.type == \"cli-login\")] | all(.terms_ok == true)" >/dev/null' "T-TERMS the owner's apply sets terms_ok: the file is the candidate, one event line, the read serves true"
+ap rollback connections >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$T/terms.orig" "$CF" && [ "$(tree)" = "$B" ] && [ "$(nev)" = $((e0+2)) ] && [ "$(ap history connections --json | jq -r ".events | map(.type) | join(\",\")")" = "apply,rollback" ]' "T-TERMS rollback restores the bytes, one more event line"
+
 $AP bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "usage error exits 2"
 [ $fails = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
