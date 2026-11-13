@@ -6,140 +6,180 @@
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "6274fc74-a7e8-43c5-ab6d-5ec4d29b0403",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "escalation-thread",
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "26649425-c776-41cb-ae8c-bf75372e5f1f",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "watchdog",
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "a0da41df-ac65-41cb-b230-6bbf26d84880",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "model-watch",
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "aafed102-612d-4f1e-b73b-b2bc8513bddf",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "kanban-board",
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "398f4843-a63b-4831-b723-e5c8dd4eef74",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "role-guards",
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "f9dd7fb1-546e-4501-b52c-fc9fb2055c4b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "complete-gate",
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "03753aa9-c0f8-4f7c-ab33-e7571bc714af",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "check-guard",
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "4d265ddd-a403-4601-811e-0e4cac225d49",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "false-close-guard",
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "2f3cfb2c-20ae-4f17-91da-2de6f46bab3d",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "commit-guard",
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "ce9abf76-1bf4-4bf7-839f-36ea407bc49e",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "review",
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "810f44bc-1ac5-4124-aa79-d24e13abdb6f",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "fallback-routing",
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "89c31222-363d-41c1-9192-cf041f05292b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "bench",
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "c2a9441b-f1ea-4ee9-9124-edaf57ec0d43",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "box",
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "96d04d2e-f176-4c87-b749-7d84e63aaf95",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "alert-catalog",
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "b800bb42-07df-4be4-94f7-e85ccb5f4293",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "broker-stand-in",
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "f43ed7e3-fdad-4a36-ae71-88728f099309",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "owner-config",
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "7bc7f09e-6602-4f06-95f0-9c747e14a82e",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "firewall",
       "owner_phase": "stages 1-6",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "7b00d9b4-cb5c-42df-9bfa-e6457fd6d6d5",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "test-map",
       "owner_phase": "F0",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "3c942d7c-6e38-4a96-b9c9-6449079dddbc",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "contract-data",
       "owner_phase": "F1",
       "status": "on",
       "depends_on": [],
-      "flag": null
+      "flag": null,
+      "global_id": "be02a203-47e7-4033-a140-66903787d611",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "role-requirements",
@@ -148,7 +188,9 @@
       "depends_on": [
         "contract-data"
       ],
-      "flag": null
+      "flag": null,
+      "global_id": "e0db348a-5f34-4acd-99c4-da23bac719b7",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "event-log",
@@ -157,7 +199,9 @@
       "depends_on": [
         "contract-data"
       ],
-      "flag": null
+      "flag": null,
+      "global_id": "3aba5b5d-dfd8-412c-b08e-e31c4154441d",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "apply-contract",
@@ -167,7 +211,9 @@
         "contract-data",
         "event-log"
       ],
-      "flag": null
+      "flag": null,
+      "global_id": "ef603e89-f639-4013-9b21-ac1d90ac82dd",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "owner-write-path",
@@ -176,7 +222,9 @@
       "depends_on": [
         "apply-contract"
       ],
-      "flag": null
+      "flag": null,
+      "global_id": "bca69873-06a2-4025-818d-8e3abc161615",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "hardcode-lint",
@@ -185,7 +233,9 @@
       "depends_on": [
         "contract-data"
       ],
-      "flag": null
+      "flag": null,
+      "global_id": "b2b3300e-72ea-4ee9-9b08-403e7bc89728",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "role-resolver",
@@ -195,7 +245,9 @@
         "contract-data",
         "role-requirements"
       ],
-      "flag": null
+      "flag": null,
+      "global_id": "7d678d34-bd5e-4351-9cf1-0c65cc0e1edf",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "build-team-preset",
@@ -204,7 +256,9 @@
       "depends_on": [
         "role-resolver"
       ],
-      "flag": null
+      "flag": null,
+      "global_id": "9e6bd477-d4c2-401b-8b94-50da9deee90e",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "generated-team-files",
@@ -213,7 +267,9 @@
       "depends_on": [
         "build-team-preset"
       ],
-      "flag": null
+      "flag": null,
+      "global_id": "84376012-7e67-4efc-aa03-cf0a69869529",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "approved-hosts-firewall",
@@ -223,7 +279,9 @@
         "contract-data",
         "apply-contract"
       ],
-      "flag": null
+      "flag": null,
+      "global_id": "b63fc845-08c6-40ce-9167-bc41fbc02848",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "broker",
@@ -233,7 +291,9 @@
         "contract-data",
         "event-log"
       ],
-      "flag": null
+      "flag": null,
+      "global_id": "9bf5e451-243d-44e4-a4d1-6b295a3efabc",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "vm-worker",
@@ -242,7 +302,9 @@
       "depends_on": [
         "broker"
       ],
-      "flag": null
+      "flag": null,
+      "global_id": "73790cc3-2e7e-41cd-993a-128df3e0b8fd",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "harness-proposals",
@@ -252,7 +314,9 @@
         "event-log",
         "apply-contract"
       ],
-      "flag": null
+      "flag": null,
+      "global_id": "e4ef3505-e328-40e1-9064-e4c92054266b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

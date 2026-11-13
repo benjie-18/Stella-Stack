@@ -14,9 +14,12 @@ mk() {  # <name>: a scratch root with a copy of the data and the role table
 }
 ed() { local f="$T/$1/.stella/$2"; jq "$3" "$f" >"$f.n" && mv "$f.n" "$f"; }   # <root name> <file> <jq filter>
 sd() { STELLA_ROOT=$T/$1 python3 -I "$SD" "${@:2}"; }                          # <root name> <args...>
+INS=$(jq -r '.files[] | select(.schema == "install") | .path' "$ROOT/.stella/data-files.json"); IID=$(jq -r .install_id "$ROOT/$INS" 2>/dev/null)
+ids() { echo "global_id:\"$(cat /proc/sys/kernel/random/uuid)\",install_id:\"$IID\""; }   # F1b D1: the two ids of a new fake record, as jq text
+rid() { echo "record_kind:(.files[] | select(.id == \"$1\") | .record_kind),$(ids)"; }   # F1b D1/D2: a fake index row of the kind of row <id>, with its two ids
 AR=$(jq -c '.fallback_role as $fb | [.roles | keys[] | select(. != $fb)]' "$ROOT/docs/hermes-local/roles.json")   # every assignable role
 conn() {  # <id> <kind> <subkind> <locality>: a complete connections entry as jq text; it allows every assignable role, so a case fails for its own cause
-  echo "{id:\"$1\",kind:\"$2\",subkind:\"$3\",label:\"Fake $1\",enabled:true,locality:\"$4\",hosts:[{host:\"$1.example.invalid\",port:443,purpose:\"api\"}],auth_types:[\"api_key\"],secrets:[\"FAKE_KEY\"],actions:[{id:\"go\",approval_class:\"write\"}],models:[{id:\"$1-model\",capabilities:{tool_calling:null,json_mode:null,context_tokens:null,vision:null,streaming:null},probed_at:null,probe_source:null}],data_policy:{retention:null,training_use:null,region:null,zero_retention_available:null,data_classes_allowed:[\"public\",\"internal\",\"client\"]},tos:{status:\"unverified\",subscription_login_by_agent:\"unverified\"},allowed_roles:$AR,risk_class:\"read\"}"
+  echo "{id:\"$1\",kind:\"$2\",subkind:\"$3\",label:\"Fake $1\",enabled:true,locality:\"$4\",hosts:[{host:\"$1.example.invalid\",port:443,purpose:\"api\"}],auth_types:[\"api_key\"],secrets:[\"FAKE_KEY\"],actions:[{id:\"go\",approval_class:\"write\"}],models:[{id:\"$1-model\",capabilities:{tool_calling:null,json_mode:null,context_tokens:null,vision:null,streaming:null},probed_at:null,probe_source:null}],data_policy:{retention:null,training_use:null,region:null,zero_retention_available:null,data_classes_allowed:[\"public\",\"internal\",\"client\"]},tos:{status:\"unverified\",subscription_login_by_agent:\"unverified\"},allowed_roles:$AR,risk_class:\"read\",$(ids)}"
 }
 refuses() { local r=$1; shift; ! sd "$r" "$@" >"$T/o" 2>&1; }                 # <root name> <args...>: exits non-zero, output in $T/o
 alerts() { cat "$T/sup/logs/alerts.log" 2>/dev/null | wc -l; }
@@ -40,6 +43,7 @@ mk fake
 ed fake connections.json ".entries += [$(conn fake-prov provider openai-compatible-aggregator cloud), $(conn fake-app app mail cloud), $(conn fake-chan channel chat cloud)]"
 ed fake capabilities.json '.entries += [{id:"fake-cap",kind:"command",summary:"frobnicate the widgets",keywords:["frob"],inputs:"a widget",outputs:"a frobbed widget",allowed_roles:["builder"],risk_class:"read",hosts:[],secrets:[],status:"proposed",source:"fake",triage:{result:"pending"}}]'
 echo '{"schema_version":1,"id":"fake-ext","kind":"mcp_server","summary":"fake extension for gizmos","hosts":["gizmo.example.invalid:443"],"secrets":["GIZMO_KEY"],"tools":["gizmo_get"],"allowed_roles":["reviewer"],"risk_class":"read","enabled":false,"status":"proposed","source":"fake"}' >"$T/fake/.stella/extensions/fake-ext.json"
+ed fake capabilities.json ".entries[-1] += {$(ids)}"; ed fake extensions/fake-ext.json ". + {$(ids)}"   # F1b D1: a new record carries its two ids
 ok 'sd fake check' "9 a scratch root with a fake provider, app, channel, capability and extension passes check"
 for e in fake-prov:connections fake-app:connections fake-chan:connections fake-cap:capabilities fake-ext:extensions; do
   id=${e%%:*}; d=${e##*:}
@@ -48,7 +52,7 @@ for e in fake-prov:connections fake-app:connections fake-chan:connections fake-c
   ok "sd fake search $id --json | jq -e 'map(.id) | index(\"$id\")' >/dev/null" "12 search finds $id"
 done
 ok '[ "$(sd fake search frobnicate --json | jq -r ".[0].id")" = fake-cap ]' "13 search matches the words of a summary"
-mk rank; ed rank capabilities.json '.entries += [{id:"aaa-pending",kind:"command",summary:"stella-data helper",keywords:[],inputs:"x",outputs:"y",allowed_roles:[],risk_class:"read",hosts:[],secrets:[],status:"proposed",source:"fake",triage:{result:"pending"}}]'
+mk rank; ed rank capabilities.json '.entries += [{id:"aaa-pending",kind:"command",summary:"stella-data helper",keywords:[],inputs:"x",outputs:"y",allowed_roles:[],risk_class:"read",hosts:[],secrets:[],status:"proposed",source:"fake",triage:{result:"pending"}}]'; ed rank capabilities.json ".entries[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok '[ "$(sd rank search stella-data --json | jq -r ".[0].status")" = approved ]' "14 search lists approved entries before proposed ones"
 mk agg; ed agg connections.json ".entries += [$(conn agg-one provider openai-compatible-aggregator cloud), $(conn agg-two provider openai-compatible-aggregator cloud)]"
 ok 'sd agg check && [ "$(sd agg list connections --json | jq "[.[] | select(.subkind == \"openai-compatible-aggregator\")] | length")" -ge 3 ]' "15 a second, different aggregator of the same subkind needs no code change"
@@ -82,12 +86,12 @@ ed bad9 role-assignments.json '.assignments[0].effort_mode = "local_only" | .ass
 ok '! sd bad9 check >/dev/null 2>&1' "27 a chain entry whose locality the effort mode forbids is refused"
 # A project assignment that widens the data policy: the project allows only the local rows, the override names a cloud provider.
 mk wide; ed wide connections.json ".entries += [$(conn cloud-one provider hosted cloud)]"
-ed wide data-policy.json '.projects.proj1 = {mode:"local_only",allowed_providers:[]}'
-ed wide role-assignments.json '.assignments += [{id:"proj1-builder",scope:{level:"project",project:"proj1"},role:"builder",effort_mode:"standard",chain:[{provider:"cloud-one",model:"cloud-one-model",parameters:{}}]}]'
+ed wide data-policy.json '.projects.proj1 = {mode:"local_only",allowed_providers:[]}'; ed wide data-policy.json ".projects.proj1 += {$(ids)}"   # F1b D1: the fake record carries its own two ids
+ed wide role-assignments.json '.assignments += [{id:"proj1-builder",scope:{level:"project",project:"proj1"},role:"builder",effort_mode:"standard",chain:[{provider:"cloud-one",model:"cloud-one-model",parameters:{}}]}]'; ed wide role-assignments.json ".assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses wide check && grep -q "cloud-one" "$T/o" && grep -q STL-CFG-310 "$T/o"' "28 a project assignment that widens the data policy makes check exit 1"
-ed wide data-policy.json '.projects.proj1 = {mode:"allowed_providers",allowed_providers:["cloud-one"]}'
+ed wide data-policy.json '.projects.proj1 = {mode:"allowed_providers",allowed_providers:["cloud-one"]}'; ed wide data-policy.json ".projects.proj1 += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'sd wide check' "29 the same assignment passes when the project policy names that provider (control)"
-mk bad10; ed bad10 features.json '.entries += [{id:"zz-a",owner_phase:"x",status:"planned",depends_on:["zz-b"],flag:null},{id:"zz-b",owner_phase:"x",status:"planned",depends_on:["zz-a"],flag:null}]'
+mk bad10; ed bad10 features.json '.entries += [{id:"zz-a",owner_phase:"x",status:"planned",depends_on:["zz-b"],flag:null},{id:"zz-b",owner_phase:"x",status:"planned",depends_on:["zz-a"],flag:null}]'; ed bad10 features.json ".entries[-2] += {$(ids)} | .entries[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses bad10 check && grep -q "zz-" "$T/o"' "30 a feature dependency cycle is refused"
 mk bad11; ed bad11 features.json '.entries[0].depends_on += ["no-such-feature"]'
 ok '! sd bad11 check >/dev/null 2>&1' "31 a feature that depends on a missing feature is refused"
@@ -128,7 +132,7 @@ ok 'grep -q NaN "$T/g1e/.stella/connections.json" && refuses g1e check' "45 NaN 
 mk g1f; ed g1f connections.json '.entries[0].secrets = ["sk-live-abcdef0123456789xyz"]'
 ok 'refuses g1f check && ! grep -q abcdef0123 "$T/o"' "46 a problem message never prints the rejected value"
 # G2 paths
-mk g2a; ed g2a data-files.json '.files += [{id:"zz-out",path:"../outside.json",schema:"approved-hosts",format:"json",owner_only:false,redact_keys:[],list_key:"hosts",id_field:"host"}]'
+mk g2a; ed g2a data-files.json '.files += [{id:"zz-out",path:"../outside.json",schema:"approved-hosts",format:"json",owner_only:false,redact_keys:[],list_key:"hosts",id_field:"host"}]'; ed g2a data-files.json ".files[-1] += {$(rid approved-hosts)}"   # F1b D1: the fake record carries its own two ids
 echo '{"schema_version":1,"hosts":[],"MARK":"OUTSIDE-MARKER"}' >"$T/outside.json";
 ok 'refuses g2a check && ! sd g2a get zz-out 2>&1 | grep -q OUTSIDE-MARKER && refuses g2a get zz-out' "47 an index path with .. is refused by check, and get prints nothing from it"
 mk g2b; ed g2b data-files.json '.backup_dir = "/var/backups"'
@@ -140,19 +144,19 @@ ok '[ "$(jq -r ".files[] | select(.id == \"data-files\") | .owner_only" "$ROOT/.
 mk g3a; ed g3a role-assignments.json '.assignments[0].role = "ghost"'
 ok 'refuses g3a check connections && grep -q "role-assignments" "$T/o" && grep -q "assignable role" "$T/o" && ! grep -q ghost "$T/o"' "51 check <id> also prints the cross-file problems"
 OPEN="(.entries[] | select(.id == \"claude-subscription\")) |= (.allowed_roles = $AR | .data_policy.data_classes_allowed = [\"public\",\"internal\",\"client\"])"   # the subscription provider allowing every role and class
-mk g3b; ed g3b connections.json "$OPEN"; ed g3b data-policy.json '.projects["cx"] = {mode:"local_only",allowed_providers:[]}'
-ed g3b role-assignments.json '.assignments += [{id:"zz",scope:{level:"card",card:"c1"},role:"builder",effort_mode:"standard",chain:[{provider:"claude-subscription",model:"haiku",parameters:{}}]}]'
+mk g3b; ed g3b connections.json "$OPEN"; ed g3b data-policy.json '.projects["cx"] = {mode:"local_only",allowed_providers:[]}'; ed g3b data-policy.json ".projects.cx += {$(ids)}"   # F1b D1: the fake record carries its own two ids
+ed g3b role-assignments.json '.assignments += [{id:"zz",scope:{level:"card",card:"c1"},role:"builder",effort_mode:"standard",chain:[{provider:"claude-subscription",model:"haiku",parameters:{}}]}]'; ed g3b role-assignments.json ".assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses g3b check' "52 a card assignment with no project is refused, not judged by the open default"
 ed g3b role-assignments.json '.assignments[-1].scope = {level:"project",project:"CX"}'
 ok 'refuses g3b check' "53 a project name in upper case is refused"
-mk g3c; ed g3c role-assignments.json '.assignments += [.assignments[0] | .id = "dup"]'
+mk g3c; ed g3c role-assignments.json '.assignments += [.assignments[0] | .id = "dup"]'; ed g3c role-assignments.json ".assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses g3c check' "54 two assignments for one scope, role and effort mode are refused"
-mk g3d; ed g3d role-assignments.json '.assignments += [.assignments[0] | .id = "zz" | .role = "unlisted"]'
+mk g3d; ed g3d role-assignments.json '.assignments += [.assignments[0] | .id = "zz" | .role = "unlisted"]'; ed g3d role-assignments.json ".assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses g3d check' "55 the fallback role of the role table cannot be assigned"
 mk g3e; ed g3e connections.json "$OPEN"; ed g3e connections.json '(.entries[] | select(.id == "claude-subscription")).enabled = false'
-ed g3e role-assignments.json '.assignments += [.assignments[0] | .id = "zz" | .role = "reviewer" | .chain = [{provider:"claude-subscription",model:"haiku",parameters:{}}]]'
+ed g3e role-assignments.json '.assignments += [.assignments[0] | .id = "zz" | .role = "reviewer" | .chain = [{provider:"claude-subscription",model:"haiku",parameters:{}}]]'; ed g3e role-assignments.json ".assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses g3e check' "56 a chain naming a disabled provider is refused"
-mk g3f; echo '{"schema_version":1,"id":"zz-ext","kind":"skill","summary":"s","hosts":[],"secrets":[],"tools":[],"allowed_roles":[],"risk_class":"read","enabled":true,"status":"proposed","source":"x"}' >"$T/g3f/.stella/extensions/zz-ext.json"
+mk g3f; echo '{"schema_version":1,"id":"zz-ext","kind":"skill","summary":"s","hosts":[],"secrets":[],"tools":[],"allowed_roles":[],"risk_class":"read","enabled":true,"status":"proposed","source":"x"}' >"$T/g3f/.stella/extensions/zz-ext.json"; ed g3f extensions/zz-ext.json ". + {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses g3f check && grep -q zz-ext "$T/o"' "57 an extension that is switched on without being approved is refused"
 mk g3g; ed g3g features.json '(.entries[] | select(.id == "generated-team-files")).status = "on"'
 ok 'refuses g3g check' "58 an on feature that depends on a planned feature is refused"
@@ -169,7 +173,7 @@ mk g4b; ed g4b connections.json '.entries[0].secrets += ["AKIAIOSFODNN7EXAMPLE"]
 ok 'refuses g4b check' "63 a pasted key without an underscore is not a secret name"
 mk g4c; ed g4c connections.json '.entries[0].secrets += ["A_" + ("X" * 70)]'
 ok 'refuses g4c check' "64 a secret name over 64 characters is refused"
-mk g4d; ed g4d settings.json '.entries += [{key:"QA_API_TOKEN",label:"x",type:"string",validation:{},scope:"global",sensitivity:"secret",default:"qa-fake-value-7f3a",store:{data:"owner-settings",key:"QA_API_TOKEN"},apply:{script:"bin/stella-apply.py",needs_restart:false},code:"STL-CFG-315"}]'
+mk g4d; ed g4d settings.json '.entries += [{key:"QA_API_TOKEN",label:"x",type:"string",validation:{},scope:"global",sensitivity:"secret",default:"qa-fake-value-7f3a",store:{data:"owner-settings",key:"QA_API_TOKEN"},apply:{script:"bin/stella-apply.py",needs_restart:false},code:"STL-CFG-315"}]'; ed g4d settings.json ".entries[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses g4d check && ! sd g4d get settings QA_API_TOKEN 2>&1 | grep -q qa-fake-value && ! sd g4d search fake-value 2>/dev/null | grep -q QA_API_TOKEN' "65 a secret setting with a default is refused, and get and search never print it"
 mk g4e; ed g4e settings.json '(.entries[] | select(.key == "CALL_TIMEOUT")).default = 0'
 ok 'refuses g4e check' "66 a setting default outside its own validation is refused"
@@ -178,7 +182,7 @@ ok 'refuses g4g check' "67 a validation with minimum above maximum is refused"
 mk g4h; ed g4h settings.json '(.entries[] | select(.key == "QUEUE_MAX")) |= (.type = "enum" | .default = null | .validation = {})'
 ok 'refuses g4h check' "68 an enum setting with no values is refused"
 mk g4f; H=$T/g4f/.stella/approved-hosts.json
-row() { echo "{\"host\":\"$1\",\"port\":$2,\"scope\":\"$3\",\"approved_by\":\"$4\",\"approved_at\":\"$5\",\"expires_at\":$6}"; }
+row() { echo "{\"host\":\"$1\",\"port\":$2,\"scope\":\"$3\",\"approved_by\":\"$4\",\"approved_at\":\"$5\",\"expires_at\":$6,\"global_id\":\"$(cat /proc/sys/kernel/random/uuid)\",\"install_id\":\"$IID\"}"; }   # F1b D1: with its two ids
 echo "{\"schema_version\":1,\"hosts\":[$(row a.example.com 443 g o 2026-11-10T00:00:00Z null),$(row a.example.com 8443 g o 2026-11-10T00:00:00Z null)]}" >"$H"
 ok 'sd g4f check' "69 the same host on two ports is two entries"
 echo "{\"schema_version\":1,\"hosts\":[$(row '*' 443 '' '' never '"never"')]}" >"$H"
@@ -251,8 +255,8 @@ ok 'refuses p2d check' "91 a data policy with no local host list is refused"
 # P3 effort-mode ids, P4 one card, one project
 mk p3a; ed p3a role-assignments.json '.effort_modes["ｌocal_only"] = {allowed_localities:["local","cloud"],no_silent_fallback:false}'
 ok 'refuses p3a check' "92 an effort-mode id outside the lower-case ASCII pattern is refused"
-mk p4a; ed p4a data-policy.json '.projects["pa"] = {mode:"open",allowed_providers:[]} | .projects["pb"] = {mode:"open",allowed_providers:[]}'
-ed p4a role-assignments.json '.assignments += [(.assignments[0] | .id = "ca" | .scope = {level:"card",project:"pa",card:"t1"}), (.assignments[0] | .id = "cb" | .scope = {level:"card",project:"pb",card:"t1"})]'
+mk p4a; ed p4a data-policy.json '.projects["pa"] = {mode:"open",allowed_providers:[]} | .projects["pb"] = {mode:"open",allowed_providers:[]}'; ed p4a data-policy.json ".projects.pa += {$(ids)} | .projects.pb += {$(ids)}"   # F1b D1: the fake record carries its own two ids
+ed p4a role-assignments.json '.assignments += [(.assignments[0] | .id = "ca" | .scope = {level:"card",project:"pa",card:"t1"}), (.assignments[0] | .id = "cb" | .scope = {level:"card",project:"pb",card:"t1"})]'; ed p4a role-assignments.json ".assignments[-2] += {$(ids)} | .assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses p4a check' "93 one card id under two projects is refused"
 ed p4a role-assignments.json '.assignments[-1].scope.card = "t2"'
 ok 'sd p4a check' "94 control: two different cards under two projects pass"
@@ -288,7 +292,7 @@ mk m3b; ed m3b data-files.json '(.files[] | select(.id == "capabilities")).redac
 CID=$(jq -r '.entries[0].id' "$ROOT/.stella/capabilities.json"); ed m3b capabilities.json '.entries[0].summary = "qafake-summary"'
 ok '! sd m3b get capabilities "$CID" | grep -q qafake && ! sd m3b list capabilities | grep -q qafake && ! sd m3b search "$CID" | grep -q qafake && ! sd m3b search "$CID" --json | grep -q qafake && ! sd m3b list capabilities --json | grep -q qafake' "107 get, list and search all mask a value under a redact_keys pattern"
 # M4 a plain setting under a redacted store key
-mk m4a; ed m4a settings.json '.entries += [{key:"QA_API_TOKEN",label:"x",type:"string",validation:{},scope:"global",sensitivity:"identity_critical",default:"qa-plain-value",store:{data:"owner-settings",key:"QA_API_TOKEN"},apply:{script:"bin/stella-apply.py",needs_restart:false},code:"STL-CFG-315"}]'
+mk m4a; ed m4a settings.json '.entries += [{key:"QA_API_TOKEN",label:"x",type:"string",validation:{},scope:"global",sensitivity:"identity_critical",default:"qa-plain-value",store:{data:"owner-settings",key:"QA_API_TOKEN"},apply:{script:"bin/stella-apply.py",needs_restart:false},code:"STL-CFG-315"}]'; ed m4a settings.json ".entries[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses m4a check && refuses m4a get settings QA_API_TOKEN && ! grep -q qa-plain-value "$T/o"' "108 a non-secret setting stored under a redacted key is refused, and get does not show its default"
 # L loader and linter
 mk l1a; sed -i '0,/"cost": null/s//"cost": {"a": 1e400}/' "$T/l1a/.stella/connections.json"
@@ -304,7 +308,7 @@ d['entries'][0]['cost']=x; json.dump(d,open(sys.argv[1],'w'))" "$T/l4a/.stella/c
 sd l4a check >/dev/null 2>&1; c1=$?; sd l4a get connections >/dev/null 2>&1; c2=$?
 ok '[ $c1 = 1 ] && [ $c2 = 1 ]' "112 check and get both refuse a deeply nested object"
 mk l5a; echo '{"schema_version":1,"entries":[{"id":"z1"}]}' >"$T/l5a/.stella/zz.json"
-ed l5a data-files.json '.files += [{id:"zz-ns",path:".stella/zz.json",schema:null,format:"json",owner_only:true,redact_keys:[],list_key:"entries",id_field:"id"}]'
+ed l5a data-files.json '.files += [{id:"zz-ns",path:".stella/zz.json",schema:null,format:"json",owner_only:true,redact_keys:[],list_key:"entries",id_field:"id"}]'; ed l5a data-files.json ".files[-1] += {$(rid capabilities)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses l5a check && refuses l5a get zz-ns && refuses l5a list zz-ns && refuses l5a search z1 && refuses l5a list' "113 a JSON row with no schema is refused by check and served by no read command"
 mk l6a; echo '{"$defs":{"a/b":{"type":"string"}},"$ref":"#/$defs/a/b"}' >"$T/l6a/.stella/schemas/zz.schema.json"; echo '"x"' >"$T/d5"
 echo '{"$defs":{"a":{"$ref":"#/$defs/a"}},"$ref":"#/$defs/a"}' >"$T/l6a/.stella/schemas/zz2.schema.json"
@@ -356,7 +360,7 @@ ed a1 connections.json "$LMS.allowed_roles = []"
 ok 'refuses a1 check && grep -q "global-dispatcher: chain\[0\].*allowed_roles" "$T/o"' "134 a provider with allowed_roles [] allows no role"
 # B every file of every row of a schema gets every rule of that schema
 mk b1; jq '.assignments |= map(.id += "-2")' "$T/b1/.stella/role-assignments.json" >"$T/b1/.stella/ra2.json"
-ed b1 data-files.json '.files += [{id:"ra2",path:".stella/ra2.json",schema:"role-assignments",format:"json",owner_only:true,redact_keys:[],list_key:"assignments",id_field:"id"}]'
+ed b1 data-files.json '.files += [{id:"ra2",path:".stella/ra2.json",schema:"role-assignments",format:"json",owner_only:true,redact_keys:[],list_key:"assignments",id_field:"id"}]'; ed b1 data-files.json ".files[-1] += {$(rid role-assignments)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses b1 check && grep -q "ra2: .*one document" "$T/o" && refuses b1 get ra2' "135 a schema the data marks one document (x-one-document) refuses a second file in another row"
 mk b2; mkdir "$T/b2/.stella/dp"; mv "$T/b2/.stella/data-policy.json" "$T/b2/.stella/dp/a.json"; cp "$T/b2/.stella/dp/a.json" "$T/b2/.stella/dp/b.json"
 ed b2 data-files.json '(.files[] | select(.id == "data-policy")).path = ".stella/dp"'
@@ -364,23 +368,23 @@ ok 'refuses b2 check && grep -q "dp/b.json: .*one document" "$T/o"' "136 the sam
 mk b2c; jq '."x-one-document" = "yes"' "$T/b2c/.stella/schemas/features.schema.json" >"$T/b2c/s" && mv "$T/b2c/s" "$T/b2c/.stella/schemas/features.schema.json"
 ok 'refuses b2c check && grep -q "x-one-document" "$T/o"' "137 x-one-document takes only true or false"
 mk b3; jq -n "{schema_version:1,entries:[$(conn two-prov provider hosted cloud)]}" >"$T/b3/.stella/conn2.json"
-ed b3 data-files.json '.files += [{id:"conn2",path:".stella/conn2.json",schema:"connections",format:"json",owner_only:true,redact_keys:[],list_key:"entries",id_field:"id"}]'
+ed b3 data-files.json '.files += [{id:"conn2",path:".stella/conn2.json",schema:"connections",format:"json",owner_only:true,redact_keys:[],list_key:"entries",id_field:"id"}]'; ed b3 data-files.json ".files[-1] += {$(rid connections)}"   # F1b D1: the fake record carries its own two ids
 ed b3 role-assignments.json '.assignments[0].chain = [{provider:"two-prov",model:"two-prov-model",parameters:{}}]'
 ok 'sd b3 check >"$T/o" 2>&1 && [ "$(sd b3 get conn2 two-prov --json | jq -r .id)" = two-prov ]' "138 control: a second connections row is one catalog with the first; an assignment may name its provider"
 ed b3 conn2.json '.entries[0].data_policy.data_classes_allowed += ["no-such-class"]'
 ok 'refuses b3 check && grep -q "conn2: two-prov: data_classes_allowed" "$T/o" && refuses b3 get conn2 two-prov && grep -q "^STL-CFG-310 " "$T/o"' "139 the cross-file rules judge the entries of the second row, and get refuses them"
-ed b3 conn2.json '.entries[0].data_policy.data_classes_allowed -= ["no-such-class"] | .entries += [.entries[0] | .id = "local-model-server"]'
+ed b3 conn2.json '.entries[0].data_policy.data_classes_allowed -= ["no-such-class"] | .entries += [.entries[0] | .id = "local-model-server"]'; ed b3 conn2.json ".entries[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses b3 check && grep -q "conn2: .*duplicate entry id .local-model-server., also in .stella/connections.json" "$T/o" && refuses b3 get conn2' "140 one entry id in two rows of one schema is refused, and the later row is not served"
 mk b4; ed b4 data-files.json '(.files[] | select(.id == "settings")).schema = "./settings"'
 ok 'refuses b4 check && grep -q "^STL-CFG-310 .*schema" "$T/o" && refuses b4 get settings' "141 the index schema field is a plain name: ./settings is refused"
-mk b5; ed b5 data-files.json '.files += [(.files[] | select(.id == "data-policy") | .id = "dp-alias" | .path = "./.stella/data-policy.json" | .owner_only = false)]'
+mk b5; ed b5 data-files.json '.files += [(.files[] | select(.id == "data-policy") | .id = "dp-alias" | .path = "./.stella/data-policy.json" | .owner_only = false)]'; ed b5 data-files.json ".files[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses b5 check && grep -q "more than one index row" "$T/o" && refuses b5 get dp-alias && refuses b5 get data-policy' "142 two rows that resolve to one file are refused, and neither is served"
 mk b6; mkdir -p "$T/b6/.supervisor"; printf 'QA_FAKE=qafake-env\n' >"$T/b6/.supervisor/limits.env"; chmod 000 "$T/b6/.supervisor/limits.env"
-ed b6 data-files.json '.files += [{id:"lim-json",path:"./.supervisor/limits.env",schema:"versions",format:"json",owner_only:true,redact_keys:[],list_key:"pins",id_field:"id"}]'
+ed b6 data-files.json '.files += [{id:"lim-json",path:"./.supervisor/limits.env",schema:"versions",format:"json",owner_only:true,redact_keys:[],list_key:"pins",id_field:"id"}]'; ed b6 data-files.json ".files[-1] += {$(rid versions)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses b6 check && grep -q "more than one index row" "$T/o" && ! grep -qi "expecting\|cannot be read\|qafake" "$T/o"' "143 a JSON row on an env row's file is refused and the file is never opened"
 OS=$(jq -r '.owner_settings[0]' "$ROOT/docs/hermes-local/roles.json")
 mk b7; mkdir -p "$T/b7/$(dirname "$OS")"; printf 'QA_FAKE=qafake-owner\n' >"$T/b7/$OS"; chmod 000 "$T/b7/$OS"
-ed b7 data-files.json "(.files[] | select(.path == \"$OS\")) |= (.format = \"json\" | .schema = \"versions\" | .list_key = \"pins\" | .id_field = \"id\")"
+ed b7 data-files.json "(.files[] | select(.path == \"$OS\")) |= (.format = \"json\" | .schema = \"versions\" | .list_key = \"pins\" | .id_field = \"id\")"; ed b7 data-files.json "(.files[] | select(.path == \"$OS\")) += {$(rid versions)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses b7 check && grep -q "owner setting of the role table" "$T/o" && ! grep -qi "expecting\|cannot be read\|qafake" "$T/o"' "144 a row on an owner setting of the role table that is not an env row is refused, and the file is never opened"
 ed b7 data-files.json "(.files[] | select(.path == \"$OS\")) |= (.format = \"env\" | .schema = null | .list_key = null | .id_field = \"key\" | .owner_only = false)"
 ok 'refuses b7 check && grep -q "owner setting of the role table" "$T/o"' "145 the same for an env row that is not owner_only"
@@ -408,13 +412,13 @@ ok 'refuses fake validate event <(jq "del(.time)" "$T/ev.json") && grep -q "^STL
 ms() { local t0=$(date +%s%N); timeout 20 env STELLA_ROOT="$T/$1" python3 -I "$SD" "${@:2}" >"$T/o" 2>&1; rc=$?; el=$(( ($(date +%s%N) - t0) / 1000000 )); }
 # S1 one-document conflict: every row of the schema is refused, whatever the row order (red team d1, c2)
 QCB='.assignments += [{id:"qa-cloud-builder",scope:{level:"global"},role:"builder",effort_mode:"max",chain:[{provider:"claude-subscription",model:"sonnet",parameters:{}}]}]'
-mk pd1; ed pd1 connections.json "$OPEN"; ed pd1 role-assignments.json "$QCB"
+mk pd1; ed pd1 connections.json "$OPEN"; ed pd1 role-assignments.json "$QCB"; ed pd1 role-assignments.json ".assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'sd pd1 check >"$T/o" 2>&1 && sd pd1 get role-assignments qa-cloud-builder >/dev/null 2>&1' "155 control: a max-mode cloud assignment under the open shipped policy passes check and is served"
 ed pd1 data-policy.json '.default.mode = "local_only"'
 ok 'refuses pd1 get role-assignments qa-cloud-builder' "156 control: the same assignment under a local_only policy is refused"
 jq '.default.mode = "open"' "$T/pd1/.stella/data-policy.json" >"$T/pd1/.stella/dp0.json"
 for at in 0 1; do
-  cp -r "$T/pd1" "$T/pd1-$at"; ed pd1-$at data-files.json "(.files | map(.id) | index(\"data-policy\")) as \$i | .files |= .[:\$i+$at] + [(.[\$i] | .id = \"dp0\" | .path = \".stella/dp0.json\")] + .[\$i+$at:]"
+  cp -r "$T/pd1" "$T/pd1-$at"; ed pd1-$at data-files.json "(.files | map(.id) | index(\"data-policy\")) as \$i | .files |= .[:\$i+$at] + [(.[\$i] | .id = \"dp0\" | .path = \".stella/dp0.json\")] + .[\$i+$at:]"; ed pd1-$at data-files.json "(.files[] | select(.id == \"dp0\")) += {$(ids)}"   # F1b D1: the fake record carries its own two ids
   ok 'refuses pd1-'$at' check && grep -q "^STL-CFG-310 .*dp0: .*one document" "$T/o" && grep -q "^STL-CFG-310 .*data-policy: .*one document" "$T/o" && refuses pd1-'$at' get role-assignments qa-cloud-builder && grep -q "data-policy\|dp0" "$T/o" && ! grep -q "data-files" "$T/o" && refuses pd1-'$at' get role-assignments && refuses pd1-'$at' get data-policy && refuses pd1-'$at' get dp0' "157.$at a second data-policy row (placed $([ $at = 0 ] && echo before || echo after) the shipped one): both rows are refused, and the assignments judged against the policy are not served"
 done
 # S1 a file that fails its schema never feeds a rule (red team d2)
@@ -446,7 +450,7 @@ ms q3 get --json role-assignments global-builder; ok '[ $rc = 0 ] && [ $el -lt 1
 # S3 RT4-03 folder rows are listed by name, never as a glob
 BADEXT='{"schema_version":1,"qa_not_an_extension":true}'
 mk g9; mkdir "$T/g9/.stella/ext[1]"; echo "$BADEXT" >"$T/g9/.stella/ext[1]/bad.json"; mkdir "$T/g9/.stella/ext1"; cp "$T/fake/.stella/extensions/fake-ext.json" "$T/g9/.stella/ext1/"
-ed g9 data-files.json '.files += [(.files[] | select(.id == "extensions") | .id = "qa-ext" | .path = ".stella/ext[1]")]'
+ed g9 data-files.json '.files += [(.files[] | select(.id == "extensions") | .id = "qa-ext" | .path = ".stella/ext[1]")]'; ed g9 data-files.json ".files[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses g9 check && grep -q "ext\[1\]/bad.json" "$T/o" && refuses g9 get qa-ext && ! grep -q fake-ext "$T/o"' "171 a folder row named with [ ] is read by its name: its own bad file is refused, a folder it would match as a glob is never read"
 mk "h[1]"; echo "$BADEXT" >"$T/h[1]/.stella/extensions/bad.json"
 ok 'refuses "h[1]" check && grep -q "extensions/bad.json" "$T/o"' "172 a stack root whose path holds [1]: a bad file in a folder row is still judged"
@@ -473,21 +477,21 @@ hits=0; for i in $(seq 60); do sd o1 check 2>&1 | grep -q QA_FAKE_OWNER_KEY && h
 ok '[ $hits = 0 ]' "177 a link swapped between a plain file and the owner settings file while check runs: the owner file is never read (0 of 60 runs; $hits)"
 # S3 RT4-02 a schema file that is a symbolic link is refused
 mk sa; ln -s role-assignments.schema.json "$T/sa/.stella/schemas/ra2.schema.json"; jq '.assignments |= map(.id += "-2")' "$T/sa/.stella/role-assignments.json" >"$T/sa/.stella/ra2.json"
-ed sa data-files.json '.files += [(.files[] | select(.id == "role-assignments") | .id = "ra2" | .path = ".stella/ra2.json" | .schema = "ra2")]'
+ed sa data-files.json '.files += [(.files[] | select(.id == "role-assignments") | .id = "ra2" | .path = ".stella/ra2.json" | .schema = "ra2")]'; ed sa data-files.json ".files[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses sa check && grep -q "ra2.schema.json: .*symbolic link" "$T/o" && refuses sa get ra2' "178 a schema file that is a symbolic link is refused, and its rows are not served"
 # S3 RT4-07, VER4-04 ids and free-form key names a value pattern matches are masked by every read and every check line
 QID=qafake0rt5aaaaaaaaaaaaaaaa.bbbbbb.ccccccccccccccccccccccccccccc; QTOK=qafakeTOKEN0rt5notreal9x
 mk k1; ed k1 role-assignments.json "(.assignments[] | select(.id == \"global-builder\")).chain[0].parameters = {\"Bearer $QTOK\": \"qa\", plain_key: 1}"
-ed k1 capabilities.json ".entries += [.entries[0] | .id = \"$QID\"]"
+ed k1 capabilities.json ".entries += [.entries[0] | .id = \"$QID\"]"; ed k1 capabilities.json ".entries[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'sd k1 check >/dev/null 2>&1 && sd k1 get --json role-assignments global-builder >"$T/o" 2>&1 && ! grep -q "$QTOK" "$T/o" && grep -q plain_key "$T/o" && jq -e ".chain[0].parameters[\"***\"] == \"qa\"" "$T/o" >/dev/null' "179 a free-form key name a value pattern matches is masked by get --json; other key names are shown"
 ok '{ sd k1 list capabilities; sd k1 list capabilities --json; sd k1 search qafake0rt5; sd k1 search --json qafake0rt5; sd k1 get --json role-assignments; } >"$T/o" 2>&1; ! grep -q "$QID\|$QTOK" "$T/o" && sd k1 get --json capabilities "$QID" | jq -e ".id == \"***\"" >/dev/null' "180 an entry id a value pattern matches is masked by list, search and get"
-mk k2; ext() { echo "{\"schema_version\":1,\"id\":\"$1\",\"kind\":\"skill\",\"summary\":\"qa\",\"hosts\":[],\"secrets\":[],\"tools\":[],\"allowed_roles\":[],\"risk_class\":\"read\",\"enabled\":$2,\"status\":\"proposed\",\"source\":\"qa\"}"; }
+mk k2; ext() { echo "{\"schema_version\":1,\"id\":\"$1\",\"kind\":\"skill\",\"summary\":\"qa\",\"hosts\":[],\"secrets\":[],\"tools\":[],\"allowed_roles\":[],\"risk_class\":\"read\",\"enabled\":$2,\"status\":\"proposed\",\"source\":\"qa\",\"global_id\":\"$(cat /proc/sys/kernel/random/uuid)\",\"install_id\":\"$IID\"}"; }   # F1b D1: with its two ids
 ext "$QID" true >"$T/k2/.stella/extensions/a.json"; ext "$QID" false >"$T/k2/.stella/extensions/b.json"
 ok 'refuses k2 check && grep -q "duplicate entry id" "$T/o" && grep -q "switched on" "$T/o" && ! grep -q "$QID" "$T/o"' "181 check lines print no entry id a value pattern matches (duplicate id, switched on)"
 # S3 VAL4-03 settings, features and versions are one document each
 for s in settings features versions; do
   mk od-$s; cp "$T/od-$s/.stella/$s.json" "$T/od-$s/.stella/$s-2.json"
-  ed od-$s data-files.json "(.files[] | select(.schema == \"$s\")) as \$r | .files += [\$r | .id = \"qa-$s-2\" | .path = \".stella/$s-2.json\"]"
+  ed od-$s data-files.json "(.files[] | select(.schema == \"$s\")) as \$r | .files += [\$r | .id = \"qa-$s-2\" | .path = \".stella/$s-2.json\"]"; ed od-$s data-files.json ".files[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
   ok 'refuses od-'$s' check && grep -q "qa-'$s'-2: .*one document" "$T/o" && refuses od-'$s' get qa-'$s'-2' "182 $s is one document: a second $s row is refused"
 done
 # S3 VAL4-04, VER4-03 two rows on one file: each is refused with the reason, naming both
@@ -511,18 +515,18 @@ mk k1e; mkdir "$T/k1e/.stella/real"; mv "$T/k1e/.stella/versions.json" "$T/k1e/.
 ok 'alone k1e versions "\.stella/vl .*must not be a symbolic link" && setting k1e && refuses k1e get versions' "189 a link in a parent folder below the root: the row is refused, the line names the linked folder"
 mk k1f; mkdir -p "$T/k1f/$(dirname "$OS")"; printf '{"QA_FAKE_OWNER_KEY": 1}\n' >"$T/k1f/$OS"; chmod 000 "$T/k1f/$OS"; ln -s "../../$OS" "$T/k1f/.stella/extensions/qa.json"
 ok 'alone k1f extensions "owner setting" && grep -q "must not be a symbolic link" "$T/o" && ! grep -qi "PermissionError\|QA_FAKE" "$T/o" && setting k1f' "190 a link to the owner settings file: the linking row is refused, the line says both, the file is never opened"
-mk k1g; ed k1g data-files.json '.files += [(.files[] | select(.id == "versions") | .id = "v-alias" | .path = "./.stella/versions.json")]'
+mk k1g; ed k1g data-files.json '.files += [(.files[] | select(.id == "versions") | .id = "v-alias" | .path = "./.stella/versions.json")]'; ed k1g data-files.json ".files[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses k1g check && [ "$(grep -c "more than one index row (versions, v-alias)" "$T/o")" = 2 ] && ! grep -q "symbolic link" "$T/o" && setting k1g' "191 control: two rows that spell one file are each refused as named twice, never as a link"
 # K2 what a row is: a JSON row whose path does not end in .json is a folder of entries, every other row is one file (W3-RT4-05)
 FR='(.files[] | select(.id == "versions"))'   # a schema no cross-file rule reads: the row's own line is the only one (a read of another row of the same schema depends on it, as for any refused row)
-mk k2a; cp "$T/k2a/.stella/versions.json" "$T/k2a/.stella/qa-single"; ed k2a data-files.json ".files += [$FR | .id = \"qa-single\" | .path = \".stella/qa-single\"]"
+mk k2a; cp "$T/k2a/.stella/versions.json" "$T/k2a/.stella/qa-single"; ed k2a data-files.json ".files += [$FR | .id = \"qa-single\" | .path = \".stella/qa-single\"]"; ed k2a data-files.json ".files[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'alone k2a qa-single "\.stella/qa-single is one file.*folder of entries.*rename" && setting k2a && sd k2a get capabilities >/dev/null 2>&1 && refuses k2a get qa-single' "192 a single file whose path has no .json suffix is a named problem of its row (the rule calls it a folder)"
-mk k2b; mkdir "$T/k2b/.stella/qa-folder.json"; cp "$T/k2b/.stella/versions.json" "$T/k2b/.stella/qa-folder.json/a.json"; ed k2b data-files.json ".files += [$FR | .id = \"qa-folder\" | .path = \".stella/qa-folder.json\"]"
+mk k2b; mkdir "$T/k2b/.stella/qa-folder.json"; cp "$T/k2b/.stella/versions.json" "$T/k2b/.stella/qa-folder.json/a.json"; ed k2b data-files.json ".files += [$FR | .id = \"qa-folder\" | .path = \".stella/qa-folder.json\"]"; ed k2b data-files.json ".files[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'alone k2b qa-folder "\.stella/qa-folder\.json is a folder.*one file.*rename" && setting k2b && sd k2b get capabilities >/dev/null 2>&1 && refuses k2b get qa-folder' "193 a folder whose path ends in .json is a named problem of its row (the rule calls it one file)"
-mk k2c; ed k2c data-files.json ".files += [$FR | .id = \"qa-none\" | .path = \".stella/qa-none\"]"
+mk k2c; ed k2c data-files.json ".files += [$FR | .id = \"qa-none\" | .path = \".stella/qa-none\"]"; ed k2c data-files.json ".files[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'alone k2c qa-none "\.stella/qa-none.*folder.*does not exist" && setting k2c && sd k2c get capabilities >/dev/null 2>&1' "194 a folder row whose folder is missing is a named problem of that row"
-mk k2d; mkdir "$T/k2d/.stella/qa-caps"; jq '.entries = [.entries[0] | .id = "qa-cap-one"]' "$T/k2d/.stella/capabilities.json" >"$T/k2d/.stella/qa-caps/a.json"
-ed k2d data-files.json '.files += [(.files[] | select(.id == "capabilities") | .id = "qa-caps" | .path = ".stella/qa-caps")]'
+mk k2d; mkdir "$T/k2d/.stella/qa-caps"; jq '.entries = [.entries[0] | .id = "qa-cap-one"]' "$T/k2d/.stella/capabilities.json" >"$T/k2d/.stella/qa-caps/a.json"; ed k2d qa-caps/a.json ".entries[0] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
+ed k2d data-files.json '.files += [(.files[] | select(.id == "capabilities") | .id = "qa-caps" | .path = ".stella/qa-caps")]'; ed k2d data-files.json ".files[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'sd k2d check >"$T/o" 2>&1 && [ "$(sd k2d get qa-caps qa-cap-one | jq -r .id)" = qa-cap-one ] && sd k2d list qa-caps --json | jq -e "map(.id) == [\"qa-cap-one\"]" >/dev/null' "195 control: a folder row with a list key is a folder of entries (the list key decides nothing)"
 ok 'python3 -I -c "
 import os, sys
@@ -549,23 +553,182 @@ ok 'refuses cp1 check && grep -q "^STL-CFG-310 .*connections: a masked id (entry
 mk cp2; printf '{"schema_version":1,"entries":[],"entries":[]}' >"$T/cp2/.stella/connections.json"
 ok 'refuses cp2 check && grep -q "connections\.json: repeated key a masked key (key 3 of its object)" "$T/o"' "200 a repeated key in the catalog: the line says which key by its position"
 # K3 W1-VER5-04 a row id that is a name the tool uses for something that is no row is refused
-jq '.entries |= map(.id += "-2")' "$ROOT/.stella/capabilities.json" >"$T/c2.json"
+jq '.entries |= map(.id += "-2")' "$ROOT/.stella/capabilities.json" >"$T/c2.json"; jq '.entries |= [to_entries[] | .value + {global_id: ("00000000-0000-4000-8000-" + ("00000000000\(.key)" | .[-12:]))}]' "$T/c2.json" >"$T/c2.n" && mv "$T/c2.n" "$T/c2.json"   # F1b D1: each copy its own global_id
 for id in role-table schema:capabilities; do
-  mk pm; cp "$T/c2.json" "$T/pm/.stella/c2.json"; ed pm data-files.json ".files += [(.files[] | select(.id == \"capabilities\") | .id = \"$id\" | .path = \".stella/c2.json\")]"
+  mk pm; cp "$T/c2.json" "$T/pm/.stella/c2.json"; ed pm data-files.json ".files += [(.files[] | select(.id == \"capabilities\") | .id = \"$id\" | .path = \".stella/c2.json\")]"; ed pm data-files.json ".files[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
   ok 'refuses pm check && grep -q "^STL-CFG-310 .*data-files: .*row id '"$id"' .*keeps for" "$T/o" && ! setting pm' "201 an index row named $id is refused by check, and no read is served"
   rm -rf "$T/pm"
 done
 mk pm2; cp "$T/c2.json" "$T/pm2/.stella/c2.json"; ed pm2 data-files.json '(.files[] | select(.id == "data-files")).id = "qa-idx"'
 ok 'sd pm2 check >"$T/o" 2>&1' "202 control: the index row of the index may have another id"
-ed pm2 data-files.json '.files += [(.files[] | select(.id == "capabilities") | .id = "data-files" | .path = ".stella/c2.json")]'
+ed pm2 data-files.json '.files += [(.files[] | select(.id == "capabilities") | .id = "data-files" | .path = ".stella/c2.json")]'; ed pm2 data-files.json ".files[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses pm2 check && grep -q "row id data-files .*keeps for" "$T/o"' "203 the id the tool uses for the index is refused on a row that is not the index"
 # K3 W1-RT5-06 the entry lists a card branch may write are bounded (maxItems, data)
 for f in capabilities:entries versions:pins; do
   s=${f%%:*}; k=${f##*:}; M=$(jq ".properties.$k.maxItems" "$ROOT/.stella/schemas/$s.schema.json")
-  mk mx; ed mx $s.json ".$k = [range($M) as \$i | (.$k[0] | .id = \"qa-\(\$i)\")]"
+  mk mx; ed mx $s.json ".$k = [range($M) as \$i | (.$k[0] | .id = \"qa-\(\$i)\")]"; ed mx $s.json ".$k |= [to_entries[] | .value + {global_id: (\"00000000-0000-4000-8000-\" + (\"00000000000\\(.key)\" | .[-12:]))}]"   # F1b D1: each copy its own global_id
   ok '[ "$M" -gt 0 ] && sd mx check >"$T/o" 2>&1' "204 control: $s with $M $k (the schema's maxItems) passes check"
   ed mx $s.json ".$k += [.$k[0] | .id = \"qa-over\"]"
   ok 'refuses mx check && grep -q "^STL-CFG-310 .*'"$s"': .*'"$k"': .* items is out of range" "$T/o" && refuses mx get '"$s"' && grep -q "^STL-CFG-310 " "$T/o"' "205 $s with one more entry is refused by its schema, and get is refused, coded"
   rm -rf "$T/mx"
 done
+# ---- F1b W1: record ids (D1), sync classes and record kinds (D2), data-class rules (D3), x-ref and x-owner-only (D4) ----
+UV4='^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+APY() { STELLA_ROOT=$T/$1 OWNER_CONFIG=$T/owner-fake.env python3 -I "$BIN/stella-apply.py" "${@:2}"; }   # the apply contract on a scratch root
+printf "OWNER_TIMEZONE='UTC'\n" >"$T/owner-fake.env"   # a fake owner file: the alert code never reads the real one
+# T-SCH every schema lints, the new install schema included
+ok 'python3 -I -c "
+import os, sys; sys.path.insert(0, sys.argv[1]); import stella_data as s
+ns = [n[:-len(\".schema.json\")] for n in os.listdir(os.path.join(s.ROOT, s.SCHEMAS)) if n.endswith(\".schema.json\")]
+assert \"install\" in ns, ns
+bad = [(n, e) for n in ns for e in s.lint_schema(s.schema_of(n))]
+assert not bad, bad" "$BIN"' "206 every schema of the tree lints, the install schema included"
+# T7a every record of the shipped tree has a unique version 4 global_id and this install's install_id
+ok '[ -n "$INS" ] && python3 -I -c "
+import re, sys; sys.path.insert(0, sys.argv[1]); import stella_data as s
+iid, seen, n = s.load(sys.argv[3])[\"install_id\"], {}, 0
+assert re.fullmatch(sys.argv[2][1:-1], iid), \"install_id\"
+for r in s.rows():
+    if r[\"format\"] != \"json\" or not (r[\"list_key\"] or s.folder_row(r)):
+        continue
+    assert r.get(\"record_kind\"), r[\"id\"]
+    for rel, _ in s.files_of(r):
+        for k, e in s.file_entries(r, rel, s.load(rel)):
+            n += 1
+            assert re.fullmatch(sys.argv[2][1:-1], e.get(\"global_id\", \"\")) and e.get(\"install_id\") == iid, (r[\"id\"], k)
+            assert e[\"global_id\"] not in seen, (k, seen[e[\"global_id\"]])
+            seen[e[\"global_id\"]] = k
+assert n >= 40, n" "$BIN" "$UV4" "$INS"' "207 every record of every row with records (index rows included) has a unique version 4 global_id and this install's install_id, and its row a record_kind"
+mk id1; ed id1 capabilities.json 'del(.entries[0].global_id)'
+ok 'refuses id1 check && grep -q "^STL-CFG-310 .*capabilities: .*global_id" "$T/o"' "208 a record without global_id is refused, on its row"
+mk id2; ed id2 features.json 'del(.entries[0].install_id)'
+ok 'refuses id2 check && grep -q "^STL-CFG-310 .*features: .*install_id" "$T/o"' "209 a record without install_id is refused"
+for v in '"not-a-uuid"' '(.pins[0].global_id | ascii_upcase)' '(.pins[0].global_id | .[:14] + "1" + .[15:])'; do
+  mk id3; ed id3 versions.json ".pins[0].global_id = $v"
+  ok 'refuses id3 check && grep -q "^STL-CFG-310 .*versions: .*global_id" "$T/o"' "210 a global_id that is not a lower-case version 4 UUID is refused: $v"; rm -rf "$T/id3"
+done
+mk id3b; ed id3b versions.json '.pins[0].install_id = "x"'
+ok 'refuses id3b check && grep -q "versions: .*install_id" "$T/o"' "210b an install_id that is not a UUID is refused"
+G=$(jq -r '.entries[0].global_id' "$ROOT/.stella/settings.json")
+mk id4; ed id4 capabilities.json ".entries[0].global_id = \"$G\""
+ok 'refuses id4 check && grep -q "^STL-CFG-310 .*capabilities: .*global_id .*also" "$T/o" && grep -q "^STL-CFG-310 .*settings: .*global_id .*also" "$T/o" && sd id4 get --json settings CALL_TIMEOUT >/dev/null 2>&1' "211 one global_id in two data files is refused on both rows; a read that does not open the other file is still served"
+mk id5; ed id5 data-files.json '(.files[] | select(.id == "versions")) |= del(.global_id)'
+ok 'refuses id5 check && grep -q "^STL-CFG-310 .*data-files: .*global_id" "$T/o"' "212 an index row without global_id is refused (the index rows are records)"
+mk id6; cp "$T/fake/.stella/extensions/fake-ext.json" "$T/id6/.stella/extensions/"
+ok 'sd id6 check >"$T/o" 2>&1' "213a control: a folder entry with its two ids passes"
+ed id6 extensions/fake-ext.json 'del(.global_id)'
+ok 'refuses id6 check && grep -q "^STL-CFG-310 .*extensions: .*global_id" "$T/o"' "213b a folder entry (one file is one record) without global_id is refused"
+mk id7; ed id7 install.json '.ids_required = false'; ed id7 capabilities.json '.entries |= map(del(.global_id, .install_id))'
+ok 'sd id7 check >"$T/o" 2>&1' "214a while the install says ids_required false (a migration in progress), records without ids pass"
+ed id7 capabilities.json '.entries[0].global_id = "x"'
+ok 'refuses id7 check && grep -q "capabilities: .*global_id" "$T/o"' "214b ... but a global_id that is there must still be a version 4 UUID"
+ed id7 capabilities.json ".entries[0].global_id = \"$G\""
+ok 'refuses id7 check && grep -q "capabilities: .*global_id .*also" "$T/o"' "214c ... and unique"
+mk id8; rm "$T/id8/$INS"; ed id8 capabilities.json 'del(.entries[0].global_id)'
+ok 'refuses id8 check && grep -q "^STL-CFG-310 .*install" "$T/o" && grep -q "capabilities: .*global_id" "$T/o"' "214d no install file: check refuses, and ids are required (fail closed)"
+# T7b the old id is an alias: a read by the alias and a read by the global_id give the same record
+mk al; cp "$T/fake/.stella/extensions/fake-ext.json" "$T/al/.stella/extensions/"
+for e in capabilities:entries:id settings:entries:key data-files:files:id; do
+  d=${e%%:*}; r=${e#*:}; lk=${r%%:*}; f=${r##*:}
+  A=$(jq -r ".$lk[1].$f" "$ROOT/.stella/$d.json"); GI=$(jq -r ".$lk[1].global_id" "$ROOT/.stella/$d.json")
+  ok '[ "$GI" != null ] && sd al get --json '"$d"' "'"$A"'" >"$T/gid-a" && sd al get --json '"$d"' "'"$GI"'" >"$T/gid-b" && cmp -s "$T/gid-a" "$T/gid-b" && jq -e ".global_id == \"'"$GI"'\"" "$T/gid-a" >/dev/null' "215 get $d by its old id and by its global_id return the same record"
+done
+GE=$(jq -r .global_id "$T/al/.stella/extensions/fake-ext.json")
+ok 'sd al get --json extensions fake-ext >"$T/gid-a" && sd al get --json extensions "$GE" >"$T/gid-b" && cmp -s "$T/gid-a" "$T/gid-b"' "215b the same for a folder entry"
+mk amb; ed amb capabilities.json '.entries[1].id = .entries[0].global_id'
+ok 'refuses amb check && grep -q "^STL-CFG-310 .*capabilities: .*global_id is the id of another entry" "$T/o"' "215c an old id that equals another record's global_id is refused (a read by it would be ambiguous)"
+n=$(alerts)
+ok 'refuses al get capabilities "$(cat /proc/sys/kernel/random/uuid)" && grep -q "^STL-CFG-311 " "$T/o" && [ "$(alerts)" -eq $((n+1)) ]' "216 an unknown global_id fails closed: STL-CFG-311 and one alert line"
+# T7c the ids migration: a candidate with the two fields added and nothing else changed, applied and rolled back through the apply contract
+mk mig; ed mig install.json '.ids_required = false'; ed mig capabilities.json '.entries |= (.[:1] + (.[1:] | map(del(.global_id, .install_id))))'   # as F1 wrote it, one record already migrated
+ed mig data-files.json '(.files[] | select(.id == "extensions")).owner_only = false'   # the cases run as no owner: the rows they apply are not owner-only
+cp "$T/mig/.stella/capabilities.json" "$T/mig-old.json"; K0=$(jq -r '.entries[0].global_id' "$T/mig-old.json")
+ok 'sd mig ids-migrate capabilities --out "$T/mig-cand.json" && jq -e --slurpfile o "$T/mig-old.json" "(.entries | map(del(.global_id, .install_id))) == (\$o[0].entries | map(del(.global_id, .install_id))) and del(.entries) == (\$o[0] | del(.entries)) and (.entries | length) == (\$o[0].entries | length)" "$T/mig-cand.json" >/dev/null && jq -e --arg i "$IID" --arg k "$K0" "([.entries[] | (.global_id | test(\"'"$UV4"'\")) and .install_id == \$i] | all) and .entries[0].global_id == \$k" "$T/mig-cand.json" >/dev/null && cmp -s "$T/mig-old.json" "$T/mig/.stella/capabilities.json"' "217 ids-migrate writes a candidate: the two fields added to every record that lacks them, an existing id kept, nothing else changed, the data file untouched"
+ok 'APY mig apply capabilities --from "$T/mig-cand.json" >"$T/o" 2>&1 && cmp -s "$T/mig-cand.json" "$T/mig/.stella/capabilities.json" && sd mig check >"$T/o" 2>&1' "218 the candidate is applied through the apply contract and the data checks"
+ok 'APY mig rollback capabilities >"$T/o" 2>&1 && cmp -s "$T/mig-old.json" "$T/mig/.stella/capabilities.json"' "219 rollback restores the bytes"
+jq 'del(.global_id, .install_id)' "$T/fake/.stella/extensions/fake-ext.json" >"$T/mig/.stella/extensions/fake-ext.json"; cp "$T/mig/.stella/extensions/fake-ext.json" "$T/mig-ext-old.json"
+ok 'sd mig ids-migrate extensions/fake-ext.json --out "$T/mig-ext.json" && jq -e --slurpfile o "$T/mig-ext-old.json" "del(.global_id, .install_id) == \$o[0] and (.global_id | test(\"'"$UV4"'\"))" "$T/mig-ext.json" >/dev/null && APY mig apply extensions/fake-ext.json --from "$T/mig-ext.json" >"$T/o" 2>&1 && APY mig rollback extensions/fake-ext.json >"$T/o" 2>&1 && cmp -s "$T/mig-ext-old.json" "$T/mig/.stella/extensions/fake-ext.json"' "220 the same for one entry file of a folder row: no loss, applied, rolled back to the bytes"
+ed mig data-files.json '.files |= map(del(.global_id, .install_id))'; cp "$T/mig/.stella/data-files.json" "$T/mig-idx-old.json"
+ok 'sd mig ids-migrate data-files --out "$T/mig-idx.json" && jq -e --slurpfile o "$T/mig-idx-old.json" "(.files | map(del(.global_id, .install_id))) == \$o[0].files and ([.files[].global_id | test(\"'"$UV4"'\")] | all)" "$T/mig-idx.json" >/dev/null' "220b the same for the index (its rows are records)"
+n=$(alerts)
+ok 'refuses mig ids-migrate no-such-row --out "$T/mig-x.json" && grep -q "^STL-CFG-311 " "$T/o" && [ "$(alerts)" -eq $((n+1)) ] && [ ! -e "$T/mig-x.json" ]' "221a ids-migrate of an unknown row fails closed (STL-CFG-311, one alert line), writes nothing"
+echo keep >"$T/mig-keep"
+ok 'refuses mig ids-migrate capabilities --out "$T/mig-keep" && grep -q "^STL-CFG-310 " "$T/o" && [ "$(cat "$T/mig-keep")" = keep ]' "221b ids-migrate never writes over an existing file"
+ok 'refuses mig ids-migrate versions/x.json --out "$T/mig-y.json" && refuses mig ids-migrate extensions --out "$T/mig-y.json" && refuses mig ids-migrate extensions/../x.json --out "$T/mig-y.json" && [ ! -e "$T/mig-y.json" ]' "221c ids-migrate takes <row> for a one-file row and <row>/<file name> for a folder row, nothing else"
+# T8a every record kind has a sync class; every row with records names a known kind
+DP='.record_kinds'
+mk sk1; ed sk1 data-policy.json "del($DP.feature.sync_class)"
+ok 'refuses sk1 check && grep -q "^STL-CFG-310 .*data-policy: .*sync_class" "$T/o"' "222 a record kind with no sync class is refused"
+mk sk2; ed sk2 data-policy.json "$DP.feature.sync_class = \"no-such-class\""
+ok 'refuses sk2 check && grep -q "data-policy: .*feature.*sync_class" "$T/o"' "223 a record kind naming an unknown sync class is refused"
+for k in card project vault-entry secret event device approval; do
+  mk sk3; ed sk3 data-policy.json "del($DP[\"$k\"])"
+  ok 'refuses sk3 check && grep -q "data-policy: .*'"$k"'" "$T/o"' "224 the kind $k, kept outside the data files, must be listed"; rm -rf "$T/sk3"
+done
+mk sk4; ed sk4 data-files.json '(.files[] | select(.id == "features")) |= del(.record_kind)'
+ok 'refuses sk4 check && grep -q "^STL-CFG-310 .*features: .*record_kind" "$T/o"' "225a an index row with records that names no record_kind is refused"
+mk sk5; ed sk5 data-files.json '(.files[] | select(.id == "features")).record_kind = "no-such-kind"'
+ok 'refuses sk5 check && grep -q "^STL-CFG-310 .*features: .*record_kind" "$T/o"' "225b an index row naming a kind the data policy does not list is refused"
+# T8b vault entries, secrets, private and local_only projects never get a cloud sync class
+CL='.sync_classes += [{id:"qa-cloud",cloud:true,description:"a fake cloud store"}]'
+mk sc1; ed sc1 data-policy.json "$CL | $DP.feature.sync_class = \"qa-cloud\""
+ok 'sd sc1 check >"$T/o" 2>&1' "226 control: a cloud sync class is data, and an ordinary kind may use it"
+for k in vault-entry secret; do
+  mk sc2; ed sc2 data-policy.json "$CL | $DP[\"$k\"].sync_class = \"qa-cloud\""
+  ok 'refuses sc2 check && grep -q "data-policy: .*'"$k"'.*cloud" "$T/o"' "227 the $k kind set to a cloud sync class is refused"; rm -rf "$T/sc2"
+  mk sc2; ed sc2 data-policy.json "$DP[\"$k\"] |= del(.never_cloud)"
+  ok 'refuses sc2 check && grep -q "data-policy: .*never_cloud" "$T/o"' "227b the $k kind cannot drop never_cloud"; rm -rf "$T/sc2"
+done
+PJ() { echo "{mode:\"$1\",allowed_providers:[],global_id:\"$(cat /proc/sys/kernel/random/uuid)\",install_id:\"$IID\"$2}"; }   # a project policy record
+mk sc3; ed sc3 data-policy.json "$CL | .projects.qa1 = $(PJ open ',private:true,sync_class:"qa-cloud"')"
+ok 'refuses sc3 check && grep -q "data-policy: .*qa1.*cloud" "$T/o"' "228a a private project with a cloud sync class is refused"
+mk sc4; ed sc4 data-policy.json "$CL | .projects.qa1 = $(PJ local_only ',sync_class:"qa-cloud"')"
+ok 'refuses sc4 check && grep -q "data-policy: .*qa1.*cloud" "$T/o"' "228b a local_only project with a cloud sync class is refused"
+mk sc5; ed sc5 data-policy.json "$CL | .projects.qa1 = $(PJ open ',private:false,sync_class:"qa-cloud"')"
+ok 'sd sc5 check >"$T/o" 2>&1' "228c control: an open project that is not private may have a cloud sync class"
+PK=$(jq -r '.files[] | select(.schema == "data-policy") | .record_kind' "$ROOT/.stella/data-files.json")
+mk sc6; ed sc6 data-policy.json "$CL | $DP[\"$PK\"].sync_class = \"qa-cloud\" | .projects.qa1 = $(PJ open ',private:true')"
+ok '[ "$PK" != null ] && refuses sc6 check && grep -q "data-policy: .*qa1.*cloud" "$T/o"' "228d a private project with no sync class of its own takes its kind's, and a cloud one is refused"
+mk sc7; ed sc7 data-policy.json "$CL | .projects.qa1 = $(PJ open ',sync_class:"no-such-class"')"
+ok 'refuses sc7 check && grep -q "data-policy: .*qa1.*sync_class" "$T/o"' "228e a project naming an unknown sync class is refused"
+# T9b data-class rules: the sensitive input classes are never synced; a class with no rule row is the most restrictive
+SENSE='["camera","microphone","sensor","host-screen"]'
+ok 'jq -e --argjson s "$SENSE" "([.class_rules[\$s[]]] | length == 4 and all(. == {sync:\"never\",store:\"owner_asks\",hosted:\"grant\",context:\"text_only\"})) and (.data_classes | contains(\$s)) and .class_rules.secret.sync == \"never\" and .class_rules.secret.hosted == \"never\" and .privacy_grants == []" "$ROOT/.stella/data-policy.json" >/dev/null' "229 the shipped data policy: camera, microphone, sensor, host-screen never synced, stored only when the owner asks, hosted only under a grant, text only in context; secret never synced nor hosted; no grant"
+mk dc1; ed dc1 data-policy.json "$CL | $DP[\"qa-frames\"] = {sync_class:\"qa-cloud\",data_class:\"camera\"}"
+ok 'refuses dc1 check && grep -q "data-policy: .*qa-frames.*cloud" "$T/o"' "230a a camera-class record kind set to a cloud sync class is refused"
+ed dc1 data-policy.json "$DP[\"qa-frames\"].sync_class = \"local-only\""
+ok 'sd dc1 check >"$T/o" 2>&1' "230b control: the same kind local-only passes"
+mk dc2; ed dc2 data-policy.json "$CL | .data_classes += [\"qa-new-class\"] | $DP[\"qa-k\"] = {sync_class:\"qa-cloud\",data_class:\"qa-new-class\"}"
+ok 'refuses dc2 check && grep -q "data-policy: .*qa-k.*cloud" "$T/o"' "231a a data class with no rule row is the most restrictive: a kind of it on a cloud class is refused"
+mk dc3; ed dc3 data-policy.json '.class_rules["qa-none"] = .class_rules.public'
+ok 'refuses dc3 check && grep -q "data-policy: .*class_rules" "$T/o"' "231b a rule row for a class data_classes does not define is refused"
+mk dc4; ed dc4 data-policy.json "$DP[\"qa-k\"] = {sync_class:\"local-only\",data_class:\"no-such-class\"}"
+ok 'refuses dc4 check && grep -q "data-policy: .*qa-k.*data_class" "$T/o"' "231c a record kind naming an unknown data class is refused"
+# D4 x-ref: a string that must be an alias or a global_id of a record of the named index row; x-owner-only: a marker owner-only lists
+mk xr; CA=$(jq -r '.entries[0].id' "$ROOT/.stella/capabilities.json"); CG=$(jq -r '.entries[0].global_id' "$ROOT/.stella/capabilities.json")
+NA=$(jq -r '.entries[0].id' "$ROOT/.stella/connections.json"); NG=$(jq -r '.entries[1].global_id' "$ROOT/.stella/connections.json")
+echo '{"type":"object","properties":{"cap":{"type":"string","x-ref":"capabilities"},"apps":{"type":"array","items":{"type":"string","x-ref":"connections"}},"note":{"type":"string","x-owner-only":true},"deep":{"type":"object","properties":{"k":{"$ref":"#/$defs/k"}}}},"$defs":{"k":{"type":"string","x-owner-only":true}},"additionalProperties":false}' >"$T/xr/.stella/schemas/qa-ref.schema.json"
+echo "{\"cap\":\"$CA\",\"apps\":[\"$NA\",\"$NG\"]}" >"$T/xr-good.json"; echo "{\"cap\":\"$CG\",\"apps\":[]}" >"$T/xr-good2.json"
+ok 'sd xr validate qa-ref "$T/xr-good.json" >"$T/o" 2>&1 && grep -qx valid "$T/o" && sd xr validate qa-ref "$T/xr-good2.json" >"$T/o" 2>&1 && grep -qx valid "$T/o"' "232 validate accepts an x-ref by the old id (alias) and by the global_id, in a string and in a list"
+n=$(alerts); echo "{\"cap\":\"$CA\",\"apps\":[\"$NA\",\"$V\",\"$(cat /proc/sys/kernel/random/uuid)\"]}" >"$T/xr-bad.json"
+ok 'refuses xr validate qa-ref "$T/xr-bad.json" && grep -q "^STL-CFG-311 " "$T/o" && grep -q "apps\[1\]" "$T/o" && ! grep -q qafake "$T/o" && [ "$(alerts)" -eq $((n+1)) ]' "233 an unknown x-ref id fails closed: STL-CFG-311 naming the field, never the value, and exactly one alert line"
+mk xr2; echo '{"type":"string","x-ref":"no-such-row"}' >"$T/xr2/.stella/schemas/qa-r2.schema.json"; echo '"x"' >"$T/xr2-v.json"; echo '{"type":"string","x-ref":7}' >"$T/xr2/.stella/schemas/qa-r3.schema.json"
+ok 'refuses xr2 validate qa-r2 "$T/xr2-v.json" && grep -q "^STL-CFG-310 .*no-such-row" "$T/o" && refuses xr2 validate qa-r3 "$T/xr2-v.json" && grep -q "^STL-CFG-310 .*x-ref" "$T/o" && ! grep -q Traceback "$T/o"' "234 an x-ref naming no index row, or that is not a row id, is an error"
+GR() { echo "{id:\"qa-g\",global_id:\"$(cat /proc/sys/kernel/random/uuid)\",install_id:\"$IID\",data_class:\"camera\",connection:\"$1\",granted_at:\"2026-11-13T00:00:00Z\"}"; }
+mk xr3; ed xr3 data-policy.json ".privacy_grants = [$(GR no-such-conn)]"
+ok 'refuses xr3 check && grep -q "^STL-CFG-310 .*data-policy: .*privacy_grants\[0\].connection" "$T/o" && ! grep -q no-such-conn "$T/o"' "235a check refuses a privacy grant whose connection (an x-ref) is no record of the catalog, naming the field"
+ed xr3 data-policy.json ".privacy_grants = [$(GR "$NA")]"
+ok 'sd xr3 check >"$T/o" 2>&1' "235b control: a grant naming the connection by its old id passes"
+ed xr3 data-policy.json ".privacy_grants = [$(GR "$NG")]"
+ok 'sd xr3 check >"$T/o" 2>&1' "235c control: and by its global_id"
+ed xr3 data-policy.json ".privacy_grants[0].data_class = \"no-such-class\""
+ok 'refuses xr3 check && grep -q "data-policy: .*privacy_grants\[0\].*data_class" "$T/o"' "235d a grant for an unknown data class is refused"
+ok 'sd xr owner-only --json >"$T/o" 2>&1 && jq -e "(.[\"data-policy\"] | index(\"/privacy_grants\")) and (.install | index(\"/install_id\") and index(\"/ids_required\")) and (.[\"qa-ref\"] | sort) == [\"/deep/k\", \"/note\"] and .capabilities == []" "$T/o" >/dev/null && sd xr owner-only | grep -qx "qa-ref	/note"' "236a owner-only lists the owner-only field paths of every schema (a marker reached through \$ref too), as JSON and as lines"
+mk xr4; echo '{"type":"string","x-owner-only":"yes"}' >"$T/xr4/.stella/schemas/qa-o.schema.json"
+ok 'refuses xr4 owner-only && grep -q "^STL-CFG-310 .*x-owner-only" "$T/o" && refuses xr4 validate qa-o "$T/xr2-v.json"' "236b x-owner-only takes only true or false, and owner-only fails closed on a schema it cannot read"
+# T-REG the new subcommands and keywords are in the capability registry
+ok 'jq -e "[.entries[] | select(.source == \"bin/stella_data.py\") | .keywords[]] | index(\"ids-migrate\") and index(\"owner-only\") and index(\"x-ref\") and index(\"x-owner-only\")" "$ROOT/.stella/capabilities.json" >/dev/null && [ "$(jq "[.entries[] | select(.source == \"bin/stella_data.py\" and .kind == \"command\")] | length" "$ROOT/.stella/capabilities.json")" -ge 3 ]' "237 the capability registry lists ids-migrate, owner-only and the x-ref and x-owner-only keywords"
+# the install id is readable through one function (W6's event lines read it there)
+mk ii; ed ii install.json '.install_id = "x"'
+ok '[ -n "$IID" ] && [ "$(python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; print(s.install_id())" "$BIN")" = "$IID" ] && ! STELLA_ROOT=$T/ii python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; s.install_id()" "$BIN" 2>/dev/null' "238 stella_data.install_id() returns this install's id and refuses a bad install file"
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

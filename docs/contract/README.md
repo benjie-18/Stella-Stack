@@ -3,6 +3,8 @@
 Every core card ships all fourteen items below. The contract data lives in `.stella/`; `bin/stella_data.py` reads and
 checks it. Check everything with `python3 bin/stella_data.py check` (exit 0 = valid; exit 1 = one `STL-CFG-310` line per
 problem). Read with `list`, `get <id> [<entry>]` and `search <words>`; every read command takes `--json`.
+`ids-migrate <id>[/<file>] --out <file>` writes a candidate with record ids added (see "Records and ids"), and
+`owner-only [--json]` lists the fields each schema marks `x-owner-only`.
 
 ## The 14 items
 
@@ -40,7 +42,9 @@ when its format is `json` and its path does not end in `.json`; every other row 
 the list key and not the disk; `stella_data.folder_row(row)` is that rule for this tool and the apply tool), `schema` (a plain name
 such as `settings`, lower case letters, digits and `-`, read as `.stella/schemas/<schema>.schema.json`; null for an env file), `format` (`json` or `env`), `owner_only` (only the
 owner's path writes it), `redact_keys` (key names whose values are masked in logs), `list_key` (the array or map that
-holds the entries) and `id_field` (several fields, comma separated, make an id joined with `:`; approved hosts use `host,port`).
+holds the entries), `id_field` (several fields, comma separated, make an id joined with `:`; approved hosts use `host,port`)
+and, on a row with records, `record_kind` (a kind of the data policy's `record_kinds`; a row with records that names none, or
+names a kind the policy does not list, is refused).
 It also names the event log, the backup folder, the applied-state file and the role table. Every path in the index is
 relative, has no `..` part and must resolve (symlinks followed) inside the stack root; `check` refuses one that does not,
 and `get`, `list` and `search` never read it. The index row of the index is `owner_only`: it decides which files are.
@@ -78,7 +82,27 @@ schema does not run; the rows those rules judge get one line "not judged by the 
 refused". A rule that fails anyway is one line naming every row it read (never the index). That merged view is what `check`
 judges and what the read commands serve.
 
-Schemas use a small JSON Schema subset (the list is in the docstring of `bin/stella_data.py`). A schema's identity is its name:
+**Records and ids (product rule 14).** A record is one entry of a row with a `list_key` (the index's own rows too), or one
+file of a folder row; the parts inside it (a connection's models and actions) are not records. Every record carries
+`global_id` (a lower-case version 4 UUID, unique across every data file: one value in two records is a line on every row that
+holds it) and `install_id` (the UUID of the install that made it; a record moved from another install keeps its own). The
+old `id` (or the row's `id_field`) is the record's alias and stays unique per schema as before: `get <id> <entry>` and every
+`x-ref` accept the alias or the `global_id`. Both fields are required while the install document says `ids_required: true`
+(the shipped value, and the answer when that document is missing or invalid); `false` is for a migration in progress only.
+**The ids migration:** `stella_data.py ids-migrate <id> --out <file>` (`<id>/<file>.json` for a folder row) writes a new file
+(never over an existing one) that is the row's file with `global_id` and `install_id` added to every record that lacks
+them and nothing else changed; apply it with `stella-apply.py apply <id> --from <file>` and undo it with `rollback`. A
+rollback restores bytes only when they pass the current checks, so on an install whose data predates the ids, set
+`ids_required: false` first (apply the install row), migrate and apply each row, then set it back to `true`.
+
+Schemas use a small JSON Schema subset (the list is in the docstring of `bin/stella_data.py`). Two keywords are Stella's own:
+`x-ref: "<index row id>"` on a string says the value must be the id (alias) or `global_id` of a record of that row's merged
+view; `check` charges a value that is neither to the row of the file that holds it (`STL-CFG-310`, naming the field, never
+the value), and `validate <schema> <file>` refuses it with `STL-CFG-311` and one alert line (an x-ref naming no JSON row of
+the index is a `STL-CFG-310` error). A read also depends on the rows its schemas' x-refs name. `x-owner-only: true` marks a
+field only the owner's path writes; `stella_data.py owner-only [--json]` lists, per schema, the JSON pointer of every marked
+field (`*` for any array item or map value; a marker reached through `$ref` counts), and fails closed (`STL-CFG-310`) when a
+schema cannot be read. A schema's identity is its name:
 the file `<name>.schema.json` in `.stella/schemas/`. A schema file that is a symbolic link is refused; a byte copy under
 another name is another schema, which the cross-file rules do not read (the schemas folder is owner data). A schema that uses any
 other keyword is an error, never ignored; so is a keyword with a wrong value (`required` as a string, an external `$ref`).
@@ -192,7 +216,27 @@ pay, delete need approval first; sign_in is an escalation), `models[]` (id, prob
 
 ### `.stella/data-policy.json`
 `data_classes[]`, `local_hosts[]` (the host names that count as local; a provider declared local may list only these), a `default` and `projects{}`; each has `mode` (`open`, `local_only`, `allowed_providers`) and
-`allowed_providers[]`. *To add a project rule:* add a key under `projects`.
+`allowed_providers[]`; a project (a record, with its two ids) may also carry `private` (owner-marked) and its own
+`sync_class`. *To add a project rule:* add a key under `projects`.
+**Sync classes (item 8).** `sync_classes[]` (`id`, `cloud`, `description`): where records may be copied; `local-only`
+(`cloud: false`) is the default every shipped kind uses. `record_kinds{}`: every kind of record and its `sync_class`, with an
+optional `data_class` and `never_cloud`. The kinds of data-file records are the `record_kind` of their index rows; the kinds
+kept outside the data files (`card`, `project`, `vault-entry`, `secret`, `event`, `device`, `approval`) must be listed. A
+kind with no sync class, or an unknown sync class or data class, is refused. A kind with `never_cloud` (the schema requires
+it on `vault-entry` and `secret`) or whose data class is never synced may only have a sync class whose `cloud` is false; so
+may a private or `local_only` project (its own `sync_class`, else the kind of the data-policy row's records). A move-primary
+transfer to the owner's own paired device, end-to-end encrypted (U1), is not a sync class.
+**Data-class rules (item 9).** `class_rules{}`: per data class `sync` (never, allowed), `store` (owner_asks, allowed),
+`hosted` (grant, allowed, never) and `context` (text_only, allowed). `camera`, `microphone`, `sensor` and `host-screen` are
+never synced, stored only when the owner asks, sent to a hosted model only under a privacy grant and only text results
+reach a worker's or the supervisor's context; `secret` is never synced and never hosted. A class with no rule row gets the
+most restrictive rules (never, owner_asks, never, text_only); a rule row for a class `data_classes` does not define is
+refused. `privacy_grants[]` (`id`, `global_id`, `install_id`, `data_class`, `connection` (an x-ref to the catalog),
+`granted_at`, optional `expires_at`) is `x-owner-only` and ships empty; routing (F2) reads it.
+
+### `.stella/install.json`
+The install's one document, owner-only: `install_id` (this install's UUID, made once) and `ids_required` (see "Records and
+ids"). Both are `x-owner-only`. `stella_data.install_id()` is the one reader (new event lines and approval records use it).
 
 ### `.stella/role-assignments.json`
 `effort_modes{}` (allowed localities and `no_silent_fallback` for standard, eco, max, local_only) and `assignments[]`:

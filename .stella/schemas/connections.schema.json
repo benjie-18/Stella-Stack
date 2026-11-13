@@ -309,6 +309,16 @@
             "delete",
             "sign_in"
           ]
+        },
+        "global_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "description": "The record's global id: a lower-case version 4 UUID, unique across every data file (product rule 14). The record's old id stays its alias: every read that takes an entry id accepts either."
+        },
+        "install_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "description": "The UUID of the install that made the record (its .stella/install.json); a record moved from another install keeps it."
         }
       },
       "required": [

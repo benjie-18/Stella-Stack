@@ -19,7 +19,9 @@
         "script": "bin/stella-apply.py",
         "needs_restart": false
       },
-      "code": "STL-CFG-315"
+      "code": "STL-CFG-315",
+      "global_id": "0913a5f5-5eb5-4071-94ec-af36401c48b4",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "key": "WORKER_GIT_EMAIL",
@@ -39,7 +41,9 @@
         "script": "bin/stella-apply.py",
         "needs_restart": false
       },
-      "code": "STL-CFG-315"
+      "code": "STL-CFG-315",
+      "global_id": "0dd5be98-e0eb-4a01-b0ab-c7817fafa89e",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "key": "CALL_TIMEOUT",
@@ -60,7 +64,9 @@
         "script": "bin/stella-apply.py",
         "needs_restart": false
       },
-      "code": "STL-CFG-315"
+      "code": "STL-CFG-315",
+      "global_id": "aad50eee-9e5a-4760-8142-adf22251a227",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "key": "QUEUE_MAX",
@@ -81,7 +87,9 @@
         "script": "bin/stella-apply.py",
         "needs_restart": false
       },
-      "code": "STL-CFG-315"
+      "code": "STL-CFG-315",
+      "global_id": "32f40408-682b-4886-bae6-ebe3bf079b64",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

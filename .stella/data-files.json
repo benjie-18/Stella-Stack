@@ -13,7 +13,10 @@
       "owner_only": true,
       "redact_keys": [],
       "list_key": "files",
-      "id_field": "id"
+      "id_field": "id",
+      "record_kind": "data-file",
+      "global_id": "ec7470b1-f594-458c-a4a5-f4cb15c933af",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "connections",
@@ -25,7 +28,10 @@
         "(?i)(key|token|secret|password|passwd|credential|authorization)$"
       ],
       "list_key": "entries",
-      "id_field": "id"
+      "id_field": "id",
+      "record_kind": "connection",
+      "global_id": "b2905a93-ba2d-4042-924a-7aa1ab9184db",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "data-policy",
@@ -35,7 +41,10 @@
       "owner_only": true,
       "redact_keys": [],
       "list_key": "projects",
-      "id_field": "id"
+      "id_field": "id",
+      "record_kind": "project",
+      "global_id": "4ae4417a-5f55-493c-9829-14ba7d208335",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "role-assignments",
@@ -47,7 +56,10 @@
         "(?i)(key|token|secret|password|passwd|credential|authorization)$"
       ],
       "list_key": "assignments",
-      "id_field": "id"
+      "id_field": "id",
+      "record_kind": "role-assignment",
+      "global_id": "278d6b8f-aefa-44f4-a01d-e828ab795ea1",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "approved-hosts",
@@ -57,7 +69,10 @@
       "owner_only": true,
       "redact_keys": [],
       "list_key": "hosts",
-      "id_field": "host,port"
+      "id_field": "host,port",
+      "record_kind": "approved-host",
+      "global_id": "07c44e47-ffe7-461a-8225-2e751b771fd9",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "capabilities",
@@ -67,7 +82,10 @@
       "owner_only": false,
       "redact_keys": [],
       "list_key": "entries",
-      "id_field": "id"
+      "id_field": "id",
+      "record_kind": "capability",
+      "global_id": "998c99d8-9e46-4027-b2df-0684d9d44d2c",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "features",
@@ -77,7 +95,10 @@
       "owner_only": true,
       "redact_keys": [],
       "list_key": "entries",
-      "id_field": "id"
+      "id_field": "id",
+      "record_kind": "feature",
+      "global_id": "7b557390-34d7-47ca-b1f2-54d7f3c15eb5",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "extensions",
@@ -87,7 +108,10 @@
       "owner_only": true,
       "redact_keys": [],
       "list_key": null,
-      "id_field": "id"
+      "id_field": "id",
+      "record_kind": "extension",
+      "global_id": "736a63bd-db8a-48b5-8b61-8ecd384c56f8",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "versions",
@@ -97,7 +121,10 @@
       "owner_only": false,
       "redact_keys": [],
       "list_key": "pins",
-      "id_field": "id"
+      "id_field": "id",
+      "record_kind": "version-pin",
+      "global_id": "5e97cb01-479e-486c-8591-71b418365478",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "settings",
@@ -107,7 +134,22 @@
       "owner_only": true,
       "redact_keys": [],
       "list_key": "entries",
-      "id_field": "key"
+      "id_field": "key",
+      "record_kind": "setting",
+      "global_id": "7dc4377a-7813-46c9-9dac-0b150c0af92c",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "install",
+      "path": ".stella/install.json",
+      "schema": "install",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "install_id",
+      "global_id": "fdfc15bc-9802-4e4d-bff3-c017b51a2808",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "limits",
@@ -117,7 +159,9 @@
       "owner_only": true,
       "redact_keys": [],
       "list_key": null,
-      "id_field": "key"
+      "id_field": "key",
+      "global_id": "5c601b37-42fe-4e12-8807-752d1e1441b5",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "owner-settings",
@@ -129,7 +173,9 @@
         "(?i)(TOKEN|SECRET|PASSWORD|KEY)"
       ],
       "list_key": null,
-      "id_field": "key"
+      "id_field": "key",
+      "global_id": "54f7df31-da0d-4829-ad27-551c13046a8f",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }
