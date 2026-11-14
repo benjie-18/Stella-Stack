@@ -425,6 +425,26 @@ r=$(V); PL; cp -p "$T/ins.gb7" "$INS"
 ok '[ $r = 0 ] && jq -e ".problems == []" "$T/v" >/dev/null && jq -e "[.[] | select(.type == \"zz-iid\") | .what] == [\"i1\", \"i2\", \"i3\"]" "$T/pl" >/dev/null && [ "$(sed -n 1p "$LOG" | jq -r .writer.install_id)" != "$(sed -n 3p "$LOG" | jq -r .writer.install_id)" ]' "GB-7 an install-id change between lines: verify exit $r with no problem ($(jq -c '[.problems[].code]' "$T/v")), proof_lines() keeps the lines from before and after it"
 # the key never leaves the state: not in the log, the untrusted stream, any output or alert line
 rm -f "$LOG" "$STATE"; $EL append --type note --what k1 >"$T/out1" 2>&1; $EL verify --json >>"$T/out1" 2>&1; $EL tail --json >>"$T/out1" 2>&1
+# R16 (fix-pass tester on d3fb7ff, kills mutant EL3): a worker's append is refused 312 before the line is judged (a line the writer
+# would refuse still gets 312, not 313) and before the trusted log's folder is touched (no log, no lock file made)
+mv "$LOG" "$T/r16.log"; [ -e "$LOG.lock" ] && mv "$LOG.lock" "$T/r16.lock"
+D16=$(dirname "$LOG"); snap16() { (cd "$D16" && ls -la --time-style=+%s.%N 2>/dev/null | grep -v ' \.\.\?$'); }
+snap16 >"$T/r16.before"
+R16C='import sys; sys.path.insert(0, sys.argv[1]); import event_log as el
+try:
+    v = 0
+    for _ in range(20 if sys.argv[2] == "deep" else 0): v = [v]
+    el.append(el.build("note", "zz-r16", new=v))
+except el.EventError as e:
+    print(e.code); sys.exit(3)
+print("written")'
+as_worker marker python3 -I -c "$R16C" "$H/bin" deep >"$T/r16.o1" 2>&1; rc=$?
+ok '[ $rc = 3 ] && grep -qx STL-CFG-312 "$T/r16.o1"' "R16 a worker's append of a line the writer would refuse is refused 312 first (rc=$rc)"
+as_worker marker python3 -I -c "$R16C" "$H/bin" plain >"$T/r16.o2" 2>&1; rc=$?
+ok '[ $rc = 3 ] && grep -qx STL-CFG-312 "$T/r16.o2"' "R16 a worker's append of a valid line is refused 312 (rc=$rc)"
+snap16 >"$T/r16.after"
+ok 'cmp -s "$T/r16.before" "$T/r16.after" && [ ! -e "$LOG" ] && [ ! -e "$LOG.lock" ]' "R16 the trusted log's folder is untouched: no log, no lock file made"
+mv "$T/r16.log" "$LOG"; [ -e "$T/r16.lock" ] && mv "$T/r16.lock" "$LOG.lock"
 K=$(jq -r .key "$STATE" 2>/dev/null)
 ok '[ ${#K} -ge 32 ] && ! grep -rqF -- "$K" "$LOG" "$UNT" "$T/out1" "$T/sup" 2>/dev/null' "W1 the writer key (in the state only) is in no log line, untrusted line, output or alert"
 $EL bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "usage error exits 2"
