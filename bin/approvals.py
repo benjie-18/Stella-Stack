@@ -14,7 +14,9 @@ digest?} is decided in this order, the first failing check wins: the channel kin
 (820), it is not decided (821), not expired (822), the nonce is the request's (823), the digest when given is the request's (824),
 message_ref is the ref that channel was given (825), the owner proof passes: owner_auth.require(channel_answer) with the
 channel-identity providers of that kind, bound to the stored delivery ref (828). On a decision the channels file's resume argv
-runs once, with the card id and the decision word.
+runs once, with the card id and the decision word. Expiry is a decision too (fail closed): the first command that sees a pending
+request past expires_at (intake, collect, deliver, answer, status, wait) writes one trusted "expired" line under the lock and
+runs resume once; a later answer is refused 822.
 CLI: approvals.py request --class C --action F --summary S --card K --ttl SECONDS [--requester PROFILE] [--json]
      approvals.py intake [--json]                 one request per new approval-ask line, delivered on every answering channel
      approvals.py deliver ID --channel CH         the row's deliver argv gets the request on stdin; prints the message ref
@@ -37,7 +39,7 @@ ANSWER_CLASS, HOST_CLASS = "channel_answer", "owner_write"   # owner-auth action
 ID = re.compile(r"[a-z0-9][a-z0-9._:-]{0,127}")      # request ids, channel ids (the schemas' id pattern, bounded)
 CARD = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")   # never starts with "-": it becomes an argument of resume
 REF = re.compile(r"[\x21-\x7e]{1,200}")               # a message ref: one printable token
-DECISIONS = ("approved", "denied")
+DECISIONS = ("approved", "denied")   # an answer's; "expired" is the service's own (a denial: fail closed)
 Refusal = oa.Refusal
 
 
@@ -99,7 +101,7 @@ def view():
         if d.get("type") == "approval-request" and rid not in out:
             out[rid] = [new, None]
         elif d.get("type") == "approval-decision" and rid in out and out[rid][1] is None \
-                and new.get("digest") == out[rid][0].get("digest") and new.get("decision") in DECISIONS:
+                and new.get("digest") == out[rid][0].get("digest") and new.get("decision") in (*DECISIONS, "expired"):
             out[rid][1] = new
     return out
 
@@ -113,6 +115,22 @@ def state(rid, v=None):
     if dec:
         return rec, req, dec, dec["decision"]
     return rec, req, None, "expired" if oa.when(req.get("expires_at")) is None or oa.when(req["expires_at"]) <= time.time() else "pending"
+
+
+def current(rid, doc, v=None):
+    """state() once the lock is held: a pending request past expires_at is settled here, first come: one trusted decision line
+    "expired" (a denial), the store's note, and resume once for its card. A later command sees that line and writes none."""
+    rec, req, dec, word = state(rid, v)
+    if word == "expired" and dec is None:
+        dec = accept(rec, req, "expired", None, [], doc)
+    return rec, req, dec, word
+
+
+def sweep(doc):
+    """Settle every pending request past its expiry (the lock is held)."""
+    v = view()
+    for r in records():
+        current(r["id"], doc, v)
 
 
 def channel_doc():
@@ -191,7 +209,7 @@ def request(cls, action, summary, card, ttl, requester=None, ask=None):
 
 def deliver(rid, cid, doc, row):
     """The message ref of rid on channel row (the lock is held): the stored one, or the adapter's (then stored)."""
-    rec, _, _, word = state(rid)
+    rec, _, _, word = current(rid, doc)
     if word != "pending":
         raise Refusal(*refusal_of(rid, word))
     if cid in rec["deliveries"]:   # delivering twice shows it once
@@ -215,7 +233,7 @@ def accept(rec, req, decision, cid, used, doc):
     """The trusted decision line, then the store's note, then resume (its failure is reported; the decision stands)."""
     rid = rec["id"]
     drec = {"schema_version": 3, "global_id": str(uuid.uuid4()), "install_id": sd.install_id(), "request_id": rid,
-            "decided_at": now(), "decision": decision, "decided_by": {"channel": cid, "user": ",".join(used)}, "note": None,
+            "decided_at": now(), "decision": decision, "decided_by": {"channel": cid, "user": ",".join(used) or None}, "note": None,
             "digest": req["digest"]}
     sd.checked(drec, "the decision", "approval-decision")
     event("approval-decision", rid, drec, {"channel": cid})
@@ -228,6 +246,7 @@ def accept(rec, req, decision, cid, used, doc):
             raise Refusal("STL-OWN-831", f"resume for card {rec['card']} exited {rc}")
     except Refusal as x:
         sd.say(x.code, x.problem, alert=True)
+    return drec
 
 
 def decide(ans, row, pol, doc):
@@ -236,7 +255,7 @@ def decide(ans, row, pol, doc):
             and ans["decision"] in DECISIONS and isinstance(ans.get("digest", ""), str)):
         raise Refusal("STL-OWN-830", f"channel {row['id']}: an answer line is not {{request_id, nonce, decision: approved|denied, user, message_ref, digest?}}")
     rid, kind, given = ans["request_id"], row["kind"], ans.get("digest") or None
-    rec, req, dec, word = state(rid)
+    rec, req, dec, word = current(rid, doc)
     e = pol["voice_host_confirmation"]
     if kind == e["channel_kind"]:   # this kind answers only through the entry, whatever channel_kinds says
         why = ("the policy's voice_host_confirmation entry is off" if not e["enabled"] else
@@ -282,6 +301,7 @@ def intake():
     doc, rows = channels()
     made, bad = [], 0
     with lock():
+        sweep(doc)
         taken = {r["ask"] for r in records() if r.get("ask")}
         for raw in data.split(b"\n"):
             try:
@@ -354,6 +374,8 @@ def main(argv):
         if o.cmd == "collect":
             doc, row = channel(o.channel)
             pol = oa.policy()
+            with lock():
+                sweep(doc)
             v = view()
             pending = [{"id": r["id"], "nonce": r["nonce"], "message_ref": r["deliveries"][o.channel]} for r in records()
                        if o.channel in r["deliveries"] and state(r["id"], v)[3] == "pending"]
@@ -380,14 +402,16 @@ def main(argv):
             if pol["channel_kinds"].get(doc["host_kind"]) is not True:
                 raise Refusal("STL-OWN-826", f"the policy does not let kind {doc['host_kind']} (the host terminal) answer")
             with lock():
-                rec, req, _, word = state(o.id)
+                rec, req, _, word = current(o.id, doc)
                 if word != "pending":
                     raise Refusal(*refusal_of(o.id, word))
                 used = oa.require(HOST_CLASS, rec["action"], oa.prove(HOST_CLASS, rec["action"]))
                 accept(rec, req, o.decision, doc["host_kind"], used, doc)
             print(f"{o.id}\t{o.decision}")
             return 0
-        word = state(o.id)[3]   # status, wait
+        doc, _ = channels()   # status, wait
+        with lock():
+            word = current(o.id, doc)[3]
         if word is None:
             raise Refusal(*refusal_of(o.id, None))
         if o.cmd == "status":

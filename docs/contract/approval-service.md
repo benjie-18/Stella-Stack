@@ -33,6 +33,9 @@ Check a message with `python3 bin/stella_data.py validate approval-request <file
   store's `status`, an untrusted line or a copied line. `status` and `wait` read that.
 - On a decision the channels file's `resume` argv runs once with the card id and the decision word (shipped:
   `bin/adapters/kanban-resume.sh`, which unblocks the card).
+- Expiry is a decision too (fail closed): the first host-side command that sees a pending request past `expires_at`
+  (`intake`, `collect`, `deliver`, `answer`, `status`, `wait`) writes ONE trusted decision line `expired` (a denial) under
+  the store's lock and runs `resume` once, so the card is never left blocked. A later answer is refused STL-OWN-822.
 
 ## Deciding an answer
 
@@ -41,7 +44,8 @@ An answer is `{request_id, nonce, decision: approved|denied, user, message_ref, 
 1. the channel's kind may answer: owner-auth policy `channel_kinds` true (a kind not listed answers nothing), STL-OWN-826.
    The kind named by the policy's `voice_host_confirmation` entry answers only when the entry is enabled, the request's
    requester is the entry's `profile`, its class is the entry's `action_class`, its ttl is at most `max_ttl_s` and the
-   answer carries the request's digest (the details shown), else STL-OWN-827; `channel_kinds` cannot open it.
+   answer carries the request's digest (the details shown), else STL-OWN-827; `channel_kinds` cannot open it. The
+   entry's `profile` is data: the shipped `stella-voice` is a placeholder until the voice profile exists (post-1.0).
 2. the request exists (STL-OWN-820); 3. it is not decided (replay, STL-OWN-821); 4. not expired (STL-OWN-822);
 5. the nonce is the request's (STL-OWN-823); 6. a digest, when given, is the request's (STL-OWN-824);
 7. `message_ref` is the ref that channel was given at delivery (STL-OWN-825);
