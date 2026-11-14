@@ -536,7 +536,11 @@ key, or by the key's hash when that name would be longer than a file name may be
   cleared; a kill in between is finished by the next apply of the same bytes.
 - **Event log.** One JSON line per state change; each line written is schema_version 2 with a `global_id` (the caller's, else a
   new UUID4; a line whose global_id is already in the log is refused, 313, nothing written) and this install's `install_id` from
-  `stella_data.install_id()` (if that cannot be read, nothing is written: 310). The ids are set after masking; older lines stay
+  `stella_data.install_id()` (if that cannot be read, nothing is written: 310). That reader judges the install row by its own
+  check only (its one file passes the install schema), so a problem elsewhere, the index's own included, never blocks the
+  apply that repairs it. `apply <install row> --from <file>` takes its line's install id from the candidate once it passes
+  the install schema, so a damaged install file is repaired through the contract (owner decision 2026-11-14); every other
+  apply and rollback stays refused (310) while the install id cannot be read. The ids are set after masking; older lines stay
   as they are. ASCII only (no value can hold a line separator), written whole or not at all
   under the log's lock: a log that does not end in a newline gets one first, and after a failed or short write the file is cut
   back to its earlier size (318). Readers split on `\n` only; a line that is not a JSON object, is larger than 4 MiB, nests
