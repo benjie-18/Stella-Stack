@@ -1291,19 +1291,15 @@ def policy_classes():
     return set.intersection(*(set(d["data_classes"]) for d in docs))
 
 
-def install_id(judged=True):
-    """This install's id: install_id of the one document of the install schema, served like every read (a DataError when the
-    index has no single such row or it is refused). New event lines and approval records read it here. judged=False (ids-migrate,
-    which repairs data the rules refuse, such as index rows without ids): the install file need only pass its own schema."""
+def install_id():
+    """This install's id: install_id of the one document of the install schema, judged by that row's own check only (its file
+    passes the install schema; exactly one JSON row of it in the index), never by the rest of the data: a problem elsewhere,
+    the index's own included, must not stop the event line of its repair (W6-CVER-01). A DataError when that row fails. New
+    event lines, approval records and ids-migrate read it here."""
     ids = [r for r in rows() if r["format"] == "json" and r["schema"] == INSTALL]
     if len(ids) != 1:
         raise DataError(f"the index has {len(ids)} JSON rows of schema {INSTALL}; exactly one holds the install id")
-    if not judged:
-        return checked(jload(plain(ids[0]["path"]), ids[0]["path"]), ids[0]["path"], INSTALL)["install_id"]
-    docs = served([ids[0]["id"]])["_rows"][ids[0]["id"]][0]
-    if len(docs) != 1:
-        raise DataError(f"{ids[0]['id']}: holds {len(docs)} files; exactly one holds the install id")
-    return docs[0][1]["install_id"]
+    return checked(jload(plain(ids[0]["path"]), ids[0]["path"]), ids[0]["path"], INSTALL)["install_id"]
 
 
 def find_entries(row, by):
@@ -1512,7 +1508,7 @@ def main(argv):
                 say("STL-CFG-313", f"ids-migrate --out {args[2]} is inside a stack tree, where a candidate would be live with no apply; write it outside every stack tree")
                 return 1
             rel = f"{row['path'].rstrip('/')}/{name}" if name else row["path"]
-            doc, iid, n = jload(plain(rel), rel), install_id(judged=False), 0
+            doc, iid, n = jload(plain(rel), rel), install_id(), 0
             for _, e in file_entries(row, rel, doc):
                 n += "global_id" not in e or "install_id" not in e
                 e.setdefault("global_id", str(uuid.uuid4()))

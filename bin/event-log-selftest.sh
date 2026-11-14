@@ -216,6 +216,13 @@ for how in 'jq "del(.install_id)" "$T/install.keep" >"$R/.stella/install.json"' 
   ok '[ $rc = 1 ] && grep -q STL-CFG-310 "$T/o" && cmp -s "$LOG" "$T/before" && ! grep -q Traceback "$T/o"' "T7d the install id cannot be read ($how): refused with STL-CFG-310, no line written"
 done
 cp "$T/install.keep" "$R/.stella/install.json"
+cp "$R/.stella/data-files.json" "$T/index.keep"
+for plant in '(.files[] | select(.schema == "versions")) |= del(.global_id)' '(.files[] | select(.schema == "data-files")).owner_only = false'; do
+  jq "$plant" "$T/index.keep" >"$R/.stella/data-files.json"
+  cp "$LOG" "$T/before"; $EL append --type note --what idxbad >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 0 ] && ! $SD check >/dev/null 2>&1 && [ "$(wc -l <"$LOG")" = $(( $(wc -l <"$T/before") + 1 )) ] && tail -n 1 "$LOG" | jq -e --arg i "$IID" ".what == \"idxbad\" and .install_id == \$i" >/dev/null' "T7d an index problem outside the install row does not stop a line: the install id is read by the install row's own check (W6-CVER-01; $plant; exit $rc)"
+done
+cp "$T/index.keep" "$R/.stella/data-files.json"
 echo '{"schema_version":1,"id":"r1","requested_at":"2026-11-10T12:00:00Z","requester":{"role":"builder","channel":null,"user":null},"approval_class":"post","action":"a","summary":"s","target":null,"card":null,"expires_at":null}' >"$T/rq.json"
 echo '{"schema_version":1,"request_id":"r1","decided_at":"2026-11-10T12:01:00Z","decision":"approved","decided_by":{"channel":"app","user":"owner"},"note":null}' >"$T/dc.json"
 ids() { jq --arg g "$(python3 -I -c 'import uuid; print(uuid.uuid4())')" --arg i "$IID" ".schema_version = 2 | .global_id = \$g | .install_id = \$i" "$1"; }

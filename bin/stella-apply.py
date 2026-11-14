@@ -884,20 +884,26 @@ def who():
 
 UNPARSED = {"unparsed": True}   # a side of an event line whose file exists and does not parse (null is: no file)
 
-def event(row, key, kind, old, new, detail, unparsed=()):
+def event(row, key, kind, old, new, detail, unparsed=(), iid=None):
     """One event line, built and judged (size, shape, schema) now, before anything changes; written later by log(). The detail is
     the tool's own text (hashes, the backup name, the token): it is not scrubbed by substring, which could garble the name or
-    the token when a masked value is a few characters long."""
+    the token when a masked value is a few characters long. iid: cand_iid() of an apply (None: the install's own id)."""
     o, n = changes(row["format"], old, new)
     line = el.build(kind, key, o, n, detail=detail, who=who())
     for k, d in (("old", old), ("new", new)):
         if d is None:   # no file on that side: null, not an empty change; a file that is there and does not parse says so
             line[k] = UNPARSED if k in unparsed else None
-    el.prepare(line, row["id"], scrub_detail=False)
+    el.prepare(line, row["id"], scrub_detail=False, install_id=iid)
     return line
 
-def log(row, line):
-    el.append(line, row["id"], scrub_detail=False)
+def log(row, line, iid=None):
+    el.append(line, row["id"], scrub_detail=False, install_id=iid)
+
+def cand_iid(row, doc):
+    """The install id of an apply's event line: for the install row the candidate's, once it passes the install schema (owner
+    decision 2026-11-14 b: a damaged install file is repaired through the contract); None for every other row, whose line reads
+    the install's own id and is refused when that cannot be read."""
+    return sd.checked(doc, row["path"], sd.INSTALL)["install_id"] if row["format"] == "json" and row["schema"] == sd.INSTALL else None
 
 def rec_of(cand, mode):
     return {"sha256": sha(cand), "mode": mode, "time": el.build("x", "x")["time"]}
@@ -1187,16 +1193,17 @@ def adopt(row, key, tgt, cand, new_doc, rec, good, resume):
     old_doc = prior_doc(row, key, good, None if resume else rec)
     note_secrets(old_doc, red)
     token = rec["adopt"] if resume else secrets.token_hex(16)
+    iid = cand_iid(row, new_doc)
     line = None if resume and logged(key, "adopt", token) else event(
         row, key, "adopt", old_doc, new_doc, hashes(row, rec and rec["sha256"], sha(cand))
         + f"recorded the current file as applied (it was changed by hand); older backups set aside; token {token}"
-        + ("" if old_doc is not None else " (the content applied before is not known)"))
+        + ("" if old_doc is not None else " (the content applied before is not known)"), iid=iid)
     again = f"`apply {key} --from <file>` with a copy of the file as it is"
     marked = {**rec_of(cand, mode), "adopt": token} if not resume else rec
     if not resume:
         did(key, "applied state: the hand edit, marked unfinished", lambda: set_applied(key, rec), again, lambda: set_applied(key, marked))
     if line:
-        did(key, "event line: written", line_undo(key, "adopt", token), again, lambda: log(row, line))
+        did(key, "event line: written", line_undo(key, "adopt", token), again, lambda: log(row, line, iid))
     aside = [(n, m) for n, m in good if m.get("status") != "superseded" and not meta_problem(m, n)]
     if aside:
         saved = load_state()[2].get(key, {})
@@ -1261,8 +1268,9 @@ def apply_locked(row, key, tgt, rel, cand):
     token, bd = secrets.token_hex(16), os.path.join(bdir(key), name)
     meta = {"path": rel, "existed": cur is not None, "mode": mode, "sha256": sha(cur) if cur is not None else None,
             "new_sha256": sha(cand), "prev_applied": prev, "seq": seq, "token": token, "status": "pending"}
+    iid = cand_iid(row, new_doc)
     line = event(row, key, "apply", old_doc, new_doc, hashes(row, meta["sha256"], sha(cand))
-                 + f"backup {name} token {token}" + ("" if parses else " (the current file did not parse)"), () if parses else ("old",))
+                 + f"backup {name} token {token}" + ("" if parses else " (the current file did not parse)"), () if parses else ("old",), iid)
     back = f"`rollback {key}`"
     def drop_if_old():   # the same one question: the saved copy goes unless the file holds the bytes this run wrote
         if read(tgt) == cand:
@@ -1280,7 +1288,7 @@ def apply_locked(row, key, tgt, rel, cand):
     tgt = path(rel)
     swap(key, "file: the new bytes", tgt, cur, cand, mode, mode, back)
     did(key, "applied state: the new bytes", lambda: set_applied(key, prev), back, lambda: set_applied(key, rec_of(cand, mode), seq))
-    did(key, "event line: written", line_undo(key, "apply", token, name), f"`apply {key} --from <file>` with the same file", lambda: log(row, line))
+    did(key, "event line: written", line_undo(key, "apply", token, name), f"`apply {key} --from <file>` with the same file", lambda: log(row, line, iid))
     mark_done(key, name, saved)
     meta["status"] = "done"
     did(key, "backup: status done", lambda: None, None, lambda: atomic_write(os.path.join(bd, "meta.json"), json.dumps(meta).encode(), 0o600))
@@ -1293,14 +1301,15 @@ def finish_apply(row, key, tgt, cand, new_doc, name, meta):
     old_doc, _ = parse_or_none(row, read(os.path.join(bd, "file"), "STL-CFG-316") if meta["existed"] else None)
     note_secrets(old_doc, el.redactor(row["id"]))
     el.preflight()
+    iid = cand_iid(row, new_doc)
     line = None if logged(key, "apply", meta["token"], name) else event(
-        row, key, "apply", old_doc, new_doc, hashes(row, meta["sha256"], sha(cand)) + f"backup {name} token {meta['token']}")
+        row, key, "apply", old_doc, new_doc, hashes(row, meta["sha256"], sha(cand)) + f"backup {name} token {meta['token']}", iid=iid)
     again = f"`apply {key} --from <file>` with the same file"
     before = applied().get(key)
     did(key, "applied state: the new bytes", lambda: set_applied(key, before), again,
         lambda: set_applied(key, rec_of(cand, os.lstat(tgt).st_mode & 0o7777), meta["seq"]))
     if line:
-        did(key, "event line: written", line_undo(key, "apply", meta["token"], name), again, lambda: log(row, line))
+        did(key, "event line: written", line_undo(key, "apply", meta["token"], name), again, lambda: log(row, line, iid))
     mark_done(key, name, saved_of(key, name))
     meta["status"] = "done"
     did(key, "backup: status done", lambda: None, None, lambda: atomic_write(os.path.join(bd, "meta.json"), json.dumps(meta).encode(), 0o600))

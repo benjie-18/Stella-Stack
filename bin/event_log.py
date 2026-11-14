@@ -2,7 +2,8 @@
 """The one writer of the event log (core contract item 4, spec E6), stdlib only. The log path is data: `event_log` in
 .stella/data-files.json. One line = one JSON object that validates against .stella/schemas/event.schema.json (schema_version
 2: every line written gets a global_id, the caller's or a new UUID4, refused when a line of the log already has it, and this
-install's install_id from stella_data.install_id(); when that cannot be read nothing is written, STL-CFG-310; lines from before
+install's install_id from stella_data.install_id() (an importer that writes the install file may name the id of the copy it
+writes: install_id=); when that cannot be read nothing is written, STL-CFG-310; lines from before
 are never rewritten), ASCII only
 (non-ASCII is escaped, so no value can hold a line separator), appended whole or not at all under a lock: a log that does
 not end in a newline gets one first, and after a failed or short write the file is cut back to the size it had. Existing
@@ -265,13 +266,14 @@ def sensitive_row(line, row_id):
     secret_rows = {e["store"]["data"] for e in registry()["entries"] if e["sensitivity"] == "secret"}
     return next((r for r in sd.rows() if r["id"] == rid and (r["redact_keys"] or rid in secret_rows)), None)
 
-def prepare(line, row_id=None, scrub_detail=True):
+def prepare(line, row_id=None, scrub_detail=True, install_id=None):
     """(the line as written, its bytes): masked and validated, or EventError 313. A caller judges a line with this before it
     changes anything; append() does the same again when it writes.
     scrub_detail=False: the caller's detail is the tool's own text (no outside value in it), which a scrub by substring could garble.
-    The ids are set after masking (they are not secrets): the caller's global_id or a new one, and always this install's id."""
+    The ids are set after masking (they are not secrets): the caller's global_id or a new one, and this install's id; install_id:
+    the id of the install file the caller is writing (an apply of the install row, its candidate checked by the install schema)."""
     try:
-        iid = sd.install_id()   # no line without the install id
+        iid = install_id or sd.install_id()   # no line without the install id
     except Exception as e:
         raise EventError("STL-CFG-310", f"the install id cannot be read ({str(e)[:100] if isinstance(e, sd.DataError) else type(e).__name__}); no event line was written")
     gid = line["global_id"] if "global_id" in line else str(uuid.uuid4())
@@ -311,11 +313,11 @@ def repeated(data, gid):
                     return True
     return False
 
-def append(line, row_id=None, scrub_detail=True):
+def append(line, row_id=None, scrub_detail=True, install_id=None):
     """Mask, validate, append one line under the lock and sync it; returns the line written. EventError 313 (invalid, nothing
     written, also for a global_id already in the log) or 318 (not written). The line goes out in one write; if that fails or is
     short, the file is cut back."""
-    line, data = prepare(line, row_id, scrub_detail)
+    line, data = prepare(line, row_id, scrub_detail, install_id)
     try:
         p = log_path()
         with locked(p + ".lock"):
