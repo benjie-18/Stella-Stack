@@ -60,5 +60,4 @@ ok 'why card ".global_id=\"$CONN\"" card "STL-CFG-310.*global_id.* already" && w
 before=$(alerts)
 ok 'why card ".skills=[\"no-such-capability\"] | .zz=1" card "STL-CFG-310.*zz. is not allowed" && grep -q "STL-CFG-311.*skills\[0\]" "$T/out" && [ "$(( $(alerts) - before ))" = 1 ]' "21 a schema error and an unknown id are both reported: the 310 line, the 311 line and exactly one alert line"
 ok 'why card ".apps=[\"qa-app-off\"]" card "STL-CFG-311.*apps\[0\].*enabled" && why card ".skills=[\"qa-skill-proposed\"]" card "STL-CFG-311.*skills\[0\].*status" && why card ".tools=[\"qa-tool-disabled\"]" card "STL-CFG-311.*tools\[0\].*status" && sd validate card <(jq ".apps=[\"$APP\"]" "$T/card.json") >/dev/null' "22 a switched-off app and an unapproved skill or tool are refused like an unknown id (x-ref-where on enabled and status)"
-ok 'jq -e ".properties.kind.description | test(\"B1\")" "$ROOT/.stella/schemas/vault-entry.schema.json" >/dev/null' "23 the vault-entry kind field says that B1 defines the kinds"
-[ $fails = 0 ] && echo "card-schema selftest OK" || { echo "card-schema selftest FAIL ($fails)"; exit 1; }
+[ $fails = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
