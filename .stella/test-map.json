@@ -2352,6 +2352,33 @@
         "write-guard"
       ],
       "why": "F1c W1: bin/event_log.py asks worker_env.reason() before append and verify, so every selftest that reaches the writer reaches it"
+    },
+    {
+      "globs": [
+        "bin/owner_auth.py"
+      ],
+      "targets": [
+        "alert-page",
+        "approval-evidence",
+        "complete-gate",
+        "delegation",
+        "escalate",
+        "escalation-reply-poll",
+        "event-log",
+        "kanban-board",
+        "kanban-guard",
+        "merge-card",
+        "model-watch",
+        "omniroute-run",
+        "reviewer-claude",
+        "role-guard",
+        "roles",
+        "routing",
+        "settings",
+        "stella-apply",
+        "write-guard"
+      ],
+      "why": "F1c W4b: bin/settings.py and bin/stella-apply.py import owner_auth (the owner proof of an owner-only change), so every selftest that reaches them reaches it (bin/test-map.py reach)"
     }
   ]
 }

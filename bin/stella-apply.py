@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """The generic apply contract (core contract item 8, spec E9), stdlib only. Works for every row of .stella/data-files.json
 (format json, or env for KEY='value' files); a folder row takes <id>/<entry file name>. No data file is special-cased.
-CLI: stella-apply.py apply <id> --from <file> [--dry-run]   validate the candidate (the whole-set check with the candidate in
-                                                           place of its file), back up, replace atomically, one event line
+CLI: stella-apply.py apply <id> --from <file> [--dry-run] [--proof <file>]
+                                                           validate the candidate (the whole-set check with the candidate in
+                                                           place of its file), back up, replace atomically, one event line;
+                                                           a dry run of an owner-only row also prints `action: <JSON>`
      stella-apply.py check [<id>] [--json]                  drift: sha256 or mode differs from the last applied one, or (never
                                                            applied) the sha256 from the committed blob; no baseline is not drift
                                                            (`--check` is accepted for `check`)
-     stella-apply.py rollback <id>                          restore the newest backup, one event line
+     stella-apply.py rollback <id> [--proof <file>]         restore the newest backup, one event line
      stella-apply.py history <id> [--json]                  the event lines of <id> and its backups
 Exit: 0 ok (a no-change apply too); 1 refused or failed, or drift (check); 2 usage. Every failure prints its catalog code and a
 plain message (310 unreadable data, 311 unknown id, 312 owner-only, 313 a change refused before it started, 314 drift, 315 a
@@ -40,17 +42,23 @@ file the index names: a symbolic link or a path that resolves elsewhere is refus
 file (same device and inode, or the same name up to case), a file with more than one hard link or a mount point is not used (for
 a row: that row only), and every file opened must be a regular file, opened without blocking, through folders checked at that
 moment. Whether a row is one file or a folder of entries is the data tool's one rule (folder_row): not the disk, not the record.
-Owner-only rows (index owner_only) are refused (312) for a worker: a worker marker variable is set (the names are the role
-table's `worker_markers`; missing or empty = refuse), or `roles.py prove` says this process is a worker or cannot tell.
-That gate is a second line only: a caller can clear its markers, shadow the board tool on PATH or detach from its parent. The
-boundary is the hooks of every role refusing to run this tool at all (item W4); see the contract docs.
+Owner-only rows (index owner_only) are refused (312) in a worker environment (bin/worker_env.py, asked first: a worker never
+spends a proof). Then, inside the lock, an apply or rollback that writes needs an owner proof (bin/owner_auth.py require, F1c
+D4) for the action {op, target: the row, old_digest, new_digest} (sha256 of the bytes before and after): the proofs of the
+--proof file alone (a device-signed request), else one made with this host's owner key (none: 806). A change that touches an
+identity-critical target (owner-auth policy identity_critical, and registry settings marked so) needs class identity_critical:
+the typed phrase on the host terminal, shown with the changed keys and the masked diff (none, or another text: 808). The event
+line names the provider ids used ("auth"). The worker refusal is a second line only (its signals can be cleared by a caller);
+the boundary is the hooks of every role refusing to run this tool at all; see the contract docs.
 Values under redact_keys / secret settings never appear in a diff, event, or message (***)."""
 import argparse, contextlib, datetime, difflib, errno, hashlib, json, os, pwd, re, secrets, shutil, signal, stat, subprocess, sys, tempfile
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
 import event_log as el
+import owner_auth
 import owner_config as oc
 import stella_data as sd
+import worker_env
 
 EventError = el.EventError
 SECRETS = el.SECRETS   # values seen under masked keys; scrubbed from any message
@@ -67,6 +75,7 @@ REFUSE = ["STL-CFG-313"]   # the code of a refusal: 313 for a command that chang
 UNDONE_OK = {"STL-CFG-318", "STL-CFG-314"}   # codes whose catalog frame stays true for a change that was undone whole
 SNAP = {}   # the start of a writing command: key, file, what it writes, and state_of() then; a failure is compared with it
 STOPPING = []   # the first interrupt received: from then on the run is stopping and further ones change nothing
+OWNER = {}   # proof: the --proof file of the command (None: the owner key of this host); auth: the provider ids owner() accepted
 
 class Interrupted(BaseException):
     pass
@@ -327,32 +336,66 @@ def target(arg, read_only=False):
     return row, key, p, rel
 
 def gate(row):
-    """Owner-only rows: refuse for a worker, and when that cannot be told (STL-CFG-312).
-    shortcut: this cannot prove an owner from inside the process (a caller can clear its marker variables, shadow the board
-    tool on PATH, or detach from its parent); the boundary is item W4, whose hooks refuse every role the right to run this
-    tool. Until W4 is in, a worker can still write an owner-only row through it. Upgrade: none here, W4 owns it."""
+    """Owner-only rows: refused in a worker environment, and when that cannot be told (bin/worker_env.py), STL-CFG-312. Asked
+    before anything is read or proved: a worker never spends a proof. The owner proof itself is owner(), inside the lock."""
+    if row["owner_only"] and (why := worker_env.reason()):
+        raise bad(f"{row['id']} is owner-only: {why}", "STL-CFG-312")
+
+def action_of(row, op, cur, new):
+    """The owner action of a change (F1c D2): the row, the sha256 of its bytes before and after (no file: of no bytes)."""
+    return {"op": op, "target": row["id"], "old_digest": sha(cur or b""), "new_digest": sha(new or b"")}
+
+def critical(row, old_doc, new_doc, unparsed, pol):
+    """Whether the change touches an identity-critical target: the policy's identity_critical list (`<row>`: any change of the
+    row; `<row>:<pointer>`: at or below it, * = any one segment) and the settings the registry marks identity_critical (an env
+    row's keys are /KEY). A side that does not parse cannot be told apart: it counts (fail closed)."""
+    rid = row["id"]
+    want = [p[len(rid) + 1:] for p in pol["identity_critical"] if p == rid or p.startswith(rid + ":/")]
+    want += ["/" + e["store"]["key"] for e in el.registry()["entries"] if e["sensitivity"] == "identity_critical" and e["store"]["data"] == rid]
+    if "" in want or (want and unparsed):
+        return bool(want)
+    o, n = changes(row["format"], old_doc, new_doc)
+    got = [(k if row["format"] == "json" else "/" + k).split("/")[1:] for k in {*o, *n}]
+    return any(len(c) >= len(w) and all(x in ("*", y) for x, y in zip(w, c)) for w in (p.split("/")[1:] for p in want) for c in got)
+
+def shown_change(row, rel, old_doc, new_doc, unparsed):
+    """What the owner confirms: the row, the names of the changed keys, and the diff with masked values (no control character)."""
+    red = el.redactor(row["id"])
+    for d in (old_doc, new_doc):
+        note_secrets(d, red)
+    o, n = changes(row["format"], old_doc, new_doc)
+    names = ", ".join(qs(k) for k in dict.fromkeys([*o, *n])) or "none (formatting only)"
+    diff = ["the current file does not parse: it is replaced whole"] if unparsed else list(
+        difflib.unified_diff(text(row["format"], old_doc, red), text(row["format"], new_doc, red), lineterm=""))[2:]
+    lines = [f"{row['id']} ({rel}): changes {names}", *diff]
+    return "\n".join(re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]", "?", el.scrub(l)) for l in lines)
+
+def owner(row, rel, op, cur, new, old_doc, new_doc, unparsed):
+    """An owner-only row changes only with an owner proof (F1c D4): the --proof file's proofs alone, else a proof made with this
+    host's owner key; class identity_critical (the typed phrase, shown with the change) when an identity-critical target is
+    touched, else owner_write. Refusals keep the owner_auth code (801..813). The provider ids go on the event line."""
     if not row["owner_only"]:
         return
-    why = None
+    act = action_of(row, op, cur, new)
     try:
-        marks = sd.load(context()["idx"]["role_table"])["worker_markers"]
-    except Exception:
-        marks = None
-    if not (isinstance(marks, list) and marks and all(isinstance(m, str) and m for m in marks)):
-        why = "the list of worker markers is not available, so it cannot be told that this is not a worker"
-    elif any(os.environ.get(m) for m in marks):
-        why = "a worker marker is set"
-    else:
-        try:   # exit 1 + "not proven" = no worker run; 0 = a worker; anything else (3, a crash) = cannot tell
-            r = subprocess.run([sys.executable, "-I", os.path.join(BIN, "roles.py"), "prove"], capture_output=True, text=True, timeout=60)
-            if r.returncode == 0:
-                why = "this process belongs to a worker's run"
-            elif r.returncode != 1 or "roles: not proven" not in r.stderr:
-                why = "it could not be proven that this process is not a worker"
-        except Exception:
-            why = "it could not be proven that this process is not a worker"
-    if why:
-        raise bad(f"{row['id']} is owner-only: {why}", "STL-CFG-312")
+        pol = owner_auth.policy()
+        crit = critical(row, old_doc, new_doc, unparsed, pol)
+        cls = "identity_critical" if crit else "owner_write"
+        if OWNER.get("proof") is None:
+            proofs = owner_auth.prove(cls, act)
+        else:
+            try:
+                proofs = sd.jload(OWNER["proof"])
+            except sd.DataError:
+                raise owner_auth.Refusal("STL-OWN-802", "the proof file cannot be read as JSON") from None
+        OWNER["auth"] = owner_auth.require(cls, act, proofs, show=shown_change(row, rel, old_doc, new_doc, unparsed) if crit else None)
+    except owner_auth.Refusal as r:
+        raise bad(r.problem, r.code) from None
+
+def say_action(row, cur, new):
+    """A dry run of an owner-only row prints the action a proof must cover (a device signs its digest)."""
+    if row["owner_only"]:
+        print("action: " + json.dumps(action_of(row, "apply", cur, new), sort_keys=True))
 
 def relock(arg, row):
     """Under the lock the index, the row, the target path and the gate are read again: a run that waited acts on the state of
@@ -893,6 +936,8 @@ def event(row, key, kind, old, new, detail, unparsed=(), iid=None):
     for k, d in (("old", old), ("new", new)):
         if d is None:   # no file on that side: null, not an empty change; a file that is there and does not parse says so
             line[k] = UNPARSED if k in unparsed else None
+    if OWNER.get("auth"):
+        line["auth"] = OWNER["auth"]
     el.prepare(line, row["id"], scrub_detail=False, install_id=iid)
     return line
 
@@ -1154,10 +1199,13 @@ def dry_run(row, key, tgt, rel, cand):
                "finish_adopt": f"would finish recording the hand edit of {key}: the missing event line is written",
                "adopt": f"would record the current file as applied (it was changed by hand since an interrupted change) and set the "
                         f"interrupted backup of {key} aside"}[act])
+        say_action(row, cur, cand)
         return 0
     st = drift_of(key, rel, tgt, cur, applied().get(key))[1]   # the refusals the apply makes, in its order: the baseline, the mode, the counter
     if cur == cand:
         print(f"would record the current file as applied (it was changed by hand): {key}" if st == "drift" else f"no change: {key}")
+        if st == "drift":
+            say_action(row, cur, cand)
         return 0
     mode_ok(rel, mode_of(tgt) or 0)
     next_seq(key, good)
@@ -1172,6 +1220,7 @@ def dry_run(row, key, tgt, rel, cand):
             o, n = changes(row["format"], old_doc, new_doc)
             for k in list(dict.fromkeys([*o, *n]))[:20]:
                 print(f"-{qs(k)} (masked)\n+{qs(k)} (masked)")
+    say_action(row, cur, cand)
     return 0
 
 def prior_doc(row, key, good, rec):
@@ -1250,15 +1299,16 @@ def apply_locked(row, key, tgt, rel, cand):
     act, err = pending_action(key, cur, cand, good, junk, strange, rec)
     if act == "refuse":
         raise err
+    drift = drift_of(key, rel, tgt, cur, rec)[1] if act == "none" else None   # every apply asks for the baseline: one that cannot be read refuses here, before any step
+    if act == "none" and cur == cand and drift != "drift":
+        out(f"no change: {key}")
+        return 0
+    owner(row, rel, "apply", cur, cand, old_doc, new_doc, not parses)   # every way on from here writes
     if act == "finish":
         return finish_apply(row, key, tgt, cand, new_doc, *live_of(good)[-1])
     if act in ("adopt", "finish_adopt"):
         return adopt(row, key, tgt, cand, new_doc, rec, good, act == "finish_adopt")
-    drift = drift_of(key, rel, tgt, cur, rec)[1]   # every apply asks for the baseline: one that cannot be read refuses here, before any step
     if cur == cand:
-        if drift != "drift":
-            out(f"no change: {key}")
-            return 0
         return adopt(row, key, tgt, cand, new_doc, rec, good, False)   # the bytes are already there (a hand edit): record them, no backup
     el.preflight()
     mode = os.lstat(tgt).st_mode & 0o7777 if cur is not None else 0o600 if row["owner_only"] or row["redact_keys"] else 0o644
@@ -1412,6 +1462,7 @@ def rollback_locked(row, key, tgt, rel, cur, now, again, red, good, junk, stale)
     new_doc, _ = parse_or_none(row, back)
     for d in (old_doc, new_doc):
         note_secrets(d, red)
+    owner(row, rel, "rollback", cur, back, old_doc, new_doc, (was is not None and old_doc is None) or (back is not None and new_doc is None))
     cur_mode = os.lstat(tgt).st_mode & 0o7777 if cur is not None else 0o644
     new_rec = saved_d.get("prev_applied", meta["prev_applied"])   # the applied state's own copy where it has one
     if new_rec is None and back is not None and git_blob(rel) is None:   # a file git does not track keeps the restored hash as its baseline
@@ -1709,17 +1760,20 @@ def main(argv):
     a.add_argument("id")
     a.add_argument("--from", dest="src", required=True)
     a.add_argument("--dry-run", action="store_true")
+    a.add_argument("--proof")
     c = sub.add_parser("check")
     c.add_argument("id", nargs="?")
     c.add_argument("--json", action="store_true")
     r = sub.add_parser("rollback")
     r.add_argument("id")
+    r.add_argument("--proof")
     h = sub.add_parser("history")
     h.add_argument("id")
     h.add_argument("--json", action="store_true")
     o = ap.parse_args(argv)
-    for x in (CTX, STEPS, SNAP, STOPPING):
+    for x in (CTX, STEPS, SNAP, STOPPING, OWNER):
         x.clear()
+    OWNER["proof"] = getattr(o, "proof", None)
     el.LOG_REL = None
     read_cmd = o.cmd in ("check", "history")
     REFUSE[0] = "STL-CFG-322" if read_cmd else "STL-CFG-313"

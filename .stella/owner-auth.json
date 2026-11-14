@@ -64,5 +64,17 @@
     "worktree_dirs": [
       ".worktrees"
     ]
-  }
+  },
+  "identity_critical": [
+    "grants",
+    "owner-auth",
+    "devices",
+    "approved-hosts",
+    "connections:/entries/*/terms_ok",
+    "data-policy:/privacy_grants",
+    "host-access:/enabled",
+    "host-access:/routes/*/enabled",
+    "host-access:/actions/*/state",
+    "owner-settings:/OWNER_DISCORD_USER_ID"
+  ]
 }

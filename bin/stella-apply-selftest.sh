@@ -6,6 +6,9 @@
 # line per apply and per rollback, no planted secret anywhere (the data files and their byte-copy backups excepted). Also: invalid
 # candidate, unknown id, owner-only rows refused for a simulated worker (stub board, marker variable, no markers), failure paths
 # (unwritable event log, an interrupted apply), two applies at once, a folder row, paths that leave the root.
+# F1c W4b: owner-only rows need an owner proof (every scratch root gets an owner key; owner_fix lets identity_critical take the key
+# alone for the contract cases); the W4b section checks the identity-critical targets, 808 with no terminal, 806 with no key, the
+# dry run's action line, --proof (and its replay, 804), rollback's proof and the provider ids on the event line.
 set -u
 H=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 T=$(mktemp -d -t stella-apply-selftest.XXXXXX); trap 'chmod -R u+w "$T" 2>/dev/null; rm -rf "$T"' EXIT
@@ -22,6 +25,10 @@ printf "WORKER_GIT_NAME='Fake One'\nWORKER_GIT_EMAIL='fake@example.invalid'\nAPI
 printf "CALL_TIMEOUT=600\nPLANTED_SETTING='sekrit-setting-333'\n" >"$R/.supervisor/limits.env"
 chmod 600 "$R/config/owner.env"; chmod 640 "$R/.supervisor/limits.env"
 cp "$R/.stella/connections.json" "$T/conn.orig"
+owner_fix() {   # F1c W4b: the apply contract's cases run with no terminal, so identity_critical takes what owner_write takes (the host key);
+  # the typed phrase is tested in the W4b section below and in bin/settings-selftest.sh
+  jq '.actions.identity_critical = .actions.owner_write' "$R/.stella/owner-auth.json" >"$T/oa" && cp "$T/oa" "$R/.stella/owner-auth.json"; }
+owner_fix
 git -C "$R" init -q 2>/dev/null; printf '.supervisor/\n' >"$R/.gitignore"
 git -C "$R" add -A >/dev/null 2>&1; git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qm base
 printf "OWNER_TIMEZONE='UTC'\n" >"$T/owner-fake.env"   # a fake owner file: no failure message makes the alert code read the real one
@@ -53,6 +60,8 @@ S
 chmod +x "$T"/pb-*/hermes
 OWNER=$PATH; PB=$T/pb-ok   # as the owner: the stub board says no worker run
 ap() { PATH=$PB:$OWNER $AP "$@"; }
+OKEY=$(jq -r .owner_key "$R/.stella/data-files.json"); PATH=$PB:$OWNER python3 -I $H/bin/owner_auth.py init-key >/dev/null 2>&1
+cp -p "$R/$OKEY" "$T/owner-key"   # F1c W4b: an owner-only change needs an owner proof; every scratch root gets this owner key (0600)
 jq '.entries[0].label = "Changed label"' "$T/conn.orig" >"$C/conn.json"
 jq '.entries[0].label = "Second label"' "$T/conn.orig" >"$C/conn2.json"
 printf "WORKER_GIT_NAME='Fake Two'\nWORKER_GIT_EMAIL='fake@example.invalid'\nAPI_TOKEN='sekrit-token-222'\n" >"$C/owner.env"
@@ -192,6 +201,7 @@ mkr() {  # <name>: a fresh scratch root with fake files and a git baseline; R, L
   cp "$ROLES" "$R/docs/hermes-local/roles.json"; cp "$SET0" "$R/.stella/settings.json"; cp -r "$H/docs/hermes-local/hooks" "$R/docs/hermes-local/hooks"
   printf "WORKER_GIT_NAME='Fake One'\nWORKER_GIT_EMAIL='fake@example.invalid'\nAPI_TOKEN='sekrit-token-111'\n" >"$R/config/owner.env"
   printf "CALL_TIMEOUT=600\nPLANTED_SETTING='sekrit-setting-333'\n" >"$R/.supervisor/limits.env"; chmod 600 "$R/config/owner.env"; chmod 640 "$R/.supervisor/limits.env"
+  owner_fix; mkdir -p "$R/$(dirname "$OKEY")"; cp -p "$T/owner-key" "$R/$OKEY"
   printf '.supervisor/\n' >"$R/.gitignore"; git -C "$R" init -q 2>/dev/null; git -C "$R" add -A >/dev/null 2>&1; git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qm base
   export STELLA_ROOT=$R
 }
@@ -372,11 +382,11 @@ LAST() { tail -n 1 "$LOG"; }
 
 # H1 the tool acts only on records it can tie to its own run
 mkr h1a; ap apply connections --from "$C/conn.json" >/dev/null 2>&1; name=$(basename "$(ls -d "$(BK)"/connections/*)")
-$EL append --type rollback --what connections --detail "restored backup $name" --user forger >/dev/null 2>&1
+PATH=$PB:$OWNER $EL append --type rollback --what connections --detail "restored backup $name" --user forger >/dev/null 2>&1
 ap rollback connections >"$T/o" 2>&1
 ok '[ $? = 0 ] && [ "$(jq -s "map(select(.type == \"rollback\")) | length" "$LOG")" = 2 ] && [ "$(LAST | jq -r .who.user)" != forger ]' "H1 a forged rollback line that names the backup does not suppress the tool's own line"
 mkr h1b; kill_at event apply connections --from "$C/conn.json" >/dev/null 2>&1; name=$(basename "$(ls -d "$(BK)"/connections/*)")
-$EL append --type apply --what connections --detail "backup $name" --user forger >/dev/null 2>&1
+PATH=$PB:$OWNER $EL append --type apply --what connections --detail "backup $name" --user forger >/dev/null 2>&1
 ap apply connections --from "$C/conn.json" >"$T/o" 2>&1
 ok '[ $? = 0 ] && [ "$(jq -s "map(select(.type == \"apply\")) | length" "$LOG")" = 2 ] && [ "$(LAST | jq -r .who.user)" != forger ]' "H1 a forged apply line does not suppress the line of an apply finished after a kill"
 mkr h1c; B=$(tree)
@@ -770,7 +780,7 @@ done
 
 # P6: the Low ones
 mkr p6a; ap apply connections --from "$C/conn.json" >/dev/null 2>&1; tok=$(ap history connections --json | jq -r '.events[-1].detail' | grep -o 'token [0-9a-f]*')
-$EL append --type rollback --what connections --detail "restored backup x $tok" --user forger >/dev/null 2>&1
+PATH=$PB:$OWNER $EL append --type rollback --what connections --detail "restored backup x $tok" --user forger >/dev/null 2>&1
 kill_at applied rollback connections >/dev/null 2>&1; ap rollback connections >/dev/null 2>&1
 ok '[ "$(LAST | jq -r .type)" = rollback ] && [ "$(LAST | jq -r .who.user)" != forger ]' "P6 a forged rollback line carrying the apply's token does not suppress a resumed rollback's own line (W3-CV3-01)"
 for t in '.mode = 2541' '.existed = false | .sha256 = null'; do
@@ -1221,6 +1231,66 @@ ok '[ $rc = 0 ] && [ "$(nev)" = $((e0+2)) ] && [ "$(last .install_id)" = "$IID" 
 N2=$(cat /proc/sys/kernel/random/uuid); jq --arg i "$N2" '.install_id = $i' "$C/install-good.json" >"$C/install-new.json"
 ap apply "$IK" --from "$C/install-new.json" >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && [ "$(nev)" = $((e0+3)) ] && [ "$(last .install_id)" = "$N2" ]' "W6-CRT-01 an apply of the install row takes its line's install id from the candidate also when the current file is readable"
+
+# F1c W4b: the owner proof of an owner-only change at the apply tool (the shipped policy: identity_critical needs the typed phrase)
+mkr w4b; cp "$H/.stella/owner-auth.json" "$R/.stella/owner-auth.json"; OA="python3 -I $H/bin/owner_auth.py"
+sap() { PATH=$PB:$OWNER setsid -w $AP "$@" </dev/null; }   # the owner with no terminal at all
+OKP=$(jq -r '[.providers[] | select(.kind == "local-key") | .id][0]' "$R/.stella/owner-auth.json")
+# which changes are identity-critical: the policy's rows and pointers (* = one segment, at or below), registry settings, a side that does not parse
+python3 -I - "$H/bin/stella-apply.py" >"$T/o" 2>&1 <<'PY'
+import importlib.util, sys
+sys.dont_write_bytecode = True; spec = importlib.util.spec_from_file_location("sa", sys.argv[1]); sa = importlib.util.module_from_spec(spec); spec.loader.exec_module(sa)
+pol = sa.owner_auth.policy(); j = lambda i: {"id": i, "format": "json"}; e = lambda i: {"id": i, "format": "env"}
+cases = [
+    (j("host-access"), {"enabled": False, "routes": []}, {"enabled": True, "routes": []}, False, True, "host-access /enabled"),
+    (j("host-access"), {"routes": []}, {"routes": [{"id": "r", "enabled": False}]}, False, True, "a route added (/routes/*/enabled)"),
+    (j("host-access"), {"routes": [{"id": "a", "enabled": True}]}, {"routes": [{"id": "b", "enabled": True}]}, False, False, "a route's id only"),
+    (j("host-access"), {"actions": [{"id": "a", "state": "ask"}]}, {"actions": [{"id": "a", "state": "run"}]}, False, True, "an action's state"),
+    (j("data-policy"), {"privacy_grants": []}, {"privacy_grants": [{"x": 1}]}, False, True, "below /privacy_grants"),
+    (j("data-policy"), {"default": "a", "privacy_grants": []}, {"default": "b", "privacy_grants": []}, False, False, "data-policy outside /privacy_grants"),
+    (j("connections"), {"entries": [{"terms_ok": None}]}, {"entries": [{"terms_ok": True}]}, False, True, "a terms_ok"),
+    (j("grants"), {"grants": []}, {"grants": []}, False, True, "grants, formatting only (a row target: any write)"),
+    (e("owner-settings"), {"WORKER_GIT_NAME": "a"}, {"WORKER_GIT_NAME": "b"}, False, True, "a registry setting marked identity_critical"),
+    (e("owner-settings"), {"OWNER_DISCORD_USER_ID": "1"}, {"OWNER_DISCORD_USER_ID": "2"}, False, True, "the owner id key listed in the policy"),
+    (e("owner-settings"), {"ZZ_OTHER": "a"}, {"ZZ_OTHER": "b"}, False, False, "another owner-settings key"),
+    (e("limits"), {"CALL_TIMEOUT": "1"}, {"CALL_TIMEOUT": "2"}, False, False, "a plain limit"),
+    (j("host-access"), None, {"enabled": False}, True, True, "a side that does not parse, row with targets"),
+    (e("limits"), None, {"CALL_TIMEOUT": "2"}, True, False, "a side that does not parse, row without targets"),
+]
+bad = [c[5] for c in cases if sa.critical(c[0], c[1], c[2], c[3], pol) != c[4]]
+print("wrong: " + "; ".join(bad) if bad else "all right")
+sys.exit(1 if bad else 0)
+PY
+ok '[ $? = 0 ]' "W4b identity-critical targets: rows, pointers with * at or below, registry settings, unparsed sides (14 cases)"
+HA=$R/.stella/host-access.json; cp -p "$HA" "$T/ha.keep"; e0=$(nev)
+jq '.enabled = true' "$T/ha.keep" >"$C/ha1.json"
+sap apply host-access --from "$C/ha1.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$HA" "$T/ha.keep" && [ "$(nev)" = $e0 ]' "W4b host access turned on with the key and no terminal: STL-OWN-808, nothing changed"
+GR=$R/.stella/grants.json; cp -p "$GR" "$T/gr.keep"; jq -c . "$T/gr.keep" >"$C/gr1.json"
+sap apply grants --from "$C/gr1.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$GR" "$T/gr.keep"' "W4b grants (a row target), even other bytes of the same content: STL-OWN-808 with no terminal"
+DP=$R/.stella/data-policy.json; cp -p "$DP" "$T/dp.keep"; jq -c . "$T/dp.keep" >"$C/dp1.json"
+sap apply data-policy --from "$C/dp1.json" --dry-run >"$T/o" 2>&1; rc=$?; sed -n 's/^action: //p' "$T/o" >"$T/dpa.json"
+ok '[ $rc = 0 ] && jq -e --arg o "$(sha256sum <"$DP" | cut -c1-64)" --arg n "$(sha256sum <"$C/dp1.json" | cut -c1-64)" ".op == \"apply\" and .target == \"data-policy\" and .old_digest == \$o and .new_digest == \$n" "$T/dpa.json" >/dev/null && cmp -s "$DP" "$T/dp.keep"' "W4b a dry run of an owner-only row prints the action: the row and the sha256 of the bytes before and after"
+mv "$R/$OKEY" "$T/key.away"
+sap apply data-policy --from "$C/dp1.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-806 "$T/o" && cmp -s "$DP" "$T/dp.keep" && [ "$(nev)" = $e0 ]' "W4b no owner key and no proof file: STL-OWN-806, nothing changed"
+jq '.entries[0].label = "W4b label"' "$T/conn.orig" >"$C/w4b-conn.json"
+sap apply connections --from "$C/w4b-conn.json" --dry-run >"$T/o" 2>&1; r1=$?; ! grep -q '^action: ' "$T/o"; r2=$?
+sap apply connections --from "$C/w4b-conn.json" >"$T/o" 2>&1; r3=$?
+ok '[ $r1 = 0 ] && [ $r2 = 0 ] && [ $r3 = 0 ] && [ "$(nev)" = $((e0+1)) ] && [ "$(LAST | jq -r ".auth // \"none\"")" = none ]' "W4b a row that is not owner-only needs no proof and its dry run prints no action (no key on the host)"
+sap rollback connections >/dev/null 2>&1; e0=$(nev); mv "$T/key.away" "$R/$OKEY"
+PATH=$PB:$OWNER $OA prove --class owner_write --action "$T/dpa.json" >"$T/dpp.json" 2>/dev/null
+sap apply data-policy --from "$C/dp1.json" --proof "$T/dpp.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$DP" "$C/dp1.json" && [ "$(nev)" = $((e0+1)) ] && LAST | jq -e --arg p "$OKP" ".type == \"apply\" and .auth == [\$p]" >/dev/null' "W4b a proof made for the dry run's action applies that change (not identity-critical: no phrase); the line names $OKP"
+mv "$R/$OKEY" "$T/key.away"
+sap rollback data-policy >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-806 "$T/o" && cmp -s "$DP" "$C/dp1.json"' "W4b a rollback needs the owner proof too: no key, STL-OWN-806, unchanged"
+mv "$T/key.away" "$R/$OKEY"
+sap rollback data-policy >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$DP" "$T/dp.keep" && LAST | jq -e --arg p "$OKP" ".type == \"rollback\" and .auth == [\$p]" >/dev/null' "W4b rollback with the host key: the old bytes are back, the line names $OKP"
+sap apply data-policy --from "$C/dp1.json" --proof "$T/dpp.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-804 "$T/o" && cmp -s "$DP" "$T/dp.keep"' "W4b the proof file again after the rollback (the host key is not used instead): STL-OWN-804"
 
 $AP bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "usage error exits 2"
 [ $fails = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

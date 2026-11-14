@@ -581,8 +581,17 @@ key, or by the key's hash when that name would be longer than a file name may be
   for a private row (owner-only alone does not suppress it). A new file's event has `old: null`: null on a side means there was
   no file; a side whose file exists and does not parse is `{"unparsed": true}` and the detail says so. `append --code` must be in the
   alert catalog. `tail` escapes every field it prints.
-- **Limits that remain.** The owner-only gate (`worker_markers` in the role table, then `roles.py prove`) cannot prove an owner
-  from inside the process: a caller can clear its marker variables, shadow the board tool on `PATH` or detach from its parent.
+- **Owner proof (F1c W4b).** An `apply` or `rollback` of an owner-only row that writes needs, after the worker refusal, an
+  owner proof (`bin/owner_auth.py` require) for the action `{op, target: the row id, old_digest, new_digest}` (sha256 of the
+  file's bytes before and after; no file: of no bytes): the proofs of `--proof <file>` alone, else one made with the host's owner
+  key (none: STL-OWN-806). A change touching an identity-critical target (the owner-auth policy's `identity_critical`:
+  `<row>` or `<row>:<JSON pointer>` with `*` for one segment, an env row's keys being `/KEY`; plus registry settings whose
+  sensitivity is identity_critical; a side that does not parse counts) needs class `identity_critical`: on the host the typed
+  phrase (policy `phrase.template`, `{what}` = the row id), shown with the changed key names and the masked diff; none, or
+  another text, is STL-OWN-808. `apply --dry-run` prints `action: <JSON>` for such a row; the event line names the provider
+  ids used (`auth`). `settings.py set` passes `--proof` through; its key-typed confirmation (STL-CFG-317) is gone.
+- **Limits that remain.** The worker refusal of the owner-only gate (`bin/worker_env.py`: the role table's `worker_markers`,
+  the owner-auth policy's `worker_signals`, then `roles.py prove`) cannot prove an owner from inside the process: a caller can clear its marker variables, shadow the board tool on `PATH` or detach from its parent.
   **The boundary is the hooks of every role refusing to run `bin/stella-apply.py` and `bin/event_log.py` (and writing the owner
   files and the state paths) at all (item W4).** `who` in an event line is the OS user name only, and any caller that can run
   `event_log.py append` can append a line of any type; W4's path rules keep roles from writing the log directly. The applied

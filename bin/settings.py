@@ -3,15 +3,18 @@
 role name is in this file. Not a tool of any role: roles.json lists it under owner_commands, so every role's hooks refuse to run it,
 and it refuses itself in a worker's environment.
 CLI: settings.py get <key> [--json]            the stored value (the default when none is stored); *** for a secret
-     settings.py set <key> <value> [--dry-run]  validate the value against the entry, build the candidate file in canonical form
-                                                and apply it through bin/stella-apply.py (backup, one event line, rollback);
-                                                --dry-run prints the diff and changes nothing
+     settings.py set <key> <value> [--dry-run] [--proof <file>]
+                                                validate the value against the entry, build the candidate file in canonical form
+                                                and apply it through bin/stella-apply.py (backup, one event line, rollback),
+                                                which asks the owner proof (the --proof file, else this host's owner key; an
+                                                identity-critical change also the typed phrase); --dry-run prints the diff and
+                                                the action a proof must cover, and changes nothing
      settings.py check [--json]                 the registry is valid and every stored value satisfies its entry
      settings.py list --json                    the registry entries (never a stored value)
 Refused: a secret entry (secrets live in the vault; the registry never stores or shows one), STL-CFG-315; a value the entry
-rejects or the owner file format cannot hold, STL-CFG-315; a worker (a marker variable from the role table's worker_markers is set,
-or bin/roles.py prove says this process is a worker or cannot tell), STL-CFG-312; an identity_critical entry without the key typed
-back on the controlling terminal (none = no terminal), STL-CFG-317; an unknown key, STL-CFG-311 with one alert line.
+rejects or the owner file format cannot hold, STL-CFG-315; a worker environment (bin/worker_env.py), STL-CFG-312; no owner proof,
+the codes of bin/owner_auth.py (806 no owner key, 808 the typed phrase of an identity-critical change missing or wrong, ...); an
+unknown key, STL-CFG-311 with one alert line.
 Exit: 0 ok (a set of the value already stored is "no change"); 1 refused or failed; 2 usage. The value of a secret is never
 printed, logged or put in a message. Only env-format stores are written (the stores of the registry today)."""
 import fcntl, json, os, re, subprocess, sys, tempfile
@@ -20,8 +23,9 @@ sys.path.insert(0, BIN)   # python3 -I does not add the script folder
 import event_log as el
 import owner_config as oc
 import stella_data as sd
+import worker_env
 
-SECRET, CRITICAL = "secret", "identity_critical"
+SECRET = "secret"
 
 
 class Refuse(Exception):
@@ -42,26 +46,8 @@ def role_table():
     return sd.load(sd.load(sd.INDEX)["role_table"])
 
 
-def worker_reason():
-    """Why this process may not use an owner path (None = it is not a worker): the same proof the apply tool uses."""
-    try:
-        marks = role_table()["worker_markers"]
-        assert isinstance(marks, list) and marks and all(isinstance(m, str) and m for m in marks)
-    except Exception:
-        return "the list of worker markers is not available, so it cannot be told that this is not a worker"
-    if any(os.environ.get(m) for m in marks):
-        return "a worker marker is set"
-    try:   # exit 1 + "not proven" = no worker run; 0 = a worker; anything else (3, a crash) = cannot tell
-        r = subprocess.run([sys.executable, "-I", os.path.join(BIN, "roles.py"), "prove"], capture_output=True, text=True, timeout=60)
-    except Exception:
-        return "it could not be proven that this process is not a worker"
-    if r.returncode == 0:
-        return "this process belongs to a worker's run"
-    return None if r.returncode == 1 and "roles: not proven" in r.stderr else "it could not be proven that this process is not a worker"
-
-
 def need_owner(what):
-    why = worker_reason()
+    why = worker_env.reason()
     if why:
         raise Refuse("STL-CFG-312", f"{what} is the owner's: {why}")
 
@@ -155,21 +141,7 @@ def do_get(key, as_json):
     return 0
 
 
-def confirm(e):
-    """The owner types the key back on the controlling terminal; no terminal, or another text, is STL-CFG-317."""
-    try:
-        out, inp = open("/dev/tty", "w"), open("/dev/tty", "r")   # two handles: a terminal is not seekable, so no "r+"
-    except OSError:
-        raise Refuse("STL-CFG-317", f"{e['key']} is identity-critical and there is no terminal to ask on")
-    with out, inp:
-        out.write(f"{e['key']} ({e['label']}) is identity-critical. Type the key name to confirm: ")
-        out.flush()
-        said = inp.readline().strip()
-    if said != e["key"]:
-        raise Refuse("STL-CFG-317", f"{e['key']}: the confirmation did not match")
-
-
-def do_set(key, text, dry):
+def do_set(key, text, dry, proof):
     need_owner("a settings change")
     # K9: the read of the store, the candidate and the apply are one critical section (a lock of this tool's own): two sets at once are two
     # changes in turn, never one lost and never one reported as failed because the other was running. Blocks until the other is done.
@@ -177,10 +149,10 @@ def do_set(key, text, dry):
     os.makedirs(os.path.dirname(lock), exist_ok=True)
     with open(lock, "a") as lf:
         fcntl.flock(lf, fcntl.LOCK_EX)
-        return set_locked(key, text, dry)
+        return set_locked(key, text, dry, proof)
 
 
-def set_locked(key, text, dry):
+def set_locked(key, text, dry, proof):
     e = entry(key)
     if e["sensitivity"] == SECRET:
         raise Refuse("STL-CFG-315", f"{key} is a secret: secrets live in the vault, never in the registry or here")
@@ -198,8 +170,6 @@ def set_locked(key, text, dry):
     if k in cfg and cfg[k] == stored:
         print(f"no change: {key}")
         return 0
-    if not dry and e["sensitivity"] == CRITICAL:
-        confirm(e)
     lines = (raw.decode("utf-8-sig") if raw is not None else "").split("\n")
     hit = [i for i, l in enumerate(lines) if l.startswith(k + "=")]   # read_store refused a file that holds a key twice: at most one such line
     if hit:
@@ -213,13 +183,13 @@ def set_locked(key, text, dry):
         src = os.path.join(d, "candidate")
         with open(src, "wb") as f:
             f.write(cand)
-        r = subprocess.run([sys.executable, "-I", os.path.join(BIN, "stella-apply.py"), "apply", row["id"], "--from", src] + (["--dry-run"] if dry else []))
+        r = subprocess.run([sys.executable, "-I", os.path.join(BIN, "stella-apply.py"), "apply", row["id"], "--from", src] + (["--dry-run"] if dry else ["--proof", proof] if proof else []))
     return r.returncode
 
 
 def do_check(as_json):
     out = [{"code": "STL-CFG-310", "key": None, "problem": m} for d, m in sd.check("settings") if d == "settings"]
-    why = None if out else worker_reason()
+    why = None if out else worker_env.reason()
     if not out:
         for e in registry():
             row, k = store(e)
@@ -248,13 +218,20 @@ def do_list():
 
 def main(argv):
     as_json, dry = "--json" in argv, "--dry-run" in argv
-    a = [x for x in argv if x not in ("--json", "--dry-run")]
+    a, proof, it = [], [], iter(argv)
+    for x in it:
+        if x == "--proof":
+            proof.append(next(it, ""))
+        elif x not in ("--json", "--dry-run"):
+            a.append(x)
     cmd, args = (a[0] if a else ""), a[1:]
+    if proof and (cmd != "set" or len(proof) > 1 or not proof[0]):
+        cmd = ""   # --proof once, with a file, and for set only: else usage
     try:
         if cmd == "get" and len(args) == 1 and not dry:
             return do_get(args[0], as_json)
         if cmd == "set" and len(args) == 2 and not as_json:
-            return do_set(args[0], args[1], dry)
+            return do_set(args[0], args[1], dry, proof[0] if proof else None)
         if cmd == "check" and not args and not dry:
             return do_check(as_json)
         if cmd == "list" and not args and as_json and not dry:
