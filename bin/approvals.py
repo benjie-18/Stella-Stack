@@ -17,6 +17,8 @@ channel-identity providers of that kind, bound to the stored delivery ref (828).
 runs once, with the card id and the decision word. Expiry is a decision too (fail closed): the first command that sees a pending
 request past expires_at (intake, collect, deliver, answer, status, wait) writes one trusted "expired" line under the lock and
 runs resume once; a later answer is refused 822.
+Untrusted input (a stream line, an ask's detail, an adapter's answer line) goes through untrusted(): the writer's size and depth
+limits, any failure reported with a code and skipped (GB-4). A channel is given the exact action, masked by display() (GB-5).
 CLI: approvals.py request --class C --action F --summary S --card K --ttl SECONDS [--requester PROFILE] [--json]
      approvals.py intake [--json]                 one request per new approval-ask line, delivered on every answering channel
      approvals.py deliver ID --channel CH         the row's deliver argv gets the request on stdin; prints the message ref
@@ -133,6 +135,49 @@ def sweep(doc):
         current(r["id"], doc, v)
 
 
+def untrusted(s, what, code):
+    """One untrusted JSON value (a line of the agents' stream, an ask's detail, a line an adapter printed), within the event
+    writer's limits (WRITE_MAX bytes, WRITE_DEPTH nesting), or Refusal(code). Any failure costs this value only (GB-4)."""
+    if not isinstance(s, (str, bytes)):
+        raise Refusal(code, f"{what} is not text")
+    if len(s) > el.WRITE_MAX:
+        raise Refusal(code, f"{what} is larger than {el.WRITE_MAX} bytes")
+    try:
+        v = json.loads(s)
+    except Exception as e:   # ValueError, RecursionError, MemoryError
+        raise Refusal(code, f"{what} is not JSON ({type(e).__name__})") from None
+    if el.depth(v) > el.WRITE_DEPTH:
+        raise Refusal(code, f"{what} is nested deeper than {el.WRITE_DEPTH}")
+    return v
+
+
+def skipped(x, code):
+    """Report one refused untrusted value (its own code; `code` for any other failure) and go on. The trusted log failing is
+    no input's fault: EventError ends the run."""
+    if isinstance(x, el.EventError):
+        raise x
+    sd.say(*((x.code, x.problem) if isinstance(x, Refusal) else (code, f"{type(x).__name__}, an unexpected failure")))
+
+
+def display(action):
+    """The action as the owner is shown it (GB-5): op, target, and new (or new_digest). new is *** when the target names a
+    secret (its key is one the event log masks; a whole row with redact keys or a secret setting: a scalar), its keys the
+    redactor names are ***, and it is *** whole when a value pattern hides any part (sd.hidden) or it cannot be judged."""
+    a = {k: action[k] for k in ("op", "target", "new_digest") if k in action}
+    if "new" in action:
+        v = action["new"]
+        try:
+            row, _, key = action["target"].partition(":")
+            red = el.redactor()
+            v = el.MASK if (red(key) if key else el.sensitive_row({}, row) and not isinstance(v, (dict, list))) else el.mask(v, red)
+            if any(map(sd.hidden, [*sd.leaves(v), *([json.dumps(v, ensure_ascii=False)] if isinstance(v, (dict, list)) else [])])):
+                v = el.MASK
+        except Exception:   # fail closed: what cannot be judged is not shown
+            v = el.MASK
+        a["new"] = v
+    return a
+
+
 def channel_doc():
     row = next((r for r in sd.rows() if r["id"] == CHANNELS), None)
     if row is None:
@@ -214,7 +259,7 @@ def deliver(rid, cid, doc, row):
         raise Refusal(*refusal_of(rid, word))
     if cid in rec["deliveries"]:   # delivering twice shows it once
         return rec["deliveries"][cid]
-    payload = {k: rec[k] for k in ("id", "nonce", "summary", "approval_class", "card", "target", "expires_at", "digest")}
+    payload = {k: rec[k] for k in ("id", "nonce", "summary", "approval_class", "card", "target", "expires_at", "digest")} | {"action": display(rec["action"])}
     rc, out = run(row["deliver"], payload, doc["adapter_timeout_s"], "STL-OWN-830")
     ref = (out.splitlines() or [""])[0].strip()
     if rc != 0 or not REF.fullmatch(ref):
@@ -294,7 +339,10 @@ def intake():
     try:
         p = el.path(sd.load(sd.INDEX)["untrusted_events"])
         # shortcut: the whole stream is read on every intake; keep a read offset when it grows large
-        data = open(p, "rb").read() if os.path.lexists(p) else b""
+        with os.fdopen(el.open_file(p, os.O_RDONLY), "rb") as f:   # no link, no FIFO: refused at the open, never waited for
+            data = f.read()
+    except FileNotFoundError:
+        data = b""
     except (OSError, ValueError, KeyError, sd.DataError) as e:
         raise Refusal("STL-CFG-318", f"the untrusted event stream cannot be read ({type(e).__name__})") from None
     pol = oa.policy()
@@ -303,23 +351,25 @@ def intake():
     with lock():
         sweep(doc)
         taken = {r["ask"] for r in records() if r.get("ask")}
-        for raw in data.split(b"\n"):
+        for n, raw in enumerate(data.split(b"\n"), 1):
+            if not raw.strip():
+                continue
             try:
-                d = json.loads(raw)
-            except ValueError:
+                d = untrusted(raw, f"line {n} of the untrusted event stream", "STL-CFG-318")
+            except Refusal as x:
+                skipped(x, "STL-CFG-318")
                 continue
             if not (isinstance(d, dict) and d.get("type") == "approval-ask" and d.get("trusted") is False and isinstance(d.get("global_id"), str)) or d["global_id"] in taken:
                 continue
             taken.add(d["global_id"])
             try:
-                a = json.loads(d.get("detail") or "")
+                a = untrusted(d.get("detail"), "the ask's detail", "STL-OWN-829")
                 if not (isinstance(a, dict) and set(a) <= {"class", "action", "summary", "card"}):
                     raise Refusal("STL-OWN-829", "the ask's detail is not {class, action, summary, card}")
                 made.append(request(a.get("class"), a.get("action"), a.get("summary"), a.get("card"), doc["ask_ttl_s"], ask=d["global_id"]))
-            except (Refusal, ValueError) as x:
+            except Exception as x:
                 bad += 1
-                code, why = (x.code, x.problem) if isinstance(x, Refusal) else ("STL-OWN-829", "the ask's detail is not JSON")
-                sd.say(code, f"approval-ask line {d['global_id']}: {why}; no request made")
+                skipped(Refusal(x.code, f"approval-ask line {sd.shown(d['global_id'][:64])} (line {n}): {x.problem}; no request made") if isinstance(x, Refusal) else x, "STL-OWN-829")
                 continue
             for cid, row in rows.items():
                 if row["kind"] != pol["voice_host_confirmation"]["channel_kind"] and pol["channel_kinds"].get(row["kind"]) is True:
@@ -386,16 +436,13 @@ def main(argv):
                 sd.say("STL-OWN-830", f"channel {o.channel}: collect exited {rc}")
             for line in filter(str.strip, out.splitlines()):
                 try:
-                    try:
-                        ans = json.loads(line)
-                    except ValueError:
-                        raise Refusal("STL-OWN-830", f"channel {o.channel}: an answer line is not JSON") from None
+                    ans = untrusted(line, f"channel {o.channel}: an answer line", "STL-OWN-830")
                     with lock():
                         rid, d = decide(ans, row, pol, doc)
                     print(f"{rid}\t{d}")
-                except Refusal as x:
+                except Exception as x:
                     refused += 1
-                    sd.say(x.code, x.problem)
+                    skipped(x, "STL-OWN-830")
             return 1 if refused else 0
         if o.cmd == "answer":
             pol, (doc, _) = oa.policy(), channels()

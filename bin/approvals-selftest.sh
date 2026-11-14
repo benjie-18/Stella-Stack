@@ -4,9 +4,11 @@
 # Every section runs in its own fresh scratch root (bash approvals-selftest.sh <section>); no argument runs them all.
 # Cases from the F1c tester's wave-2 T1a, T1b, T2a, T2b, T7b and T6b (consumer part), unchanged; plus the shipped adapters:
 # the Discord adapter over the stack's Discord helper (a fake Hermes interpreter), the host-cli adapter and the resume script.
+# Gate B cycle 1: the tester's R10 and the attack scripts CRT-1, RT-4, RT-5 (GB-4), CRT-7, RT-7 (GB-5), unchanged; gb4 and gb5
+# cover every site of those rules (intake and collect; the payload, Discord and host-cli).
 set -u
 H=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
-SECTIONS="t1a t1b t2a t2b t7b t6b adapters expiry"
+SECTIONS="t1a t1b t2a t2b t7b t6b adapters expiry r10 crt1 rt4 rt5 crt7 rt7 gb4 gb5"
 if [ $# = 0 ]; then
   fails=0
   for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || fails=$((fails+1)); done
@@ -53,6 +55,7 @@ cd "$T" || exit 1
 fails=0; n=0
 ok() { n=$((n+1)); if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); cat "$T/o" "$T/ve" 2>/dev/null | sed 's/^/     | /' | tail -n 3; fi; rm -f "$T/o" "$T/ve"; }
 finish() { echo "# approvals-selftest $SECTION: $n cases, $fails failed"; [ "$fails" = 0 ]; exit $?; }
+codes() { grep -oE 'STL-[A-Z]+-[0-9]{3}' "$@" | sort -u | tr '\n' ' '; }   # the codes in output files
 has() { [ -f "$B/$1" ] || { echo "     (precondition: bin/$1 does not exist in TREE)"; return 1; }; }
 SIGNALS="marker user sandbox worktree board-worker board-down policy-unreadable $(jq -r '.worker_signals.token_env[]? | "token:" + .' "$POL" 2>/dev/null | tr '\n' ' ')"
 as_worker() {
@@ -388,6 +391,7 @@ ok '[ -n "$ID" ] && [ $rc = 0 ] && jq -e --arg c "$DC" ".deliveries[\$c] == \"55
 ok 'grep -q "^create_thread 100$" "$T/sup/discord_calls" && grep -qF "$ID" "$T/sup/threads" && grep -q "^send 555 " "$T/sup/sends" && grep -qF "zz summary dz" "$T/sup/sends" && ! grep -qF "$(rf dz nonce)" "$T/sup/sends"' "the thread is named for the request; the summary is posted in it; the nonce is never posted"
 $AP deliver "$ID" --channel "$DC" >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && [ "$(grep -c "^create_thread" "$T/sup/discord_calls")" = 1 ]' "delivering the same request again shows it once (no second thread)"
+ok 'grep -qF "\"op\":\"set\"" "$T/sup/sends" && grep -qF "\"target\":\"settings:QUEUE_MAX\"" "$T/sup/sends" && grep -qF "$(jq -r .new_digest "$A")" "$T/sup/sends" && grep -qF "$(rf dz digest)" "$T/sup/sends"' "GB-5 the Discord message shows the exact action (op, target, new_digest) and the digest the answer binds to"
 msg() { jq -nc --arg i "$1" --arg c "$2" --arg u "$3" --argjson b "${4:-false}" '{id: $i, content: $c, author: {id: $u, username: "u", bot: $b}}'; }
 jq -nc --argjson a "$(msg 3 "approve" "$OTHER_ID")" --argjson b "$(msg 2 "what is this" "$OWNER_ID")" --argjson s "$(msg 1 "Approve" 999 true)" '{messages: [$a, $b, $s]}' >"$T/sup/msgs_555"
 collect "$DC"; rc=$?
@@ -400,6 +404,9 @@ ok '[ $rc = 0 ] && [ "$(ndec "$ID")" = 1 ]' "a decided request is no longer coll
 A2=$(act settings:QUEUE_MAX hz); ID2=$(mkreq hz write "$A2" card-hz 120)
 $AP deliver "$ID2" --channel "$HC" >"$T/o" 2>&1; rc=$?
 ok '[ -n "$ID2" ] && [ $rc = 0 ] && c "approvals.py answer $ID2" && jq -e --arg c "$HC" ".deliveries[\$c] | length > 0" "$STORE/requests/$ID2.json" >/dev/null 2>&1' "host-cli deliver: says how to answer on the host, and gives a ref"
+A3=$(act settings:QUEUE_MAX hy); ID3=$(mkreq hy write "$A3" card-hy 120)
+$AP deliver "$ID3" --channel "$HC" >"$T/o" 2>&1; rc=$?
+ok '[ -n "$ID3" ] && [ $rc = 0 ] && c "\"op\":\"set\"" && c "settings:QUEUE_MAX" && c "$(jq -r .new_digest "$A3")" && c "$(rf hy digest)"' "GB-5 host-cli deliver shows the exact action (op, target, new_digest) and the digest"
 collect "$HC"; rc=$?
 ok '[ $rc = 0 ] && [ "$(stat_of "$ID2")" = pending ]' "host-cli collect: nothing (its answers come through approvals.py answer)"
 $AP request --class zz-no-class --action "$A2" --summary s --card card-x --ttl 60 --json >"$T/o" 2>&1; rc=$?
@@ -439,6 +446,171 @@ ID4=$(mkreq e4 write "$(act settings:QUEUE_MAX e4)" card-e4 2); sleep 3
 collect "$DC"; ok '[ "$(nexp "$ID4")" = 1 ] && [ "$(grep -c "card-e4 expired" "$T/resume.log")" = 1 ]' "collect settles an overdue request too (one line, one resume)"
 ID5=$(mkreq e5 write "$(act settings:QUEUE_MAX e5)" card-e5 60)
 ok '[ "$(stat_of "$ID5")" = pending ] && [ "$(ndec "$ID5")" = 0 ]' "a request within its ttl is left pending by the same commands"
+;;
+r10) # the F1c tester's wave-2+3 pass R10 (D3: digest binding, first decision stands, store is no proof, host kind policy), unchanged
+ok 'has approvals.py' "precondition: bin/approvals.py exists"
+$OA init-key >/dev/null 2>&1; setresume
+# host-side trusted line through the one writer (event_log.append), as approvals.py writes its decisions
+tl() { $PY - "$B" "$@" <<'PY'
+import sys; sys.path.insert(0, sys.argv[1]); import event_log as el
+rid, dec, dg = sys.argv[2:5]
+el.append(el.build("approval-decision", rid, new={"request_id": rid, "decision": dec, "digest": dg}, who={"channel": "host-cli"}), scrub_detail=False)
+PY
+}
+A=$(act settings:QUEUE_MAX r10a); IA=$(mkreq r10a write "$A" card-r10a 300)
+tl "$IA" approved "$(d64 other-action)" >"$T/o" 2>&1; rc=$?
+ok '[ -n "$IA" ] && [ $rc = 0 ] && [ "$(stat_of "$IA")" = pending ]' "(a) a trusted approved decision line with another digest: the request stays pending"
+B_=$(act settings:QUEUE_MAX r10b); IB=$(mkreq r10b write "$B_" card-r10b 300)
+$AP answer "$IB" --decision approved >"$T/o" 2>&1
+tl "$IB" denied "$(rf r10b digest)" >"$T/o" 2>&1; rc=$?
+ok '[ -n "$IB" ] && [ $rc = 0 ] && [ "$(stat_of "$IB")" = approved ]' "(b) a later trusted denied line for an approved request: the first decision stands (approved)"
+C_=$(act settings:QUEUE_MAX r10c); IC=$(mkreq r10c write "$C_" card-r10c 300); X=$(act settings:CALL_TIMEOUT r10x)
+jq --slurpfile x "$X" --arg d "$(adig "$X")" '.action = $x[0] | .target = $x[0].target | .digest = $d' "$STORE/requests/$IC.json" >"$T/s" && cat "$T/s" >"$STORE/requests/$IC.json"
+$AP answer "$IC" --decision approved >"$T/o" 2>&1; rc=$?
+ok '[ -n "$IC" ] && [ $rc = 1 ] && [ "$(ndec "$IC")" = 0 ]' "(c) a request whose stored action was changed after its trusted line: the host answer is refused, no decision line"
+D_=$(act settings:QUEUE_MAX r10d); ID_=$(mkreq r10d write "$D_" card-r10d 300); HK=$(jq -r .host_kind "$CH")
+polset '.channel_kinds[$k] = false' --arg k "$HK"
+$AP answer "$ID_" --decision approved >"$T/o" 2>&1; rc=$?
+ok '[ -n "$ID_" ] && [ $rc = 1 ] && c STL-OWN-826 && [ "$(stat_of "$ID_")" = pending ]' "(d) channel_kinds[$HK] = false: the host answer is refused STL-OWN-826, still pending"
+;;
+crt1) # Gate B CRT-1 (GB-4 intake): a non-string detail, a line or a detail nested past the recursion limit cost their line only; a FIFO stream is refused, unchanged
+ok 'has approvals.py' "precondition: bin/approvals.py exists"
+EU="$PY $B/event_untrusted.py"
+stubkind discord; stubkind host-cli; setresume
+UT=$R/$(ix .untrusted_events); mkdir -p "$(dirname "$UT")"
+A=$(act settings:QUEUE_MAX crt1)
+ASK=$(jq -nc --slurpfile a "$A" '{class: "write", action: $a[0], summary: "zz crt1", card: "card-crt1"}')
+nreq() { ls "$STORE/requests" 2>/dev/null | grep -c '\.json$'; }
+# control: a valid ask alone becomes one request
+STUB_WORKER_MARK=1 $EU append --type approval-ask --what card-crt1 --detail "$ASK" >/dev/null 2>&1
+$AP intake >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && [ "$(nreq)" = 1 ]' "control: one valid ask, intake exit 0, one request"
+# case 1: a worker writes one ask line whose detail is a JSON object (not a string), then a second valid ask
+printf '%s\n' '{"type":"approval-ask","trusted":false,"global_id":"zz-crt1-bad","detail":{"class":"write"}}' >>"$UT"
+STUB_WORKER_MARK=1 $EU append --type approval-ask --what card-crt1b --detail "$(jq -c '.card = "card-crt1b"' <<<"$ASK")" >/dev/null 2>&1
+$AP intake >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && [ "$(nreq)" = 2 ]' "a non-string detail costs its own line only: the next valid ask still becomes a request (rc=$rc, requests=$(nreq), $(codes "$T/o"))"
+# case 2: a line nested 100000 deep (json.loads raises RecursionError, which is no ValueError)
+grep -v zz-crt1-bad "$UT" >"$T/ut.keep"; cat "$T/ut.keep" >"$UT"; head -c 100000 /dev/zero | tr '\0' '[' >>"$UT"; echo >>"$UT"
+STUB_WORKER_MARK=1 $EU append --type approval-ask --what card-crt1c --detail "$(jq -c '.card = "card-crt1c"' <<<"$ASK")" >/dev/null 2>&1
+$AP intake >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && [ "$(nreq)" -ge 3 ]' "a line nested past the recursion limit costs its own line only (rc=$rc, requests=$(nreq), $(codes "$T/o"))"
+# case 2b: the same through the sanctioned command only: event_untrusted.py --detail with a string nested 100000 deep (the line
+# itself is depth 2 and under 1 MiB, so the writer takes it; intake's json.loads(detail) raises RecursionError)
+grep -v '^\[\[\[' "$UT" >"$T/ut.keep"; cat "$T/ut.keep" >"$UT"
+STUB_WORKER_MARK=1 $EU append --type approval-ask --what card-crt1d --detail "$(head -c 100000 /dev/zero | tr '\0' '[')" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ]' "precondition: a worker writes the deep detail through event_untrusted.py (rc=$rc)"
+STUB_WORKER_MARK=1 $EU append --type approval-ask --what card-crt1e --detail "$(jq -c '.card = "card-crt1e"' <<<"$ASK")" >/dev/null 2>&1
+N0=$(nreq); $AP intake >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && grep -lq "card-crt1e" "$STORE"/requests/*.json 2>/dev/null' "an ask written through event_untrusted.py with a deeply nested detail costs its own line only: the next ask (card-crt1e) becomes a request (rc=$rc, $(codes "$T/o"))"
+# case 3: a FIFO at the stream path: intake must refuse within seconds, never hang
+rm -f "$UT"; mkfifo "$UT"
+timeout 15 $AP intake >"$T/o" 2>&1; rc=$?
+ok '[ $rc != 124 ]' "a FIFO planted at the untrusted stream path is refused, not waited on (rc=$rc; 124 = intake hung)"
+;;
+rt4) # Gate B RT-4 (GB-4 intake): a deeply nested line or detail between asks is skipped, every later intake goes on, unchanged
+ok 'has approvals.py' "precondition: bin/approvals.py exists"
+stubkind discord; stubkind host-cli; setresume
+US=$R/$(ix .untrusted_events); EU="$PY $B/event_untrusted.py"
+ask() { $EU append --type approval-ask --what "card-$1" --source worker --detail "$(jq -nc --arg c "card-$1" --arg o "$(d64 o$1)" --arg n "$(d64 n$1)" '{class: "write", action: {op: "set", target: "zz-t", old_digest: $o, new_digest: $n}, summary: "zz ask", card: $c}')" >/dev/null 2>&1; }
+nreq() { ls "$STORE/requests" 2>/dev/null | grep -c '\.json$'; }
+ask a1
+as_worker marker python3 -I -c 'import sys; open(sys.argv[1], "ab").write(b"[" * 200000 + b"\n")' "$US"
+ask a2
+$AP intake >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && [ "$(nreq)" = 2 ]' "a nested line between two asks: intake goes on and makes both requests (got exit $rc, $(nreq) request(s): $(grep -oE "[A-Za-z]+Error" "$T/o" | head -1))"
+$AP intake >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && [ "$(nreq)" = 2 ]' "a second intake: no failure, the later ask is taken (got exit $rc, $(nreq) request(s))"
+# the same through the ask's own detail (a well-formed approval-ask line whose detail is nested JSON), on a stream without the first line
+: >"$US"
+as_worker marker python3 -I -c 'import json, sys, uuid; open(sys.argv[1], "ab").write((json.dumps({"schema_version": 3, "trusted": False, "type": "approval-ask", "what": "x", "global_id": str(uuid.uuid4()), "detail": "[" * 200000}) + "\n").encode())' "$US"
+ask a3
+$AP intake >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && [ "$(nreq)" -ge 2 ] && [ -n "$(grep -l card-a3 "$STORE"/requests/*.json 2>/dev/null)" ]' "an ask whose detail is nested JSON: refused as data, the next ask is taken (got exit $rc, $(nreq) request(s))"
+;;
+rt5) # Gate B RT-5 (GB-4 intake): a FIFO at the untrusted stream is refused with a code at once, unchanged
+ok 'has approvals.py' "precondition: bin/approvals.py exists"
+stubkind discord; stubkind host-cli; setresume
+US=$R/$(ix .untrusted_events); mkdir -p "$(dirname "$US")"; rm -f "$US"
+as_worker marker mkfifo "$US"
+ok '[ -p "$US" ]' "setup: a worker made the untrusted stream a FIFO"
+timeout 20 $AP intake >"$T/o" 2>&1; rc=$?
+ok '[ $rc != 124 ]' "approvals.py intake does not hang on a FIFO stream (got exit $rc; 124 = killed after 20 s)"
+timeout 20 $AP intake >"$T/o" 2>&1; rc=$?   # fold note: ok() removed $T/o after the case above; the same command again for this one
+ok '[ $rc = 1 ] && c "STL-"' "approvals.py intake refuses the FIFO stream with a code (got exit $rc)"
+$PY $B/event_untrusted.py append --type note --what x >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && c STL-CFG-318' "control: event_untrusted.py append refuses the FIFO at once (318)"
+;;
+crt7) # Gate B CRT-7 (GB-5): the delivered request carries the action's new value, unchanged
+ok 'has approvals.py' "precondition: bin/approvals.py exists"
+EU="$PY $B/event_untrusted.py"
+stubkind discord; stubkind host-cli; setresume
+DC=$(jq -r --arg lk "$CHLK" '[.[$lk][]? | select(.kind == "discord") | .id][0]' "$CH")
+ACT=$(jq -nc --arg o "$(d64 old-crt7)" '{op: "set", target: "settings:QUEUE_MAX", old_digest: $o, new: "zz-real-value-999"}')
+ASK=$(jq -nc --argjson a "$ACT" '{class: "write", action: $a, summary: "set QUEUE_MAX to zz-harmless-1", card: "card-crt7"}')
+STUB_WORKER_MARK=1 $EU append --type approval-ask --what card-crt7 --detail "$ASK" >/dev/null 2>&1
+$AP intake >"$T/o" 2>&1; rc=$?
+REQ=$(ls "$T/ans/$DC.req."* 2>/dev/null | tail -n1)
+ok '[ $rc = 0 ] && [ -n "$REQ" ]' "precondition: the ask was delivered on $DC"
+ok 'grep -q zz-real-value-999 "$REQ" 2>/dev/null' "the delivered request carries the action's new value, so the owner can see what the digest approves (payload keys: $(jq -c keys "$REQ" 2>/dev/null))"
+;;
+rt7) # Gate B RT-7 (GB-5): the delivered request carries the action's op and new value, unchanged
+ok 'has approvals.py' "precondition: bin/approvals.py exists"
+stubkind discord; stubkind host-cli; setresume
+DET=$(jq -nc --arg o "$(d64 o7)" '{class: "delete", action: {op: "delete-all-backups", target: "zz-backups", old_digest: $o, new: "nothing left"}, summary: "read the weather forecast (harmless)", card: "card-rt7"}')
+$PY $B/event_untrusted.py append --type approval-ask --what card-rt7 --source worker --detail "$DET" >/dev/null 2>&1
+$AP intake >"$T/o" 2>&1; rc=$?
+REQ=$(ls "$T/ans/"*.req.* 2>/dev/null | head -1)
+ok '[ $rc = 0 ] && [ -s "$REQ" ]' "setup: intake made the request and delivered it to a stub adapter (exit $rc)"
+ok 'jq -e ".summary" "$REQ" >/dev/null' "info: the adapter got the agent's summary: $(jq -r .summary "$REQ" 2>/dev/null)"
+ok 'grep -q "delete-all-backups" "$REQ"' "the delivered request carries the action's op the decision binds to"
+ok 'grep -q "nothing left" "$REQ"' "the delivered request carries the action's new value the decision binds to"
+;;
+gb4) # Gate B GB-4: one rule for every untrusted input approvals.py parses (the agents' stream in intake, adapter output in collect): the writer's size and depth limits, every failure reported with a code and skipped, never the end of the run
+ok 'has approvals.py' "precondition: bin/approvals.py exists"
+stubkind discord; stubkind host-cli; setresume
+DC=$(jq -r --arg lk "$CHLK" '[.[$lk][]? | select(.kind == "discord") | .id][0]' "$CH")
+EU="$PY $B/event_untrusted.py"; UT=$R/$(ix .untrusted_events); mkdir -p "$(dirname "$UT")"
+nreq() { ls "$STORE/requests" 2>/dev/null | grep -c '\.json$'; }
+ASK=$(jq -nc --slurpfile a "$(act settings:QUEUE_MAX g4)" '{class: "write", action: $a[0], summary: "zz g4", card: "card-g4"}')
+gl() { jq -nc --arg d "$1" --arg g "$(uuid)" '{schema_version: 3, trusted: false, type: "approval-ask", what: "x", global_id: $g, detail: $d}' >>"$UT"; }
+python3 -I -c 'import sys; open(sys.argv[1], "ab").write(b"\"" + b"a" * (1 << 20) + b"\"\n" + b"\xff\xfe{\n")' "$UT"
+gl '[1]'; gl "$(printf '%.0s[' $(seq 20))$(printf '%.0s]' $(seq 20))"; gl '{"class": ["write"], "action": {"op": 1}, "summary": 2, "card": 3}'
+STUB_WORKER_MARK=1 $EU append --type approval-ask --what card-g4 --detail "$ASK" >/dev/null 2>&1
+$AP intake >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && [ "$(nreq)" = 1 ] && [ "$(grep -c "^STL-CFG-318 " "$T/o")" = 2 ] && [ "$(grep -c "^STL-OWN-829 " "$T/o")" = 3 ] && ! grep -qE "unexpected|Traceback" "$T/o"' "intake: a line over the writer's size limit, a line that is not JSON, a detail that is a list, one nested past the writer's depth and one of wrong shapes: each reported (318 / 829) and skipped, the next ask becomes a request"
+mv "$UT" "$T/ut.real"; ln -s "$T/ut.real" "$UT"
+$AP intake >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && c "^STL-CFG-318 " && [ "$(nreq)" = 1 ]' "intake: a stream that is a symbolic link is refused STL-CFG-318, nothing read through it"
+rm -f "$UT"; mv "$T/ut.real" "$UT"
+ID=$(ls "$STORE/requests" | sed -n 's/\.json$//p' | head -1); $AP deliver "$ID" --channel "$DC" >/dev/null 2>&1; REF=$(lastref "$DC")
+NONCE=$(jq -r .nonce "$STORE/requests/$ID.json")
+{ head -c 100000 /dev/zero | tr '\0' '['; echo; echo 'not json'; echo '[1, 2]'; echo '{"request_id": 5, "nonce": [], "decision": {}, "user": null, "message_ref": 1}'
+  python3 -I -c 'print("\"" + "a" * (1 << 20) + "\"")'; } >>"$T/ans/$DC.in"
+answer "$DC" "$ID" "$NONCE" approved "$OWNER_ID" "$REF"
+collect "$DC"; rc=$?
+ok '[ -n "$ID" ] && [ $rc = 1 ] && [ "$(grep -c "^STL-OWN-830 " "$T/o")" = 5 ] && ! grep -qE "unexpected|Traceback" "$T/o" && [ "$(stat_of "$ID")" = approved ]' "collect: a line nested past the recursion limit, one not JSON, one of wrong shapes (twice) and one over the size limit: each refused STL-OWN-830; the owner's answer after them is decided"
+;;
+gb5) # Gate B GB-5: what a channel gets to show the owner is the exact action (op, target, new or new_digest) and the digest; new is masked when the target names a secret or a value pattern hides it
+ok 'has approvals.py' "precondition: bin/approvals.py exists"
+stubkind discord; setresume
+DC=$(jq -r --arg lk "$CHLK" '[.[$lk][]? | select(.kind == "discord") | .id][0]' "$CH")
+# shown <tag> <target> <new JSON>: a request of that action delivered on the stub; its payload in $T/p-<tag>
+shown() { jq -nc --arg t "$2" --arg o "$(d64 "o$1")" --argjson n "$3" '{op: "set", target: $t, old_digest: $o, new: $n}' >"$T/act-$1.json"
+  local id; id=$(mkreq "$1" write "$T/act-$1.json" "card-$1" 120); $AP deliver "$id" --channel "$DC" >/dev/null 2>&1; cp "$T/ans/$DC.req.$(cat "$T/ans/$DC.n")" "$T/p-$1"; }
+pv() { jq -c "$2" "$T/p-$1" 2>/dev/null; }
+shown g1 settings:QUEUE_MAX 7
+ok '[ "$(pv g1 .action)" = "{\"op\":\"set\",\"target\":\"settings:QUEUE_MAX\",\"new\":7}" ] && [ "$(pv g1 .digest)" = "\"$(rf g1 digest)\"" ] && [ "$(pv g1 .digest)" = "\"$(adig "$T/act-g1.json")\"" ]' "a plain value: the payload shows op, target and new as they are, and the digest of that action"
+shown g2 owner-settings:ZZ_API_TOKEN '"plain-zz-secret-1"'
+ok '[ "$(pv g2 .action.new)" = "\"***\"" ] && [ "$(pv g2 .action.op)" = "\"set\"" ] && ! grep -rqF plain-zz-secret-1 "$T/p-g2" "$LOG"' "a target whose key is a secret (a redact pattern): new is ***, never in the payload or the log"
+shown g3 settings:QUEUE_MAX '"Bearer zzabc123def"'
+ok '[ "$(pv g3 .action.new)" = "\"***\"" ] && ! grep -qF zzabc123def "$T/p-g3"' "a value a value pattern of the catalog matches: new is ***"
+shown g4 connections '{"api_key": "zzzzzzzz2", "name": "zz-visible"}'
+ok '[ "$(pv g4 .action.new)" = "{\"api_key\":\"***\",\"name\":\"zz-visible\"}" ] && ! grep -qF zzzzzzzz2 "$T/p-g4"' "an object value: the keys a redact pattern names are ***, the rest is shown"
+shown g5 owner-settings '"PLAIN_ZZ=plain-zz-secret-3"'
+ok '[ "$(pv g5 .action.new)" = "\"***\"" ] && ! grep -qF plain-zz-secret-3 "$T/p-g5"' "a scalar for a whole row that has redact keys: masked whole (as the event log masks it)"
+ID=$(mkreq g6 write "$(act settings:QUEUE_MAX g6)" card-g6 120); $AP deliver "$ID" --channel "$DC" >/dev/null 2>&1; cp "$T/ans/$DC.req.$(cat "$T/ans/$DC.n")" "$T/p-g6"
+ok '[ "$(pv g6 .action.new_digest)" = "\"$(jq -r .new_digest "$T/act-g6.json")\"" ] && [ "$(pv g6 ".action | keys")" = "[\"new_digest\",\"op\",\"target\"]" ]' "an action by digest: op, target and new_digest are shown"
 ;;
 esac
 finish

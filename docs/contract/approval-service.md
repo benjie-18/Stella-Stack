@@ -37,6 +37,15 @@ Check a message with `python3 bin/stella_data.py validate approval-request <file
   (`intake`, `collect`, `deliver`, `answer`, `status`, `wait`) writes ONE trusted decision line `expired` (a denial) under
   the store's lock and runs `resume` once, so the card is never left blocked. A later answer is refused STL-OWN-822.
 
+## Untrusted input
+
+Every value `approvals.py` takes from outside the host is parsed by one rule: a line of the agents' stream (intake), the
+`detail` of an ask, and a line an adapter prints (collect). The stream is opened through the event writer's opener (no
+link, regular file only, without blocking: a FIFO is refused STL-CFG-318 at once). Each value must be text within the
+writer's limits (`WRITE_MAX` bytes, `WRITE_DEPTH` nesting) that parses as JSON; any failure (not JSON, too large, too deep,
+wrong shapes, an unexpected exception) costs that value only: it is reported with its code (a stream line: STL-CFG-318; an
+ask: STL-OWN-829; an answer line: STL-OWN-830) and the next one is taken. Only a failure of the trusted log ends the run.
+
 ## Deciding an answer
 
 An answer is `{request_id, nonce, decision: approved|denied, user, message_ref, digest?}`. The first failing check wins:
@@ -61,8 +70,15 @@ A row of `.stella/channels.json`: `{id, kind, deliver: [argv], collect: [argv], 
 is relative to the stack root or absolute. A new channel, of a known kind or a new one, is a new row: no code change (a
 new kind also needs its `channel_kinds` entry and a channel-identity provider in the owner-auth policy).
 
-1. **deliver**: the request on stdin (`id, nonce, summary, approval_class, card, target, expires_at, digest`; no secret);
-   show it in the channel's own medium and print one message ref. Delivering the same request twice shows it once.
+1. **deliver**: the request on stdin (`id, nonce, summary, approval_class, card, target, expires_at, digest, action`; no
+   secret); show it in the channel's own medium and print one message ref. Delivering the same request twice shows it once.
+   The owner approves the exact action, never only the agent's words: a channel shows `action` (`{op, target, new}` or
+   `{op, target, new_digest}`) and `digest` (the shipped adapters print the action as one line of JSON, then the agent's
+   summary as one line). `new` is `***` when the target names a secret (its key matches a `redact_keys` pattern or is a
+   secret setting of the registry; a whole-row target of a row with redact keys or a secret setting: a scalar value),
+   inside an object the keys those patterns name are `***`, and the whole value is `***` when a value pattern of the
+   connections catalog (`redaction_patterns`) matches any part of it, it is too long to check, or it cannot be judged.
+   The store keeps the action unmasked; the digest is always over it.
 2. **collect**: the pending requests delivered on this channel on stdin (`[{id, nonce, message_ref}]`); print one answer
    line per answer. Who answered is the channel's own user id; the owner check is the service's, never the adapter's.
 3. **fail closed**: an adapter that fails, times out (`adapter_timeout_s`) or prints a line that is not an answer is
