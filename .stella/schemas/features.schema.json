@@ -7,6 +7,16 @@
     "schema_version": {
       "const": 1
     },
+    "phase_order": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      },
+      "description": "The build phases in order, earliest first: `stella_data.py stubs --phase P` lists the stubs due at or before P, and a stub's due_phase must be one of these. Add a phase here before a stub names it."
+    },
     "entries": {
       "type": "array",
       "items": {
@@ -40,6 +50,25 @@
               "null"
             ]
           },
+          "due_phase": {
+            "type": [
+              "string",
+              "array"
+            ],
+            "minItems": 1,
+            "uniqueItems": true,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+            },
+            "description": "A stub (rule 13): the phase, or the phases, of phase_order by which the real thing replaces it; with replaced_by. `stella_data.py stubs --phase P` fails (STL-OWN-810) while a stub due at or before P is still listed."
+          },
+          "replaced_by": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What replaces the stub (required with due_phase)."
+          },
           "global_id": {
             "type": "string",
             "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
@@ -58,12 +87,18 @@
           "depends_on",
           "flag"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "dependentRequired": {
+          "due_phase": [
+            "replaced_by"
+          ]
+        }
       }
     }
   },
   "required": [
     "schema_version",
+    "phase_order",
     "entries"
   ],
   "additionalProperties": false
