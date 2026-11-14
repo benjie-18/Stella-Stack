@@ -91,6 +91,20 @@ ed wide role-assignments.json '.assignments += [{id:"proj1-builder",scope:{level
 ok 'refuses wide check && grep -q "cloud-one" "$T/o" && grep -q STL-CFG-310 "$T/o"' "28 a project assignment that widens the data policy makes check exit 1"
 ed wide data-policy.json '.projects.proj1 = {mode:"allowed_providers",allowed_providers:["cloud-one"]}'; ed wide data-policy.json ".projects.proj1 += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'sd wide check' "29 the same assignment passes when the project policy names that provider (control)"
+# FIN-CRT-02 every id a role assignment names (scope.project, the policy's allowed_providers, a link's connection) resolves by its
+# alias or its global_id to one record: the policy and the same-scope rule judge the record, never the spelling
+PG=$(jq -r .projects.proj1.global_id "$T/wide/.stella/data-policy.json"); CG=$(jq -r '.entries[] | select(.id == "cloud-one") | .global_id' "$T/wide/.stella/connections.json")
+rm -rf "$T/fg"; cp -r "$T/wide" "$T/fg"; ed fg data-policy.json '.projects.proj1 |= (.mode = "local_only" | .allowed_providers = [])'
+ed fg role-assignments.json "(.assignments[] | select(.id == \"proj1-builder\")).scope.project = \"$PG\""
+ok 'refuses fg check && grep -q "^STL-CFG-310 .*role-assignments: .*proj1-builder: chain\[0\]: .*cloud-one.*not allowed by the data policy for .*proj1" "$T/o"' "29a FIN-CRT-02 an override naming a Local only project by its global_id is judged under that project's policy"
+rm -rf "$T/fd"; cp -r "$T/wide" "$T/fd"; ed fd role-assignments.json ".assignments += [.assignments[] | select(.id == \"proj1-builder\") | .id = \"proj1-builder-g\" | .scope.project = \"$PG\" | . += {$(ids)}]"
+ok 'refuses fd check && grep -q "^STL-CFG-310 .*role-assignments: .*proj1-builder-g.*same scope, role and effort mode" "$T/o"' "29b FIN-CRT-02 two overrides for one project, one by alias and one by global_id, are one scope and refused"
+rm -rf "$T/fa"; cp -r "$T/wide" "$T/fa"; ed fa data-policy.json ".projects.proj1.allowed_providers = [\"$CG\"]"
+ok 'sd fa check >"$T/o" 2>&1' "29c FIN-CRT-02 a project policy naming a provider by its global_id in allowed_providers allows that provider"
+ed fa role-assignments.json "(.assignments[] | select(.id == \"proj1-builder\")).scope.project = \"$PG\""
+ok 'sd fa check >"$T/o" 2>&1' "29d control: the same override naming its project by global_id passes under that project's policy"
+ed fa data-policy.json ".projects.proj1.allowed_providers = [$(jq '.entries[] | select(.id == "claude-subscription") | .global_id' "$T/wide/.stella/connections.json")]"
+ok 'refuses fa check && grep -q "proj1-builder: chain\[0\]: .*cloud-one.*not allowed by the data policy for .*proj1" "$T/o"' "29e control: allowed_providers naming another connection by its global_id refuses this one (the alias controls are 28, 29 and 54)"
 mk bad10; ed bad10 features.json '.entries += [{id:"zz-a",owner_phase:"x",status:"planned",depends_on:["zz-b"],flag:null},{id:"zz-b",owner_phase:"x",status:"planned",depends_on:["zz-a"],flag:null}]'; ed bad10 features.json ".entries[-2] += {$(ids)} | .entries[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses bad10 check && grep -q "zz-" "$T/o"' "30 a feature dependency cycle is refused"
 mk bad11; ed bad11 features.json '.entries[0].depends_on += ["no-such-feature"]'
