@@ -25,7 +25,7 @@ export PATH="$T/bin:$PATH" FAKE_CARDS=$T/cards FAKE_LOG=$T/hermes.log
 EXPECT_HOME=$(getent passwd "$(id -u)" | cut -d: -f6)/.hermes; export EXPECT_HOME
 mkdir -p "$T/bin" "$FAKE_CARDS"
 sleep 600 & STR=$!   # a live process that is no ancestor of any hook
-trap 'kill $STR 2>/dev/null; rm -rf "$T" ${NR:+"$NR"} ${NR2:+"$NR2"} ${LN:+"$LN"}' EXIT   # NR, NR2, LN: the S3A-01 rows build folders under /workspace/.scratch, outside $T
+trap 'kill $STR 2>/dev/null; rm -rf "$T" ${NR:+"$NR"} ${NR2:+"$NR2"} ${LN:+"$LN"} ${W4D:+"$W4D"}' EXIT   # NR, NR2, LN: the S3A-01 rows build folders under /workspace/.scratch, outside $T; W4D: the F1c W4a index copy
 cat >"$T/bin/hermes" <<'SH'
 #!/usr/bin/env bash
 # stub: `kanban --board <b> show <id> --json` and `kanban --board <b> list [--assignee <p>] --status running --json`, from
@@ -412,6 +412,18 @@ for p in $BUILDERS; do
 done
 # ---- F1 W4 round 2 (G2, G4): the guard reads a command the way the shell will. A card worktree OWN under /workspace is the proven one.
 NL=$'\n'; WGA=$T/sup/logs/alerts.log
+# F1c W4a (B4, D0/D4): the new protected paths, named by the index: the owner-key stub, the approval store (a request and the nonces), the event
+# writer's state, the owner-only rows grants, host-access, the owner-auth policy and connections (terms_ok), and the device registry (its row, or the
+# row W2b ships when the index has none yet). The hook reads the index through a table copy whose data_index names a copy of the stack's index under
+# /workspace/.scratch (bin/roles.py reads <ROOT>/<data_index>); a missing key or row names itself and fails.
+IX=/workspace/$(jq -r .data_index /workspace/docs/hermes-local/roles.json); mkdir -p /workspace/.scratch; W4D=$(mktemp -d -p /workspace/.scratch "$P-w4a.XXXXXX")
+DEVP=$(jq -r '[.files[] | select(.id == "devices") | .path][0] // empty' "$IX")
+if [ -n "$DEVP" ]; then cp "$IX" "$W4D/index.json"; else DEVP=.stella/devices.json; jq --arg p "$DEVP" '.files += [{id: "devices", path: $p, owner_only: true}]' "$IX" >"$W4D/index.json"; fi
+W4T=$T/w4a-roles.json; jq --arg i "${W4D#/workspace/}/index.json" '.data_index = $i' /workspace/docs/hermes-local/roles.json >"$W4T"
+W4A=(); for x in owner_key approval_store event_writer_state; do W4A+=("$(jq -r --arg x "$x" '.[$x] // "zz-no-index-key-\($x)"' "$IX")"); done
+W4A+=("${W4A[1]}/nonces"); W4A[1]=${W4A[1]}/requests/zz.json
+for i in grants host-access owner-auth connections; do W4A+=("$(jq -r --arg i "$i" '[.files[] | select(.id == $i and .owner_only == true) | .path][0] // "zz-no-owner-row-\($i)"' "$IX")"); done
+W4A+=("$DEVP" "$(jq -r .event_log "$IX")")
 for p in $BUILDERS; do
   OWN=/workspace/.worktrees/$C
   wg() { hookrun bind $C $p $OWN terminal "$(tjson "$1")" "${2:-$OWN}"; }
@@ -513,6 +525,14 @@ G2GIT
   ok '[ "$(wg "echo x > /workspace/.stella/settings.json")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out" && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ]' "G4 $p: a redirect into owner data: the code, one alert line"
   : >"$WGA"
   ok '[ "$(wg "echo x > /workspace/.supervisor/logs/events.jsonl")" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out" && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ]' "G4 $p: a redirect into an owner state path (the event log): the code, one alert line"
+  for x in "${W4A[@]}"; do   # F1c W4a: each new protected path, through the index copy (above)
+    : >"$WGA"
+    ok '[ "$(hookrun bind $C $p $OWN write_file "$(wjson "/workspace/$x")" $OWN ROLES_FILE=$W4T)" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out" && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ]' "F1c W4a $p: a write of $x: the code, one alert line"
+    : >"$WGA"
+    ok '[ "$(hookrun bind $C $p $OWN terminal "$(tjson "echo x > /workspace/$x")" $OWN ROLES_FILE=$W4T)" = 2 ] && grep -qF "[STL-CFG-312]" "$T/out" && [ "$(grep -c "^STL-CFG-312 " "$WGA")" = 1 ]' "F1c W4a $p: a redirect into $x: the code, one alert line"
+    : >"$WGA"
+    ok '[ "$(hookrun bind $C $p $OWN terminal "$(tjson "git add -f /workspace/$x")" /workspace ROLES_FILE=$W4T)" = 2 ] && grep -qF "STL-" "$T/out"' "F1c W4a $p: git add of $x in the main checkout: refused with a code"
+  done
   : >"$WGA"
   ok '[ "$(wg "echo x > /workspace/bin/y")" = 2 ] && ! grep -qF "STL-CFG-312" "$T/out" && grep -qF "[STL-GRD-604]" "$T/out" && [ "$(grep -c "^STL-GRD-604 " "$WGA")" = 1 ] && [ "$(wc -l <"$WGA")" = 1 ]' "G4 $p: an older refusal keeps its text, is not called owner data, and carries the role-rule code with one alert line (B.1, r5: was no code and no line)"
 done

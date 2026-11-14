@@ -514,12 +514,15 @@ def owner_settings(d):
     return [f"{ROOT}/{p}" for p in d["owner_settings"]]
 
 
+STATE_KEYS = ("backup_dir", "applied_state", "event_log", "owner_key", "approval_store", "event_writer_state")   # the index keys that name state paths (B1, F1c D0)
+
+
 def index(d, root=None):
     """The data index (d['data_index']) parsed and shape-checked. Raises RolesError when it cannot be read: callers fail closed."""
     try:
         with open(f"{root or ROOT}/{d['data_index']}", encoding="utf-8") as f:
             ix = json.load(f, object_pairs_hook=_pairs)
-        if not (isinstance(ix, dict) and all(_rel(ix.get(k)) for k in ("backup_dir", "applied_state", "event_log"))
+        if not (isinstance(ix, dict) and all(_rel(ix.get(k)) for k in STATE_KEYS)
                 and isinstance(ix.get("files"), list)
                 and all(isinstance(x, dict) and _rel(x.get("path")) and isinstance(x.get("owner_only"), bool) for x in ix["files"])):
             raise ValueError("shape")
@@ -535,7 +538,7 @@ def owner_paths(d, root=None):
     apply tool's state paths too: every path no role may write. Raises RolesError."""
     ix = index(d, root)
     return sorted({d["data_index"], *d["owner_data"], *d["owner_settings"], *(x["path"] for x in ix["files"] if x["owner_only"]),
-                   ix["backup_dir"], ix["applied_state"], ix["event_log"]})   # K1: the apply tool's state is a path no role writes either, the same list
+                   *(ix[k] for k in STATE_KEYS)})   # K1: the state paths are paths no role writes either, the same list
 
 
 def owner_data(d):
@@ -545,9 +548,10 @@ def owner_data(d):
 
 def state_paths(d, root=None):
     """B1 (F1 W4): the apply tool's state, relative: its backups (owner values in clear), applied state and event log (old and new
-    owner values). No role reads or writes them and no OS box mounts them. Raises RolesError when the index cannot be read."""
+    owner values); F1c D0: the owner-key stub, the approval store (a folder) and the event writer's state (its key). No role reads or
+    writes them and no OS box mounts them; the agents' untrusted event stream is not one. Raises RolesError when the index cannot be read."""
     ix = index(d, root)
-    return [ix["backup_dir"], ix["applied_state"], ix["event_log"]]
+    return [ix[k] for k in STATE_KEYS]
 
 
 def state_trees(d):

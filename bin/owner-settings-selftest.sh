@@ -397,6 +397,54 @@ NS=$(wc -l <"$T/j/sample"); ND=$(agree "$T/j/sample" ""); NX=$(agree "$T/j/sampl
 say "$([ "$NS" -ge 100 ] && [ "$ND" = 0 ]; echo $?)" "T1 route agreement: $NS sampled rows of $(wc -l <"$T/j/rows") judged in one process give the same exit code and output as a real hook process ($ND differ)"
 say "$([ "$NX" -gt 0 ]; echo $?)" "T1 route agreement, negative control: a planted one-word difference in the in-process hooks is caught ($NX of $NS rows differ)"
 
+# 3d F1c W4a (B4, D0/D4): the new protected paths, for every role. Named by the index (a missing key or row names itself and fails): the owner-key
+# stub, the approval store (a request file and the nonces), the event writer's state and the trusted event log are state paths (no role reads or
+# writes them); the owner-only rows grants, host-access, the owner-auth policy, connections (terms_ok) and the device registry (its row, or the row
+# W2b ships while the index has none) are owner data (no role writes them); unattended mode lives in the owner settings file (sections 1 to 3, 5, 6).
+# Write tool, patch, shell redirect and copy, git; reads and content searches of the state paths. The hooks read the index through a table copy whose
+# data_index names a copy of $STACK's index under .scratch (bin/roles.py reads <ROOT>/<data_index>, so the tree's own index is the one judged).
+W4I=$STACK/$(jq -r .data_index "$SRC")
+DEVP=$(jq -r '[.files[] | select(.id == "devices") | .path][0] // empty' "$W4I"); DEVW="its index row"
+if [ -n "$DEVP" ]; then cp "$W4I" "$FIX/w4a-index.json"; else DEVP=.stella/devices.json; DEVW="the row W2b ships, in a scratch index"; jq --arg p "$DEVP" '.files += [{id: "devices", path: $p, owner_only: true}]' "$W4I" >"$FIX/w4a-index.json"; fi
+W4T=$T/w4a-roles.json; jq --arg i "${FIX#/workspace/}/w4a-index.json" '.data_index = $i' "$SRC" >"$W4T"
+W4P=$T/w4a-probe.json; jq --arg i "${FIX#/workspace/}/w4a-index.json" '.data_index = $i' "$T/probe.json" >"$W4P"   # section 5's probe table, same index
+W4K=(); for x in owner_key approval_store event_writer_state; do W4K+=("$(jq -r --arg x "$x" '.[$x] // "zz-no-index-key-\($x)"' "$W4I")"); done
+W4S=("${W4K[0]}" "${W4K[1]}/requests/zz.json" "${W4K[1]}/nonces" "${W4K[2]}" "$(jq -r .event_log "$W4I")")
+W4O=(); for i in grants host-access owner-auth connections; do W4O+=("$(jq -r --arg i "$i" '[.files[] | select(.id == $i and .owner_only == true) | .path][0] // "zz-no-owner-row-\($i)"' "$W4I")"); done; W4O+=("$DEVP")
+W4U=$(jq -r '.untrusted_events // empty' "$W4I")
+SPJ=$(ROLES_FILE=$W4T python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import roles; print(json.dumps(roles.state_paths(roles.load())))' "$STACK/bin" 2>&1)
+OPJ=$(ROLES_FILE=$W4T python3 -I "$STACK/bin/roles.py" owner-data 2>&1)
+inj() { jq -e --arg k "$2" 'index([$k]) != null' <<<"$1" >/dev/null 2>&1; }
+for k in "${W4K[@]}"; do
+  say "$(inj "$SPJ" "$k"; echo $?)" "3d roles.state_paths() holds $k (no role reads or writes it, no box mounts it)"
+  say "$(inj "$OPJ" "$k"; echo $?)" "3d roles.py owner-data holds $k"
+done
+for k in "${W4O[@]}"; do say "$(inj "$OPJ" "$k"; echo $?)" "3d roles.py owner-data holds the owner-only row $k"; done
+say "$([ -n "$W4U" ] && jq -e . <<<"$SPJ" >/dev/null 2>&1 && ! inj "$SPJ" "$W4U" && ! inj "$OPJ" "$W4U"; echo $?)" "3d the untrusted stream (${W4U:-no index key}) is in neither list (the agents' own stream)"
+MT=$W4T; export ROLES_FILE=$W4T
+jstart s3d
+while read -r lab role; do
+  setw "$lab"; L="3d $lab/$role"
+  for x in "${W4S[@]}" "${W4O[@]}"; do
+    w=$x; [ "$x" = "$DEVP" ] && w="$x ($DEVW)"
+    refuse "$L" "$role" write_file "$(js --arg p "/workspace/$x" '{path: $p, content: "x"}')" "$w"
+    refuse "$L" "$role" patch "$(js --arg p "/workspace/$x" '{mode: "replace", path: $p, old_string: "a", new_string: "b"}')" "$w"
+    for c in "echo x > /workspace/$x" "cp /tmp/x /workspace/$x" "git add -f /workspace/$x" "git -C /workspace checkout HEAD -- $x"; do
+      refuse "$L" "$role" terminal "$(js --arg c "$c" '{command: $c}')" "$c"
+    done
+  done
+  for x in "${W4S[@]}"; do
+    refuse "$L" "$role" read_file "$(js --arg p "/workspace/$x" '{path: $p}')" "state path $x"
+    refuse "$L" "$role" search_files "$(js --arg p "/workspace/${x%/*}" '{pattern: "x", path: $p}')" "folder of state path $x (content search)"
+    for c in "cat /workspace/$x" "head -c 5 $x" "grep -r x /workspace/${x%/*}" "python3 -c \"print(open('/workspace/$x').read())\""; do
+      refuse "$L" "$role" terminal "$(js --arg c "$c" '{command: $c}')" "$c"
+    done
+  done
+  [ -z "$W4U" ] || allow "$L" "$role" read_file "$(js --arg p "/workspace/$W4U" '{path: $p}')" "the untrusted stream $W4U (control: not protected)"
+done < <(pairs)
+jstop
+MT=$SRC; export ROLES_FILE=$SRC
+
 # 3c F1 W4 round 2 (the critical red team asserted decisions, not effects): the commands the hooks let through are run for real, in a scratch owner-data
 # folder under .scratch; the owner file there must be byte-identical afterwards, for every role. A control that is allowed must change its own file.
 NL=$'\n'; EFF=$FIX/eff; mkdir -p "$EFF"; printf 'orig\n' >"$EFF/owner.txt"; EFH=$(sha256sum <"$EFF/owner.txt"); printf 'new\n' >"$T/effsrc"
@@ -573,6 +621,19 @@ for m in main thread; do
       brefuse $m terminal "$(js --arg c "$x" '{command: $c}')" "owner command: $x"
     done
   done < <(jq -r '.owner_commands[]' "$MT")
+  # F1c W4a (3d): the new protected paths from the bound worker's main thread and from a delegated child (a second thread)
+  MT=$W4P; export ROLES_FILE=$W4P
+  for x in "${W4S[@]}" "${W4O[@]}"; do
+    brefuse $m write_file "$(js --arg p "/workspace/$x" '{path: $p, content: "x"}')" "F1c W4a $x"
+    for c in "echo x > /workspace/$x" "git -C $WS add -f /workspace/$x" "git -C /workspace checkout HEAD -- $x"; do
+      brefuse $m terminal "$(js --arg c "$c" '{command: $c}')" "F1c W4a: $c"
+    done
+  done
+  for x in "${W4S[@]}"; do
+    brefuse $m read_file "$(js --arg p "/workspace/$x" '{path: $p}')" "F1c W4a state path $x"
+    brefuse $m terminal "$(js --arg c "cat /workspace/$x" '{command: $c}')" "F1c W4a: cat of state path $x"
+  done
+  MT=$T/probe.json; export ROLES_FILE=$MT
   ballow $m terminal "$(js --arg c "echo x > $WS/zz-ok.txt" '{command: $c}')" "an ordinary write in its own worktree (control)"
   ballow $m write_file "$(js --arg p "$WS/docs-ok.md" '{path: $p, content: "x"}')" "an ordinary file in its own worktree (control)"
 done

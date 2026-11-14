@@ -2274,6 +2274,22 @@
         "owner-auth"
       ],
       "why": "F1c W2a: the owner-authenticator and its selftest (which also runs stella_data.py stubs over the features file)"
+    },
+    {
+      "globs": [
+        ".stella/grants.json",
+        ".stella/host-access.json",
+        ".stella/schemas/grants.schema.json",
+        ".stella/schemas/host-access.schema.json"
+      ],
+      "targets": [
+        "commit-guard",
+        "owner-settings",
+        "stella-apply",
+        "stella-data",
+        "write-guard"
+      ],
+      "why": "F1c W4a: owner-only index rows: stella-apply stage() copies every json row and the schemas folder (bin/stella-apply.py:436-445), stella_data check validates them, and the protected-path selftests name their paths from the index (owner-settings 3d, write-guard G4, commit-guard F1c W4a)"
     }
   ]
 }
