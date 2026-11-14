@@ -505,6 +505,59 @@
       },
       "global_id": "72c0dd38-7348-4693-957c-4ac211381d93",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "loopback-guard",
+      "kind": "command",
+      "summary": "Judge a request to the local HTTP API against the loopback API contract: Host, Origin (every request), endpoint, API token, Origin and CSRF token on a state-changing request, owner proof on an owner-write endpoint (the library the real API calls; the CLI replays one request)",
+      "keywords": [
+        "loopback",
+        "api",
+        "host",
+        "origin",
+        "csrf",
+        "token",
+        "owner-write",
+        "rebinding"
+      ],
+      "inputs": "a request file {method, path, headers, body, session {api_token, csrf_token, port}}",
+      "outputs": "{ok, code[, cause, message]} on stdout; exit 0 allowed, 1 refused with STL-OWN-850..858 and one alert line; an accepted owner proof is spent",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/loopback_guard.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "1f7505b9-04c7-48d0-ad9c-7bc8efce683d",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "loopback-api-double",
+      "kind": "command",
+      "summary": "The loopback API's test double: serves the contract's endpoints on the IPv4 loopback address and a free port with the loopback guard in front, and does nothing else (until E1 builds the real API)",
+      "keywords": [
+        "loopback",
+        "api",
+        "double",
+        "test",
+        "http"
+      ],
+      "inputs": "--port P (0 = a free port) and --session F ({api_token, csrf_token})",
+      "outputs": "the bound port on the first stdout line; HTTP 200 {ok: true} or 4xx {ok: false, code[, cause], message} per request; STL-OWN-858/859 when it cannot start",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/loopback-api-double.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "c62fd95a-734a-497f-b4c8-e2f0ce1d1699",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

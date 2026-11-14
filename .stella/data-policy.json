@@ -50,6 +50,9 @@
     "device": {
       "sync_class": "local-only"
     },
+    "endpoint": {
+      "sync_class": "local-only"
+    },
     "event": {
       "sync_class": "local-only"
     },

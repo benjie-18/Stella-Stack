@@ -169,6 +169,9 @@
     },
     "devices": {
       "mark": "hermetic"
+    },
+    "loopback": {
+      "mark": "hermetic"
     }
   },
   "test_like": [
@@ -1988,14 +1991,6 @@
       "why": "bin/bench.sh reads every task folder"
     },
     {
-      "globs": [
-        "docs/contract/*.md",
-        ".gitignore"
-      ],
-      "targets": [],
-      "why": "prose no selftest names. PLAN.md (named in docs/hermes-local/fallback-routing.json) and .claude/agents/*.md (tester.md is test-like) may not be here (the prose rule refuses them): they have their own rows"
-    },
-    {
       "scan": true,
       "globs": [
         "bin/*",
@@ -2472,6 +2467,7 @@
         "event-log",
         "kanban-board",
         "kanban-guard",
+        "loopback",
         "merge-card",
         "model-watch",
         "omniroute-run",
@@ -2497,6 +2493,83 @@
         "write-guard"
       ],
       "why": "F1c W2b: the device registry is an owner-only row; the guards' selftests protect its path"
+    },
+    {
+      "globs": [
+        "docs/contract/README.md",
+        "docs/contract/approval-service.md",
+        "docs/contract/cards-and-vault.md",
+        ".gitignore"
+      ],
+      "targets": [],
+      "why": "prose no selftest names. PLAN.md (named in docs/hermes-local/fallback-routing.json) and .claude/agents/*.md (tester.md is test-like) may not be here (the prose rule refuses them): they have their own rows"
+    },
+    {
+      "globs": [
+        "bin/loopback_guard.py",
+        "bin/loopback-api-double.py",
+        "bin/loopback-selftest.sh",
+        "docs/contract/loopback-api.md"
+      ],
+      "targets": [
+        "loopback"
+      ],
+      "why": "F1c W5: the loopback API guard, its test double, its selftest (the tester's wave-3 T5a cases) and the contract document it names the codes in"
+    },
+    {
+      "globs": [
+        ".stella/loopback-api.json",
+        ".stella/schemas/loopback-api.schema.json"
+      ],
+      "targets": [
+        "commit-guard",
+        "loopback",
+        "owner-settings",
+        "stella-apply",
+        "stella-data",
+        "write-guard"
+      ],
+      "why": "F1c W5: the loopback-api row is owner-only: the guard and the double read it, stella-apply stage() copies every json row and the schemas folder, stella_data check validates it, and the protected-path selftests name their paths from the index"
+    },
+    {
+      "globs": [
+        ".stella/data-files.json",
+        ".stella/schemas/event.schema.json",
+        ".supervisor/limits.env",
+        "SUPERVISOR.md",
+        "bin/alert-catalog.sh",
+        "bin/alert.sh",
+        "bin/alert_catalog.py",
+        "bin/apply-hermes-local.sh",
+        "bin/escalation-complete.sh",
+        "bin/escalation-discord.sh",
+        "bin/escalation-on-block.sh",
+        "bin/escalation-on-claim.sh",
+        "bin/escalation-on-complete.sh",
+        "bin/escalation-thread.sh",
+        "bin/event_log.py",
+        "bin/event_untrusted.py",
+        "bin/kanban-board.sh",
+        "bin/kanban-guard.sh",
+        "bin/owner-config.sh",
+        "bin/owner_auth.py",
+        "bin/owner_config.py",
+        "bin/register-escalation-hook.sh",
+        "bin/register-toolsets.sh",
+        "bin/role-guard.py",
+        "bin/roles.py",
+        "bin/stella-apply.py",
+        "bin/stella_data.py",
+        "bin/worker_env.py",
+        "docs/alert-codes.md",
+        "docs/hermes-local/alert-catalog.json",
+        "docs/hermes-local/board.md",
+        "docs/hermes-local/roles.json"
+      ],
+      "targets": [
+        "loopback"
+      ],
+      "why": "F1c W5: what the loopback selftest reaches (bin/test-map.py reach): the guard imports owner_auth and stella_data, owner_auth asks worker_env (roles, the board), every refusal renders an alert from the catalog"
     }
   ]
 }
