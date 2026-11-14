@@ -367,7 +367,7 @@ ed b2 data-files.json '(.files[] | select(.id == "data-policy")).path = ".stella
 ok 'refuses b2 check && grep -q "dp/b.json: .*one document" "$T/o"' "136 the same for the second file of a folder row"
 mk b2c; jq '."x-one-document" = "yes"' "$T/b2c/.stella/schemas/features.schema.json" >"$T/b2c/s" && mv "$T/b2c/s" "$T/b2c/.stella/schemas/features.schema.json"
 ok 'refuses b2c check && grep -q "x-one-document" "$T/o"' "137 x-one-document takes only true or false"
-mk b3; jq -n "{schema_version:1,entries:[$(conn two-prov provider hosted cloud)]}" >"$T/b3/.stella/conn2.json"
+mk b3; jq -n "{schema_version:2,entries:[$(conn two-prov provider hosted cloud)]}" >"$T/b3/.stella/conn2.json"
 ed b3 data-files.json '.files += [{id:"conn2",path:".stella/conn2.json",schema:"connections",format:"json",owner_only:true,redact_keys:[],list_key:"entries",id_field:"id"}]'; ed b3 data-files.json ".files[-1] += {$(rid connections)}"   # F1b D1: the fake record carries its own two ids
 ed b3 role-assignments.json '.assignments[0].chain = [{connection:"two-prov",model:"two-prov-model",parameters:{}}]'
 ok 'sd b3 check >"$T/o" 2>&1 && [ "$(sd b3 get conn2 two-prov --json | jq -r .id)" = two-prov ]' "138 control: a second connections row is one catalog with the first; an assignment may name its provider"
@@ -550,7 +550,7 @@ done
 # K3 W1-RT5-04 the catalog's own fault is locatable by position while its patterns cannot be read
 mk cp1; N=$(jq '[.entries[].kind] | index("channel") + 1' "$T/cp1/.stella/connections.json"); ed cp1 connections.json '(.entries[] | select(.kind == "channel")).redaction_patterns += ["("]'
 ok 'refuses cp1 check && grep -q "^STL-CFG-310 .*connections: a masked id (entry '"$N"' of its file): a redaction pattern is not a regular expression" "$T/o"' "199 a pattern that does not compile: the line says which entry by its position (entry $N)"
-mk cp2; printf '{"schema_version":1,"entries":[],"entries":[]}' >"$T/cp2/.stella/connections.json"
+mk cp2; printf '{"schema_version":2,"entries":[],"entries":[]}' >"$T/cp2/.stella/connections.json"
 ok 'refuses cp2 check && grep -q "connections\.json: repeated key a masked key (key 3 of its object)" "$T/o"' "200 a repeated key in the catalog: the line says which key by its position"
 # K3 W1-VER5-04 a row id that is a name the tool uses for something that is no row is refused
 jq '.entries |= map(.id += "-2")' "$ROOT/.stella/capabilities.json" >"$T/c2.json"; jq '.entries |= [to_entries[] | .value + {global_id: ("00000000-0000-4000-8000-" + ("00000000000\(.key)" | .[-12:]))}]' "$T/c2.json" >"$T/c2.n" && mv "$T/c2.n" "$T/c2.json"   # F1b D1: each copy its own global_id
@@ -814,7 +814,7 @@ mk ii; ed ii install.json '.install_id = "x"'
 ok '[ -n "$IID" ] && [ "$(python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; print(s.install_id())" "$BIN")" = "$IID" ] && ! STELLA_ROOT=$T/ii python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; s.install_id()" "$BIN" 2>/dev/null' "238 stella_data.install_id() returns this install's id and refuses a bad install file"
 # F1b D5 connection types (items 1, 5, 9): fake entries of each new shape validate and load with no code change (T1a-c, T9a)
 API='{type:"api"}'
-CLI='{type:"cli-login",cli:"qa-cli",quota_source:["cli_usage","limit_errors"],concurrency_limit:2,credential_store:"engine_cli_store",terms_ok:null}'
+CLI='{type:"cli-login",cli:"qa-cli",quota_source:["cli_usage","limit_errors"],concurrency_limit:2,credential_store:"engine_cli_store",terms_ok:null,secrets:[]}'   # W2-CVER-03: its token stays in the CLI's own store, so no broker secret
 AGG='{type:"api",aggregator:true,broker_entries:{unified:"QA_AGG_TOKEN",admin:"QA_AGG_ADMIN_KEY",upstream:["QA_UP_ONE_KEY","QA_UP_TWO_KEY"]}}'
 SRC() { echo "($(conn "$1" input_source "$2" "$3") + $API | .hosts = [] | .models = [] | .data_policy.data_classes_allowed = [\"$2\"])"; }   # <id> <subkind> <locality>: an input source
 HOSTED='.data_policy.hosted = true'
@@ -934,4 +934,46 @@ ed tk connections.json '(.entries[] | select(.id == "claude-subscription")).term
 ok 'refuses tk check && grep -q "^STL-CFG-310 .*role-assignments: .*qa-cloud-builder: chain\[0\]: .*claude-subscription.*terms_ok" "$T/o"' "251a a cli-login link whose terms_ok is unset is refused"
 ed tk connections.json '(.entries[] | select(.id == "claude-subscription")).terms_ok = false'
 ok 'refuses tk check && grep -q "qa-cloud-builder: chain\[0\]: .*terms_ok" "$T/o"' "251b a cli-login link whose terms_ok is false is refused"
+# ---- F1b W2 r2 ----
+# W2-CRT-01 an aggregator fronts upstream providers: routing judges it as cloud whatever its locality (grant, hosted never, Local only)
+LH=$(jq -r '.local_hosts[0]' "$ROOT/.stella/data-policy.json"); LO=$(jq -r '[.effort_modes | to_entries[] | select(.value.allowed_localities == ["local"]) | .key][0]' "$ROOT/.stella/role-assignments.json")
+LAG="(.entries[] | select(.id == \"qa-lagg\"))"
+mk ag; ed ag connections.json ".entries += [($(conn qa-lagg provider openai-compatible-aggregator local) + $AGG | .hosts = [{host:\"$LH\",port:443,purpose:\"api\"}])]"
+ed ag role-assignments.json ".assignments += [{id:\"qa-lagg-builder\",scope:{level:\"global\"},role:\"builder\",effort_mode:\"eco\",chain:[{connection:\"qa-lagg\",model:\"qa-lagg-model\",parameters:{}}],$(ids)}]"
+ok 'sd ag check >"$T/o" 2>&1' "257 control: an aggregator on a local host serves a role that handles no class with a hosted rule"
+AGC() { rm -rf "$T/$1"; cp -r "$T/ag" "$T/$1"; ed "$1" ../docs/hermes-local/roles.json ".roles.builder.requirements.allowed_data_classes += [\"$2\"]"; ed "$1" connections.json "($LMS, $LAG).data_policy.data_classes_allowed += [\"$2\"]"; }   # <root> <class>: the builder handles it, both its links allow it
+AGC agc camera
+ok 'refuses agc check && grep -q "^STL-CFG-310 .*role-assignments: .*qa-lagg-builder: chain\[0\]: .*qa-lagg.*camera.*grant" "$T/o" && ! grep -q "global-builder" "$T/o"' "257a a camera-class role routed to an aggregator marked local, with no privacy grant, is refused; its local link needs none"
+ed agc data-policy.json ".privacy_grants = [$(GR qa-lagg)]"
+ok 'sd agc check >"$T/o" 2>&1' "257b control: a camera grant naming the aggregator lets the route pass"
+AGC ags secret
+ok 'refuses ags check && grep -q "^STL-CFG-310 .*role-assignments: .*qa-lagg-builder: chain\[0\]: .*qa-lagg.*secret.*never" "$T/o" && ! grep -q "global-builder" "$T/o"' "257c a secret-class role (hosted never) routed to an aggregator marked local is refused"
+rm -rf "$T/agl"; cp -r "$T/ag" "$T/agl"; ed agl data-policy.json ".projects[\"qa-lo\"] = $(PJ local_only "")"
+ed agl role-assignments.json ".assignments += [{id:\"qa-lo-builder\",scope:{level:\"project\",project:\"qa-lo\"},role:\"builder\",effort_mode:\"standard\",chain:[{connection:\"local-model-server\",model:\"$(jq -r "$LMS.models[0].id" "$ROOT/.stella/connections.json")\",parameters:{}}],$(ids)}]"
+ok 'sd agl check >"$T/o" 2>&1' "257d control: a Local only project routed to the local model server passes"
+ed agl role-assignments.json '(.assignments[] | select(.id == "qa-lo-builder")).chain = [{connection:"qa-lagg",model:"qa-lagg-model",parameters:{}}]'
+ok 'refuses agl check && grep -q "^STL-CFG-310 .*role-assignments: .*qa-lo-builder: chain\[0\]: .*qa-lagg.*not allowed by the data policy" "$T/o"' "257e a Local only project routed to an aggregator marked local is refused"
+rm -rf "$T/age"; cp -r "$T/ag" "$T/age"; ed age role-assignments.json "(.assignments[] | select(.id == \"qa-lagg-builder\")).effort_mode = \"$LO\""
+ok '[ "$LO" != null ] && refuses age check && grep -q "^STL-CFG-310 .*role-assignments: .*qa-lagg-builder: chain\[0\]: .*qa-lagg.*effort mode" "$T/o"' "257f an effort mode that allows local links only refuses an aggregator marked local"
+# W2-CRT-03 every connection marked local, whatever its kind, lists only hosts of the data policy local_hosts
+CH='.hosts = [{host:"qa-vendor-cloud.example.invalid",port:443,purpose:"feed"}]'   # a host that is not in local_hosts
+w2 258a ".entries += [($(SRC qa-lsrc camera local) | $CH)]" "qa-lsrc.*local_hosts" "an input source marked local with a host outside local_hosts is refused"
+w2 258c ".entries += [$(conn qa-lapp app mail local)]" "qa-lapp.*local_hosts" "an app marked local with a host outside local_hosts is refused"
+w2 258d ".entries += [$(conn qa-lchan channel chat local)]" "qa-lchan.*local_hosts" "a channel marked local with a host outside local_hosts is refused"
+rm -rf "$T/w2l"; cp -r "$T/w2f" "$T/w2l"; ed w2l connections.json ".entries += [($(SRC qa-lcam camera local) | .hosts = [{host:\"$LH\",port:443,purpose:\"feed\"}]), ($(conn qa-lapp app mail local) | .hosts = [{host:\"$LH\",port:443,purpose:\"api\"}])]"
+ok 'sd w2l check >"$T/o" 2>&1' "258b control: an input source and an app marked local on a host of local_hosts pass"
+# W2-CVER-02 an input source's subkind is a data class whose rule is sync never (data-driven)
+SA=$(jq -r '[.class_rules | to_entries[] | select(.value.sync != "never") | .key][0]' "$ROOT/.stella/data-policy.json")
+w2 259a "$(E qa-cam).subkind = \"$SA\"" "qa-cam.*subkind" "an input source whose subkind is a class that may be synced ($SA) is refused"
+rm -rf "$T/w2s"; cp -r "$T/w2f" "$T/w2s"; ed w2s data-policy.json '.data_classes += ["qa-feed"] | .class_rules["qa-feed"] = .class_rules.camera'
+ed w2s connections.json "$(E qa-cam).subkind = \"qa-feed\" | $(E qa-cam).data_policy.data_classes_allowed = [\"qa-feed\"]"
+ok 'sd w2s check >"$T/o" 2>&1' "259b control: a new class whose rule says sync never is a valid subkind, with no code change"
+ed w2s data-policy.json '.class_rules["qa-feed"].sync = "allowed"'
+ok 'refuses w2s check && grep -q "^STL-CFG-310 .*connections: .*qa-cam.*subkind" "$T/o"' "259c the same class with its rule set to sync allowed is refused as a subkind"
+# W2-CVER-03 a cli-login whose credential stays in the engine's CLI store lists no broker secret (X1/X3)
+w2 260a "$(E qa-cli).secrets = [\"QA_CLI_TOKEN\"]" "qa-cli.*secret" "a cli-login entry in the engine's CLI store that lists a broker secret is refused"
+ok 'jq -e "[.entries[] | select(.type == \"cli-login\" and .credential_store == \"engine_cli_store\") | .secrets[]] == []" "$ROOT/.stella/connections.json" >/dev/null' "260b the shipped catalog: no engine-store cli-login lists a broker secret"
+# owner decision (d) 2026-11-14: the connections schema is version 2 (types, aggregators, input sources)
+mk cv; ed cv connections.json '.schema_version = 1'
+ok '[ "$(jq .schema_version "$ROOT/.stella/connections.json")" = 2 ] && refuses cv check && grep -q "^STL-CFG-310 .*connections.*schema_version" "$T/o"' "261 the shipped catalog is schema_version 2, and a catalog at version 1 is refused"
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
