@@ -59,7 +59,6 @@ TMP_RE = re.compile(re.escape(TMP) + r"[0-9a-f]{16}")   # their whole name (tmp_
 GONE = ".gone-"   # a backup folder renamed so: removed, its content is being deleted
 BACKUP_RE = re.compile(r"\d{8}-\d{8}T\d{12}Z")   # a backup folder's whole name: the counter and the time (apply_locked)
 STAGE = "stella-apply-stage-"   # staging folders in the temp folder: <STAGE><pid>-<process start time>-<random>
-ENTRY = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*\.json")   # a folder entry's file name, for every command
 MAXSEQ = 99999999   # the counter in a backup folder's name has eight digits
 STATUSES = ("pending", "done", "rollback-pending", "superseded")
 CTX = {}
@@ -307,8 +306,8 @@ def target(arg, read_only=False):
     if folder:
         if not slash and not read_only:
             raise bad(f"{did} is a folder: name a file as <id>/<file>")
-        if slash and not ENTRY.fullmatch(entry):
-            raise bad(f"{json.dumps(arg)}: not a plain file name (letters, digits, dot, dash, underscore; ends in .json)")
+        if slash and (why := sd.bad_entry(entry, arg)):   # the one entry rule of check and ids-migrate
+            raise bad(why)
     elif slash:
         raise bad(f"{did} is a single file: give just its id")
     rel = row["path"] + ("/" + entry if slash else "")
@@ -733,7 +732,7 @@ def stage(tmp, rel, data):
         src = path(s)
         if os.path.isdir(src):
             for n in sorted(os.listdir(src)):
-                if ENTRY.fullmatch(n) and (b := try_read(os.path.join(src, n))) is not None:
+                if sd.ENTRY.fullmatch(n) and (b := try_read(os.path.join(src, n))) is not None:
                     put(f"{s}/{n}", b)
         elif (b := try_read(src)) is not None:
             put(s, b)

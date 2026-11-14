@@ -229,9 +229,20 @@ def kind_problem(row, p):
     return None
 
 
+ENTRY = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._-]*\.json")   # a folder entry's file name: the one rule of check, ids-migrate and the apply tool
+
+
+def bad_entry(name, said):
+    """The one refusal of a folder entry's file name, worded alike in every tool: None when `name` passes ENTRY; `said` is how
+    the caller names the file (the command's <id>/<name>, or its path)."""
+    return None if ENTRY.fullmatch(name) else \
+        f"{json.dumps(said)}: not a plain file name (letters, digits, dot, dash, underscore; no leading dot; ends in .json)"
+
+
 def files_of(row):
-    """[(relative path, absolute path)]: the file a row names, or every *.json of a folder row's folder (folder_row() says which;
-    a path whose disk disagrees is returned as itself, so it is still compared with the other rows, and layout() closes it).
+    """[(relative path, absolute path)]: the file a row names, or every *.json (any case) of a folder row's folder (folder_row()
+    says which; a path whose disk disagrees is returned as itself, so it is still compared with the other rows, and layout()
+    closes it). An entry whose name fails ENTRY is listed too: layout() reports it and opens it for no reader.
     A JSON row's path and each entry file must be free of symbolic links (plain()); a row this tool never opens (env) is found
     by where it resolves, inside the root (safe())."""
     if row["format"] != "json":
@@ -240,7 +251,7 @@ def files_of(row):
     if not folder_row(row) or not os.path.isdir(p):
         return [(row["path"], p)]
     out = []
-    for n in sorted(n for n in os.listdir(p) if n.endswith(".json") and not n.startswith(".")):   # by name: never a glob
+    for n in sorted(n for n in os.listdir(p) if n.casefold().endswith(".json")):   # by name: never a glob
         a = os.path.join(p, n)
         if os.path.islink(a):
             raise linked(os.path.relpath(a, ROOT), a)
@@ -273,8 +284,10 @@ def layout(rs, owner):
             probs.append((r["id"], str(e)))
             continue
         named.append((r, fs))
-        for _, a in fs:
+        for rel, a in fs:
             by_file.setdefault(a, []).append(r)
+            if rel != r["path"] and (why := bad_entry(os.path.basename(rel), rel)):   # a folder entry (a row's own path is returned as itself)
+                probs.append((r["id"], why))
         bad = kind_problem(r, fs[0][1]) if fs and fs[0][0] == r["path"] else None   # a listed folder agrees with its kind
         if bad:
             probs.append((r["id"], bad))
@@ -291,7 +304,8 @@ def layout(rs, owner):
             shut.add(id(r))
             if r["format"] != "env" or not r["owner_only"]:
                 probs.append((r["id"], f"{rel} is an owner setting of the role table: its row must be format env and owner_only, and it is never opened here"))
-    return probs, [(r, fs) for r, fs in named if r["format"] == "json" and id(r) not in shut]
+    return probs, [(r, [f for f in fs if f[0] == r["path"] or ENTRY.fullmatch(os.path.basename(f[0]))])
+                   for r, fs in named if r["format"] == "json" and id(r) not in shut]
 
 
 _pats = "unread"
@@ -1492,10 +1506,13 @@ def main(argv):
     if cmd == "ids-migrate" and len(args) == 3 and args[1] == "--out":
         rid, _, name = args[0].partition("/")
         row = known_json(rid)
-        if not has_records(row) or folder_row(row) != bool(name) or name and not re.fullmatch(r"[^./\\][^/\\]*\.json", name):
+        if not has_records(row) or folder_row(row) != bool(name):
             print(f"ids-migrate: {rid} takes " + ("<id>/<file>.json (a folder row)" if folder_row(row) else "<id> alone" if has_records(row)
                                                  else "nothing: its row has no records"), file=sys.stderr)
             return 2
+        if name and (why := bad_entry(name, args[0])):
+            say("STL-CFG-313", why, alert=True)   # the apply tool's refusal of that name, line for line
+            return 1
         import event_log as el   # here: event_log imports this module
         d, base = os.path.split(os.path.abspath(args[2]))
         try:   # the folder is opened once and checked as opened; the candidate is made through that descriptor (no swap after the check)
