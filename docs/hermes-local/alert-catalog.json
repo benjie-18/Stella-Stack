@@ -565,9 +565,9 @@
       "area": "CFG",
       "severity": "warning",
       "title": "the same list is kept in two data files",
-      "message": "A list that one data file owns (models, providers, hosts, roles) is also kept in another data file: {problem}. The lines after this one name each file, the list and the ids.",
+      "message": "A list of entries is kept in more than one data file: {problem}. The lines after this one name each file, the list kind and the file that owns it or also keeps it.",
       "action": "keep the list only in the file that owns it and refer to its entries by id in the other file; records of their own kind that are keyed by that id are listed under refs in hardcode-allow.json. See STL-CFG-324 in docs/alert-codes.md.",
-      "cause": "A change copied a list of entries (objects with the same ids) into a second data file instead of referring to them by id.",
+      "cause": "A change copied a list of entries (two or more of the same ids) into a second data file instead of referring to them by id.",
       "check": "`bin/hardcode-lint.sh` (each file and list that is kept twice); the lists rows of docs/hermes-local/hardcode-allow.json (which file owns which list).",
       "related": "F1 W5; bin/hardcode-lint.sh; docs/hermes-local/hardcode-allow.json",
       "resolvable": false
