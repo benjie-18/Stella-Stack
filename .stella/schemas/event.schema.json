@@ -1,13 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Event log line",
-  "description": "schema_version 2 (from F1b): every new line has global_id and install_id; bin/event_log.py stamps both on every line it writes. schema_version 1: a line from before the ids; it is never rewritten, it is read and validated as it is, and it is still found by what identified it then (its position in the log and its fields). The schema subset has no conditional, so the schema accepts either version with the ids optional; that a version 2 line has both is the writer's rule.",
+  "description": "schema_version 3 (from F1c): a trusted line of bin/event_log.py also carries the chain: writer {id: the index's event_writer_id, install_id}, seq (the previous chained line's + 1), prev (that line's mac, or a genesis value for the first) and mac (HMAC-SHA256 hex, with the writer key, of the line's canonical JSON without mac). A line of the agents' untrusted stream (bin/event_untrusted.py) is version 3 with \"trusted\": false and a source, and has no chain fields. schema_version 2 (from F1b): every line has global_id and install_id. schema_version 1: a line from before the ids. Lines of versions 1 and 2 are never rewritten; they are read and validated as they are, and `event_log.py verify` reports them as legacy, never as proof. The schema subset has no conditional, so the schema accepts every version with the ids and the chain optional; which fields a version has is the writers' rule.",
   "type": "object",
   "properties": {
     "schema_version": {
       "enum": [
         1,
-        2
+        2,
+        3
       ]
     },
     "global_id": {
@@ -67,6 +68,50 @@
     },
     "detail": {
       "type": "string"
+    },
+    "writer": {
+      "type": "object",
+      "description": "The trusted writer that chained this line: its id (index event_writer_id) and its install's id.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "install_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "description": "The UUID of the writer's install."
+        }
+      },
+      "required": [
+        "id",
+        "install_id"
+      ],
+      "additionalProperties": false
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The chained line's number: the previous chained line's + 1 (the first is 1)."
+    },
+    "prev": {
+      "type": "string",
+      "description": "The mac of the previous chained line, or the genesis value for the first."
+    },
+    "mac": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "HMAC-SHA256 (lower-case hex) with the writer key of the line's canonical JSON (sorted keys, no spaces, ASCII) without mac."
+    },
+    "trusted": {
+      "const": false,
+      "description": "Only on a line of the untrusted stream: written by anyone, never proof."
+    },
+    "source": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Only on a line of the untrusted stream: who wrote it, as the caller says."
     }
   },
   "required": [

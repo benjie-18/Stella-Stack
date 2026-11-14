@@ -66,7 +66,7 @@
     },
     "worker_signals": {
       "type": "object",
-      "description": "Any one signal makes this process a worker environment: every owner command refuses, and the event writer sends its line to the untrusted stream (F1c B4, B7). These add to the role table's worker_markers and roles.py prove.",
+      "description": "Any one signal makes this process a worker environment: every owner command refuses, the trusted event writer included (STL-CFG-312); agents write only to the untrusted stream through bin/event_untrusted.py (F1c B4, B7). These add to the role table's worker_markers and roles.py prove.",
       "properties": {
         "token_env": {
           "type": "array",
