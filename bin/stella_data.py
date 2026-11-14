@@ -9,7 +9,8 @@ CLI: stella_data.py check [--json] [<id>]       validate every data file against
      stella_data.py search [--json] <words...>  entries whose values hold all the words; approved first. Finding grants nothing.
      stella_data.py ids-migrate <id>[/<file>] --out <file>  a candidate of that row's file (<id>/<file>.json for a folder row)
                                                 with global_id and install_id added to every record that lacks them, nothing
-                                                else changed; apply it with stella-apply.py apply. Never writes over a file.
+                                                else changed; apply it with stella-apply.py apply. Never writes over a file,
+                                                never inside the stack root.
      stella_data.py owner-only [--json]         the paths (JSON pointer, * for any item) each schema marks x-owner-only
 Exit: 0 ok; 1 a problem (one line per problem or unreadable file, code STL-CFG-310) or an unknown id (STL-CFG-311, one
 alert line); 2 usage. No command ends in a traceback.
@@ -22,9 +23,12 @@ nature, so a second file of it is refused), x-ref (an index row id: a string mus
 record of that row's merged view; "<row id>/<key>": of an item of the list or map under key in that row's documents),
 x-ref-where (beside an x-ref, {field: value}: the record must also carry each value) and x-owner-only (true: only the
 owner's path writes the field; owner-only lists them). Any other keyword, or a wrong keyword value, is an error, never ignored.
+x-ref (and so x-ref-where) stands only beside type string, property names included, and is applied wherever it stands; a
+document validated where no x-ref is resolved (validate_doc without refs) fails when its schema holds one.
 A record is one entry of an index row with a list_key, or one file of a folder row: it carries global_id (a lower-case version
 4 UUID, unique across every data file) and install_id (the UUID of the install that made it); its old id is its alias. Both
-are required unless the install's one document says ids_required false (a migration in progress).
+are always required. An object deeper in a file whose schema has a global_id property (a privacy grant) is a record too: its
+global_id joins the same check, and its id is unique in its list.
 Every file an index row names is judged by every rule of its schema (all rows of a schema form one merged view, which is what
 check judges and what the read commands serve). A file that fails its schema feeds no rule. A read is judged by exactly the
 files its rules use (RULES, DEPS): it is served only when none of them has a problem, and its refusal names the first one."""
@@ -47,7 +51,7 @@ TABLE, FRAME, NOROW = "role-table", "data-files", "schema:"   # members that are
 MASK_LIMIT = 1024   # a value pattern never runs on a longer string (it is masked whole): a pattern's time grows with the length
 UUID4 = r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"   # global_id
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"   # install_id: any UUID (a record may come from another install)
-INSTALL = "install"   # the schema of the install's one document (install_id, ids_required)
+INSTALL = "install"   # the schema of the install's one document (install_id)
 CLI_LOGIN = ("cli", "quota_source", "concurrency_limit", "credential_store", "terms_ok")   # every cli-login entry has these, no api entry
 STRICTEST = {"sync": "never", "store": "owner_asks", "hosted": "never", "context": "text_only"}   # a data class with no rule row
 TYPES = {"object": dict, "array": list, "string": str, "integer": int, "number": (int, float), "boolean": bool, "null": type(None)}
@@ -307,7 +311,7 @@ def value_pats():
         _pats, out, n = None, [], 0
         try:
             idx = load(INDEX)
-            if validate_doc(idx, schema_of("data-files")):
+            if validate_doc(idx, schema_of("data-files"), []):
                 raise DataError("index")
             try:
                 table = load(idx["role_table"])
@@ -404,6 +408,8 @@ def lint_schema(s, path="$", root=None):
             bad(k, "must be a string")
     if "x-ref" in s and not (isinstance(s["x-ref"], str) and re.fullmatch(r"[a-z0-9][a-z0-9._:-]*(/[A-Za-z0-9_-]+)?", s["x-ref"])):
         bad("x-ref", "must be the id of an index row, or <row id>/<key of a list in its documents>")
+    if "x-ref" in s and s.get("type") != "string":   # the one place check_value applies it: never accepted and then ignored
+        bad("x-ref", "stands only beside type string")
     w = s.get("x-ref-where")
     if "x-ref-where" in s and not ("x-ref" in s and isinstance(w, dict) and w and all(x is None or isinstance(x, (str, int, float, bool)) for x in w.values())):
         bad("x-ref-where", "must be a non-empty object of field: value (a string, number, true, false or null) beside an x-ref")
@@ -487,7 +493,7 @@ def check_value(v, s, defs, p, errs, refs=None):
         props, extra = s.get("properties", {}), s.get("additionalProperties", True)
         for k, x in v.items():
             if "propertyNames" in s:
-                check_value(k, s["propertyNames"], defs, f"{p}.<name of {desc(k)}>", errs)
+                check_value(k, s["propertyNames"], defs, f"{p}.<name of {desc(k)}>", errs, refs)
             if k in props:
                 check_value(x, props[k], defs, f"{p}.{k}", errs, refs)
             elif extra is False:
@@ -497,7 +503,11 @@ def check_value(v, s, defs, p, errs, refs=None):
 
 
 def validate_doc(doc, schema, refs=None):
+    """Problems of doc against schema. refs: a list that collects the x-ref values for the caller to resolve; without one (the
+    role table, an event line, a setting value), a schema that holds an x-ref fails closed: it would be accepted unresolved."""
     errs = lint_schema(schema)
+    if not errs and refs is None and ref_rows(schema):
+        return ["schema: holds an x-ref, which is not resolved where this document is validated"]
     if not errs:
         check_value(doc, schema, schema.get("$defs", {}), "$", errs, refs)
     return errs
@@ -571,8 +581,8 @@ def schema_of(name):
 
 def checked(doc, rel, schema):
     """doc if it passes its schema, else a DataError naming the file. The read commands of this tool also run the cross-file
-    rules on what they serve (served()), so they never serve data `check` refuses."""
-    errs = validate_doc(doc, schema_of(schema))
+    rules on what they serve (served()), so they never serve data `check` refuses; check resolves the x-refs (judge())."""
+    errs = validate_doc(doc, schema_of(schema), [])
     if errs:
         raise DataError(f"{rel}: {errs[0]}" + (f" (and {len(errs) - 1} more)" if len(errs) > 1 else ""))
     return doc
@@ -589,16 +599,6 @@ def is_folder(row):
 def has_records(row):
     """A row whose entries are records (each with global_id and install_id): a JSON row with a list key, or a folder row."""
     return row["format"] == "json" and (row["list_key"] is not None or folder_row(row))
-
-
-def ids_required(opened):
-    """False only while the install's one document says ids_required false (a migration in progress); anything else, also an
-    install document that is missing, refused or not valid, is True (fail closed). opened: layout()'s rows that may be opened."""
-    docs = [rel for r, fs in opened if r["schema"] == INSTALL for rel, _ in fs]
-    try:
-        return len(docs) != 1 or checked(load(docs[0]), docs[0], INSTALL)["ids_required"] is not False
-    except Exception:
-        return True
 
 
 def file_entries(row, rel, d):
@@ -618,6 +618,26 @@ def file_entries(row, rel, d):
         if not isinstance(e, dict):
             raise DataError(f"{rel}: entry {idn(k)} is not an object")
     return pairs
+
+
+def records_in(v, s, defs, p="$"):
+    """[(where, alias, object)] of every object below v whose schema declares a global_id property: the records of a file, found
+    from its schema wherever they sit (a privacy grant too, not only the entries under list_key). where: the path of its list or
+    map (of itself under a fixed property); alias: its key in a map, else its id."""
+    if isinstance(v, dict):
+        props, extra = look(s, "properties", defs) or {}, look(s, "additionalProperties", defs)
+        kids = [(x, props[k] if k in props else extra if isinstance(extra, dict) else {}, f"{p}.{'<a masked key>' if hidden(k) else k}",
+                 None if k in props else k) for k, x in v.items()]
+    elif isinstance(v, list):
+        kids = [(x, look(s, "items", defs) or {}, f"{p}[{i}]", None) for i, x in enumerate(v)]
+    else:
+        return []
+    out = []
+    for x, sub, at, key in kids:
+        if isinstance(x, dict) and "global_id" in (look(sub, "properties", defs) or {}):
+            out.append((p if key is not None or isinstance(v, list) else at, key if key is not None else x.get("id"), x))
+        out += records_in(x, sub, defs, at)
+    return out
 
 
 # ---- check ----
@@ -742,7 +762,7 @@ def class_rule(pol, k):
 def rule_sync(c):
     """Sync classes (item 8) and data-class rules (item 9): every record kind names a known sync class (and a known data class);
     a kind that never reaches a cloud store (never_cloud, or a data class whose rule is sync never) and a private or local_only
-    project (its own sync class, else its row's kind's) have a sync class whose cloud is false; rule rows and grants name known
+    project (its own sync class, else its row's kind's; the default too) have a sync class whose cloud is false; rule rows and grants name known
     classes; every index row with records names a kind of the data policy."""
     P, pols = c["P"], c["whole"].get("data-policy", [])
     for rid, pol in pols:
@@ -751,7 +771,7 @@ def rule_sync(c):
             P(rid, "sync_classes: an id is listed twice")
         for k in pol["class_rules"]:
             if k not in classes:
-                P(rid, f"class_rules: {kname(k)} is not in data_classes")
+                P(rid, f"class_rules: a key ({desc(k)}) is not in data_classes")
         for k, kd in kinds.items():
             w = f"record kind {kname(k)}"
             if kd["sync_class"] not in sc:
@@ -761,13 +781,13 @@ def rule_sync(c):
             if sc.get(kd["sync_class"]) and (kd.get("never_cloud") or "data_class" in kd and class_rule(pol, kd["data_class"])["sync"] == "never"):
                 P(rid, f"{w}: sync class {idn(kd['sync_class'], True)} is a cloud class, but this kind never reaches a cloud store (never_cloud, or a data class that is never synced)")
         pk = next((r.get("record_kind") for r in c["rs"] if r["id"] == rid), None)
-        for name, p in pol["projects"].items():
-            own = p.get("sync_class")
+        for name, p in [(None, pol["default"])] + list(pol["projects"].items()):   # the default is every project not listed
+            w, own = "the default (every project not listed)" if name is None else f"project {kname(name)}", p.get("sync_class")
             if own is not None and own not in sc:
-                P(rid, f"project {kname(name)}: sync_class ({desc(own)}) is not in sync_classes")
+                P(rid, f"{w}: sync_class ({desc(own)}) is not in sync_classes")
             eff = own if own is not None else kinds.get(pk, {}).get("sync_class")
             if sc.get(eff) and (p.get("private") or p["mode"] == "local_only"):
-                P(rid, f"project {kname(name)}: a private or local_only project never reaches a cloud store, but its sync class {idn(eff, True)} is a cloud class")
+                P(rid, f"{w}: a private or local_only project never reaches a cloud store, but its sync class {idn(eff, True)} is a cloud class")
         for i, g in enumerate(pol["privacy_grants"]):
             if g["data_class"] not in classes:
                 P(rid, f"privacy_grants[{i}].data_class ({desc(g['data_class'])}) is not in data_classes")
@@ -1018,7 +1038,7 @@ def judge(reads=None):
         probs.append((d, m, frozenset(members or (d,))))
     try:
         idx = load(INDEX)
-        errs = validate_doc(idx, schema_of("data-files"))
+        errs = validate_doc(idx, schema_of("data-files"), [])   # its x-refs are resolved with its row's file below
         if errs:
             return [(FRAME, e, frozenset({FRAME})) for e in errs], None, {}
         rs = idx["files"]
@@ -1057,7 +1077,7 @@ def judge(reads=None):
     refused = {d for d, _ in found}   # rows whose files feed no rule
     head = len(probs)
     want, run, members = plan(rs, reads) if reads is not None else (None, RULES, None)
-    loaded, nfiles, good, onedoc, need_ids = [], {}, [], {}, ids_required(opened)
+    loaded, nfiles, good, onedoc, nested = [], {}, [], {}, {}
     for r, fs in opened:
         if want is not None and r["id"] not in reads and r["schema"] not in want:
             continue
@@ -1080,6 +1100,7 @@ def judge(reads=None):
                     P(r["id"], f"{rel}: {e}")
                 if not errs:
                     good.append((r, rel, d, file_entries(r, rel, d), refs))
+                    nested[(r["id"], rel)] = records_in(d, sch, sch.get("$defs", {}))
             except Exception as e:
                 P(r["id"], why(e) if isinstance(e, DataError) else f"{rel}: {why(e)}")
                 errs = [e]
@@ -1094,7 +1115,7 @@ def judge(reads=None):
     for r in loaded:
         if r["id"] not in refused:
             by["_rows"][r["id"]] = ([], {})
-    gids = {}   # global_id -> [(row id, file, entry id)]: one global_id in two records is a problem of every row that holds it
+    gids = {}   # global_id -> [(row id, file, record as a line names it, schema)]: one global_id in two records is a problem of every row that holds it
     for r, rel, d, pairs, _ in good:
         if r["id"] in refused:
             continue
@@ -1104,10 +1125,10 @@ def judge(reads=None):
         for n, (k, e) in enumerate(pairs):
             for f, pat in (("global_id", UUID4), ("install_id", UUID)) if has_records(r) else ():
                 v = e.get(f)
-                if (v is None and need_ids) or not (v is None or isinstance(v, str) and re.fullmatch(pat, v)):
+                if not (isinstance(v, str) and re.fullmatch(pat, v)):
                     P(r["id"], f"{rel}: entry {idn(k, True)}: {f} is " + ("missing" if v is None else "not a lower-case UUID" + (" of version 4" if f == "global_id" else "")))
             if has_records(r) and isinstance(e.get("global_id"), str):
-                gids.setdefault(e["global_id"], []).append((r["id"], rel, k, name))
+                gids.setdefault(e["global_id"], []).append((r["id"], rel, f"entry {idn(k, True)}", name))
             if k in where.setdefault(name, {}):
                 P(r["id"], f"{rel}: duplicate entry id {idn(k, True)}" + ("" if where[name][k] == rel else f", also in {where[name][k]}"))
                 continue
@@ -1115,13 +1136,21 @@ def judge(reads=None):
             by.setdefault(name, {})[k] = ents[k] = e
             by["_src"].setdefault(name, {})[k] = r["id"]
             by["_at"].setdefault(name, {})[k] = n + 1
+        mine, seen = {id(e) for _, e in pairs}, set()
+        for at, a, e in nested.get((r["id"], rel), []):   # the records not under the row's list_key
+            if id(e) in mine:
+                continue
+            if isinstance(e.get("global_id"), str):
+                gids.setdefault(e["global_id"], []).append((r["id"], rel, f"record {idn(a, True)} of {at}" if a is not None else f"a record of {at}", None))
+            if isinstance(a, str) and (at, a) in seen:
+                P(r["id"], f"{rel}: {at}: id {idn(a, True)} is listed twice")
+            seen.add((at, a))
     for g, at in gids.items():
         for x in at:
             if len(at) > 1:
-                P(x[0], f"{x[1]}: entry {idn(x[2], True)}: its global_id is also the global_id of "
-                        + ", ".join(f"entry {idn(y[2], True)} of {y[1]}" for y in at if y is not x))
+                P(x[0], f"{x[1]}: {x[2]}: its global_id is also the global_id of " + ", ".join(f"{y[2]} of {y[1]}" for y in at if y is not x))
             if g in by.get(x[3], {}) and by[x[3]][g].get("global_id") != g:   # an alias that is another record's global_id: a read by it is ambiguous
-                P(x[0], f"{x[1]}: entry {idn(x[2], True)}: its global_id is the id of another entry of its schema")
+                P(x[0], f"{x[1]}: {x[2]}: its global_id is the id of another entry of its schema")
     for r, rel, _, _, refs in good:   # x-ref values against the merged view of the row they name
         if r["id"] not in refused:
             for _, m in ref_problems(refs, by, rs, refused):
@@ -1236,15 +1265,18 @@ def policy_classes():
     return set.intersection(*(set(d["data_classes"]) for d in docs))
 
 
-def install_id():
+def install_id(judged=True):
     """This install's id: install_id of the one document of the install schema, served like every read (a DataError when the
-    index has no single such row or it is refused). New event lines and approval records read it here."""
-    ids = [r["id"] for r in rows() if r["format"] == "json" and r["schema"] == INSTALL]
+    index has no single such row or it is refused). New event lines and approval records read it here. judged=False (ids-migrate,
+    which repairs data the rules refuse, such as index rows without ids): the install file need only pass its own schema."""
+    ids = [r for r in rows() if r["format"] == "json" and r["schema"] == INSTALL]
     if len(ids) != 1:
         raise DataError(f"the index has {len(ids)} JSON rows of schema {INSTALL}; exactly one holds the install id")
-    docs = served(ids)["_rows"][ids[0]][0]
+    if not judged:
+        return checked(jload(plain(ids[0]["path"]), ids[0]["path"]), ids[0]["path"], INSTALL)["install_id"]
+    docs = served([ids[0]["id"]])["_rows"][ids[0]["id"]][0]
     if len(docs) != 1:
-        raise DataError(f"{ids[0]}: holds {len(docs)} files; exactly one holds the install id")
+        raise DataError(f"{ids[0]['id']}: holds {len(docs)} files; exactly one holds the install id")
     return docs[0][1]["install_id"]
 
 
@@ -1432,8 +1464,11 @@ def main(argv):
             print(f"ids-migrate: {rid} takes " + ("<id>/<file>.json (a folder row)" if folder_row(row) else "<id> alone" if has_records(row)
                                                  else "nothing: its row has no records"), file=sys.stderr)
             return 2
+        out = os.path.realpath(args[2])
+        if os.path.commonpath([ROOT, out]) == ROOT:   # the root holds the live data: a candidate there would be live with no apply
+            raise DataError("--out is inside the stack root; write the candidate outside it (as the apply tool stages its copies)")
         rel = f"{row['path'].rstrip('/')}/{name}" if name else row["path"]
-        doc, iid, n = jload(plain(rel), rel), install_id(), 0
+        doc, iid, n = jload(plain(rel), rel), install_id(judged=False), 0
         for _, e in file_entries(row, rel, doc):
             n += "global_id" not in e or "install_id" not in e
             e.setdefault("global_id", str(uuid.uuid4()))

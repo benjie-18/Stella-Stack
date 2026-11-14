@@ -85,21 +85,29 @@ judges and what the read commands serve.
 **Records and ids (product rule 14).** A record is one entry of a row with a `list_key` (the index's own rows too), or one
 file of a folder row; the parts inside it (a connection's models and actions) are not records. Every record carries
 `global_id` (a lower-case version 4 UUID, unique across every data file: one value in two records is a line on every row that
-holds it) and `install_id` (the UUID of the install that made it; a record moved from another install keeps its own). The
-old `id` (or the row's `id_field`) is the record's alias and stays unique per schema as before: `get <id> <entry>` and every
-`x-ref` accept the alias or the `global_id`. Both fields are required while the install document says `ids_required: true`
-(the shipped value, and the answer when that document is missing or invalid); `false` is for a migration in progress only.
-**The ids migration:** `stella_data.py ids-migrate <id> --out <file>` (`<id>/<file>.json` for a folder row) writes a new file
-(never over an existing one) that is the row's file with `global_id` and `install_id` added to every record that lacks
-them and nothing else changed; apply it with `stella-apply.py apply <id> --from <file>` and undo it with `rollback`. A
-rollback restores bytes only when they pass the current checks, so on an install whose data predates the ids, set
-`ids_required: false` first (apply the install row), migrate and apply each row, then set it back to `true`.
+holds it) and `install_id` (the UUID of the install that made it; a record moved from another install keeps its own). An
+object deeper in a file whose schema declares a `global_id` (a privacy grant) is a record too, found from the schema: its
+`global_id` joins the same check and its `id` is unique in its list. The old `id` (or the row's `id_field`) is the record's
+alias and stays unique per schema as before: the reads of `stella_data.py` (`get <id> <entry>`) and every `x-ref` accept the
+alias or the `global_id`; `bin/settings.py get/set` take the key only. Both fields are always required: there is no switch
+that turns the check off (owner decision 2026-11-13). **A migration that changes what a schema requires ships with its code**
+(the run branch carries the migrated files) **and is undone by reverting that merge, code and data together**; the apply
+contract's `rollback` covers value changes only, since it restores only bytes that pass the current checks.
+**The ids migration** (for live data that diverged before that merge): `stella_data.py ids-migrate <id> --out <file>`
+(`<id>/<file>.json` for a folder row) writes a new file (never over an existing one, never inside the stack root: a file
+there could be a live entry at once, outside the apply contract) that is the row's file with `global_id` and `install_id`
+added to every record that lacks them and nothing else changed; apply it with `stella-apply.py apply <id> --from <file>`
+(dry run first). It reads the install id from the install file checked by its own schema, so it runs while the index itself
+lacks ids. On a row already migrated it adds nothing, and its apply is no change.
 
 Schemas use a small JSON Schema subset (the list is in the docstring of `bin/stella_data.py`). Two keywords are Stella's own:
 `x-ref: "<index row id>"` on a string says the value must be the id (alias) or `global_id` of a record of that row's merged
-view; `check` charges a value that is neither to the row of the file that holds it (`STL-CFG-310`, naming the field, never
-the value), and `validate <schema> <file>` refuses it with `STL-CFG-311` and one alert line (an x-ref naming no JSON row of
-the index is a `STL-CFG-310` error). `x-ref: "<row id>/<key>"` names instead the list (objects with an `id`) or map under
+view. The rule for an unknown id: `check` charges it to the row of the file that holds it as one more `STL-CFG-310` line
+(naming the field, never the value; no alert line: check reports a set, and the apply tool runs it on a temp copy), and
+`validate <schema> <file>` refuses it with `STL-CFG-311` and one alert line (an x-ref naming no JSON row of the index is a
+`STL-CFG-310` error). `x-ref` stands only beside `type: "string"` (a property name under `propertyNames` too, where it is
+applied to every key); anywhere else the schema lint refuses it, and so an `x-ref-where`, which needs an x-ref beside it. A
+document validated where no x-ref is resolved (the role table, an event line, a setting value) fails when its schema holds one. `x-ref: "<row id>/<key>"` names instead the list (objects with an `id`) or map under
 `<key>` inside that row's documents (`data-policy/sync_classes`). `x-ref-where: {field: value}` beside an x-ref says the
 record must also carry each value (JSON equality: `false` is not `0`); a record that does not counts as unknown (the
 line says which values). A read also depends on the rows its schemas' x-refs name. `x-owner-only: true` marks a
@@ -248,7 +256,8 @@ optional `data_class` and `never_cloud`. The kinds of data-file records are the 
 kept outside the data files (`card`, `project`, `vault-entry`, `secret`, `event`, `device`, `approval`) must be listed. A
 kind with no sync class, or an unknown sync class or data class, is refused. A kind with `never_cloud` (the schema requires
 it on `vault-entry` and `secret`) or whose data class is never synced may only have a sync class whose `cloud` is false; so
-may a private or `local_only` project (its own `sync_class`, else the kind of the data-policy row's records). A move-primary
+may a private or `local_only` project (its own `sync_class`, else the kind of the data-policy row's records), the `default`
+too (every project the policy does not list follows it). A move-primary
 transfer to the owner's own paired device, end-to-end encrypted (U1), is not a sync class.
 **Data-class rules (item 9).** `class_rules{}`: per data class `sync` (never, allowed), `store` (owner_asks, allowed),
 `hosted` (grant, allowed, never) and `context` (text_only, allowed). `camera`, `microphone`, `sensor` and `host-screen` are
@@ -259,8 +268,8 @@ refused. `privacy_grants[]` (`id`, `global_id`, `install_id`, `data_class`, `con
 `granted_at`, optional `expires_at`) is `x-owner-only` and ships empty; routing (F2) reads it.
 
 ### `.stella/install.json`
-The install's one document, owner-only: `install_id` (this install's UUID, made once) and `ids_required` (see "Records and
-ids"). Both are `x-owner-only`. `stella_data.install_id()` is the one reader (new event lines and approval records use it).
+The install's one document, owner-only: `install_id` (this install's UUID, made once, `x-owner-only`). No switch turns the
+id check off (see "Records and ids"). `stella_data.install_id()` is the one reader (new event lines and approval records use it).
 
 ### `.stella/role-assignments.json`
 `effort_modes{}` (allowed localities and `no_silent_fallback` for standard, eco, max, local_only) and `assignments[]`:
@@ -401,7 +410,8 @@ key, or by the key's hash when that name would be longer than a file name may be
   way out (fix that row first, then run the command again). The same rule judges the saved copy a rollback restores and a dry
   run. **A rollback restores saved bytes the row's reader cannot parse as they are** (they were in use so; the apply replaced
   them without asking them to parse); saved bytes that parse are checked like a candidate (registry, whole set), and a refusal
-  says the reason and the one way out.
+  says the reason and the one way out. So rollback undoes value changes; a change of what a schema requires (a migration such
+  as the record ids) ships with its code and is undone by reverting that merge, code and data together.
 - **What a row is.** Whether a row is one file or a folder of entries is the data tool's one rule, `stella_data.folder_row`
   (a json row whose path does not end in `.json` is a folder of entries; every other row is one file): not the list key, not the
   disk, not the applied record. The disk and the record are compared with it: a folder row whose folder is missing or is a file,

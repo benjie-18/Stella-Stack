@@ -13,17 +13,11 @@
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
       "x-owner-only": true,
       "description": "This install's UUID (lower case, version 4), made once when the install is set up."
-    },
-    "ids_required": {
-      "type": "boolean",
-      "x-owner-only": true,
-      "description": "true: every record must carry global_id and install_id. false only while a migration adds them (stella_data.py ids-migrate, then stella-apply.py apply), so each step can be rolled back."
     }
   },
   "required": [
     "schema_version",
-    "install_id",
-    "ids_required"
+    "install_id"
   ],
   "additionalProperties": false
 }
