@@ -69,6 +69,13 @@
     "detail": {
       "type": "string"
     },
+    "auth": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "The owner-auth provider ids whose proofs allowed the change (an apply or rollback of an owner-only row, F1c W4b)."
+    },
     "writer": {
       "type": "object",
       "description": "The trusted writer that chained this line: its id (index event_writer_id) and its install's id.",

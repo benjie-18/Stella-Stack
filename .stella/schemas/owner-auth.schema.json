@@ -95,6 +95,12 @@
       },
       "required": ["token_env", "users", "sandbox_files", "worktree_dirs"],
       "additionalProperties": false
+    },
+    "identity_critical": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]*(:(/[^/]*)+)?$"},
+      "description": "Identity-critical targets (F1c B3, D2): a change that touches one needs the identity_critical action class (the typed phrase) instead of owner_write. `<row id>`: any change of that index row; `<row id>:<JSON pointer>`: a change at or below that pointer, where a * segment stands for any one segment (an env row's keys are top-level members, /KEY). Settings whose registry sensitivity is identity_critical count too, without being listed here."
     }
   },
   "$defs": {
@@ -115,7 +121,8 @@
     "actions",
     "phrase",
     "proof_ttl_s",
-    "worker_signals"
+    "worker_signals",
+    "identity_critical"
   ],
   "additionalProperties": false
 }
