@@ -24,7 +24,7 @@
 # holds a literal glued to other letters, is refused. The line the board value is read from is left out of its file.
 # A short or common literal (an id that is also an English word) is counted like any other, never dropped.
 # hardcode-allow.json "lists" (kind, owner file or null, path, id): the one data file that owns each list kind; another data file
-# that defines two or more of its entries (an array or map of objects, by id) fails with STL-CFG-320, one line per file and kind.
+# that defines two or more of its entries (an array or map of objects, by id) fails with STL-CFG-324, one line per file and kind.
 # usage: hardcode-lint.sh [--check | --dump | --list]   --check (default): exit 0, or 1 with STL-CFG-320 and one line per file
 #        and literal over its baseline; --dump: "file<TAB>literal<TAB>count" for every use; --list: the files a scratch root needs
 #        to run the lint (the scanned files and the data it reads), one per line; reads no home folder and no literal source.
@@ -201,7 +201,9 @@ EOF
 # One list, one owner (D8): a data file that defines entries of a list another file owns (an array or a map of objects whose ids
 # match two or more owned ids) is a duplicate; a list of plain id strings is a reference. Allow list "lists": kind; owner (a data
 # file, or null when none holds the kind yet: then two files with a non-empty list under the key <kind> are the duplicate); path
-# (the owner's list, "[]" flattens); id (the id field, default "id").
+# (the owner's list, "[]" flattens); id (the id field, default "id"); refs (optional: rows {record_kind, why}: a file whose index row
+# has that record_kind holds records of their own kind keyed by the owned id, e.g. approvals keyed by host, so it refers to the list
+# and is no copy of it; a record_kind no index row has is refused).
 PYD=$(cat <<'EOF'
 import json, sys
 from pathlib import Path
@@ -217,6 +219,7 @@ rt = load("docs/hermes-local/roles.json"); idx = load(rt["data_index"])
 src = {r["path"]: str(r.get("id_field") or "id").split(",")[0] for r in idx["files"] if r.get("format") == "json" and (root / r["path"]).is_file()}
 if idx.get("role_table"): src.setdefault(idx["role_table"], "id")
 docs = {f: load(f) for f in src}
+rk = {r["path"]: r.get("record_kind") for r in idx["files"]}
 def rows(v, f):  # ids of a definition: an array of objects (field f) or a map of objects (its keys)
     if isinstance(v, list) and v and all(isinstance(x, dict) for x in v): return {x[f] for x in v if isinstance(x.get(f), str)}
     if isinstance(v, dict) and v and all(isinstance(x, dict) for x in v.values()): return set(v)
@@ -227,8 +230,11 @@ def walk(v):
 out = []
 for l in allow.get("lists", []):
     k, o, idf = l["kind"], l.get("owner"), l.get("id", "id")
+    refs = {x["record_kind"] for x in l.get("refs", [])}
+    if refs - set(rk.values()): err(f"the {k} list names a record kind no index row has: {', '.join(sorted(refs - set(rk.values())))}")
+    dd = {f: d for f, d in docs.items() if rk.get(f) not in refs}
     if o is None:
-        have = [f for f, d in docs.items() if any(isinstance(n, dict) and any(rows(v, i) for i in {src[f], "id", idf} for v in [n.get(k)]) for n in walk(d))]
+        have = [f for f, d in dd.items() if any(isinstance(n, dict) and any(rows(v, i) for i in {src[f], "id", idf} for v in [n.get(k)]) for n in walk(d))]
         if len(have) > 1: out += [f"{f}: keeps a {k} list that {', '.join(x for x in have if x != f)} also keeps; one file owns it, the others refer by id" for f in have]
         continue
     if o not in docs: err(f"the owner file of the {k} list is not a data file of the index: {o}")
@@ -238,7 +244,7 @@ for l in allow.get("lists", []):
         vs = [x.get(q) for x in vs if isinstance(x, dict)]
         if flat: vs = [y for x in vs if isinstance(x, list) for y in x]
     mine = set().union(*[rows(x, idf) for x in vs])
-    for f, d in docs.items():
+    for f, d in dd.items():
         hit = set() if f == o else set().union(*[rows(n, i) & mine for n in walk(d) for i in {src[f], "id", idf}])
         if len(hit) > 1: out.append(f"{f}: keeps the {k} list that {o} owns (ids {', '.join(sorted(hit))[:120]}); refer to them by id")
 print("\n".join(out))
@@ -254,7 +260,7 @@ jq -e 'def S: type == "string" and length > 0; def rows(f): type == "array" and 
   and (.allow | rows((.file | S) and (.text | S) and (.phase | S))) and (.own_names | rows((.text | S) and (.phase | S)))
   and (.plain_words | rows((.word | S) and (.why | S)))
   and (.skip | rows((.file | P and test("[A-Za-z0-9_]")) and (.why | S) and ((.run_by // "x") | P)))
-  and ((.lists // []) | rows((.kind | S) and (.owner == null or (.owner | P)) and (.owner == null or (.path | S)) and ((.id // "x") | S)))
+  and ((.lists // []) | rows((((.refs // []) | rows((.record_kind | S) and (.why | S)))) and (.kind | S) and (.owner == null or (.owner | P)) and (.owner == null or (.path | S)) and ((.id // "x") | S)))
   and (.scan | type == "array" and length > 0 and all(.[]; P)) and (.watch | type == "array" and all(.[]; S))' "$A" >/dev/null 2>&1 \
   || die "$A is not a valid allow list (schema_version 1; baseline, allow, own_names, plain_words, skip, scan, watch and lists are lists of well-formed rows; patterns are paths inside the root; no baseline row twice)"
 [ "$mode" != --list ] || { printf '%s\n' "$lst"; exit 0; }
@@ -301,5 +307,6 @@ fi
 [ "$mode" = --dump ] && { [ -z "$counts" ] || printf '%s\n' "$counts"; exit 0; }
 dups=$(python3 -I -B -c "$PYD" "$R" "$A"); drc=$?
 if [ $drc != 0 ]; then case $dups in "ERROR"$'\t'*) [ "$(wc -l <<<"$dups")" = 1 ] && die "the duplicate-list check failed: ${dups#ERROR$'\t'}";; esac; die "the duplicate-list check failed (it ended without a result)"; fi
-[ -z "$dups" ] || { say STL-CFG-320 "the same list is kept in two data files" problem="$(wc -l <<<"$dups") file and list pairs"; printf '%s\n' "$dups"; [ -z "$counts" ] || printf '%s\n' "$counts"; exit 1; }
+[ -z "$dups" ] || { say STL-CFG-324 "the same list is kept in two data files" problem="$(wc -l <<<"$dups") file and list pairs"; printf '%s\n' "$dups"
+  [ -z "$counts" ] || { say STL-CFG-320 "a hard-coded name is used more often than its baseline allows" problem="$(wc -l <<<"$counts") file and name pairs"; printf '%s\n' "$counts"; }; exit 1; }
 [ -z "$counts" ] || { say STL-CFG-320 "a hard-coded name is used more often than its baseline allows" problem="$(wc -l <<<"$counts") file and name pairs"; printf '%s\n' "$counts"; exit 1; }
