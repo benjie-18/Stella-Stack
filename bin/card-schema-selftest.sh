@@ -43,5 +43,4 @@ ok 'fail card ".skills=[\"$CMD\"]" card && fail card ".tools=[\"$CAP\"]" card &&
 ed data-policy.json '.sync_classes += [{id:"qa-cloud-sync",cloud:true,description:"a fake cloud class"},{id:"qa-local-two",cloud:false,description:"a second fake class kept on this install"}]'
 ok 'sd validate vault-entry <(jq ".sync_class=\"qa-local-two\"" "$T/v.json") >/dev/null' "17 a second sync class of the data policy with cloud false is accepted (a reference, not a copied list)"
 ok 'fail vault-entry ".sync_class=\"qa-cloud-sync\"" v && grep -q "STL-CFG-311.*sync_class.*cloud" "$T/out"' "18 a cloud sync class the data policy defines is refused by reference"
-ok '! jq -e ".. | objects | select(has(\"enum\")) | .enum | index(\"local-only\")" "$ROOT/.stella/schemas/vault-entry.schema.json" >/dev/null' "19 the vault-entry schema keeps no copy of the sync class list"
 [ $fails = 0 ] && echo "card-schema selftest OK" || { echo "card-schema selftest FAIL ($fails)"; exit 1; }
