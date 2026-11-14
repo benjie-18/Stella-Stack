@@ -71,8 +71,8 @@ mk bad2; ed bad2 connections.json 'del(.schema_version)'
 ok 'refuses bad2 check && grep -q "schema_version" "$T/o"' "20 a data file without schema_version makes check exit 1"
 mk bad3; jq '.properties.entries.contains = {}' "$T/bad3/.stella/schemas/connections.schema.json" >"$T/bad3/s" && mv "$T/bad3/s" "$T/bad3/.stella/schemas/connections.schema.json"
 ok 'refuses bad3 check && grep -q "contains" "$T/o"' "21 a schema keyword the validator does not know is an error, never ignored"
-mk bad4; ed bad4 role-assignments.json '.assignments[0].chain[0].provider = "no-such-provider"'
-ok 'refuses bad4 check && grep -q "chain\[0\].provider" "$T/o" && ! grep -q "no-such-provider" "$T/o"' "22 a dangling provider reference in a role assignment is refused, and the line names the field, not the value"
+mk bad4; ed bad4 role-assignments.json '.assignments[0].chain[0].connection = "no-such-provider"'
+ok 'refuses bad4 check && grep -q "chain\[0\].connection" "$T/o" && ! grep -q "no-such-provider" "$T/o"' "22 a dangling provider reference in a role assignment is refused, and the line names the field, not the value"
 mk bad5; ed bad5 role-assignments.json '.assignments[0].chain[0].model = "no-such-model"'
 ok '! sd bad5 check >/dev/null 2>&1' "23 an unknown model in a chain is refused"
 mk bad6; ed bad6 role-assignments.json '.assignments[0].role = "no-such-role"'
@@ -82,12 +82,12 @@ ok '! sd bad7 check >/dev/null 2>&1' "25 an empty chain is refused"
 mk bad8; ed bad8 role-assignments.json '.assignments[0].effort_mode = "no-such-mode"'
 ok '! sd bad8 check >/dev/null 2>&1' "26 an unknown effort mode is refused"
 mk bad9; ed bad9 connections.json ".entries += [$(conn cloud-one provider hosted cloud)]"
-ed bad9 role-assignments.json '.assignments[0].effort_mode = "local_only" | .assignments[0].chain = [{provider:"cloud-one",model:"cloud-one-model",parameters:{}}]'
+ed bad9 role-assignments.json '.assignments[0].effort_mode = "local_only" | .assignments[0].chain = [{connection:"cloud-one",model:"cloud-one-model",parameters:{}}]'
 ok '! sd bad9 check >/dev/null 2>&1' "27 a chain entry whose locality the effort mode forbids is refused"
 # A project assignment that widens the data policy: the project allows only the local rows, the override names a cloud provider.
 mk wide; ed wide connections.json ".entries += [$(conn cloud-one provider hosted cloud)]"
 ed wide data-policy.json '.projects.proj1 = {mode:"local_only",allowed_providers:[]}'; ed wide data-policy.json ".projects.proj1 += {$(ids)}"   # F1b D1: the fake record carries its own two ids
-ed wide role-assignments.json '.assignments += [{id:"proj1-builder",scope:{level:"project",project:"proj1"},role:"builder",effort_mode:"standard",chain:[{provider:"cloud-one",model:"cloud-one-model",parameters:{}}]}]'; ed wide role-assignments.json ".assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
+ed wide role-assignments.json '.assignments += [{id:"proj1-builder",scope:{level:"project",project:"proj1"},role:"builder",effort_mode:"standard",chain:[{connection:"cloud-one",model:"cloud-one-model",parameters:{}}]}]'; ed wide role-assignments.json ".assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses wide check && grep -q "cloud-one" "$T/o" && grep -q STL-CFG-310 "$T/o"' "28 a project assignment that widens the data policy makes check exit 1"
 ed wide data-policy.json '.projects.proj1 = {mode:"allowed_providers",allowed_providers:["cloud-one"]}'; ed wide data-policy.json ".projects.proj1 += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'sd wide check' "29 the same assignment passes when the project policy names that provider (control)"
@@ -143,9 +143,9 @@ ok '[ "$(jq -r ".files[] | select(.id == \"data-files\") | .owner_only" "$ROOT/.
 # G3 cross-file rules
 mk g3a; ed g3a role-assignments.json '.assignments[0].role = "ghost"'
 ok 'refuses g3a check connections && grep -q "role-assignments" "$T/o" && grep -q "assignable role" "$T/o" && ! grep -q ghost "$T/o"' "51 check <id> also prints the cross-file problems"
-OPEN="(.entries[] | select(.id == \"claude-subscription\")) |= (.allowed_roles = $AR | .data_policy.data_classes_allowed = [\"public\",\"internal\",\"client\"])"   # the subscription provider allowing every role and class
+OPEN="(.entries[] | select(.id == \"claude-subscription\")) |= (.allowed_roles = $AR | .data_policy.data_classes_allowed = [\"public\",\"internal\",\"client\"] | .terms_ok = true)"   # the subscription provider allowing every role and class, its terms recorded as allowing this use (F1b D6)
 mk g3b; ed g3b connections.json "$OPEN"; ed g3b data-policy.json '.projects["cx"] = {mode:"local_only",allowed_providers:[]}'; ed g3b data-policy.json ".projects.cx += {$(ids)}"   # F1b D1: the fake record carries its own two ids
-ed g3b role-assignments.json '.assignments += [{id:"zz",scope:{level:"card",card:"c1"},role:"builder",effort_mode:"standard",chain:[{provider:"claude-subscription",model:"haiku",parameters:{}}]}]'; ed g3b role-assignments.json ".assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
+ed g3b role-assignments.json '.assignments += [{id:"zz",scope:{level:"card",card:"c1"},role:"builder",effort_mode:"standard",chain:[{connection:"claude-subscription",model:"haiku",parameters:{}}]}]'; ed g3b role-assignments.json ".assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses g3b check' "52 a card assignment with no project is refused, not judged by the open default"
 ed g3b role-assignments.json '.assignments[-1].scope = {level:"project",project:"CX"}'
 ok 'refuses g3b check' "53 a project name in upper case is refused"
@@ -154,7 +154,7 @@ ok 'refuses g3c check' "54 two assignments for one scope, role and effort mode a
 mk g3d; ed g3d role-assignments.json '.assignments += [.assignments[0] | .id = "zz" | .role = "unlisted"]'; ed g3d role-assignments.json ".assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses g3d check' "55 the fallback role of the role table cannot be assigned"
 mk g3e; ed g3e connections.json "$OPEN"; ed g3e connections.json '(.entries[] | select(.id == "claude-subscription")).enabled = false'
-ed g3e role-assignments.json '.assignments += [.assignments[0] | .id = "zz" | .role = "reviewer" | .chain = [{provider:"claude-subscription",model:"haiku",parameters:{}}]]'; ed g3e role-assignments.json ".assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
+ed g3e role-assignments.json '.assignments += [.assignments[0] | .id = "zz" | .role = "reviewer" | .chain = [{connection:"claude-subscription",model:"haiku",parameters:{}}]]'; ed g3e role-assignments.json ".assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses g3e check' "56 a chain naming a disabled provider is refused"
 mk g3f; echo '{"schema_version":1,"id":"zz-ext","kind":"skill","summary":"s","hosts":[],"secrets":[],"tools":[],"allowed_roles":[],"risk_class":"read","enabled":true,"status":"proposed","source":"x"}' >"$T/g3f/.stella/extensions/zz-ext.json"; ed g3f extensions/zz-ext.json ". + {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses g3f check && grep -q zz-ext "$T/o"' "57 an extension that is switched on without being approved is refused"
@@ -233,9 +233,9 @@ ok '! grep -q "stella_data" "$BIN/roles.py"' "83 bin/roles.py does not import st
 # ---- F1 W1 fix round 2 (QA round 2): P policy, M no leaks, L loader, I index, S schemas ----
 V=sk-ant-api03-qafake0123456789abcdef   # lower case on purpose: it fits the id pattern
 CM=$(jq -r '.entries[] | select(.id == "claude-subscription") | .models[0].id' "$ROOT/.stella/connections.json")
-CHAIN="[{provider:\"claude-subscription\",model:\"$CM\",parameters:{}}]"
+CHAIN="[{connection:\"claude-subscription\",model:\"$CM\",parameters:{}}]"
 # P1 a chain entry's provider must allow every data class the role handles
-mk p1a; ed p1a connections.json "(.entries[] | select(.id == \"claude-subscription\")).allowed_roles = $AR"; ed p1a role-assignments.json ".assignments[0].chain = $CHAIN"
+mk p1a; ed p1a connections.json "(.entries[] | select(.id == \"claude-subscription\")) |= (.allowed_roles = $AR | .terms_ok = true)"; ed p1a role-assignments.json ".assignments[0].chain = $CHAIN"   # F1b D6: terms recorded, so the cases judge only the data classes
 ok 'refuses p1a check && grep -q "data class" "$T/o"' "84 a chain to a provider that allows none of the role's data classes is refused"
 ed p1a connections.json '(.entries[] | select(.id == "claude-subscription")).data_policy.data_classes_allowed = ["public"]'
 ok 'refuses p1a check' "85 a provider that allows only some of the role's data classes is refused"
@@ -369,7 +369,7 @@ mk b2c; jq '."x-one-document" = "yes"' "$T/b2c/.stella/schemas/features.schema.j
 ok 'refuses b2c check && grep -q "x-one-document" "$T/o"' "137 x-one-document takes only true or false"
 mk b3; jq -n "{schema_version:1,entries:[$(conn two-prov provider hosted cloud)]}" >"$T/b3/.stella/conn2.json"
 ed b3 data-files.json '.files += [{id:"conn2",path:".stella/conn2.json",schema:"connections",format:"json",owner_only:true,redact_keys:[],list_key:"entries",id_field:"id"}]'; ed b3 data-files.json ".files[-1] += {$(rid connections)}"   # F1b D1: the fake record carries its own two ids
-ed b3 role-assignments.json '.assignments[0].chain = [{provider:"two-prov",model:"two-prov-model",parameters:{}}]'
+ed b3 role-assignments.json '.assignments[0].chain = [{connection:"two-prov",model:"two-prov-model",parameters:{}}]'
 ok 'sd b3 check >"$T/o" 2>&1 && [ "$(sd b3 get conn2 two-prov --json | jq -r .id)" = two-prov ]' "138 control: a second connections row is one catalog with the first; an assignment may name its provider"
 ed b3 conn2.json '.entries[0].data_policy.data_classes_allowed += ["no-such-class"]'
 ok 'refuses b3 check && grep -q "conn2: two-prov: data_classes_allowed" "$T/o" && refuses b3 get conn2 two-prov && grep -q "^STL-CFG-310 " "$T/o"' "139 the cross-file rules judge the entries of the second row, and get refuses them"
@@ -411,7 +411,7 @@ ok 'refuses fake validate event <(jq "del(.time)" "$T/ev.json") && grep -q "^STL
 # ---- F1 W1 fix round 5 (QA round 4): S1 a read is judged by exactly the files its rules use, S2 bounded time, S3 the small ones ----
 ms() { local t0=$(date +%s%N); timeout 20 env STELLA_ROOT="$T/$1" python3 -I "$SD" "${@:2}" >"$T/o" 2>&1; rc=$?; el=$(( ($(date +%s%N) - t0) / 1000000 )); }
 # S1 one-document conflict: every row of the schema is refused, whatever the row order (red team d1, c2)
-QCB='.assignments += [{id:"qa-cloud-builder",scope:{level:"global"},role:"builder",effort_mode:"max",chain:[{provider:"claude-subscription",model:"sonnet",parameters:{}}]}]'
+QCB='.assignments += [{id:"qa-cloud-builder",scope:{level:"global"},role:"builder",effort_mode:"max",chain:[{connection:"claude-subscription",model:"sonnet",parameters:{}}]}]'
 mk pd1; ed pd1 connections.json "$OPEN"; ed pd1 role-assignments.json "$QCB"; ed pd1 role-assignments.json ".assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'sd pd1 check >"$T/o" 2>&1 && sd pd1 get role-assignments qa-cloud-builder >/dev/null 2>&1' "155 control: a max-mode cloud assignment under the open shipped policy passes check and is served"
 ed pd1 data-policy.json '.default.mode = "local_only"'
@@ -790,11 +790,67 @@ ed w2p data-policy.json '.projects.qa1.private = false'
 ok 'sd w2p check >"$T/o" 2>&1' "244h control: the same project, not private, passes"
 ed w2p connections.json "$(E qa-api).data_policy.hosted = true"
 ed w2p data-policy.json ".projects.qa1 = $(PJ open ',private:true')"
-ed w2p role-assignments.json ".assignments += [{id:\"qa1-builder\",scope:{level:\"project\",project:\"qa1\"},role:\"builder\",effort_mode:\"standard\",chain:[{provider:\"qa-api\",model:\"qa-api-model\",parameters:{}}],$(ids)}]"
+ed w2p role-assignments.json ".assignments += [{id:\"qa1-builder\",scope:{level:\"project\",project:\"qa1\"},role:\"builder\",effort_mode:\"standard\",chain:[{connection:\"qa-api\",model:\"qa-api-model\",parameters:{}}],$(ids)}]"
 ok 'refuses w2p check && grep -q "^STL-CFG-310 .*role-assignments: .*qa1-builder.*qa-api.*not allowed by the data policy" "$T/o"' "244i a private project open to every provider still never routes to a hosted one"
 ed w2p data-policy.json '.projects.qa1.private = false'
 ok 'sd w2p check >"$T/o" 2>&1' "244j control: the same route for a project that is not private passes"
 # T-CLI every CLI login of the F1 audit is a cli-login connection with terms_ok unset; terms_ok is owner-only
 ok 'jq -e "(.entries | all(.type == \"api\" or .type == \"cli-login\")) and ([.entries[] | select(.type == \"cli-login\") | .cli] | index(\"claude-code\")) and ([.entries[] | select(.type == \"cli-login\")] | all(.terms_ok == null and .credential_store == \"engine_cli_store\"))" "$ROOT/.stella/connections.json" >/dev/null' "245 the shipped catalog: every entry is api or cli-login; the Claude Code login is cli-login, its token in the engine's CLI store, terms_ok unset"
 ok 'python3 -I "$SD" owner-only --json | jq -e ".connections | index(\"/entries/*/terms_ok\")" >/dev/null' "246 owner-only lists terms_ok of the connections schema"
+# ---- F1b W3: typed links (D6), the routing check, x-ref-where ----
+# T2a/T2b the links F1 wrote ({provider, model, parameters}) migrated to {connection, model, parameters} through the apply contract
+LK='.assignments[].chain[] |= with_entries(if .key == "connection" then .key = "provider" else . end)'   # a link as F1 wrote it
+FW='.assignments[].chain[] |= with_entries(if .key == "provider" then .key = "connection" else . end)'   # the migration: that key renamed, nothing else
+RB='[.assignments[] | {id, role, scope, effort_mode, links: [.chain[] | [(.connection // .provider), .model, .parameters]]}]'   # what each row resolves to, in order
+mk lk; ed lk data-files.json '(.files[] | select(.id == "role-assignments")).owner_only = false'   # the cases run as no owner
+ed lk role-assignments.json "$LK"; cp "$T/lk/.stella/role-assignments.json" "$T/lk-old.json"; jq "$FW" "$T/lk-old.json" >"$T/lk-cand.json"
+ok 'jq -e "[.assignments[].chain[] | keys == [\"model\",\"parameters\",\"provider\"]] | all" "$T/lk-old.json" >/dev/null && refuses lk check && grep -q "^STL-CFG-310 .*role-assignments: .*provider" "$T/o"' "247 the role assignments as F1 wrote them (links naming provider) fail the typed-link schema"
+ok 'APY lk apply role-assignments --from "$T/lk-cand.json" --dry-run >"$T/o" 2>&1 && cmp -s "$T/lk-old.json" "$T/lk/.stella/role-assignments.json"' "247a T2a the migration's dry run passes and changes nothing"
+ok 'APY lk apply role-assignments --from "$T/lk-cand.json" >"$T/o" 2>&1 && cmp -s "$T/lk-cand.json" "$T/lk/.stella/role-assignments.json" && sd lk check >"$T/o" 2>&1' "247b T2a the candidate is applied through the apply contract, and check passes"
+ok 'jq -e --slurpfile o "$T/lk-old.json" "($RB) == (\$o[0] | $RB) and ($LK) == \$o[0] and (.assignments | length) == (\$o[0].assignments | length) and (\$o[0].assignments | length) > 0" "$T/lk/.stella/role-assignments.json" >/dev/null' "247c T2b row by row (id, role, scope, effort mode, ordered links) the migrated assignments resolve to the same connections and models; only the key changed"
+ok '[ "$(sd lk get role-assignments --json | jq -c "$RB")" = "$(jq -c "$RB" "$T/lk-old.json")" ]' "247d T2b the served assignments resolve as F1's did"
+APY lk rollback role-assignments >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q "^STL-CFG-31[36] .*saved copy fails a check a candidate must pass" "$T/o" && cmp -s "$T/lk-cand.json" "$T/lk/.stella/role-assignments.json" && sd lk check >/dev/null 2>&1' "247f T2a a data-only rollback would bring back links the schema refuses: it is refused, coded, and the migrated file stays (exit $rc: $(head -c 200 "$T/o"))"
+ok 'jq -e "[.assignments[].chain[] | keys == [\"connection\",\"model\",\"parameters\"]] | all" "$ROOT/.stella/role-assignments.json" >/dev/null' "247e the shipped role assignments are migrated: every link is {connection, model, parameters}"
+C0=$(jq -r '.assignments[0].chain[0] | .connection // .provider' "$ROOT/.stella/role-assignments.json"); G0=$(jq -r --arg c "$C0" '.entries[] | select(.id == $c) | .global_id' "$ROOT/.stella/connections.json")
+mk lg; ed lg role-assignments.json ".assignments[0].chain[0].connection = \"$G0\""
+ok 'sd lg check >"$T/o" 2>&1' "248a a link may name its connection by global_id (x-ref)"
+mk la; ed la connections.json ".entries += [$(conn qa-app app mail cloud)]"; ed la role-assignments.json '.assignments[0].chain[0] = {connection:"qa-app",model:"qa-app-model",parameters:{}}'
+ok 'refuses la check && grep -q "^STL-CFG-310 .*role-assignments: .*chain\[0\]\.connection.*kind" "$T/o"' "248b a link to a catalog entry that is no provider (an app) is refused by its x-ref-where, naming the field"
+# T9c the routing check: a role that handles a class whose rule is hosted grant reaches a cloud or hosted link only under a privacy grant
+CLS() { ed "$1" ../docs/hermes-local/roles.json ".roles.builder.requirements.allowed_data_classes += [\"$2\"]"; ed "$1" connections.json "($LMS, (.entries[] | select(.id == \"qa-cloud\"))).data_policy.data_classes_allowed += [\"$2\"]"; }   # <root> <class>: the builder handles it, both links allow it
+mk rt; ed rt connections.json ".entries += [$(conn qa-cloud provider hosted cloud)]"; CLS rt camera
+ed rt role-assignments.json ".assignments += [{id:\"qa-cam-builder\",scope:{level:\"global\"},role:\"builder\",effort_mode:\"max\",chain:[{connection:\"qa-cloud\",model:\"qa-cloud-model\",parameters:{}}],$(ids)}]"
+cp -r "$T/rt" "$T/rt0"   # the same root before any grant
+ok 'refuses rt check && grep -q "^STL-CFG-310 .*role-assignments: .*qa-cam-builder: chain\[0\]: .*qa-cloud.*camera.*grant" "$T/o" && ! grep -q "global-builder" "$T/o"' "249 T9c a camera-class role routed to a cloud link with no privacy grant is refused; its local link needs none"
+ed rt data-policy.json ".privacy_grants = [$(GR qa-cloud)]"
+ok 'sd rt check >"$T/o" 2>&1' "249a control: a grant for camera on that connection lets the route pass"
+QG=$(jq -r '.entries[] | select(.id == "qa-cloud") | .global_id' "$T/rt/.stella/connections.json")
+ed rt data-policy.json ".privacy_grants[0].connection = \"$QG\""
+ok 'sd rt check >"$T/o" 2>&1' "249b a grant may name its connection by global_id"
+ed rt data-policy.json '.privacy_grants[0].expires_at = "2020-01-01T00:00:00Z"'
+ok 'refuses rt check && grep -q "qa-cam-builder: chain\[0\]: .*camera.*grant" "$T/o"' "249c an expired grant is no grant"
+ed rt data-policy.json '.privacy_grants[0].expires_at = "2999-01-01T00:00:00Z"'
+ok 'sd rt check >"$T/o" 2>&1' "249d control: a grant that has not expired passes"
+ed rt data-policy.json '.privacy_grants[0].data_class = "microphone"'
+ok 'refuses rt check && grep -q "qa-cam-builder: chain\[0\]: .*camera.*grant" "$T/o"' "249e a grant for another class does not cover camera"
+ed rt data-policy.json ".privacy_grants[0].data_class = \"camera\" | .privacy_grants[0].connection = \"$NA\""
+ok 'refuses rt check && grep -q "qa-cam-builder: chain\[0\]: .*camera.*grant" "$T/o"' "249f a grant for another connection does not cover this one"
+rm -rf "$T/rt1"; cp -r "$T/rt0" "$T/rt1"; ed rt1 data-policy.json '.data_classes += ["qa-g"] | .class_rules["qa-g"] = (.class_rules.public | .hosted = "grant")'
+ed rt1 role-assignments.json 'del(.assignments[] | select(.id == "qa-cam-builder"))'; ed rt1 ../docs/hermes-local/roles.json '.roles.builder.requirements.allowed_data_classes -= ["camera"]'; CLS rt1 qa-g
+ok 'sd rt1 check >"$T/o" 2>&1' "249g control: a class whose rule is hosted grant, on local links only, needs no grant"
+ed rt1 connections.json "$LMS.data_policy.hosted = true"
+ok 'refuses rt1 check && grep -q "^STL-CFG-310 .*role-assignments: .*global-builder: chain\[0\]: .*qa-g.*grant" "$T/o"' "249h a hosted connection needs the grant even when its locality is local"
+rm -rf "$T/rn"; cp -r "$T/rt0" "$T/rn"; CLS rn secret; ed rn data-policy.json ".privacy_grants = [$(GR qa-cloud) | .data_class = \"secret\"]"
+ok 'refuses rn check && grep -q "^STL-CFG-310 .*role-assignments: .*qa-cam-builder: chain\[0\]: .*qa-cloud.*secret.*never" "$T/o" && ! grep -q "global-builder" "$T/o"' "250a a class whose rule is hosted never (secret) never reaches a cloud link, even with a grant; its local link passes"
+rm -rf "$T/rm"; cp -r "$T/rt0" "$T/rm"; ed rm data-policy.json '.data_classes += ["qa-k"] | .privacy_grants = []'; CLS rm qa-k; ed rm ../docs/hermes-local/roles.json '.roles.builder.requirements.allowed_data_classes -= ["camera"]'
+ed rm data-policy.json ".privacy_grants = [$(GR qa-cloud) | .data_class = \"qa-k\"]"
+ok 'refuses rm check && grep -q "qa-cam-builder: chain\[0\]: .*qa-k.*never" "$T/o" && ! grep -q "global-builder" "$T/o"' "250b a class with no rule row is the most restrictive: refused on a cloud link even with a grant"
+# T-CLI routing: a cli-login link is refused until the owner records terms_ok true
+mk tk; ed tk connections.json "$OPEN"; ed tk role-assignments.json "$QCB"; ed tk role-assignments.json ".assignments[-1] += {$(ids)}"
+ok 'sd tk check >"$T/o" 2>&1' "251 control: a cli-login link whose terms_ok is true passes"
+ed tk connections.json '(.entries[] | select(.id == "claude-subscription")).terms_ok = null'
+ok 'refuses tk check && grep -q "^STL-CFG-310 .*role-assignments: .*qa-cloud-builder: chain\[0\]: .*claude-subscription.*terms_ok" "$T/o"' "251a a cli-login link whose terms_ok is unset is refused"
+ed tk connections.json '(.entries[] | select(.id == "claude-subscription")).terms_ok = false'
+ok 'refuses tk check && grep -q "qa-cloud-builder: chain\[0\]: .*terms_ok" "$T/o"' "251b a cli-login link whose terms_ok is false is refused"
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

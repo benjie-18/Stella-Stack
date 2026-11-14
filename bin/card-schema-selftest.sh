@@ -8,10 +8,15 @@ fails=0
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 sd() { python3 -I "$SD" "$@"; }
 IID=$(jq -r .install_id "$ROOT/.stella/install.json"); GID=$(cat /proc/sys/kernel/random/uuid)
-APP=$(jq -r '.entries[0].id' "$ROOT/.stella/connections.json"); CAP=$(jq -r '.entries[0].id' "$ROOT/.stella/capabilities.json")
-CAP2=$(jq -r '.entries[1].global_id' "$ROOT/.stella/capabilities.json")   # a global_id is as good as an id
-jq -n --arg g "$GID" --arg i "$IID" --arg a "$APP" --arg c "$CAP" --arg c2 "$CAP2" \
-  '{schema_version:1,global_id:$g,install_id:$i,apps:[$a],skills:[$c],tools:[$c,$c2]}' >"$T/card.json"
+U() { cat /proc/sys/kernel/random/uuid; }
+ed() { jq "$2" "$T/r/.stella/$1" >"$T/x" && mv "$T/x" "$T/r/.stella/$1"; }   # <data file> <jq filter>, in the scratch root
+# a fake app (a copy of the first api provider) and fake skills and tools (copies of the first capability): matched by kind (x-ref-where)
+ed connections.json "[.entries[] | select(.kind == \"provider\" and .type == \"api\")][0] as \$p | .entries += [\$p | .id = \"qa-app\" | .kind = \"app\" | .global_id = \"$(U)\"]"
+ed capabilities.json ".entries[0] as \$c | .entries += [(\$c | .id = \"qa-skill\" | .kind = \"skill\" | .global_id = \"$(U)\"), (\$c | .id = \"qa-tool\" | .kind = \"tool\" | .global_id = \"$(U)\"), (\$c | .id = \"qa-tool2\" | .kind = \"tool\" | .global_id = \"$(U)\")]"
+APP=qa-app; CAP=qa-skill; TOOL=qa-tool; CAP2=$(jq -r '.entries[] | select(.id == "qa-tool2") | .global_id' "$T/r/.stella/capabilities.json")   # a global_id is as good as an id
+PROV=$(jq -r '[.entries[] | select(.kind == "provider")][0].id' "$ROOT/.stella/connections.json"); CMD=$(jq -r '[.entries[] | select(.kind == "command")][0].id' "$ROOT/.stella/capabilities.json")
+jq -n --arg g "$GID" --arg i "$IID" --arg a "$APP" --arg c "$CAP" --arg t "$TOOL" --arg c2 "$CAP2" \
+  '{schema_version:1,global_id:$g,install_id:$i,apps:[$a],skills:[$c],tools:[$t,$c2]}' >"$T/card.json"
 jq -n --arg g "$GID" --arg i "$IID" '{schema_version:1,global_id:$g,install_id:$i,kind:"cli-login",version:3,last_refreshed:"2026-11-13T10:00:00Z",
   custody:"engine_store",lease:{holder:"vm_run:run-7",acquired_at:"2026-11-13T10:00:00Z",expires_at:"2026-11-13T11:00:00Z"},
   write_back:{rule:"compare_and_swap",expected_version:3},sync_class:"local-only"}' >"$T/v.json"
@@ -32,4 +37,10 @@ ok 'fail vault-entry ".sync_class=\"cloud\"" v' "11 a cloud sync class is refuse
 ok 'fail vault-entry "del(.write_back)" v && fail vault-entry "del(.write_back.expected_version)" v && fail vault-entry ".write_back.rule=\"overwrite\"" v' "12 a missing or wrong compare-and-swap rule is refused"
 ok 'fail vault-entry ".value=\"s3cret\"" v && fail vault-entry ".secret=\"s3cret\"" v' "13 a secret value field is refused"
 ok 'fail vault-entry ".version=0" v && fail vault-entry ".custody=\"cloud\"" v && fail vault-entry "del(.global_id)" v' "14 version 0, a bad custody and a missing id are refused"
+# F1b W3: x-ref-where (the record must also carry given values) and an x-ref to a list inside a one-document row
+ok 'fail card ".apps=[\"$PROV\"]" card && grep -q "STL-CFG-311.*apps\[0\].*kind" "$T/out" && ! grep -q "$PROV" "$T/out"' "15 a provider id in apps is refused (an app is a connection of kind app), and never printed"
+ok 'fail card ".skills=[\"$CMD\"]" card && fail card ".tools=[\"$CAP\"]" card && fail card ".skills=[\"$TOOL\"]" card' "16 a command or a tool in skills and a skill in tools are refused (matched by capability kind)"
+ed data-policy.json '.sync_classes += [{id:"qa-cloud-sync",cloud:true,description:"a fake cloud class"},{id:"qa-local-two",cloud:false,description:"a second fake class kept on this install"}]'
+ok 'sd validate vault-entry <(jq ".sync_class=\"qa-local-two\"" "$T/v.json") >/dev/null' "17 a second sync class of the data policy with cloud false is accepted (a reference, not a copied list)"
+ok 'fail vault-entry ".sync_class=\"qa-cloud-sync\"" v && grep -q "STL-CFG-311.*sync_class.*cloud" "$T/out"' "18 a cloud sync class the data policy defines is refused by reference"
 [ $fails = 0 ] && echo "card-schema selftest OK" || { echo "card-schema selftest FAIL ($fails)"; exit 1; }
