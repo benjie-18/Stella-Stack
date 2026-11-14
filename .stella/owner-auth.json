@@ -84,5 +84,22 @@
     "host-access:/routes/*/enabled",
     "host-access:/actions/*/state",
     "owner-settings:/OWNER_DISCORD_USER_ID"
-  ]
+  ],
+  "channel_kinds": {
+    "discord": true,
+    "host-cli": true,
+    "app": true,
+    "voice": false,
+    "card": false,
+    "comment": false,
+    "tool-output": false,
+    "model-output": false
+  },
+  "voice_host_confirmation": {
+    "enabled": false,
+    "channel_kind": "voice",
+    "profile": "stella-voice",
+    "max_ttl_s": 30,
+    "action_class": "host_ask"
+  }
 }

@@ -15,47 +15,111 @@
       "items": {
         "type": "object",
         "properties": {
-          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]*$"},
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
           "kind": {
-            "enum": ["local-key", "channel-identity", "command", "typed-phrase", "device-phrase"],
+            "enum": [
+              "local-key",
+              "channel-identity",
+              "command",
+              "typed-phrase",
+              "device-phrase"
+            ],
             "description": "local-key: an HMAC with the owner key file (index owner_key) on the host. channel-identity: the answer's user id equals the owner config value named by owner_config_key, on the message the caller delivered. command: argv runs with the request as JSON on stdin; exit 0 = valid, within timeout_s. typed-phrase: the rendered phrase typed on the host terminal. device-phrase: the device-signed payload's phrase equals the rendered phrase (stands only beside a device-signature provider)."
           },
           "params": {
             "type": "object",
             "properties": {
-              "channel_kind": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
-              "owner_config_key": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$", "description": "The name (never the value) of the owner config key that holds the owner's user id on that channel."},
-              "argv": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "description": "The command; its first item is an absolute path."},
-              "timeout_s": {"type": "integer", "minimum": 1, "maximum": 600}
+              "channel_kind": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9_-]*$"
+              },
+              "owner_config_key": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$",
+                "description": "The name (never the value) of the owner config key that holds the owner's user id on that channel."
+              },
+              "argv": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": "The command; its first item is an absolute path."
+              },
+              "timeout_s": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 600
+              }
             },
             "additionalProperties": false
           },
-          "enabled": {"type": "boolean"},
-          "global_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
-          "install_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+          "enabled": {
+            "type": "boolean"
+          },
+          "global_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "install_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
         },
-        "required": ["id", "kind", "params", "enabled", "global_id", "install_id"],
+        "required": [
+          "id",
+          "kind",
+          "params",
+          "enabled",
+          "global_id",
+          "install_id"
+        ],
         "additionalProperties": false
       }
     },
     "actions": {
       "type": "object",
       "description": "Action class -> alternatives; an alternative is a list of provider ids that must all pass, and one passing alternative is enough. owner_write: an owner data change; channel_answer: an approval answered on a channel; identity_critical: used instead of owner_write when the change touches an identity-critical target. owner_auth.py check requires every id to be a provider.",
-      "propertyNames": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
-      "properties": {
-        "owner_write": {"$ref": "#/$defs/alternatives"},
-        "channel_answer": {"$ref": "#/$defs/alternatives"},
-        "identity_critical": {"$ref": "#/$defs/alternatives"}
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]*$"
       },
-      "additionalProperties": {"$ref": "#/$defs/alternatives"},
-      "required": ["owner_write", "channel_answer", "identity_critical"]
+      "properties": {
+        "owner_write": {
+          "$ref": "#/$defs/alternatives"
+        },
+        "channel_answer": {
+          "$ref": "#/$defs/alternatives"
+        },
+        "identity_critical": {
+          "$ref": "#/$defs/alternatives"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/alternatives"
+      },
+      "required": [
+        "owner_write",
+        "channel_answer",
+        "identity_critical"
+      ]
     },
     "phrase": {
       "type": "object",
       "properties": {
-        "template": {"type": "string", "pattern": "\\{what\\}", "description": "The confirmation phrase; {what} becomes the action's target."}
+        "template": {
+          "type": "string",
+          "pattern": "\\{what\\}",
+          "description": "The confirmation phrase; {what} becomes the action's target."
+        }
       },
-      "required": ["template"],
+      "required": [
+        "template"
+      ],
       "additionalProperties": false
     },
     "proof_ttl_s": {
@@ -70,37 +134,106 @@
       "properties": {
         "token_env": {
           "type": "array",
-          "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          },
           "uniqueItems": true,
           "description": "Environment variables that carry an agent token: set and not empty = a worker."
         },
         "users": {
           "type": "array",
-          "items": {"type": "string", "pattern": "^[a-z_][a-z0-9_-]*$"},
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z_][a-z0-9_-]*$"
+          },
           "uniqueItems": true,
           "description": "OS user names agents run as (empty until E1 adds the agent user)."
         },
         "sandbox_files": {
           "type": "array",
-          "items": {"type": "string", "pattern": "^/.+$"},
+          "items": {
+            "type": "string",
+            "pattern": "^/.+$"
+          },
           "uniqueItems": true,
           "description": "Absolute paths whose existence marks the agent sandbox."
         },
         "worktree_dirs": {
           "type": "array",
-          "items": {"type": "string", "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"},
+          "items": {
+            "type": "string",
+            "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"
+          },
           "uniqueItems": true,
           "description": "Folders (relative to the stack root) whose sub-folders are run worktrees: a process whose working folder lies in one is a worker."
         }
       },
-      "required": ["token_env", "users", "sandbox_files", "worktree_dirs"],
+      "required": [
+        "token_env",
+        "users",
+        "sandbox_files",
+        "worktree_dirs"
+      ],
       "additionalProperties": false
     },
     "identity_critical": {
       "type": "array",
       "uniqueItems": true,
-      "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]*(:(/[^/]*)+)?$"},
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._:-]*(:(/[^/]*)+)?$"
+      },
       "description": "Identity-critical targets (F1c B3, D2): a change that touches one needs the identity_critical action class (the typed phrase) instead of owner_write. `<row id>`: any change of that index row; `<row id>:<JSON pointer>`: a change at or below that pointer, where a * segment stands for any one segment (an env row's keys are top-level members, /KEY). Settings whose registry sensitivity is identity_critical count too, without being listed here."
+    },
+    "channel_kinds": {
+      "type": "object",
+      "description": "Channel kind -> whether an answer on a channel of that kind may decide an approval (bin/approvals.py, F1c B2, D3). Open map: a new kind is data (a channels row of that kind plus its entry here and a channel-identity provider). A kind not listed here answers nothing (fail closed). The kind voice_host_confirmation.channel_kind (voice) answers only through that entry, whatever its value here.",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9_-]*$"
+      },
+      "additionalProperties": {
+        "type": "boolean"
+      }
+    },
+    "voice_host_confirmation": {
+      "type": "object",
+      "description": "The one exception to 'a voice channel answers no approval' (F1c B2, decided 2026-11-13): when enabled, the voice profile `profile` may give the quick confirmation for its own ask-first host action, a request of class action_class whose ttl is at most max_ttl_s, answered with the digest of the details shown; never any other approval. Off until the post-1.0 host operator exists. The schema keeps it strict: no other key.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "channel_kind": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "description": "The voice channel kind: a channel of this kind answers only through this entry, whatever channel_kinds says."
+        },
+        "profile": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "description": "The requester profile whose own asks voice may confirm."
+        },
+        "max_ttl_s": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600,
+          "description": "The longest request ttl (seconds) voice may confirm."
+        },
+        "action_class": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "The approval class of the host ask-first action (an approval_class of the approval-request schema)."
+        }
+      },
+      "required": [
+        "enabled",
+        "channel_kind",
+        "profile",
+        "max_ttl_s",
+        "action_class"
+      ],
+      "additionalProperties": false
     }
   },
   "$defs": {
@@ -111,7 +244,10 @@
         "type": "array",
         "minItems": 1,
         "uniqueItems": true,
-        "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]*$"}
+        "items": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+        }
       }
     }
   },
@@ -122,7 +258,9 @@
     "phrase",
     "proof_ttl_s",
     "worker_signals",
-    "identity_critical"
+    "identity_critical",
+    "channel_kinds",
+    "voice_host_confirmation"
   ],
   "additionalProperties": false
 }

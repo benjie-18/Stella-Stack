@@ -1,13 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Approval request",
-  "description": "schema_version 2 (from F1b): every new record has global_id and install_id; whatever writes one stamps both, the install id read through stella_data.install_id(). schema_version 1: a record from before the ids; it is never rewritten, it is read and validated as it is, and it is still found by what identified it then (its id). The schema subset has no conditional, so the schema accepts either version with the ids optional; that a version 2 record has both is the writer's rule.",
+  "description": "schema_version 2 (from F1b): every new record has global_id and install_id; whatever writes one stamps both, the install id read through stella_data.install_id(). schema_version 1: a record from before the ids; it is never rewritten, it is read and validated as it is, and it is still found by what identified it then (its id). The schema subset has no conditional, so the schema accepts either version with the ids optional; that a version 2 record has both is the writer's rule. schema_version 3 (F1c W3, the approval service bin/approvals.py): the store record approval_store/requests/<id>.json; action is the exact action object {op, target, old_digest, new_digest | new} the answer approves, digest its sha256 (owner_auth.digest), nonce the single-use binding an answer must carry, status what the store last wrote (never proof: an approval counts only as a trusted decision line in event_log.proof_lines()), deliveries the message ref each channel id was given, ask the global_id of the untrusted approval-ask line it came from (null: asked on the host).",
   "type": "object",
   "properties": {
     "schema_version": {
       "enum": [
         1,
-        2
+        2,
+        3
       ]
     },
     "global_id": {
@@ -65,11 +66,16 @@
         "send",
         "pay",
         "delete",
-        "sign_in"
+        "sign_in",
+        "host_ask"
       ]
     },
     "action": {
-      "type": "string"
+      "type": [
+        "string",
+        "object"
+      ],
+      "description": "What will happen: plain text (schema_version 1, 2) or, from schema_version 3, the exact action object."
     },
     "summary": {
       "type": "string"
@@ -91,6 +97,53 @@
         "string",
         "null"
       ]
+    },
+    "nonce": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$",
+      "description": "The request's single-use binding: an answer must carry it (32 lower-case hex)."
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 of the action's canonical JSON (owner_auth.digest)."
+    },
+    "status": {
+      "enum": [
+        "pending",
+        "approved",
+        "denied",
+        "expired"
+      ],
+      "description": "What the store last wrote; never proof."
+    },
+    "deliveries": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "description": "Channel id -> the message ref its adapter returned; an answer counts only on that message."
+    },
+    "decision": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "The accepted decision record (approval-decision), as the store last wrote it; never proof."
+    },
+    "ask": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "global_id of the untrusted approval-ask line this request came from (intake makes one request per ask); null when asked on the host."
     }
   },
   "required": [
