@@ -637,6 +637,11 @@ GE=$(jq -r .global_id "$T/al/.stella/extensions/fake-ext.json")
 ok 'sd al get --json extensions fake-ext >"$T/gid-a" && sd al get --json extensions "$GE" >"$T/gid-b" && cmp -s "$T/gid-a" "$T/gid-b"' "215b the same for a folder entry"
 mk amb; ed amb capabilities.json '.entries[1].id = .entries[0].global_id'
 ok 'refuses amb check && grep -q "^STL-CFG-310 .*capabilities: .*global_id is the id of another entry" "$T/o"' "215c an old id that equals another record's global_id is refused (a read by it would be ambiguous)"
+# W1 r3 (W1r2-CRT-03): no alias anywhere equals the global_id of a record of another data file
+CNG=$(jq -r '.entries[0].global_id' "$ROOT/.stella/connections.json"); RAG=$(jq -r '.assignments[0].global_id' "$ROOT/.stella/role-assignments.json")
+mk amb2; ed amb2 capabilities.json ".entries += [(.entries[0] | .id = \"$CNG\" | .global_id = \"$(cat /proc/sys/kernel/random/uuid)\")]"
+mk amb3; ed amb3 data-policy.json ".projects[\"$RAG\"] = {mode:\"open\",allowed_providers:[],$(ids)}"
+ok 'refuses amb2 check && grep -q "^STL-CFG-310 .*connections: .*global_id is the id of another entry.*capabilities" "$T/o" && refuses amb3 check && grep -q "^STL-CFG-310 .*role-assignments: .*global_id is the id of another entry.*data-policy" "$T/o"' "215d an old id that equals the global_id of a record in another data file is refused (a capability, a project key)"
 n=$(alerts)
 ok 'refuses al get capabilities "$(cat /proc/sys/kernel/random/uuid)" && grep -q "^STL-CFG-311 " "$T/o" && [ "$(alerts)" -eq $((n+1)) ]' "216 an unknown global_id fails closed: STL-CFG-311 and one alert line"
 # T7c the ids migration of data that diverged before the merge that made ids required: a candidate with the two fields added and
@@ -659,7 +664,24 @@ echo keep >"$T/mig-keep"
 ok 'refuses mig ids-migrate capabilities --out "$T/mig-keep" && grep -q "^STL-CFG-310 " "$T/o" && [ "$(cat "$T/mig-keep")" = keep ]' "221b ids-migrate never writes over an existing file"
 ok 'refuses mig ids-migrate versions/x.json --out "$T/mig-y.json" && refuses mig ids-migrate extensions --out "$T/mig-y.json" && refuses mig ids-migrate extensions/../x.json --out "$T/mig-y.json" && [ ! -e "$T/mig-y.json" ]' "221c ids-migrate takes <row> for a one-file row and <row>/<file name> for a folder row, nothing else"
 ln -s "$T/mig/.stella" "$T/mig-in"   # a folder outside the root that is a link into its data
-ok '(cd "$T/mig" && refuses mig ids-migrate capabilities --out .stella/extensions/qa-injected.json) && grep -q "^STL-CFG-310 .*inside the stack root" "$T/o" && refuses mig ids-migrate capabilities --out "$T/mig/qa-new.json" && grep -q "^STL-CFG-310 .*inside the stack root" "$T/o" && refuses mig ids-migrate capabilities --out "$T/mig-in/extensions/qa-injected.json" && grep -q "^STL-CFG-310 .*inside the stack root" "$T/o" && [ ! -e "$T/mig/.stella/extensions/qa-injected.json" ] && [ ! -e "$T/mig/qa-new.json" ]' "221d ids-migrate never writes inside the stack root: not into a data folder, not beside the data, not through a link into it"
+ok '(cd "$T/mig" && refuses mig ids-migrate capabilities --out .stella/extensions/qa-injected.json) && grep -q "^STL-CFG-313 .*inside a stack tree" "$T/o" && refuses mig ids-migrate capabilities --out "$T/mig/qa-new.json" && grep -q "^STL-CFG-313 .*inside a stack tree" "$T/o" && refuses mig ids-migrate capabilities --out "$T/mig-in/extensions/qa-injected.json" && grep -q "^STL-CFG-313 .*inside a stack tree" "$T/o" && [ ! -e "$T/mig/.stella/extensions/qa-injected.json" ] && [ ! -e "$T/mig/qa-new.json" ]' "221d ids-migrate never writes inside the stack root: not into a data folder, not beside the data, not through a link into it"
+# W1 r3 (W1r2-CRT-01, W1r2-CVER-01, W1r2-T-01): --out is refused inside any stack tree (the root, the tree the tool runs from,
+# any folder holding an index), with its own message (STL-CFG-313, not "data file not valid"); the folder checked is the one written
+mkdir -p "$T/own/bin" "$T/own/docs/hermes-local" "$T/own/.claude"; cp "$BIN"/*.py "$T/own/bin/"; cp "$ROOT/docs/hermes-local/alert-catalog.json" "$T/own/docs/hermes-local/"
+OWNSD() { STELLA_ROOT=$T/mig python3 -I "$T/own/bin/stella_data.py" "$@" >"$T/o" 2>&1; }   # the tool of tree own (no data of its own) run against a decoy root
+ok '! OWNSD ids-migrate capabilities --out "$T/own/bin/qa-planted.json" && grep -q "^STL-CFG-313 .*inside a stack tree" "$T/o" && ! grep -q "data file that Stella reads is not valid" "$T/o" && ! OWNSD ids-migrate capabilities --out "$T/own/.claude/qa-planted.local.json" && grep -q "^STL-CFG-313 .*inside a stack tree" "$T/o" && [ -z "$(ls -A "$T/own/.claude")" ] && [ ! -e "$T/own/bin/qa-planted.json" ]' "221e through a decoy STELLA_ROOT, ids-migrate never writes into the tree it runs from (not beside its code, not beside the agent settings)"
+mk oth; ln -s "$T/oth/.stella/extensions" "$T/oth-ext"
+ok 'refuses mig ids-migrate capabilities --out "$T/oth/qa-planted.json" && grep -q "^STL-CFG-313 .*inside a stack tree" "$T/o" && refuses mig ids-migrate capabilities --out "$T/oth/.stella/extensions/qa-planted.json" && grep -q "^STL-CFG-313 .*inside a stack tree" "$T/o" && refuses mig ids-migrate capabilities --out "$T/oth-ext/qa-planted.json" && grep -q "^STL-CFG-313 .*inside a stack tree" "$T/o" && [ ! -e "$T/oth/qa-planted.json" ] && [ ! -e "$T/oth/.stella/extensions/qa-planted.json" ]'  "221f ids-migrate never writes inside another stack tree (a folder that holds an index), directly or through a link to its folder"
+mkdir "$T/race-ok"; python3 -I -c "
+import os,sys
+l, t = sys.argv[1], sys.argv[1] + '.tmp'
+while True:
+    for a in sys.argv[2:]:
+        try: os.remove(t)
+        except FileNotFoundError: pass
+        os.symlink(a, t); os.replace(t, l)" "$T/race" "$T/race-ok" "$T/mig/.stella/extensions" & SW=$!
+for i in $(seq 40); do sd mig ids-migrate capabilities --out "$T/race/qa-race-$i.json" >/dev/null 2>&1; done; kill $SW; wait $SW 2>/dev/null; SW=
+ok '[ -z "$(ls "$T/mig/.stella/extensions" | grep qa-race)" ] && [ -n "$(ls "$T/race-ok")" ]' "221g a link swapped between a plain folder and the root's data while ids-migrate runs: nothing lands in the root (40 runs; the candidates in $T/race-ok: $(ls "$T/race-ok" | wc -l))"
 # T8a every record kind has a sync class; every row with records names a known kind
 DP='.record_kinds'
 mk sk1; ed sk1 data-policy.json "del($DP.feature.sync_class)"
@@ -700,6 +722,13 @@ mk sc8; ed sc8 data-policy.json "$CL | $DP[\"$PK\"].sync_class = \"qa-cloud\" | 
 ok 'refuses sc8 check && grep -q "^STL-CFG-310 .*data-policy: .*default.*cloud" "$T/o"' "228f every project the policy does not list follows the default: a local_only default whose project kind has a cloud class is refused"
 mk sc9; ed sc9 data-policy.json "$CL | $DP[\"$PK\"].sync_class = \"qa-cloud\""
 ok 'sd sc9 check >"$T/o" 2>&1' "228g control: an open default with a cloud project kind passes"
+# W1 r3 (W1r2-CRT-02): the index schema pins the kind of the data policy's records, so a relabelled row cannot move the projects
+# (the default too) onto another kind's sync class
+mk sc10; ed sc10 data-policy.json "$CL | $DP[\"$PK\"].sync_class = \"qa-cloud\" | .default.mode = \"local_only\""
+ed sc10 data-files.json '(.files[] | select(.schema == "features") | .record_kind) as $k | (.files[] | select(.schema == "data-policy")).record_kind = $k'
+ok 'refuses sc10 check && grep -q "^STL-CFG-310 .*data-policy: .*record_kind.*pins" "$T/o"' "228h the data policy's row relabelled to another kind (on a local class) is refused: its projects stay judged by the kind the index schema pins"
+mk sc11; ed sc11 schemas/data-files.schema.json '."x-record-kind-of"[.["x-record-kind-of"] | keys[0]] = 1'
+ok 'refuses sc11 check && grep -q "^STL-CFG-310 .*x-record-kind-of must" "$T/o"' "228i a pin that is not a kind name is refused by the schema lint"
 # T9b data-class rules: the sensitive input classes are never synced; a class with no rule row is the most restrictive
 SENSE='["camera","microphone","sensor","host-screen"]'
 ok 'jq -e --argjson s "$SENSE" "([.class_rules[\$s[]]] | length == 4 and all(. == {sync:\"never\",store:\"owner_asks\",hosted:\"grant\",context:\"text_only\"})) and (.data_classes | contains(\$s)) and .class_rules.secret.sync == \"never\" and .class_rules.secret.hosted == \"never\" and .privacy_grants == []" "$ROOT/.stella/data-policy.json" >/dev/null' "229 the shipped data policy: camera, microphone, sensor, host-screen never synced, stored only when the owner asks, hosted only under a grant, text only in context; secret never synced nor hosted; no grant"

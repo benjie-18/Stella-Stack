@@ -10,7 +10,8 @@ CLI: stella_data.py check [--json] [<id>]       validate every data file against
      stella_data.py ids-migrate <id>[/<file>] --out <file>  a candidate of that row's file (<id>/<file>.json for a folder row)
                                                 with global_id and install_id added to every record that lacks them, nothing
                                                 else changed; apply it with stella-apply.py apply. Never writes over a file,
-                                                never inside the stack root.
+                                                never inside a stack tree (the root, this tool's own tree, any folder that
+                                                holds an index: STL-CFG-313).
      stella_data.py owner-only [--json]         the paths (JSON pointer, * for any item) each schema marks x-owner-only
 Exit: 0 ok; 1 a problem (one line per problem or unreadable file, code STL-CFG-310) or an unknown id (STL-CFG-311, one
 alert line); 2 usage. No command ends in a traceback.
@@ -21,8 +22,9 @@ uniqueItems, minLength, maxLength, pattern ($ matches only at the very end), min
 keywords still apply), $defs, $schema, $id, title, description, x-one-document (true: the schema is one document by
 nature, so a second file of it is refused), x-ref (an index row id: a string must be the id, the alias, or the global_id of a
 record of that row's merged view; "<row id>/<key>": of an item of the list or map under key in that row's documents),
-x-ref-where (beside an x-ref, {field: value}: the record must also carry each value) and x-owner-only (true: only the
-owner's path writes the field; owner-only lists them). Any other keyword, or a wrong keyword value, is an error, never ignored.
+x-ref-where (beside an x-ref, {field: value}: the record must also carry each value), x-owner-only (true: only the
+owner's path writes the field; owner-only lists them) and x-record-kind-of (in the index schema, {schema name: record kind}:
+an index row of that schema must name that record_kind). Any other keyword, or a wrong keyword value, is an error, never ignored.
 x-ref (and so x-ref-where) stands only beside type string, property names included, and is applied wherever it stands; a
 document validated where no x-ref is resolved (validate_doc without refs) fails when its schema holds one.
 A record is one entry of an index row with a list_key, or one file of a folder row: it carries global_id (a lower-case version
@@ -45,7 +47,7 @@ INDEX = ".stella/data-files.json"
 SCHEMAS = ".stella/schemas"
 KEYWORDS = {"$schema", "$id", "$ref", "$defs", "title", "description", "type", "enum", "const", "properties", "propertyNames",
             "required", "additionalProperties", "items", "minItems", "maxItems", "uniqueItems", "minLength", "maxLength",
-            "pattern", "minimum", "maximum", "x-one-document", "x-ref", "x-ref-where", "x-owner-only"}
+            "pattern", "minimum", "maximum", "x-one-document", "x-ref", "x-ref-where", "x-owner-only", "x-record-kind-of"}
 MAX_DEPTH = 64   # a data file nests far less; one limit makes `check` and the read commands agree on a deep object
 TABLE, FRAME, NOROW = "role-table", "data-files", "schema:"   # members that are no index row: the role table, the index, a schema with no JSON row
 MASK_LIMIT = 1024   # a value pattern never runs on a longer string (it is masked whole): a pattern's time grows with the length
@@ -413,6 +415,8 @@ def lint_schema(s, path="$", root=None):
     w = s.get("x-ref-where")
     if "x-ref-where" in s and not ("x-ref" in s and isinstance(w, dict) and w and all(x is None or isinstance(x, (str, int, float, bool)) for x in w.values())):
         bad("x-ref-where", "must be a non-empty object of field: value (a string, number, true, false or null) beside an x-ref")
+    if "x-record-kind-of" in s and not (isinstance(s["x-record-kind-of"], dict) and all(isinstance(x, str) and re.fullmatch(r"[a-z0-9][a-z0-9._:-]*", x) for x in s["x-record-kind-of"].values())):
+        bad("x-record-kind-of", "must be an object of schema name: record kind")
     if "pattern" in s:
         try:
             rx(s["pattern"])
@@ -768,7 +772,7 @@ def class_rule(pol, k):
 def rule_sync(c):
     """Sync classes (item 8) and data-class rules (item 9): every record kind names a known sync class (and a known data class);
     a kind that never reaches a cloud store (never_cloud, or a data class whose rule is sync never) and a private or local_only
-    project (its own sync class, else its row's kind's; the default too) have a sync class whose cloud is false; rule rows and grants name known
+    project (its own sync class, else its row's kind's, which the index schema pins; the default too) have a sync class whose cloud is false; rule rows and grants name known
     classes; every index row with records names a kind of the data policy."""
     P, pols = c["P"], c["whole"].get("data-policy", [])
     for rid, pol in pols:
@@ -798,7 +802,10 @@ def rule_sync(c):
             if g["data_class"] not in classes:
                 P(rid, f"privacy_grants[{i}].data_class ({desc(g['data_class'])}) is not in data_classes")
     known = set.intersection(*(set(d["record_kinds"]) for _, d in pols)) if pols else set()
+    pins = schema_of(FRAME).get("x-record-kind-of", {})   # a row's label cannot move its records (the projects) onto another kind
     for r in c["rs"]:
+        if r["schema"] in pins and r.get("record_kind") != pins[r["schema"]]:
+            P(r["id"], f"record_kind ({desc(r.get('record_kind'))}) is not the kind the index schema pins for rows of schema {r['schema']} ({pins[r['schema']]})")
         if has_records(r) and isinstance(r.get("record_kind"), str) and r["record_kind"] not in known:
             P(r["id"], f"record_kind ({desc(r['record_kind'])}) is not a kind of the data policy's record_kinds")
 
@@ -1152,12 +1159,13 @@ def judge(reads=None):
                 P(r["id"], f"{rel}: {at}: id {idn(a, True)} is listed twice")
             seen.add((at, a))
     by["_gids"] = set(gids)   # every record's global_id, for validate
-    for g, at in gids.items():
+    for g, at in gids.items():   # an alias anywhere that is another record's global_id: a read by that string is ambiguous
+        other = list(dict.fromkeys(by["_src"][n][g] for n in by if not n.startswith("_") and g in by[n] and by[n][g].get("global_id") != g))
         for x in at:
             if len(at) > 1:
                 P(x[0], f"{x[1]}: {x[2]}: its global_id is also the global_id of " + ", ".join(f"{y[2]} of {y[1]}" for y in at if y is not x))
-            if g in by.get(x[3], {}) and by[x[3]][g].get("global_id") != g:   # an alias that is another record's global_id: a read by it is ambiguous
-                P(x[0], f"{x[1]}: {x[2]}: its global_id is the id of another entry of its schema")
+            if other:
+                P(x[0], f"{x[1]}: {x[2]}: its global_id is the id of another entry (of {', '.join(other)})")
     for r, rel, _, _, refs in good:   # x-ref values against the merged view of the row they name
         if r["id"] not in refused:
             for _, m in ref_problems(refs, by, rs, refused):
@@ -1476,20 +1484,36 @@ def main(argv):
             print(f"ids-migrate: {rid} takes " + ("<id>/<file>.json (a folder row)" if folder_row(row) else "<id> alone" if has_records(row)
                                                  else "nothing: its row has no records"), file=sys.stderr)
             return 2
-        out = os.path.realpath(args[2])
-        if os.path.commonpath([ROOT, out]) == ROOT:   # the root holds the live data: a candidate there would be live with no apply
-            raise DataError("--out is inside the stack root; write the candidate outside it (as the apply tool stages its copies)")
-        rel = f"{row['path'].rstrip('/')}/{name}" if name else row["path"]
-        doc, iid, n = jload(plain(rel), rel), install_id(judged=False), 0
-        for _, e in file_entries(row, rel, doc):
-            n += "global_id" not in e or "install_id" not in e
-            e.setdefault("global_id", str(uuid.uuid4()))
-            e.setdefault("install_id", iid)
-        try:
-            with open(args[2], "x", encoding="utf-8") as f:   # x: never over an existing file
-                f.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
-        except OSError as e:
+        import event_log as el   # here: event_log imports this module
+        d, base = os.path.split(os.path.abspath(args[2]))
+        try:   # the folder is opened once and checked as opened; the candidate is made through that descriptor (no swap after the check)
+            dfd = el.open_dir(os.path.realpath(d))
+        except (OSError, ValueError) as e:
             raise DataError(f"{args[2]}: cannot be written ({type(e).__name__}); ids-migrate never writes over a file") from None
+        try:
+            real = os.readlink(f"/proc/self/fd/{dfd}")
+            ups, u = [real], os.path.dirname(real)
+            while u != ups[-1]:
+                ups.append(u)
+                u = os.path.dirname(u)
+            # a stack tree holds live data: the root, the tree this tool runs from, any folder holding an index (case as the disk sees it)
+            if any(el.inside(real, t) for t in (ROOT, el.OWN)) or any(os.path.exists(os.path.join(u, INDEX)) for u in ups):
+                say("STL-CFG-313", f"ids-migrate --out {args[2]} is inside a stack tree, where a candidate would be live with no apply; write it outside every stack tree")
+                return 1
+            rel = f"{row['path'].rstrip('/')}/{name}" if name else row["path"]
+            doc, iid, n = jload(plain(rel), rel), install_id(judged=False), 0
+            for _, e in file_entries(row, rel, doc):
+                n += "global_id" not in e or "install_id" not in e
+                e.setdefault("global_id", str(uuid.uuid4()))
+                e.setdefault("install_id", iid)
+            try:   # O_EXCL: never over an existing file nor through a link
+                fd = os.open(base, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=dfd)
+                with open(fd, "w", encoding="utf-8") as f:
+                    f.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+            except OSError as e:
+                raise DataError(f"{args[2]}: cannot be written ({type(e).__name__}); ids-migrate never writes over a file") from None
+        finally:
+            os.close(dfd)
         print(f"{rel}: {n} records given ids; apply with: stella-apply.py apply {args[0]} --from {args[2]}")
         return 0
     if cmd == "owner-only" and not args:

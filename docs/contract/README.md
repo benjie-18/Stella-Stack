@@ -91,14 +91,15 @@ file of a folder row; the parts inside it (a connection's models and actions) ar
 holds it) and `install_id` (the UUID of the install that made it; a record moved from another install keeps its own). An
 object deeper in a file whose schema declares a `global_id` (a privacy grant) is a record too, found from the schema: its
 `global_id` joins the same check and its `id` is unique in its list. The old `id` (or the row's `id_field`) is the record's
-alias and stays unique per schema as before: the reads of `stella_data.py` (`get <id> <entry>`) and every `x-ref` accept the
+alias and stays unique per schema as before, and no alias equals the `global_id` of another record in any data file: the reads of `stella_data.py` (`get <id> <entry>`) and every `x-ref` accept the
 alias or the `global_id`; `bin/settings.py get/set` take the key only. Both fields are always required: there is no switch
 that turns the check off (owner decision 2026-11-13). **A migration that changes what a schema requires ships with its code**
 (the run branch carries the migrated files) **and is undone by reverting that merge, code and data together**; the apply
 contract's `rollback` covers value changes only, since it restores only bytes that pass the current checks.
 **The ids migration** (for live data that diverged before that merge): `stella_data.py ids-migrate <id> --out <file>`
-(`<id>/<file>.json` for a folder row) writes a new file (never over an existing one, never inside the stack root: a file
-there could be a live entry at once, outside the apply contract) that is the row's file with `global_id` and `install_id`
+(`<id>/<file>.json` for a folder row) writes a new file (never over an existing one, never inside a stack tree: the root,
+the tree the tool runs from, or any folder that holds an index, where a file could be a live entry at once, outside the apply
+contract; refused with STL-CFG-313; the folder is opened once, checked as opened, and the file made through it) that is the row's file with `global_id` and `install_id`
 added to every record that lacks them and nothing else changed; apply it with `stella-apply.py apply <id> --from <file>`
 (dry run first). It reads the install id from the install file checked by its own schema, so it runs while the index itself
 lacks ids. On a row already migrated it adds nothing, and its apply is no change.
@@ -116,7 +117,8 @@ record must also carry each value (JSON equality: `false` is not `0`); a record 
 line says which values). A read also depends on the rows its schemas' x-refs name. `x-owner-only: true` marks a
 field only the owner's path writes; `stella_data.py owner-only [--json]` lists, per schema, the JSON pointer of every marked
 field (`*` for any array item or map value; a marker reached through `$ref` counts), and fails closed (`STL-CFG-310`) when a
-schema cannot be read. A schema's identity is its name:
+schema cannot be read. `x-record-kind-of: {"<schema name>": "<record kind>"}` (in the index schema) says an index row of
+that schema must name that `record_kind`; any other value is refused by the schema lint. A schema's identity is its name:
 the file `<name>.schema.json` in `.stella/schemas/`. A schema file that is a symbolic link is refused; a byte copy under
 another name is another schema, which the cross-file rules do not read (the schemas folder is owner data). A schema that uses any
 other keyword is an error, never ignored; so is a keyword with a wrong value (`required` as a string, an external `$ref`).
@@ -259,8 +261,8 @@ optional `data_class` and `never_cloud`. The kinds of data-file records are the 
 kept outside the data files (`card`, `project`, `vault-entry`, `secret`, `event`, `device`, `approval`) must be listed. A
 kind with no sync class, or an unknown sync class or data class, is refused. A kind with `never_cloud` (the schema requires
 it on `vault-entry` and `secret`) or whose data class is never synced may only have a sync class whose `cloud` is false; so
-may a private or `local_only` project (its own `sync_class`, else the kind of the data-policy row's records), the `default`
-too (every project the policy does not list follows it). A move-primary
+may a private or `local_only` project (its own `sync_class`, else the kind of the data-policy row's records, which the index
+schema pins with `x-record-kind-of` so a relabelled row is refused), the `default` too (every project the policy does not list follows it). A move-primary
 transfer to the owner's own paired device, end-to-end encrypted (U1), is not a sync class.
 **Data-class rules (item 9).** `class_rules{}`: per data class `sync` (never, allowed), `store` (owner_asks, allowed),
 `hosted` (grant, allowed, never) and `context` (text_only, allowed). `camera`, `microphone`, `sensor` and `host-screen` are

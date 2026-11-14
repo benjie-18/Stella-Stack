@@ -48,7 +48,7 @@
         "record"
       ],
       "inputs": "an index row id (<id>/<file>.json for a folder row) and --out <new file>",
-      "outputs": "the candidate file; exit 1 with a catalog code when the row is unknown, --out lies inside the stack root, or the file cannot be written",
+      "outputs": "the candidate file; exit 1 with a catalog code: STL-CFG-311 when the row is unknown, STL-CFG-313 when --out lies inside a stack tree (the root, the tree the tool runs from, any folder holding an index), STL-CFG-310 when the file cannot be written",
       "allowed_roles": [
         "dispatcher",
         "builder",

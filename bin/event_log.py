@@ -17,7 +17,7 @@ CLI: event_log.py append --type T --what W [--old JSON] [--new JSON] [--code C] 
                                              event objects are counted and reported on stderr (one STL-CFG-318 line)
 Exit: 0 ok; 1 refused (STL-CFG-313 invalid line, STL-CFG-318 log not writable; the catalog's plain message on stderr); 2 usage.
 The stack root is the parent of this file's folder, or STELLA_ROOT (a scratch root in tests). Importers use build, prepare,
-append, preflight, mask, redactor, scrub, SECRETS, note_secrets, depth, read_log, path, locked, open_file, open_dir, mkdirs,
+append, preflight, mask, redactor, scrub, SECRETS, note_secrets, depth, read_log, path, inside, locked, open_file, open_dir, mkdirs,
 say and fail. A file opened for writing (the log, a lock) must have one hard link; every line written is synced.
 Limits of a line (one rule for the writer and the reader, the reader's with a margin): the writer refuses nesting beyond
 WRITE_DEPTH or a line beyond WRITE_MAX bytes (313); the reader counts a line beyond READ_DEPTH / READ_MAX, or one it cannot
@@ -42,6 +42,10 @@ class EventError(Exception):
         super().__init__(problem)
         self.code, self.problem, self.extra = code, problem, extra or {}   # extra: more placeholders of the catalog row
 
+def inside(p, d):
+    """p is the folder d or below it (both real paths): the test path() uses for the root and for another stack tree."""
+    return p == d or p.startswith(d.rstrip(os.sep) + os.sep)   # rstrip: the root may be "/"
+
 def path(rel):
     """Absolute path of a root-relative path from the index. Refused when it leaves the root (symlinks resolved), and, when
     STELLA_ROOT names another tree than this tool's own, when it lands inside this tool's own tree: pointing the tool at
@@ -50,7 +54,7 @@ def path(rel):
         raise ValueError(f"{rel}: a path in the data must have no .. part")
     lex = os.path.normpath(os.path.join(ROOT, rel))
     p = os.path.realpath(lex)
-    within = lambda d: p == d or p.startswith(d.rstrip(os.sep) + os.sep)   # rstrip: the root may be "/"
+    within = lambda d: inside(p, d)
     if not within(ROOT):
         raise ValueError(f"{rel} is outside the stack root")
     if ROOT != OWN and within(OWN):
