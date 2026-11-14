@@ -1429,7 +1429,7 @@ jq '(.entries | map(.sensitivity == "identity_critical") | index(true)) as $i | 
 ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$SETF" "$T/keep"' "R15 (2) lowering an identity_critical registry entry (marked so in the old registry) needs the typed phrase: 808 ($rc)"
 jq '(.entries | map(.sensitivity == "plain") | index(true)) as $i | .entries[$i].sensitivity = "identity_critical"' "$SETF" >"$C/r15-s2.json"; try "$SETF" settings "$C/r15-s2.json"
 ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$SETF" "$T/keep"' "R15 (2) raising a registry entry to identity_critical (marked so in the new registry) needs the typed phrase: 808 ($rc)"
-jq -c . "$CN" >"$C/r15-c4.json"; PATH=$PB:$OWNER setsid -w kill_at applied apply connections --from "$C/r15-c4.json" </dev/null >/dev/null 2>&1; krc=$?
+jq -c . "$CN" >"$C/r15-c4.json"; PATH=$PB:$OWNER kill_at applied apply connections --from "$C/r15-c4.json" </dev/null >/dev/null 2>&1; krc=$?
 try "$CN" connections "$C/r15-c4.json"
 ok '[ $krc = 137 ] && [ $rc = 0 ] && grep -q "interrupted apply was finished" "$T/o"' "R15 (4) the finish of a killed formatting-only apply is judged against the saved copy: done with the key only (kill $krc, $rc)"
 jq '.entries |= map(select(has("terms_ok") | not))' "$CN" >"$C/r15-c3.json"; cat "$C/r15-c3.json" >"$CN"

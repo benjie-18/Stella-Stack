@@ -397,7 +397,8 @@ def shown_change(row, rel, old_doc, new_doc, unparsed):
 def owner(row, rel, op, cur, new, olds, new_doc):
     """An owner-only row changes only with an owner proof (F1c D4): the --proof file's proofs alone, else a proof made with this
     host's owner key; class identity_critical (the typed phrase, shown with the change) when an identity-critical target is
-    touched between any of olds (the (doc, unparsed) sides the change is judged against: before()) and new_doc, else owner_write. Refusals keep the owner_auth code (801..813). The provider ids go on the event line."""
+    touched between any of olds (the (doc, unparsed) sides the change is judged against: before()) and new_doc, else
+    owner_write. Refusals keep the owner_auth code (801..813). The provider ids go on the event line."""
     if not row["owner_only"]:
         return
     act = action_of(row, op, cur, new)
