@@ -2250,6 +2250,67 @@
         "roles"
       ],
       "why": "F1c G0, conservative: the one worker-environment answer and its policy; every owner command and the event writer use it (W2a/W4b narrow this when their selftests land)"
+    },
+    {
+      "globs": [
+        "bin/event_untrusted.py"
+      ],
+      "targets": [
+        "alert",
+        "alert-page",
+        "approval-evidence",
+        "card-schema",
+        "complete-gate",
+        "delegation",
+        "escalate",
+        "escalation-reply-poll",
+        "event-log",
+        "hardcode-lint",
+        "kanban-board",
+        "kanban-guard",
+        "merge-card",
+        "model-watch",
+        "omniroute-run",
+        "profile-hooks",
+        "reviewer-claude",
+        "role-guard",
+        "roles",
+        "routing",
+        "settings",
+        "stella-apply",
+        "stella-data",
+        "watchdog",
+        "write-guard"
+      ],
+      "why": "F1c W1: the agents' untrusted stream (event-log-selftest runs it); bin/event_log.py imports its line limits, so every selftest that reaches the writer reaches it"
+    },
+    {
+      "globs": [
+        "bin/worker_env.py"
+      ],
+      "targets": [
+        "alert",
+        "alert-page",
+        "approval-evidence",
+        "card-schema",
+        "complete-gate",
+        "delegation",
+        "escalate",
+        "escalation-reply-poll",
+        "hardcode-lint",
+        "kanban-board",
+        "kanban-guard",
+        "merge-card",
+        "model-watch",
+        "omniroute-run",
+        "profile-hooks",
+        "reviewer-claude",
+        "role-guard",
+        "routing",
+        "watchdog",
+        "write-guard"
+      ],
+      "why": "F1c W1: bin/event_log.py asks worker_env.reason() before append and verify, so every selftest that reaches the writer reaches it"
     }
   ]
 }

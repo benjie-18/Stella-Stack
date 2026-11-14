@@ -282,6 +282,28 @@ rs; $EL append --type note --what a5 >/dev/null 2>&1; cp -p "$T/sgood" "$STATE"
 r=$(V); ok '[ $r = 0 ]' "W1 a log one genuine line ahead of the writer state (a writer killed between line and state) verifies"
 $EL append --type note --what a6 >/dev/null 2>&1; r=$(V)
 ok '[ $r = 0 ] && [ "$(tail -n 1 "$LOG" | jq .seq)" = 6 ] && jq -e ".seq == 6" "$STATE" >/dev/null' "W1 the next append continues from that line (seq 6), the state catches up"
+# the state's write fails after the line is synced (twice): both appends succeed, the line stands; the next append walks forward over both
+python3 -I -c '
+import sys; sys.path.insert(0, sys.argv[1]); import event_log as e
+def no(s): raise e.EventError("STL-EVT-905", "planted")
+e.save_state = no
+for w in ("a7", "a8"):
+    assert e.append(e.build("note", w))["seq"] in (7, 8)' "$H/bin" >"$T/o" 2>&1; rc=$?
+$EL append --type note --what a9 >/dev/null 2>&1; r=$(V)
+ok '[ $rc = 0 ] && [ $r = 0 ] && [ "$(jq -sc "[.[].seq]" "$LOG")" = "[1,2,3,4,5,6,7,8,9]" ] && jq -e ".seq == 9" "$STATE" >/dev/null' "W1 a state write that fails after the line: the append stands, the next append continues from seq 8 (two lines ahead), verify passes"
+# the first trusted write: its state is made before the line; when the line then fails, that new state is removed again (nothing changed)
+rm -f "$LOG" "$STATE"; python3 -I -c '
+import os, sys; sys.path.insert(0, sys.argv[1]); import event_log as e
+real = os.write
+def boom(fd, b):
+    if os.readlink(f"/proc/self/fd/{fd}") == e.log_path(): raise OSError(28, "No space left on device")
+    return real(fd, b)
+os.write = boom
+try:
+    e.append(e.build("note", "first")); sys.exit(1)
+except e.EventError as x:
+    print(x.code)' "$H/bin" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && grep -q STL-CFG-318 "$T/o" && [ ! -e "$LOG" ] && [ ! -e "$STATE" ] && [ -z "$(ls -A "$(dirname "$STATE")")" ]' "W1 the first line fails to write: no log, no state, no temp file left (nothing changed)"
 # legacy lines (v1/v2) before the chain: reported as legacy, never a problem, never rewritten
 rm -f "$LOG" "$STATE"
 for k in 1 2; do jq -c --arg g "$(uuid)" --arg w "legacy$k" '.schema_version = 2 | .global_id = $g | .what = $w | del(.writer, .seq, .prev, .mac)' <<<"$L4" >>"$LOG"; done
@@ -328,8 +350,14 @@ done
 ok 'tail -n 1 "$UNT" | jq -e --arg i "$IID" "(.global_id | test(\"^[0-9a-f-]{36}$\")) and .install_id == \$i and .schema_version == 3" >/dev/null && python3 -I $H/bin/stella_data.py validate event <(tail -n 1 "$UNT") >/dev/null' "W1 an untrusted line has its own global_id and this install's id, and passes the event schema"
 ok '[ -f "$H/bin/event_untrusted.py" ] && ! grep -nE "^\s*(import|from)\s+(event_log|owner_auth|hmac)\b|event_writer_state|owner_key" "$H/bin/event_untrusted.py" >/dev/null' "W1 event_untrusted.py imports no writer, key or chain code"
 cp "$UNT" "$T/ubefore"
-$EU append --type t --what "$(head -c $((1 << 20)) /dev/zero | tr '\0' x)" >"$T/o" 2>&1; rc=$?
-ok '[ $rc = 1 ] && grep -q STL-CFG-313 "$T/o" && ! grep -q Traceback "$T/o" && cmp -s "$UNT" "$T/ubefore"' "W1 an untrusted line beyond the writer's size limit is refused (313), nothing written"
+python3 -I -c '
+import sys; sys.path.insert(0, sys.argv[1]); import event_untrusted as u, event_log as e
+assert (u.WRITE_MAX, u.WRITE_DEPTH) == (e.WRITE_MAX, e.WRITE_DEPTH)
+try:
+    u.line_of("t", "x" * u.WRITE_MAX); sys.exit(1)   # beyond what one argument can carry (the kernel caps it): the library call
+except u.Refused as r:
+    print(r.code)' "$H/bin" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && grep -q STL-CFG-313 "$T/o" && cmp -s "$UNT" "$T/ubefore"' "W1 an untrusted line beyond the writer's size limit (the same limits as the writer's) is refused (313), nothing written"
 $EU append --type "" --what w >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 1 ] && grep -q STL-CFG-313 "$T/o" && cmp -s "$UNT" "$T/ubefore"' "W1 an untrusted line with an empty type is refused (313)"
 mv "$UNT" "$T/ureal"; ln -s "$T/ureal" "$UNT"; $EU append --type t --what w >"$T/o" 2>&1; rc=$?
@@ -349,7 +377,13 @@ done
 sed -n 2p "$T/good" >>"$LOG"; grep -m1 zz-unt- "$UNT" >>"$LOG"
 r=$(V); PL
 ok '[ $r = 1 ] && jq -e "[.[].what] == [\"zz-cap-genuine\", \"zz-appr-genuine\", \"zz-qa-genuine\"] and all(has(\"mac\") and .trusted != false)" "$T/pl" >/dev/null' "W1 forged chained and unchained lines, a replayed approval and an untrusted line copied in: verify fails, proof_lines() keeps the three genuine lines once"
-rm -f "$STATE"; PL; ok '[ ! -s "$T/pl" ] && grep -q STL-EVT-905 "$T/e"' "W1 proof_lines() with the chain present and the state missing raises STL-EVT-905 (never an empty proof)"
+rm -f "$STATE"; python3 -I -c '
+import sys; sys.path.insert(0, sys.argv[1]); import event_log as e
+try:
+    e.proof_lines(); sys.exit(1)
+except e.EventError as x:
+    print(x.code)' "$H/bin" >"$T/o" 2>&1
+ok '[ $? = 0 ] && grep -q STL-EVT-905 "$T/o"' "W1 proof_lines() with the chain present and the state missing raises STL-EVT-905 (never an empty proof)"
 rm -f "$LOG"; PL; ok '[ -s "$T/pl" ] && jq -e ". == []" "$T/pl" >/dev/null' "W1 proof_lines() with no chain and no state: []"
 # the key never leaves the state: not in the log, the untrusted stream, any output or alert line
 rm -f "$LOG" "$STATE"; $EL append --type note --what k1 >"$T/out1" 2>&1; $EL verify --json >>"$T/out1" 2>&1; $EL tail --json >>"$T/out1" 2>&1

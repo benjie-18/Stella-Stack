@@ -211,15 +211,15 @@
     {
       "id": "event-log",
       "kind": "command",
-      "summary": "Append one line to the event log with secrets masked, or read its last lines",
+      "summary": "Append one chained line to the trusted event log with secrets masked (owner tools only), read its last lines, or verify its chain",
       "keywords": [
         "event",
         "log",
         "audit",
         "history"
       ],
-      "inputs": "an event (who, what, old, new) or a line count",
-      "outputs": "one JSON line per event; STL-CFG-318 when the log cannot be written",
+      "inputs": "an event (who, what, old, new), a line count, or verify [--json]",
+      "outputs": "one JSON line per event (schema_version 3: writer, seq, prev, mac); verify: the problems with their line numbers (STL-EVT-901..906) and the legacy count; STL-CFG-318 when the log cannot be written, STL-CFG-312 in a worker environment",
       "allowed_roles": [
         "dispatcher",
         "builder",
@@ -343,6 +343,35 @@
         "result": "shipped"
       },
       "global_id": "ad9e7db7-16c4-48dd-a758-95bb23193656",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "event-untrusted",
+      "kind": "command",
+      "summary": "Append one line marked untrusted to the agents' event stream (never proof of anything)",
+      "keywords": [
+        "event",
+        "log",
+        "untrusted",
+        "agent",
+        "note"
+      ],
+      "inputs": "--type, --what, and optionally --source and --detail",
+      "outputs": "one JSON line with \"trusted\": false in the untrusted stream; STL-CFG-313 for an invalid or oversized line, STL-CFG-318 when the stream cannot be written",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/event_untrusted.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "5de36c04-3b9d-454b-8d1f-61b365a9a586",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

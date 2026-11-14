@@ -652,8 +652,9 @@ def logged(key, kind, token, name=None):
     `token <token>` (adopt), not the token as a loose word. That an apply's line is written is a fact of the applied state
     (`done`); the log is read for it only where that fact is missing or being made: by the finish of a killed apply or adopt,
     by a rollback of a backup not marked done or that resumes a marked one, and by the undo of an event-line step (did its
-    write land?)."""
-    evs, _ = el.read_log()
+    write land?). Only a line that counts as proof (event_log.proof_lines(): chained by the writer, its mac verified) is read: a
+    line copied, forged or written into the log by anything but the writer is never taken for the tool's own."""
+    evs = el.proof_lines()
     shape = re.compile(r"(^|\s)" + re.escape((f"backup {name} " if name else "") + f"token {token}") + r"(\s|$)")
     return any(e.get("what") == key and e.get("type") == kind and shape.search(str(e.get("detail", ""))) for e in evs)
 
