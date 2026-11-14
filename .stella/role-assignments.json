@@ -2,29 +2,19 @@
   "schema_version": 1,
   "effort_modes": {
     "standard": {
-      "allowed_localities": [
-        "local",
-        "cloud"
-      ],
+      "allowed_localities": ["local", "cloud"],
       "no_silent_fallback": false
     },
     "eco": {
-      "allowed_localities": [
-        "local",
-        "cloud"
-      ],
+      "allowed_localities": ["local", "cloud"],
       "no_silent_fallback": false
     },
     "max": {
-      "allowed_localities": [
-        "cloud"
-      ],
+      "allowed_localities": ["cloud"],
       "no_silent_fallback": true
     },
     "local_only": {
-      "allowed_localities": [
-        "local"
-      ],
+      "allowed_localities": ["local"],
       "no_silent_fallback": true
     }
   },
@@ -38,7 +28,7 @@
       "effort_mode": "standard",
       "chain": [
         {
-          "provider": "local-model-server",
+          "connection": "local-model-server",
           "model": "qwen3.5:9b-64k",
           "parameters": {}
         }
@@ -55,7 +45,7 @@
       "effort_mode": "standard",
       "chain": [
         {
-          "provider": "local-model-server",
+          "connection": "local-model-server",
           "model": "qwen3.5:9b-64k",
           "parameters": {}
         }
@@ -72,7 +62,7 @@
       "effort_mode": "standard",
       "chain": [
         {
-          "provider": "local-model-server",
+          "connection": "local-model-server",
           "model": "qwen3.5:9b-64k",
           "parameters": {}
         }
