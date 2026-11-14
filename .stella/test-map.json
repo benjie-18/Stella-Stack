@@ -2222,13 +2222,12 @@
     {
       "globs": [
         "bin/card-schema-selftest.sh",
-        ".stella/schemas/card.schema.json",
-        ".stella/schemas/vault-entry.schema.json"
+        ".stella/schemas/card.schema.json"
       ],
       "targets": [
         "card-schema"
       ],
-      "why": "the selftest validates fake cards and vault entries against the two schemas; the doc describes them"
+      "why": "the selftest validates fake cards and vault entries against the two schemas (it names the vault-entry schema, so the scan rows find that one)"
     }
   ]
 }
