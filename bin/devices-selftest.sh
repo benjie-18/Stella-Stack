@@ -261,7 +261,7 @@ ok '[ $rc = 1 ] && c STL-OWN-801 && grep -qx CALL_TIMEOUT=600 "$LIMF"' "the same
 cp -p "$POL" "$T/pol.w2b"
 polset 'del(.remote)'; $OA check >"$T/o" 2>&1; rc=$?; cp -p "$T/pol.w2b" "$POL"
 ok '[ $rc = 1 ] && c STL-CFG-310' "a policy with a device-signature provider and no remote: check refuses STL-CFG-310"
-polset '.remote.alert_code = "STL-OWN-819"'; $OA check >"$T/o" 2>&1; rc=$?; cp -p "$T/pol.w2b" "$POL"
+polset '.remote.alert_code = "STL-ZZZ-999"'; $OA check >"$T/o" 2>&1; rc=$?; cp -p "$T/pol.w2b" "$POL"
 ok '[ $rc = 1 ] && c STL-CFG-310' "remote.alert_code not in the alert catalog: check refuses STL-CFG-310"
 cp -p "$DV" "$T/dv.w2b"; jq --arg lk "$DVLK" '.[$lk] += [.[$lk][0]]' "$DV" >"$T/dv.dup" && cat "$T/dv.dup" >"$DV"
 $PY $B/devices.py check --json >"$T/o" 2>"$T/ve"; rc=$?

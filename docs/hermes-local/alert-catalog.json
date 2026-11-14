@@ -1203,7 +1203,7 @@
       "code": "STL-OWN-857",
       "area": "OWN",
       "severity": "warning",
-      "title": "a loopback API request was refused: unknown endpoint",
+      "title": "loopback API request refused: endpoint not listed",
       "message": "A request to the local API was refused because no endpoint of the contract has that method and path: {problem}. Nothing was done.",
       "action": "check the method and the exact path (a trailing slash or a query string is another path); a new endpoint is a new row of the contract (an owner change). See STL-OWN-857 in docs/alert-codes.md.",
       "cause": "The method and exact path are not a row of the contract's endpoints.",
