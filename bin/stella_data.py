@@ -665,19 +665,21 @@ def policy_allows(pol, prov):
 def route_problems(pols, need, prov, now):
     """Why a link to provider prov may not serve a role that handles the data classes `need` (F1b D6; next to policy_allows, the one
     routing rule): a cli-login link needs terms_ok true; on a cloud or hosted link, each class's hosted rule in every data policy:
-    never refuses, grant needs a privacy grant for that class naming this connection (id or global_id) that has not expired."""
+    never refuses, grant needs a privacy grant for that class naming this connection (id or global_id) that is in force (live)."""
     out = [] if prov["type"] != "cli-login" or prov.get("terms_ok") is True else \
         ["is cli-login, and the owner has not recorded terms_ok true (the provider's terms allow this use)"]
     if prov["locality"] == "local" and not prov["data_policy"].get("hosted"):
         return out
     names = {prov["id"], prov.get("global_id")}
-    live = lambda g: "expires_at" not in g or g["expires_at"] is None or (when(g, "expires_at") or now) > now   # a bad date is no grant
+    def live(g):   # in force: granted_at a real date not in the future; expires_at (if any) a real date after it, not past; a bad date is no grant
+        a, x = when(g, "granted_at"), (when(g, "expires_at") if "expires_at" in g else None)
+        return bool(a) and a <= now and (x is None or bool(x) and a < x and now < x)
     for _, d in pols:
         for k in need:
             h = class_rule(d, k)["hosted"]
             if h == "allowed" or h == "grant" and any(g["data_class"] == k and g["connection"] in names and live(g) for g in d["privacy_grants"]):
                 continue
-            out.append(f"is cloud or hosted, and data class {idn(k, True)} " + ("reaches one only under a privacy grant, and no grant that has not expired names this connection"
+            out.append(f"is cloud or hosted, and data class {idn(k, True)} " + ("reaches one only under a privacy grant, and no grant in force (started, not ended) names this connection"
                                                                             if h == "grant" else "never reaches one (its rule is hosted never, or it has no rule row)"))
     return list(dict.fromkeys(out))
 
