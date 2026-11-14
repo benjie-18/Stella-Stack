@@ -1,5 +1,57 @@
 {
   "schema_version": 1,
+  "providers": [
+    {
+      "id": "owner-key",
+      "kind": "local-key",
+      "params": {},
+      "enabled": true,
+      "global_id": "4deb20db-f166-43ff-9c29-5d9098af4aed",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "discord-owner",
+      "kind": "channel-identity",
+      "params": {
+        "channel_kind": "discord",
+        "owner_config_key": "OWNER_DISCORD_USER_ID"
+      },
+      "enabled": true,
+      "global_id": "4daf6f32-eec1-44fe-b125-88048e63097d",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "typed-phrase",
+      "kind": "typed-phrase",
+      "params": {},
+      "enabled": true,
+      "global_id": "3041028e-8d74-4c9c-a6fb-b317e0ceffd9",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "device-phrase",
+      "kind": "device-phrase",
+      "params": {},
+      "enabled": true,
+      "global_id": "e1cad284-c86a-498e-ae99-fe1787df7245",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    }
+  ],
+  "actions": {
+    "owner_write": [
+      ["owner-key"]
+    ],
+    "channel_answer": [
+      ["discord-owner"]
+    ],
+    "identity_critical": [
+      ["owner-key", "typed-phrase"]
+    ]
+  },
+  "phrase": {
+    "template": "change {what}"
+  },
+  "proof_ttl_s": 300,
   "worker_signals": {
     "token_env": [
       "STELLA_AGENT_TOKEN",

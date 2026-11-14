@@ -160,6 +160,9 @@
     "write-guard": {
       "mark": "shared",
       "why": "timing: it waits up to 4 s (200 x 0.02 s) for each fake worker's pid file and proves the card from the live process tree, and flaked under parallel load in P1 (3/3 alone); its live .worktrees and alert-log asserts name the runner's copy, so they are no reason (write-guard-selftest.sh:53, 80, 147)"
+    },
+    "owner-auth": {
+      "mark": "hermetic"
     }
   },
   "test_like": [
@@ -903,7 +906,8 @@
       ],
       "targets": [
         "stella-apply",
-        "stella-data"
+        "stella-data",
+        "owner-auth"
       ],
       "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
     },
@@ -971,7 +975,8 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard"
+        "write-guard",
+        "owner-auth"
       ],
       "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field); plus the selftests that reach it since the merge of build/F1 69edb47 (bin/test-map.py reach)"
     },
@@ -1061,7 +1066,8 @@
         "stella-apply",
         "stella-data",
         "watchdog",
-        "write-guard"
+        "write-guard",
+        "owner-auth"
       ],
       "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
     },
@@ -1210,7 +1216,8 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard"
+        "write-guard",
+        "owner-auth"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1283,7 +1290,8 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard"
+        "write-guard",
+        "owner-auth"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1397,7 +1405,8 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard"
+        "write-guard",
+        "owner-auth"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1430,7 +1439,8 @@
         "stella-apply",
         "stella-data",
         "watchdog",
-        "write-guard"
+        "write-guard",
+        "owner-auth"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1515,7 +1525,8 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard"
+        "write-guard",
+        "owner-auth"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1598,7 +1609,8 @@
         "stella-apply",
         "stella-data",
         "watchdog",
-        "write-guard"
+        "write-guard",
+        "owner-auth"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1632,7 +1644,8 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard"
+        "write-guard",
+        "owner-auth"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach); plus the selftests that reach it since the merge of build/F1 69edb47 (bin/test-map.py reach)"
     },
@@ -2247,9 +2260,20 @@
         "stella-apply",
         "stella-data",
         "event-log",
-        "roles"
+        "roles",
+        "owner-auth"
       ],
       "why": "F1c G0, conservative: the one worker-environment answer and its policy; every owner command and the event writer use it (W2a/W4b narrow this when their selftests land)"
+    },
+    {
+      "globs": [
+        "bin/owner_auth.py",
+        "bin/owner-auth-selftest.sh"
+      ],
+      "targets": [
+        "owner-auth"
+      ],
+      "why": "F1c W2a: the owner-authenticator and its selftest (which also runs stella_data.py stubs over the features file)"
     }
   ]
 }

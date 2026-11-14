@@ -13,12 +13,15 @@ CLI: stella_data.py check [--json] [<id>]       validate every data file against
                                                 never inside a stack tree (the root, this tool's own tree, any folder that
                                                 holds an index: STL-CFG-313).
      stella_data.py owner-only [--json]         the paths (JSON pointer, * for any item) each schema marks x-owner-only
+     stella_data.py stubs --phase P [--json]    the stubs (features entries with due_phase) due at or before phase P of the
+                                                features phase_order: exit 1 and STL-OWN-810 when any is, 0 when none; an
+                                                unknown phase is a usage error (2)
 Exit: 0 ok; 1 a problem (one line per problem or unreadable file, code STL-CFG-310) or an unknown id (STL-CFG-311, one
 alert line); 2 usage. No command ends in a traceback.
 The stack root is the parent of this file's folder, or STELLA_ROOT (a scratch root in tests; the alert line then goes under it).
 Data files must be strict JSON: a repeated key, NaN and Infinity are errors. A problem message never prints the rejected value.
 Schema subset: type, enum, const, properties, propertyNames, required, additionalProperties, items, minItems, maxItems,
-uniqueItems, minLength, maxLength, pattern ($ matches only at the very end), minimum, maximum, $ref (#/$defs/x; sibling
+uniqueItems, minLength, maxLength, pattern ($ matches only at the very end), minimum, maximum, dependentRequired, $ref (#/$defs/x; sibling
 keywords still apply), $defs, $schema, $id, title, description, x-one-document (true: the schema is one document by
 nature, so a second file of it is refused), x-ref (an index row id: a string must be the id, the alias, or the global_id of a
 record of that row's merged view; "<row id>/<key>": of an item of the list or map under key in that row's documents),
@@ -47,7 +50,7 @@ INDEX = ".stella/data-files.json"
 SCHEMAS = ".stella/schemas"
 KEYWORDS = {"$schema", "$id", "$ref", "$defs", "title", "description", "type", "enum", "const", "properties", "propertyNames",
             "required", "additionalProperties", "items", "minItems", "maxItems", "uniqueItems", "minLength", "maxLength",
-            "pattern", "minimum", "maximum", "x-one-document", "x-ref", "x-ref-where", "x-owner-only", "x-record-kind-of"}
+            "pattern", "minimum", "maximum", "dependentRequired", "x-one-document", "x-ref", "x-ref-where", "x-owner-only", "x-record-kind-of"}
 MAX_DEPTH = 64   # a data file nests far less; one limit makes `check` and the read commands agree on a deep object
 TABLE, FRAME, NOROW = "role-table", "data-files", "schema:"   # members that are no index row: the role table, the index, a schema with no JSON row
 MASK_LIMIT = 1024   # a value pattern never runs on a longer string (it is masked whole): a pattern's time grows with the length
@@ -400,6 +403,9 @@ def lint_schema(s, path="$", root=None):
         bad("type", "must be a known type or a list of them")
     if "required" in s and not (isinstance(s["required"], list) and all(isinstance(x, str) for x in s["required"])):
         bad("required", "must be a list of names")
+    dr = s.get("dependentRequired")
+    if "dependentRequired" in s and not (isinstance(dr, dict) and all(isinstance(x, list) and all(isinstance(y, str) for y in x) for x in dr.values())):
+        bad("dependentRequired", "must be an object of name: list of names")
     if "enum" in s and not (isinstance(s["enum"], list) and s["enum"]):
         bad("enum", "must be a non-empty list")
     if not isinstance(s.get("additionalProperties", True), (bool, dict)):
@@ -511,6 +517,7 @@ def check_value(v, s, defs, p, errs, refs=None):
                 refs[n:] = [(*r[:4], p) for r in refs[n:]]
     if isinstance(v, dict):
         errs += [f"{p}: missing {k}" for k in s.get("required", []) if k not in v]
+        errs += [f"{p}: {k} needs {n}, which is missing" for k, ns in s.get("dependentRequired", {}).items() if k in v for n in ns if n not in v]
         props, extra = s.get("properties", {}), s.get("additionalProperties", True)
         for k, x in v.items():
             if "propertyNames" in s:
@@ -900,9 +907,20 @@ def rule_assignments(c):
                     P(rid, f"{w}: {pn} does not list role {nm(a['role'], allroles, 'role')} in its allowed_roles")
 
 
+def phases(f):
+    """The due phases of a features entry, as a list (due_phase is one phase or a list of them)."""
+    d = f.get("due_phase", [])
+    return [d] if isinstance(d, str) else d
+
+
 def rule_features(c):
-    """depends_on: no missing target, no cycle, an on feature depends only on on features."""
+    """depends_on: no missing target, no cycle, an on feature depends only on on features; a stub's due phases are in the phase order."""
     feats, P = c["by"].get("features", {}), c["P"]
+    order = {p for _, d in c["whole"].get("features", []) for p in d["phase_order"]}
+    for f in feats.values():
+        for p in phases(f):
+            if p not in order:
+                P(D(c, "features", f["id"]), f"{idn(f['id'])}: due_phase ({desc(p)}) is not in phase_order")
     for f in feats.values():
         for i, d in enumerate(f["depends_on"]):
             if d not in feats:
@@ -1567,6 +1585,22 @@ def main(argv):
             out[n] = owner_paths(sch, sch.get("$defs", {}))
         print(json.dumps(out, indent=2) if as_json else "\n".join(f"{n}\t{p}" for n, ps in out.items() for p in ps))
         return 0
+    if cmd == "stubs" and len(args) == 2 and args[0] == "--phase":
+        frows = [r["id"] for r in rows() if r["format"] == "json" and r["schema"] == "features"]
+        by = served(frows)   # x-one-document: one features file, its phase_order
+        order = [p for r in frows for _, d in by["_rows"][r][0] for p in d["phase_order"]]
+        if args[1] not in order:
+            print(f"stubs: {shown(args[1])} is not a phase of the features phase_order ({', '.join(order)})", file=sys.stderr)
+            return 2
+        due = [{"id": f["id"], "due_phase": f["due_phase"], "replaced_by": f["replaced_by"]} for f in by.get("features", {}).values()
+               if phases(f) and min(order.index(p) for p in phases(f)) <= order.index(args[1])]
+        if due or as_json:
+            emit(due, as_json, lambda x: f"{shown(x['id'])}\tdue {', '.join(phases(x))}\treplaced by {x['replaced_by']}")
+        if due:
+            say("STL-OWN-810", f"{len(due)} stub(s) due at or before {args[1]} still listed: {', '.join(shown(x['id']) for x in due)}"[:200])
+        elif not as_json:
+            print(f"no stub due at or before {args[1]}")
+        return 1 if due else 0
     print(__doc__.split("\n", 1)[1], file=sys.stderr)
     return 2
 

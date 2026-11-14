@@ -344,6 +344,63 @@
       },
       "global_id": "ad9e7db7-16c4-48dd-a758-95bb23193656",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "owner-auth",
+      "kind": "command",
+      "summary": "The owner-authenticator: check the owner-auth policy, list its providers, create the owner key (setup), make and verify owner proofs bound to one exact action, a nonce and an expiry",
+      "keywords": [
+        "owner",
+        "proof",
+        "owner key",
+        "authenticator",
+        "provider",
+        "nonce",
+        "identity-critical",
+        "phrase"
+      ],
+      "inputs": "an action file {op, target, old_digest, new_digest | new}, an action class and, to verify, a proof file",
+      "outputs": "a proof (JSON) or the provider ids used; STL-CFG-312 in a worker environment, STL-CFG-310 for an invalid policy, STL-OWN-801..809 for a refused proof or key",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/owner_auth.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "573739f3-1e89-4127-8b3c-13a30be2910c",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "stella-data-stubs",
+      "kind": "command",
+      "summary": "List the stubs (features entries with due_phase and replaced_by) due at or before a phase of the features phase order; fails while one is due",
+      "keywords": [
+        "stub",
+        "due_phase",
+        "replaced_by",
+        "phase",
+        "features"
+      ],
+      "inputs": "a phase of the features phase_order",
+      "outputs": "JSON or text: the stubs due {id, due_phase, replaced_by}; exit 1 with STL-OWN-810 when any is due, 2 for an unknown phase",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/stella_data.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "1b9d5cf8-b5ff-4715-a64a-2838c9f22d61",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

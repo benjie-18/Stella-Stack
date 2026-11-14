@@ -8,6 +8,62 @@
     "schema_version": {
       "const": 1
     },
+    "providers": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The owner-authenticator providers (F1c D2). The kind is code (bin/owner_auth.py); which ones exist and what each action class needs is this data. A new provider of a known kind (a command, say) is a new row: no code change. owner_auth.py check also requires each id once and the params of its kind: local-key, typed-phrase, device-phrase none; channel-identity channel_kind and owner_config_key; command argv and timeout_s.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]*$"},
+          "kind": {
+            "enum": ["local-key", "channel-identity", "command", "typed-phrase", "device-phrase"],
+            "description": "local-key: an HMAC with the owner key file (index owner_key) on the host. channel-identity: the answer's user id equals the owner config value named by owner_config_key, on the message the caller delivered. command: argv runs with the request as JSON on stdin; exit 0 = valid, within timeout_s. typed-phrase: the rendered phrase typed on the host terminal. device-phrase: the device-signed payload's phrase equals the rendered phrase (stands only beside a device-signature provider)."
+          },
+          "params": {
+            "type": "object",
+            "properties": {
+              "channel_kind": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
+              "owner_config_key": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$", "description": "The name (never the value) of the owner config key that holds the owner's user id on that channel."},
+              "argv": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "description": "The command; its first item is an absolute path."},
+              "timeout_s": {"type": "integer", "minimum": 1, "maximum": 600}
+            },
+            "additionalProperties": false
+          },
+          "enabled": {"type": "boolean"},
+          "global_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+          "install_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+        },
+        "required": ["id", "kind", "params", "enabled", "global_id", "install_id"],
+        "additionalProperties": false
+      }
+    },
+    "actions": {
+      "type": "object",
+      "description": "Action class -> alternatives; an alternative is a list of provider ids that must all pass, and one passing alternative is enough. owner_write: an owner data change; channel_answer: an approval answered on a channel; identity_critical: used instead of owner_write when the change touches an identity-critical target. owner_auth.py check requires every id to be a provider.",
+      "propertyNames": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+      "properties": {
+        "owner_write": {"$ref": "#/$defs/alternatives"},
+        "channel_answer": {"$ref": "#/$defs/alternatives"},
+        "identity_critical": {"$ref": "#/$defs/alternatives"}
+      },
+      "additionalProperties": {"$ref": "#/$defs/alternatives"},
+      "required": ["owner_write", "channel_answer", "identity_critical"]
+    },
+    "phrase": {
+      "type": "object",
+      "properties": {
+        "template": {"type": "string", "pattern": "\\{what\\}", "description": "The confirmation phrase; {what} becomes the action's target."}
+      },
+      "required": ["template"],
+      "additionalProperties": false
+    },
+    "proof_ttl_s": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3600,
+      "description": "How long a proof made on the host stays valid (prove's default and maximum); a proof that expires later than this from now is refused."
+    },
     "worker_signals": {
       "type": "object",
       "description": "Any one signal makes this process a worker environment: every owner command refuses, and the event writer sends its line to the untrusted stream (F1c B4, B7). These add to the role table's worker_markers and roles.py prove.",
@@ -41,8 +97,24 @@
       "additionalProperties": false
     }
   },
+  "$defs": {
+    "alternatives": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "array",
+        "minItems": 1,
+        "uniqueItems": true,
+        "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]*$"}
+      }
+    }
+  },
   "required": [
     "schema_version",
+    "providers",
+    "actions",
+    "phrase",
+    "proof_ttl_s",
     "worker_signals"
   ],
   "additionalProperties": false
