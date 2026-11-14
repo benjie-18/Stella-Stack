@@ -326,7 +326,7 @@ The resolver that applies the precedence is built in a later phase; this file is
 `entries[]`: id, global_id, install_id, kind (phone, computer), public_key (an Ed25519 PEM), role (primary, secondary, phone,
 worker-node), paired_at, revoked_at (null while paired). Owner-only and identity-critical; ships empty. A paired device is the
 owner-auth provider of kind `device-signature`: it signs canonical `{digest, nonce, expires_at, device_id[, phrase]}` (raw
-Ed25519, base64 in `signature`), checked with `openssl pkeyutl -verify -rawin`; unknown STL-OWN-811, revoked 812. Every accepted
+Ed25519, base64 in `signature`), checked with `openssl pkeyutl -verify -rawin`, where the openssl program is the absolute path in the paired-device provider's `params.openssl` (data; never looked up on PATH); unknown STL-OWN-811, revoked 812. Every accepted
 device-signed request writes one alert (`remote.alert_code` of the policy) and counts toward `remote.rate_limit` (813 past it).
 *To pair or revoke:* an owner write of the row (`stella-apply.py apply devices --from <file>`; set revoked_at to revoke).
 `bin/devices.py list|check [--json]`. The primary lease is a contract only (`.stella/schemas/primary-lease.schema.json`:

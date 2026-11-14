@@ -40,7 +40,8 @@
       "id": "paired-device",
       "kind": "device-signature",
       "params": {
-        "timeout_s": 10
+        "timeout_s": 10,
+        "openssl": "/usr/bin/openssl"
       },
       "enabled": true,
       "global_id": "c1847ec9-b854-485b-b08e-f54d8c4e4cb6",

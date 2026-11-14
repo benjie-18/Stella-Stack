@@ -261,7 +261,7 @@ ok '[ $rc = 1 ] && c STL-OWN-801 && grep -qx CALL_TIMEOUT=600 "$LIMF"' "the same
 cp -p "$POL" "$T/pol.w2b"
 polset 'del(.remote)'; $OA check >"$T/o" 2>&1; rc=$?; cp -p "$T/pol.w2b" "$POL"
 ok '[ $rc = 1 ] && c STL-CFG-310' "a policy with a device-signature provider and no remote: check refuses STL-CFG-310"
-polset '.remote.alert_code = "STL-ZZZ-""999"'; $OA check >"$T/o" 2>&1; rc=$?; cp -p "$T/pol.w2b" "$POL"
+polset '.remote.alert_code = ("STL-ZZZ-" + "999")'; $OA check >"$T/o" 2>&1; rc=$?; cp -p "$T/pol.w2b" "$POL"
 ok '[ $rc = 1 ] && c STL-CFG-310' "remote.alert_code not in the alert catalog: check refuses STL-CFG-310"
 cp -p "$DV" "$T/dv.w2b"; jq --arg lk "$DVLK" '.[$lk] += [.[$lk][0]]' "$DV" >"$T/dv.dup" && cat "$T/dv.dup" >"$DV"
 $PY $B/devices.py check --json >"$T/o" 2>"$T/ve"; rc=$?
@@ -269,6 +269,26 @@ ok '[ $rc = 1 ] && jq -e ".ok == false" "$T/o" >/dev/null 2>&1' "devices.py chec
 A7=$(act settings:CALL_TIMEOUT d7); sign "$T/w1" "$DEVP" zz-phone-1 phone "$(adig "$A7")" 120; vf "$T/w1" "$A7"; cat "$T/dv.w2b" >"$DV"
 ok '[ $rc = 1 ] && c STL-CFG-310' "a device proof while the registry is invalid: refused STL-CFG-310 (fails closed)"
 vf "$T/w1" "$A7"; ok '[ $rc = 0 ]' "the same proof once the registry is valid again: verified (the refusal spent no nonce)"
+# GB-6 (RT-6, CRT-3): the signature is checked by the policy's openssl path (data: absolute), never by an openssl found on PATH
+mkdir -p "$T/fakebin"; printf '#!/bin/sh\nexit 0\n' >"$T/fakebin/openssl"; chmod +x "$T/fakebin/openssl"
+A8=$(act settings:CALL_TIMEOUT d8); sign "$T/f1" "$DEVP" zz-phone-1 other "$(adig "$A8")" 120
+PATH="$T/fakebin:$PATH" $OA verify --class owner_write --action "$A8" --proof "$T/f1" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && c STL-OWN-802' "GB-6 a stub openssl first on PATH: a request signed by another key is still refused STL-OWN-802 (rc=$rc)"
+sign "$T/f2" "$DEVP" zz-phone-1 phone "$(adig "$A8")" 120; jq --arg s "$(head -c 64 /dev/urandom | base64 -w0)" '.signature = $s' "$T/f2" >"$T/f3"
+PATH="$T/fakebin:$PATH" $OA verify --class owner_write --action "$A8" --proof "$T/f3" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && c STL-OWN-802' "GB-6 a stub openssl first on PATH: 64 random bytes as the signature are still refused STL-OWN-802 (rc=$rc)"
+for v in openssl bin/openssl ""; do
+  polset '(.providers[] | select(.kind == "device-signature") | .params.openssl) = $v' --arg v "$v"; $OA check >"$T/o" 2>&1; rc=$?; cp -p "$T/pol.w2b" "$POL"
+  ok '[ $rc = 1 ] && c STL-CFG-310' "GB-6 a device openssl path that is not absolute (\"$v\"): check refuses STL-CFG-310"
+done
+polset 'del(.providers[] | select(.kind == "device-signature") | .params.openssl)'; $OA check >"$T/o" 2>&1; rc=$?; cp -p "$T/pol.w2b" "$POL"
+ok '[ $rc = 1 ] && c STL-CFG-310' "GB-6 a device-signature provider without an openssl path: check refuses STL-CFG-310"
+polset '(.providers[] | select(.kind == "device-signature") | .params.openssl) = $v' --arg v "$T/zz-no-such-openssl"; vf "$T/f2" "$A8"; cp -p "$T/pol.w2b" "$POL"
+ok '[ $rc = 1 ] && c STL-OWN-809' "GB-6 the openssl named in the data is the one run: a missing one refuses a genuine request STL-OWN-809 (rc=$rc)"
+# GB-8 (RT-8): the store's remote folder (rate limit) is refused when it is a symbolic link, at the path itself; nothing written through it
+STORE=$R/$(ix .approval_store); mkdir -p "$T/evil-remote"; rm -rf "$STORE/remote"; ln -s "$T/evil-remote" "$STORE/remote"
+vf "$T/f2" "$A8"; ok '[ $rc = 1 ] && c STL-CFG-310 && [ -z "$(ls -A "$T/evil-remote")" ]' "GB-8 the store's remote folder is a symbolic link: a genuine device request is refused (STL-CFG-310), nothing written through it"
+rm -f "$STORE/remote"; vf "$T/f2" "$A8"; ok '[ $rc = 0 ]' "GB-8 the same request once the remote folder is plain again: verified (the refusal spent no nonce)"
 
 # ---- T8c: the primary-lease contract and its test double ----
 LD="$PY $B/lease_double.py"; S=$T/lease-state.json; SD="$PY $B/stella_data.py"; SCH=$R/.stella/schemas/primary-lease.schema.json

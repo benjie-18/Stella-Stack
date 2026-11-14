@@ -41,7 +41,9 @@
     ".stella/schemas"
   ],
   "owner_commands": [
+    "bin/approvals.py",
     "bin/merge-card.sh",
+    "bin/owner_auth.py",
     "bin/stella-apply.py",
     "bin/settings.py",
     "bin/event_log.py"
@@ -52,6 +54,9 @@
   "boundary_paths": [
     "docs/hermes-local/alert-catalog.json",
     "package.json",
+    "bin/devices.py",
+    "bin/event_untrusted.py",
+    "bin/owner_auth.py",
     "bin/selftests.sh",
     "bin/test-map.py",
     ".stella/test-map.json",
@@ -87,7 +92,8 @@
     "bin/roles.py",
     "bin/settings.py",
     "bin/stella-apply.py",
-    "bin/stella_data.py"
+    "bin/stella_data.py",
+    "bin/worker_env.py"
   ],
   "write_tools": [
     "write_file",

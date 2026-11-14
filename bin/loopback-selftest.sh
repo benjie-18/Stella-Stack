@@ -220,6 +220,16 @@ rq POST /qa/zz-fake-write "${WH[@]}" -H "$PRH: $(cat "$T/p3" 2>/dev/null)" --dat
 ok '[ "$BINSUM" = "$(cd "$B" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum)" ]' "no file under bin/ changed (the new endpoints are data only)"
 stopd
 
+# ---- R9 (F1c wave-2+3 tester, kills mutant LG11): a repeated header over real HTTP, the bad copy first ----
+startd; P=${P:-1}; ORIG=$(cj '.origins[0]'); ORIG=${ORIG//\{port\}/$P}; ORIG=${ORIG:-http://127.0.0.1:$P}
+rq GET "$RPATH" -H "$TOKH: $TOK" -H "Origin: $ORIG"
+ok 'passed' "R9 control: the read GET with the token and one allowed Origin passes"
+rq GET "$RPATH" -H "$TOKH: $TOK" -H "Origin: http://evil.example" -H "Origin: $ORIG"
+ok 'refused_any' "R9: two Origin headers, a foreign one first: refused (got HTTP $(cat "$T/st"))"
+rq GET "$RPATH" -H "$TOKH: wrong-token" -H "$TOKH: $TOK"
+ok 'refused_any' "R9: two API token headers, a wrong one first: refused (got HTTP $(cat "$T/st"))"
+stopd
+
 # ---- nothing secret in any answer or log ----
 ok '[ -s "$T/bodies" ] && grep -q STL-OWN-85 "$T/bodies" && ! grep -qF -e "$TOK" -e "$CSRF" "$T/bodies" "$T/dbl.out" "$T/dbl.err" "$T/sup/logs/alerts.log" "$R/.supervisor/logs/alerts.log" 2>/dev/null' \
   "no response body, double output or alert log holds the API token or the CSRF token"

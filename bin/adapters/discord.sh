@@ -4,7 +4,8 @@
 # One thread per request in the channel whose id the owner config key KEY holds; the thread id is the message ref, so an answer counts
 # only inside its request's thread, and only from the owner's id (owner_auth channel-identity, checked by approvals.py, never here).
 # usage: <this file> deliver|collect KEY HELPER   (HELPER: the Discord helper, relative to the stack root)
-# deliver: the request JSON on stdin (the nonce is never posted); opens the thread, posts the request in it, prints the thread id.
+# deliver: the request JSON on stdin (the nonce is never posted); opens the thread, posts the request in it (the exact action and
+#   its digest, then the agent's summary), prints the thread id.
 # collect: the pending requests delivered here on stdin ([{id, nonce, message_ref}]); in each thread, every human message whose
 #   first word is approve/approved/yes or deny/denied/no is one answer line {request_id, nonce, decision, user, message_ref}, oldest
 #   first; anything else is no answer. A thread that cannot be read is named on stderr and makes the exit 1; the others still count.
@@ -20,7 +21,9 @@ case $1 in
     res=$(discord_action create_thread "$ch" "$(name100 "$(jq -r '"Approval \(.id) · \(.summary)"' <<<"$r")")")
     th=$(jq -r '.thread_id // empty' <<<"$res" 2>/dev/null)
     [ -n "$th" ] || { echo "$me: create_thread failed: $(jq -r '.error // "no thread id"' <<<"$res" 2>/dev/null | head -c 300)" >&2; exit 1; }
-    res=$(discord_action send_message "$th" "$(jq -r '"Approval \(.id) for card \(.card) (class \(.approval_class)): \(.summary[:1500])\nTarget: \(.target)\nExpires: \(.expires_at)\nReply in this thread with approve or deny."' <<<"$r")")
+    # the exact action (JSON: op, target, new or new_digest, masked by approvals.py) and the digest first; the agent's summary
+    # last, on one line (no line break in it can forge an Action line), and short enough that the post fits one message
+    res=$(discord_action send_message "$th" "$(jq -r '"Approval \(.id) for card \(.card) (class \(.approval_class))\nAction: \(.action | tojson)\nDigest: \(.digest)\nExpires: \(.expires_at)\nThe agent says: \(.summary[:300] | explode | map(if . < 32 or . == 127 then 32 else . end) | implode)\nReply in this thread with approve or deny."' <<<"$r")")
     jq -e '.success' <<<"$res" >/dev/null 2>&1 || { echo "$me: send_message failed: $(jq -r '.error // "no answer"' <<<"$res" 2>/dev/null | head -c 300)" >&2; exit 1; }
     echo "$th";;
   collect)

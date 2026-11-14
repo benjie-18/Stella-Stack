@@ -1038,9 +1038,9 @@
       "related": "F1c B7 trusted event log; bin/event_log.py",
       "resolvable": false,
       "title": "an event log line names another writer",
-      "message": "A line of the trusted event log names a writer or install that is not this one: {problem}. It counts for nothing.",
+      "message": "A line of the trusted event log names a writer that is not this one, or a writer install that is not the line's own: {problem}. It counts for nothing.",
       "action": "do not trust the log's lines from that point as proof; find which process wrote the file. See STL-EVT-906 in docs/alert-codes.md.",
-      "cause": "The line was forged with another writer id or install id, or copied from another install's log.",
+      "cause": "The line was forged with another writer id, or its writer install id was changed. (An install id changed since the line was written is no forgery; a line copied from another install fails its mac: STL-EVT-901.)",
       "check": "`bin/event_log.py verify` (it names every problem with its line); the event log path and event_writer_state in `.stella/data-files.json`; .supervisor/logs/alerts.log."
     },
     {
