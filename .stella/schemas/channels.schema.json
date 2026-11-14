@@ -27,7 +27,7 @@
     },
     "resume": {
       "type": "object",
-      "description": "Runs once per accepted decision (approved or denied), never while pending: argv plus the request's card id and the decision word, and the decision as JSON on stdin (board unblock).",
+      "description": "Runs once per decision (an accepted answer approved or denied, or the expiry: expired), never while pending: argv plus the request's card id and the decision word, and the decision as JSON on stdin (board unblock).",
       "properties": {
         "argv": {"$ref": "#/$defs/argv"},
         "timeout_s": {"type": "integer", "minimum": 1, "maximum": 600}

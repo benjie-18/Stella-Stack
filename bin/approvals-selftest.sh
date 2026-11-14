@@ -6,7 +6,7 @@
 # the Discord adapter over the stack's Discord helper (a fake Hermes interpreter), the host-cli adapter and the resume script.
 set -u
 H=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
-SECTIONS="t1a t1b t2a t2b t7b t6b adapters"
+SECTIONS="t1a t1b t2a t2b t7b t6b adapters expiry"
 if [ $# = 0 ]; then
   fails=0
   for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || fails=$((fails+1)); done
@@ -412,6 +412,33 @@ mkdir -p "$T/kb"; printf '#!/usr/bin/env bash\necho "$*" >>"%s/kb/calls"\n' "$T"
 RS=$R/$(jq -r '.resume.argv[0]' "$H/$CHREL")
 echo '{"decision": "denied"}' | PATH=$T/kb:$BASEPATH "$RS" t_zz000001 denied >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && grep -qE "^kanban --board [^ ]+ unblock --reason .*denied.* t_zz000001$" "$T/kb/calls"' "the shipped resume unblocks the card on the stack's board, the decision in the reason"
+;;
+expiry) # Gate A correction: the first host command that sees a pending request past expires_at settles it: one trusted "expired" line, resume once
+ok 'has approvals.py' "precondition: bin/approvals.py exists"
+stubkind discord; setresume
+DC=$(jq -r --arg lk "$CHLK" '[.[$lk][]? | select(.kind == "discord") | .id][0] // "zz-discord"' "$CH"); [ "$DC" = zz-discord ] && addchan zz-discord discord
+nexp() { grep -F "\"$1\"" "$LOG" 2>/dev/null | grep '"approval-decision"' | grep -c '"expired"'; }
+ID=$(mkreq e1 write "$(act settings:QUEUE_MAX e1)" card-e1 2); $AP deliver "$ID" --channel "$DC" >/dev/null 2>&1; REF=$(lastref "$DC")
+ok '[ -n "$ID" ] && [ "$(stat_of "$ID")" = pending ] && [ "$(ndec "$ID")" = 0 ] && [ ! -s "$T/resume.log" ]' "before expiry: pending, no decision line, no resume"
+sleep 3
+$AP status "$ID" --json >"$T/s1" 2>"$T/s1.err" & $AP status "$ID" --json >"$T/s2" 2>"$T/s2.err" & wait
+ok 'jq -e ".status == \"expired\"" "$T/s1" >/dev/null && jq -e ".status == \"expired\"" "$T/s2" >/dev/null' "two status calls at once past expires_at: both say expired"
+ok '[ "$(ndec "$ID")" = 1 ] && [ "$(nexp "$ID")" = 1 ]' "exactly one trusted decision line, and it says expired"
+ok 'pl_dec "$ID" "$(rf e1 digest)" expired' "the expired line is trusted: in proof_lines() with the request's digest"
+ok '[ "$(grep -c card-e1 "$T/resume.log" 2>/dev/null)" = 1 ] && grep -q "card-e1 expired" "$T/resume.log"' "resume ran once for the card, with the word expired"
+$AP wait "$ID" >"$T/o" 2>&1; rc=$?
+ok '[ $rc != 0 ] && c expired && [ "$(ndec "$ID")" = 1 ] && [ "$(grep -c card-e1 "$T/resume.log")" = 1 ]' "wait afterwards: non-zero, expired; no second line, no second resume"
+answer "$DC" "$ID" "$(rf e1 nonce)" approved "$OWNER_ID" "$REF" "$(rf e1 digest)"; collect "$DC"; rc=$?
+ok '[ $rc = 1 ] && c STL-OWN-822 && [ "$(ndec "$ID")" = 1 ] && [ "$(ndeca "$ID")" = 0 ] && [ "$(stat_of "$ID")" = expired ]' "a late owner answer: refused STL-OWN-822, still one line, never an approval"
+ID2=$(mkreq e2 write "$(act settings:QUEUE_MAX e2)" card-e2 2); ID3=$(mkreq e3 write "$(act settings:QUEUE_MAX e3)" card-e3 2); sleep 3
+$AP intake --json >/dev/null 2>"$T/o"
+ok '[ -n "$ID2" ] && [ "$(nexp "$ID2")" = 1 ] && [ "$(nexp "$ID3")" = 1 ] && [ "$(grep -c "card-e[23] expired" "$T/resume.log")" = 2 ]' "intake settles every overdue request it sees: one expired line and one resume each, with no status call"
+st $AP answer "$ID2" --decision approved >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && c STL-OWN-822 && [ "$(nexp "$ID2")" = 1 ] && [ "$(ndeca "$ID2")" = 0 ]' "host-cli answer after expiry: refused STL-OWN-822, no second line"
+ID4=$(mkreq e4 write "$(act settings:QUEUE_MAX e4)" card-e4 2); sleep 3
+collect "$DC"; ok '[ "$(nexp "$ID4")" = 1 ] && [ "$(grep -c "card-e4 expired" "$T/resume.log")" = 1 ]' "collect settles an overdue request too (one line, one resume)"
+ID5=$(mkreq e5 write "$(act settings:QUEUE_MAX e5)" card-e5 60)
+ok '[ "$(stat_of "$ID5")" = pending ] && [ "$(ndec "$ID5")" = 0 ]' "a request within its ttl is left pending by the same commands"
 ;;
 esac
 finish
