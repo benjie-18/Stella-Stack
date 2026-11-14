@@ -94,11 +94,18 @@ K0=$( (sha256sum <"$KEY") 2>/dev/null)
 $OA init-key >"$T/o" 2>&1; rc=$?; outs
 ok '[ $rc = 1 ] && c STL-OWN-807 && [ "$( (sha256sum <"$KEY") 2>/dev/null)" = "$K0" ]' "a second init-key: refused (STL-OWN-807), the key unchanged"
 $OA prove --class owner_write --action "$A" >"$T/good-proof" 2>"$T/o"; cat "$T/good-proof" >>"$T/allout" 2>/dev/null
+LIBK='import sys; sys.path.insert(0, sys.argv[1]); import owner_auth as oa
+try:
+    oa.read_key(); print("read"); sys.exit(1)
+except oa.Refusal as r:
+    print("refused", r.code)'
 for s in $SIGNALS; do
   as_worker "$s" $OA prove --class owner_write --action "$A" >"$T/o" 2>&1; rc=$?; outs
   ok '[ $rc = 1 ] && c STL-CFG-312' "worker signal $s: prove (reads the key) refused, STL-CFG-312"
   as_worker "$s" $OA verify --class owner_write --action "$A" --proof "$T/good-proof" >"$T/o" 2>&1; rc=$?; outs
   ok '[ $rc = 1 ] && c STL-CFG-312' "worker signal $s: verify (reads the key) refused, STL-CFG-312"
+  as_worker "$s" $PY -c "$LIBK" "$B" >"$T/o" 2>&1; rc=$?; outs
+  ok '[ $rc = 0 ] && c "^refused STL-CFG-312$"' "GB-1 worker signal $s: owner_auth.read_key() imported as a library is refused (STL-CFG-312), no key bytes to mac with ($(tail -n 1 "$T/o"))"
 done
 P() { $OA prove --class owner_write --action "${2:-$A}" ${3:+--ttl $3} >"$1" 2>"$T/o"; local r=$?; cat "$1" >>"$T/allout" 2>/dev/null; outs; return $r; }
 Vf() { $OA verify --class "${3:-owner_write}" --action "${2:-$A}" --proof "$1" >"$T/o" 2>&1; local r=$?; outs; return $r; }
@@ -124,6 +131,15 @@ rm -f "$KEY"; ln -s "$T/zz-dangling-target" "$KEY"
 $OA init-key >"$T/o" 2>&1; rc=$?; outs
 ok '[ $rc = 1 ] && [ ! -e "$T/zz-dangling-target" ]' "init-key over a dangling symbolic link: refused, nothing written through it"
 rm -f "$KEY"; mv "$T/key.real" "$KEY" 2>/dev/null
+# GB-8 (RT-8): the approval store and each folder of it (nonces; remote: devices-selftest) is refused when it is a symbolic link, at the
+# path itself: nothing is written through the link, the proof is not spent, and it verifies once the store is a plain folder again
+STORE=$R/$(ix .approval_store); P "$T/p10"; mkdir -p "$T/evil-store" "$T/evil-nonces" "$(dirname "$STORE")"; mv "$STORE" "$T/store.keep" 2>/dev/null
+ln -s "$T/evil-store" "$STORE"; Vf "$T/p10"; rc=$?
+ok '[ $rc = 1 ] && c STL-CFG-310 && [ -z "$(ls -A "$T/evil-store")" ]' "GB-8 the approval store is a symbolic link: verify refused (STL-CFG-310), nothing written through it"
+rm -f "$STORE"; mkdir -p "$STORE"; ln -s "$T/evil-nonces" "$STORE/nonces"; Vf "$T/p10"; rc=$?
+ok '[ $rc = 1 ] && c STL-CFG-310 && [ -z "$(ls -A "$T/evil-nonces")" ]' "GB-8 the store's nonces folder is a symbolic link: verify refused (STL-CFG-310), no nonce written through it"
+rm -rf "$STORE"; [ -e "$T/store.keep" ] && mv "$T/store.keep" "$STORE"; Vf "$T/p10"; rc=$?
+ok '[ $rc = 0 ]' "GB-8 the same proof once the store is a plain folder again: verified (the refusals spent no nonce)"
 
 # ---- typed-phrase and device-phrase (identity_critical) ----
 cat >"$T/pty.py" <<'PY'

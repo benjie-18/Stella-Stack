@@ -269,6 +269,21 @@ tamper 'forge . >>"$LOG"' STL-EVT-901 5 "a next-seq line with a made-up mac (lin
 tamper 'forge ".writer.id = \"zz-other\"" >>"$LOG"' STL-EVT-906 5 "a forged writer id (line 5)"
 tamper 'forge ".writer.install_id = \"$(uuid)\"" >>"$LOG"' STL-EVT-906 5 "a forged install id (line 5)"
 tamper 'tail -n 1 "$T/good" >>"$LOG"' STL-EVT-903 5 "a genuine line replayed at the end (line 5)"
+# the tester's R5 (wave-1 pass): a forged next-seq line past the state is not adopted by the next append; verify: only 901 at it
+rm -f "$LOG" "$STATE"; for w in a1 a2; do $EL append --type note --what "$w" >/dev/null 2>&1; done
+jq -c --arg g "$(uuid)" --arg m "$(hex64)" '.global_id = $g | .seq = (.seq + 1) | .prev = .mac | .mac = $m | .what = "forged"' <<<"$(tail -n 1 "$LOG")" >>"$LOG"
+$EL append --type note --what a3 >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ]' "R5 the owner appends after the forged line"
+ok '[ "$(tail -n 1 "$LOG" | jq .seq)" = 3 ] && [ "$(tail -n 1 "$LOG" | jq -r .prev)" = "$(sed -n 2p "$LOG" | jq -r .mac)" ]' "R5 the new line continues from the last genuine line (seq 3, prev = mac of line 2), not from the forged one"
+$EL verify --json >"$T/v" 2>/dev/null
+ok 'jq -e "[.problems[] | [.code, .line]] == [[\"STL-EVT-901\", 3]]" "$T/v" >/dev/null' "R5 verify: exactly 901 at the forged line 3 (now: $(jq -c '[.problems[] | [.code, .line]]' "$T/v"))"
+# the tester's R7 (wave-1 pass): the state keeps its key and seq but its last mac is replaced; verify reports 903 at the next line
+rm -f "$LOG" "$STATE"; for w in a1 a2; do $EL append --type note --what "$w" >/dev/null 2>&1; done
+jq -c --arg m "$(hex64)" '.mac = $m' "$STATE" >"$T/st" && cat "$T/st" >"$STATE"   # in place: mode and link count kept
+ok '[ "$(stat -c %a "$STATE")" = 600 ]' "R7 (fixture) state rewritten in place, still 0600"
+$EL append --type note --what a3 >/dev/null 2>&1
+$EL verify --json >"$T/v" 2>/dev/null; rc=$?
+ok '[ $rc = 1 ] && jq -e ".problems | any(.code == \"STL-EVT-903\" and .line == 3)" "$T/v" >/dev/null' "R7 a line chained from a swapped state mac: verify exit 1, 903 at line 3 (now: $(jq -c '[.problems[] | [.code, .line]]' "$T/v"))"
 $EL verify >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-EVT-903 "$T/o"' "W1 verify (plain): a problem exits 1 and prints its code"
 for how in 'rm -f "$STATE"' 'chmod 644 "$STATE"' 'mv "$STATE" "$T/sreal"; ln -s "$T/sreal" "$STATE"' 'ln "$STATE" "$T/slink2"'; do
   rs; eval "$how"; r=$(V); ok '[ $r = 1 ] && probc STL-EVT-905' "W1 writer state unsafe ($how): verify exit 1, STL-EVT-905"
@@ -339,6 +354,21 @@ as_worker() {   # as_worker <signal> <cmd...>: exactly that signal present; the 
   cp -p "$T/pol.keep" "$POL"; rm -f "$T/sandbox-flag"
   return $rc; }
 $EL append --type note --what owner-seed >/dev/null 2>&1
+# GB-1 (RT-1): the library, imported by a worker, refuses every read of the writer key and every trusted write (312); the chain check
+# reports 312 and gives no proof; reading the log's lines (no secret) still works
+LIBW='import sys; sys.path.insert(0, sys.argv[1]); import event_log as e
+calls = {"append": lambda: e.append(e.build("approval-decision", "zz-lib", new={"decision": "approved"})), "load_state": e.load_state,
+         "save_state": lambda: e.save_state({"key": "0" * 64, "seq": 0, "mac": e.GENESIS}), "proof_lines": e.proof_lines}
+for n, f in calls.items():
+    try:
+        f(); print(n, "ran"); sys.exit(1)
+    except e.EventError as x:
+        if x.code != "STL-CFG-312":
+            print(n, x.code); sys.exit(1)
+p, _, proof = e.chain()
+if proof or [c for c, _, _ in p] != ["STL-CFG-312"]:
+    print("chain", p); sys.exit(1)
+print("tail", len(e.tail()), "read_log", len(e.read_log()[0]))'
 for s in $SIGNALS; do
   S0=$(snap); as_worker "$s" $EL append --type capability-used --what "zz-forge-$s" >"$T/o" 2>&1; rc=$?
   ok '[ $rc = 1 ] && grep -q STL-CFG-312 "$T/o" && [ "$(snap)" = "$S0" ]' "W1 worker signal $s: event_log.py append refused (STL-CFG-312), log and state untouched"
@@ -346,6 +376,8 @@ for s in $SIGNALS; do
   ok '[ $rc = 1 ] && grep -q STL-CFG-312 "$T/o" && [ "$(snap)" = "$S0" ]' "W1 worker signal $s: event_log.py verify (it reads the key) refused (STL-CFG-312)"
   as_worker "$s" $EU append --type approval-decision --what "zz-unt-$s" --source "zz-src-$s" >"$T/o" 2>&1; rc=$?
   ok '[ $rc = 0 ] && tail -n 1 "$UNT" | jq -e --arg w "zz-unt-$s" --arg s "zz-src-$s" ".trusted == false and .what == \$w and .source == \$s and .type == \"approval-decision\" and (has(\"seq\") or has(\"mac\") or has(\"prev\") or has(\"writer\") | not)" >/dev/null && [ "$(snap)" = "$S0" ]' "W1 worker signal $s: event_untrusted.py appends a \"trusted\": false line (no chain fields) to the untrusted stream; the trusted log and state untouched"
+  as_worker "$s" python3 -I -c "$LIBW" "$H/bin" >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 0 ] && grep -qE "^tail [1-9][0-9]* read_log [1-9]" "$T/o" && [ "$(snap)" = "$S0" ]' "GB-1 worker signal $s: the library refuses append, load_state, save_state, proof_lines (STL-CFG-312) and chain() gives no proof; log and state untouched; tail() and read_log() still read ($(tail -n 1 "$T/o"))"
 done
 ok 'tail -n 1 "$UNT" | jq -e --arg i "$IID" "(.global_id | test(\"^[0-9a-f-]{36}$\")) and .install_id == \$i and .schema_version == 3" >/dev/null && python3 -I $H/bin/stella_data.py validate event <(tail -n 1 "$UNT") >/dev/null' "W1 an untrusted line has its own global_id and this install's id, and passes the event schema"
 ok '[ -f "$H/bin/event_untrusted.py" ] && ! grep -nE "^\s*(import|from)\s+(event_log|owner_auth|hmac)\b|event_writer_state|owner_key" "$H/bin/event_untrusted.py" >/dev/null' "W1 event_untrusted.py imports no writer, key or chain code"
@@ -385,6 +417,12 @@ except e.EventError as x:
     print(x.code)' "$H/bin" >"$T/o" 2>&1
 ok '[ $? = 0 ] && grep -q STL-EVT-905 "$T/o"' "W1 proof_lines() with the chain present and the state missing raises STL-EVT-905 (never an empty proof)"
 rm -f "$LOG"; PL; ok '[ -s "$T/pl" ] && jq -e ". == []" "$T/pl" >/dev/null' "W1 proof_lines() with no chain and no state: []"
+# GB-7 (CRT-5): the owner's install-id change leaves every earlier genuine line genuine: verify passes, proof_lines() keeps them all
+rm -f "$LOG" "$STATE"; for w in i1 i2; do $EL append --type zz-iid --what $w >/dev/null 2>&1; done
+INS=$R/$(ixr '.files[] | select(.id == "install") | .path'); cp -p "$INS" "$T/ins.gb7"
+jq --arg i "$(uuid)" '.install_id = $i' "$T/ins.gb7" >"$INS"; $EL append --type zz-iid --what i3 >/dev/null 2>&1
+r=$(V); PL; cp -p "$T/ins.gb7" "$INS"
+ok '[ $r = 0 ] && jq -e ".problems == []" "$T/v" >/dev/null && jq -e "[.[] | select(.type == \"zz-iid\") | .what] == [\"i1\", \"i2\", \"i3\"]" "$T/pl" >/dev/null && [ "$(sed -n 1p "$LOG" | jq -r .writer.install_id)" != "$(sed -n 3p "$LOG" | jq -r .writer.install_id)" ]' "GB-7 an install-id change between lines: verify exit $r with no problem ($(jq -c '[.problems[].code]' "$T/v")), proof_lines() keeps the lines from before and after it"
 # the key never leaves the state: not in the log, the untrusted stream, any output or alert line
 rm -f "$LOG" "$STATE"; $EL append --type note --what k1 >"$T/out1" 2>&1; $EL verify --json >>"$T/out1" 2>&1; $EL tail --json >>"$T/out1" 2>&1
 K=$(jq -r .key "$STATE" 2>/dev/null)

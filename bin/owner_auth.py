@@ -23,13 +23,15 @@ CLI: owner_auth.py check                    the policy is valid (schema, ids, pa
                                             the proof (or list of proofs) in P meets an alternative of class C: prints the
                                             provider ids used, and the nonces are spent
 Refused (exit 1, the code and its plain message, one alert line): init-key, prove and verify in a worker environment
-(bin/worker_env.py), STL-CFG-312; an invalid policy, STL-CFG-310; STL-OWN-801..809, 811..813 (docs/alert-codes.md). Exit 2: usage, or an
-action file that is not an action. The key never appears in any output."""
+(bin/worker_env.py), STL-CFG-312, and so is every read of the owner key (read_key(), whatever the entry point); an invalid policy,
+STL-CFG-310; STL-OWN-801..809, 811..813 (docs/alert-codes.md). Exit 2: usage, or an action file that is not an action. The key
+never appears in any output."""
 import datetime, fcntl, hashlib, hmac, json, os, re, secrets, signal, stat, subprocess, sys, time
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
 import alert_catalog
 import devices
+import event_log as el
 import owner_config as oc
 import stella_data as sd
 import worker_env
@@ -39,7 +41,8 @@ HEX64, NONCE = re.compile(r"[0-9a-f]{64}"), re.compile(r"[0-9a-f]{32}")
 TIME = "%Y-%m-%dT%H:%M:%SZ"
 ENVELOPE = ("provider", "digest", "nonce", "expires_at")
 PARAMS = {"local-key": set(), "channel-identity": {"channel_kind", "owner_config_key"}, "command": {"argv", "timeout_s"},
-          "typed-phrase": set(), "device-phrase": set(), "device-signature": {"timeout_s"}}
+          "typed-phrase": set(), "device-phrase": set(), "device-signature": {"timeout_s", "openssl"}}
+PROGRAM = {"command": ("argv[0]", lambda q: q["argv"][0]), "device-signature": ("openssl", lambda q: q["openssl"])}   # what each kind runs: never looked up on PATH
 PROVED = {"local-key", "channel-identity", "command", "device-signature"}   # kinds whose pass is a proof object; the others decide at verify time
 SIGNED = {"device-signature"}   # kinds whose proof is signed by the owner's device and may carry the phrase
 
@@ -74,8 +77,8 @@ def problems(doc):
     for p in doc["providers"]:
         if set(p["params"]) != PARAMS[p["kind"]]:
             out.append(f"provider {p['id']}: a {p['kind']} provider takes params {', '.join(sorted(PARAMS[p['kind']])) or 'none'}")
-        elif p["kind"] == "command" and not p["params"]["argv"][0].startswith("/"):
-            out.append(f"provider {p['id']}: argv[0] is an absolute path")
+        elif p["kind"] in PROGRAM and not PROGRAM[p["kind"]][1](p["params"]).startswith("/"):
+            out.append(f"provider {p['id']}: {PROGRAM[p['kind']][0]} is an absolute path")
     for c, alts in doc["actions"].items():
         for n, alt in enumerate(alts):
             out += [f"actions.{c}[{n}]: {sd.desc(i)} is not a provider" for i in alt if i not in kinds]
@@ -116,12 +119,10 @@ def need_host(what):
 
 
 def state(key, code):
-    """Absolute path of an index state path (owner_key, approval_store): no symbolic link in any folder on the way below the
-    root; else Refusal(code)."""
+    """Absolute path of an index state path (owner_key, approval_store): no symbolic link in any part below the root, the path
+    itself included; else Refusal(code)."""
     try:
-        rel = sd.spelled(sd.checked(sd.load(sd.INDEX), sd.INDEX, "data-files")[key])
-        head, tail = os.path.split(os.path.normpath(rel))
-        return os.path.join(sd.plain(head) if head else sd.ROOT, tail)
+        return sd.plain(sd.checked(sd.load(sd.INDEX), sd.INDEX, "data-files")[key])
     except sd.DataError as e:
         raise Refusal(code, f"the index {key} path cannot be used: {e}") from None
 
@@ -131,6 +132,7 @@ def key_path():
 
 
 def read_key():
+    need_host("reading the owner key")   # here, not in the callers: no entry point reads the key in a worker environment
     try:   # O_NOFOLLOW: a link is refused, never followed; O_NONBLOCK: a fifo planted there does not hang
         fd = os.open(key_path(), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
@@ -259,9 +261,9 @@ def v_device_signature(prov, proof, ctx):
         raise Refusal("STL-OWN-812", f"device {dev['id']} was revoked at {dev['revoked_at']}")
     signed = canon({k: proof[k] for k in ("digest", "nonce", "expires_at", "device_id", "phrase") if k in proof}).encode()
     try:
-        good = devices.verify(dev["public_key"], signed, proof["signature"], prov["params"]["timeout_s"])
+        good = devices.verify(dev["public_key"], signed, proof["signature"], prov["params"]["timeout_s"], prov["params"]["openssl"])
     except (OSError, subprocess.TimeoutExpired) as e:
-        raise Refusal("STL-OWN-809", f"the {prov['id']} signature check (openssl) could not run ({type(e).__name__})") from None
+        raise Refusal("STL-OWN-809", f"the {prov['id']} signature check (its openssl) could not run ({type(e).__name__})") from None
     if not good:
         raise Refusal("STL-OWN-802", f"the {prov['id']} proof is not signed by the key of device {dev['id']}")
     ctx["devices"].append(dev["id"])
@@ -302,34 +304,37 @@ def require(cls, action, proofs, bound=None, show=None):
     if alt is None:
         raise Refusal("STL-OWN-801", f"the proofs given meet no alternative of {cls}")
     ctx = {"cls": cls, "action": action, "pol": pol, "bound": bound, "show": show, "used": [], "devices": []}
-    nonces = os.path.join(store_dir(), "nonces")
-    for i in [i for i in alt if i in given]:
-        x, p = given[i], provs[i]
-        if not (isinstance(x.get("digest"), str) and HEX64.fullmatch(x["digest"]) and isinstance(x.get("nonce"), str) and NONCE.fullmatch(x["nonce"])
-                and when(x.get("expires_at")) is not None and when(x["expires_at"]) <= time.time() + pol["proof_ttl_s"]):
-            raise Refusal("STL-OWN-802", f"the {i} proof is not well formed (digest, nonce, expires_at within proof_ttl_s)")
-        VERIFY[p["kind"]](p, x, ctx)
-        if x["digest"] != dg:
-            raise Refusal("STL-OWN-805", f"the {i} proof is for another action")
-        if when(x["expires_at"]) <= time.time():
-            raise Refusal("STL-OWN-803", f"the {i} proof expired")
-        if os.path.lexists(os.path.join(nonces, x["nonce"])):
-            raise Refusal("STL-OWN-804", f"the {i} proof was already used")
-        ctx["used"].append((p["kind"], x))
-    for i in sorted((i for i in alt if i not in given), key=lambda i: provs[i]["kind"] == "typed-phrase"):   # the owner types last
-        VERIFY[provs[i]["kind"]](provs[i], None, ctx)
-    os.makedirs(nonces, mode=0o700, exist_ok=True)
-    if ctx["devices"]:
-        remote_change(pol, ctx, nonces)
-    else:
-        spend(ctx["used"], nonces)
+    nonces = store_fd("nonces")
+    try:
+        for i in [i for i in alt if i in given]:
+            x, p = given[i], provs[i]
+            if not (isinstance(x.get("digest"), str) and HEX64.fullmatch(x["digest"]) and isinstance(x.get("nonce"), str) and NONCE.fullmatch(x["nonce"])
+                    and when(x.get("expires_at")) is not None and when(x["expires_at"]) <= time.time() + pol["proof_ttl_s"]):
+                raise Refusal("STL-OWN-802", f"the {i} proof is not well formed (digest, nonce, expires_at within proof_ttl_s)")
+            VERIFY[p["kind"]](p, x, ctx)
+            if x["digest"] != dg:
+                raise Refusal("STL-OWN-805", f"the {i} proof is for another action")
+            if when(x["expires_at"]) <= time.time():
+                raise Refusal("STL-OWN-803", f"the {i} proof expired")
+            if x["nonce"] in os.listdir(nonces):
+                raise Refusal("STL-OWN-804", f"the {i} proof was already used")
+            ctx["used"].append((p["kind"], x))
+        for i in sorted((i for i in alt if i not in given), key=lambda i: provs[i]["kind"] == "typed-phrase"):   # the owner types last
+            VERIFY[provs[i]["kind"]](provs[i], None, ctx)
+        if ctx["devices"]:
+            remote_change(pol, ctx, nonces)
+        else:
+            spend(ctx["used"], nonces)
+    finally:
+        os.close(nonces)
     return list(alt)
 
 
 def spend(used, nonces):
+    """The nonces of the proofs used, spent in the open nonces folder (a descriptor of store_fd)."""
     for _, x in used:
         try:   # O_EXCL: two verifications racing for one proof, one wins
-            os.close(os.open(os.path.join(nonces, x["nonce"]), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
+            os.close(os.open(x["nonce"], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=nonces))
         except FileExistsError:
             raise Refusal("STL-OWN-804", f"the {x['provider']} proof was already used") from None
     # shortcut: spent nonces stay forever (one empty file each); prune those past their expiry when the store grows large
@@ -339,22 +344,20 @@ def remote_change(pol, ctx, nonces):
     """An accepted device-signed request: one more remote owner change in <store>/remote (one file per change, named
     <epoch>-<nonce>; a name that is not that counts as recent), refused STL-OWN-813 at remote.rate_limit within its window; else
     the nonces are spent and one alert with remote.alert_code is written."""
-    lim, d = pol["remote"]["rate_limit"], os.path.join(store_dir(), "remote")
-    os.makedirs(d, mode=0o700, exist_ok=True)
-    fd = os.open(d, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    lim, fd = pol["remote"]["rate_limit"], store_fd("remote")
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)   # two racing requests never both take the last place
         now, recent = int(time.time()), []
-        for n in os.listdir(d):
+        for n in os.listdir(fd):
             t = n.split("-", 1)[0]
             if t.isdigit() and int(t) <= now - lim["window_s"]:
-                os.unlink(os.path.join(d, n))
+                os.unlink(n, dir_fd=fd)
             else:
                 recent.append(n)
         if len(recent) >= lim["count"]:
             raise Refusal("STL-OWN-813", f"{len(recent)} remote owner changes in the last {lim['window_s']} s, the limit is {lim['count']}")
         spend(ctx["used"], nonces)
-        os.close(os.open(os.path.join(d, f"{now}-{ctx['used'][0][1]['nonce']}"), os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600))
+        os.close(os.open(f"{now}-{ctx['used'][0][1]['nonce']}", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=fd))
     finally:
         os.close(fd)
     sd.say(pol["remote"]["alert_code"], f"{ctx['action']['op']} {ctx['action']['target']} ({ctx['cls']}), signed by device {', '.join(ctx['devices'])}", alert=True)
@@ -362,6 +365,18 @@ def remote_change(pol, ctx, nonces):
 
 def store_dir():
     return state("approval_store", "STL-CFG-310")
+
+
+def store_fd(sub):
+    """The open folder sub (nonces, remote) of the approval store, made 0700 when missing. One rule for the store and every folder of
+    it: each part below the root is opened as itself (event_log.mkdirs / open_dir), so a symbolic link at the path or on the way
+    is refused (STL-CFG-310), never followed, and later steps work through this descriptor."""
+    p = os.path.join(store_dir(), sub)
+    try:
+        el.mkdirs(p)
+        return el.open_dir(p)
+    except (OSError, ValueError) as e:
+        raise Refusal("STL-CFG-310", f"the approval store folder {sub} cannot be used safely ({el.why(e)}); a symbolic link is refused, never followed") from None
 
 
 # ---- CLI ----
