@@ -21,8 +21,9 @@ echo '{}' >"$H/kanban/boards/$BOARD/board.json"
 printf '#!/usr/bin/env bash\necho "$*" >> "%s/calls"\ncase "$*" in *"config get"*) echo unset;; esac\nexit 0\n' "$A" >"$A/bin/hermes"; chmod +x "$A/bin/hermes"
 mk() { mkdir -p "$1"; printf 'model: x\n' >"$1/config.yaml"; echo '{"approvals": []}' >"$1/shell-hooks-allowlist.json"; }
 # The scratch table: the real one plus role "planner" (assignable, delegates, creates cards, one hook) and profile planner-x.
-uid() { python3 -I -c 'import uuid; print(uuid.uuid4())'; }   # every record of the table carries global_id + install_id (FV-01)
-jq --arg g1 "$(uid)" --arg g2 "$(uid)" --arg i "$(uid)" '.roles.planner = {global_id: $g1, install_id: $i, runs_unboxed: false, assignable: true, may_answer_for_owner: false, workspace: "git-worktree", may_complete: true, may_unblock: false, may_claim: true,
+uid() { cat /proc/sys/kernel/random/uuid; }
+IID=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; print(s.install_id())' /workspace/bin)   # FV-01: a role-table record a fixture adds carries a fresh global_id and this install's install_id
+jq --arg g1 "$(uid)" --arg g2 "$(uid)" --arg i "$IID" '.roles.planner = {global_id: $g1, install_id: $i, runs_unboxed: false, assignable: true, may_answer_for_owner: false, workspace: "git-worktree", may_complete: true, may_unblock: false, may_claim: true,
       may_delegate: true, may_create_cards: true, may_review: false, allowed_overrides: [], background_review: false,
       requirements: {tool_calling: true, min_context_tokens: 8000, vision: false, allowed_data_classes: ["public"]},
       platform_toolsets: {cli: ["file", "terminal"]},

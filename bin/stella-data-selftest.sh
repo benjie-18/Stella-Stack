@@ -221,21 +221,21 @@ ok 'jq -e ".entries[] | select(.id == \"fallback-gateway\") | .enabled and (.mod
 RT="$ROOT/docs/hermes-local/roles.json"
 FB=$(jq -r .fallback_role "$RT"); R1=$(jq -r --arg fb "$FB" '[.roles | keys[] | select(. != $fb)][0]' "$RT")
 ok 'python3 -I "$SD" validate roles "$RT" >/dev/null 2>&1' "79 control: validate roles accepts the shipped table"
-n=0
-for f in '.profiles["qa-p"] = {"role": "qa-no-such-role"}' '.fallback_role = "qa-no-such-role"' ".roles[\"$FB\"].may_complete = true" \
+n=0   # a record a fixture adds gets a fresh global_id ($g) and this install's install_id ($i) (FV-01); a copy keeps its install_id
+for f in ".profiles[\"qa-p\"] = {\"role\": \"qa-no-such-role\", \"global_id\": \$g, \"install_id\": \$i}" '.fallback_role = "qa-no-such-role"' ".roles[\"$FB\"].may_complete = true" \
          ".roles[\"$R1\"].hooks += [{\"matcher\": \"x\", \"file\": \"bin/roles.py\", \"command\": \"/workspace/bin/roles.py\"}]" \
-         ".roles[\"$R1\"].hooks += [{\"matcher\": \"(\", \"command\": \"/workspace/bin/roles.py\"}]" ".roles[\"qa bad name\"] = .roles[\"$R1\"]" \
+         ".roles[\"$R1\"].hooks += [{\"matcher\": \"(\", \"command\": \"/workspace/bin/roles.py\"}]" ".roles[\"qa bad name\"] = (.roles[\"$R1\"] | .global_id = \$g)" \
          ".roles[\"$R1\"].requirements.allowed_data_classes = [\"public\n\"]" ".roles[\"$R1\"].git_identity = {\"name\": \"WORKER_GIT_NAME\"}" \
          ".roles[\"$R1\"].allowed_overrides = [\"model\", \"model\"]" '.protected.repo += [.protected.repo[0]]' \
          ".roles[\"$R1\"].requirements.allowed_data_classes = [\"bogus\"]" '.schema_version = true' '.schema_version = "1"' \
          ".roles[\"$R1\"].requirements.min_context_tokens = 9007199254740992" ".roles[\"$R1\"].may_answer_for_owner = 1" \
-         ".roles[\"$FB\"].requirements.allowed_data_classes += [\"zz-extra\"]" '.profiles["qa bad"] = {"role": .fallback_role}' \
+         ".roles[\"$FB\"].requirements.allowed_data_classes += [\"zz-extra\"]" ".profiles[\"qa bad\"] = {\"role\": .fallback_role, \"global_id\": \$g, \"install_id\": \$i}" \
          ".roles[\"$R1\"].qa_unknown_key = 1" ".roles[\"$R1\"].complete_needs_reveiw = true" ".profiles[.profiles | keys[0]].qa_unknown_key = 1" '.qa_unknown_key = 1'; do
-  n=$((n+1)); mk rt$n; jq "$f" "$RT" >"$T/rtc$n.json"; cp "$T/rtc$n.json" "$T/rt$n/docs/hermes-local/roles.json"
+  n=$((n+1)); mk rt$n; jq --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$IID" "$f" "$RT" >"$T/rtc$n.json"; cp "$T/rtc$n.json" "$T/rt$n/docs/hermes-local/roles.json"
   ok 'refuses rt'$n' validate roles "$T/rtc'$n'.json" && grep -q "^STL-CFG-310 " "$T/o"' "80.$n validate roles refuses a broken table: $f"
   ok 'refuses rt'$n' check && grep -q "^STL-CFG-310 " "$T/o"' "81.$n check refuses the same table in the index's role_table, as STL-CFG-310 lines"
 done
-mk rtd; jq '.roles["qa-x"] = .roles.'"$FB"' | .roles["qa-x"].requirements.allowed_data_classes = ["public","bogus"]' "$RT" >"$T/rtd.json"
+mk rtd; jq --arg g "$(cat /proc/sys/kernel/random/uuid)" '.roles["qa-x"] = (.roles.'"$FB"' | .global_id = $g) | .roles["qa-x"].requirements.allowed_data_classes = ["public","bogus"]' "$RT" >"$T/rtd.json"
 ok 'refuses rtd validate roles "$T/rtd.json" && [ "$(grep -c "^STL-CFG-310 " "$T/o")" = 1 ] && grep -q "qa-x" "$T/o" && grep -q "allowed_data_classes\[1\]" "$T/o" && ! grep -q bogus "$T/o"' "82 a data class the data policy does not define: validate roles refuses it, one STL-CFG-310 line naming it"
 # R5: a role table under STELLA_ROOT is judged against that root's hook files, not the fixed stack root's
 mk r5a; mkdir -p "$T/r5a/docs/hermes-local/hooks/qa"; cp "$ROOT/docs/hermes-local/hooks/default/deny-write.sh" "$T/r5a/docs/hermes-local/hooks/qa/only-here.sh"

@@ -10,6 +10,7 @@ T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 S=${STAGE:-/workspace/bin}   # the guard under test (a staged copy while it is being replaced)
 G=$S/role-guard.py
 RF=${ROLES_FILE:-/workspace/docs/hermes-local/roles.json}   # the table under test (a staged copy while it is being replaced)
+IID=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; print(s.install_id())' /workspace/bin)   # FV-01: a role-table record a fixture adds carries a fresh global_id and this install's install_id
 fails=0
 ok() { local REAL=; case $1 in *alerts.log*) REAL=1 ;; esac   # T1 (r5): a case that reads the alert log runs its guard as a real process
   if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); [ -s "$T/out" ] && sed 's/^/     /' "$T/out" | head -3; fi; }
@@ -299,7 +300,7 @@ for tf in "$T/bad.json" "$T/garbage.json" "$T/nope.json" "$T/nomr.json" "$T/strm
 done
 # Not hard-coded to the stack's profiles: a second reviewing profile in the table is accepted and listed; with none, the
 # refusal says so; a profile of another role that gets may_review is accepted.
-jq --arg r "$(role "$RV1")" '.profiles["qa-x"] = {role: $r, soul: "reviewer.md"} | .sandbox.boxed_profiles += ["qa-x"]' "$RF" >"$T/two.json"
+jq --arg r "$(role "$RV1")" --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$IID" '.profiles["qa-x"] = {global_id: $g, install_id: $i, role: $r, soul: "reviewer.md"} | .sandbox.boxed_profiles += ["qa-x"]' "$RF" >"$T/two.json"
 ok '[ "$(run "$WT" kanban_request_review "$(rr qa-x)" ROLES_FILE=$T/two.json)" = 0 ] && [ "$(run "$WT" kanban_request_review "$(rr "$RV1")" ROLES_FILE=$T/two.json)" = 0 ] && [ "$(run "$WT" kanban_request_review "$(rr "$WT")" ROLES_FILE=$T/two.json)" = 2 ] && grep -qF qa-x "$T/out" && grep -qF "$RV1" "$T/out"' "K8: a second reviewing profile in the table: accepted, and listed in a refusal"
 ok '[ "$(run "$RV1" kanban_request_review "$(rr qa-x)" ROLES_FILE=$T/two.json)" = 0 ] && [ "$(run qa-x kanban_request_review "$(rr qa-x)" ROLES_FILE=$T/two.json)" = 2 ] && grep -qF "$RV1" "$T/out" && ! grep -qF "ask the owner" "$T/out"' "K8: one reviewing profile may hand to the other, never to itself"
 jq '.roles[].may_review = false' "$RF" >"$T/nobody.json"
@@ -353,7 +354,7 @@ ok '[ -n "$DISP" ] && [ "$(jq "[.roles[] | select(.may_answer_for_owner == true)
 # W2-RT-01: a role without the field is a worker for this rule, listed or not, whatever its `assignable`: foreign comment refused
 for r in $(jq -r '.roles | to_entries[] | select(.value.may_answer_for_owner != true) | .key' "$RF"); do
   # a served role needs explicit platform_toolsets (W4 r3 table rule); one that has none gets those of the first boxed profile's role
-  jq --arg r "$r" '. as $d | .profiles["qa-p"] = {"role": $r} | .sandbox.boxed_profiles += ["qa-p"] | .roles[$r].platform_toolsets |= (if [(. // {})[] | length] | add // 0 > 0 then . else $d.roles[$d.profiles[$d.sandbox.boxed_profiles[0]].role].platform_toolsets end)' "$RF" >"$T/qa-t.json"
+  jq --arg r "$r" --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$IID" '. as $d | .profiles["qa-p"] = {"global_id": $g, "install_id": $i, "role": $r} | .sandbox.boxed_profiles += ["qa-p"] | .roles[$r].platform_toolsets |= (if [(. // {})[] | length] | add // 0 > 0 then . else $d.roles[$d.profiles[$d.sandbox.boxed_profiles[0]].role].platform_toolsets end)' "$RF" >"$T/qa-t.json"
   ok '[ "$(ROLES_FILE=$T/qa-t.json run qa-p kanban_comment "$(cm t_0000c001)")" = 2 ] && grep -qF "not your own running card" "$T/out"' "W2-RT-01: a profile with role $r (no may_answer_for_owner) is refused a foreign comment by the own-card proof"
 done
 unset TREE_TOOL
