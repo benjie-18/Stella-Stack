@@ -14,3 +14,8 @@ __pycache__/
 
 # the owner's plan documents live here; they name the owner and stay out of the repo (follow-up 5)
 docs/spec/
+
+# local, untracked: env files and local skills
+.env.*
+.claude/skills/agentic-test-audit/
+.claude/skills/break-ai-fix-loops/
