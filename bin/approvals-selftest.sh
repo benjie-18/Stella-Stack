@@ -6,9 +6,11 @@
 # the Discord adapter over the stack's Discord helper (a fake Hermes interpreter), the host-cli adapter and the resume script.
 # Gate B cycle 1: the tester's R10 and the attack scripts CRT-1, RT-4, RT-5 (GB-4), CRT-7, RT-7 (GB-5), unchanged; gb4 and gb5
 # cover every site of those rules (intake and collect; the payload, Discord and host-cli).
+# Gate B cycle 2: the attack scripts CRT2-1, CRT2-2, RT2-3 (text shown to the owner: masked and filtered in every field, in the
+# payload, Discord and host-cli) and RT2-4 (a fixed child environment), and the fix-pass R13, unchanged; env covers every child.
 set -u
 H=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
-SECTIONS="t1a t1b t2a t2b t7b t6b adapters expiry r10 crt1 rt4 rt5 crt7 rt7 gb4 gb5"
+SECTIONS="t1a t1b t2a t2b t7b t6b adapters expiry r10 crt1 rt4 rt5 crt7 rt7 gb4 gb5 crt21 crt22 rt23 rt24 env r13"
 if [ $# = 0 ]; then
   fails=0
   for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || fails=$((fails+1)); done
@@ -125,6 +127,21 @@ pl_dec() { PL; [ -s "$T/pl" ] && jq -e --arg id "$1" --arg dg "$2" --arg d "$3" 
 st() { setsid -w "$@" </dev/null; }
 nev() { [ -f "$LOG" ] && wc -l <"$LOG" || echo 0; }
 ndeca() { grep -F "\"$1\"" "$LOG" 2>/dev/null | grep '"approval-decision"' | grep -c approved; }
+
+# dlib: the CRT2 helpers (qa/gateB/critical-red-team/CRT2-lib.sh, unchanged): the REAL discord.sh over a stub Discord helper that
+# records every create_thread / send_message call in $T/discord.log and never reaches the network; realdiscord points the shipped
+# discord row(s) at it (data only); askit <tag> <action json> <summary>: one approval-ask (as a worker), then the owner's intake
+dlib() {
+cat >"$R/zz-dhelper.sh" <<S
+discord_action() { jq -nc --arg a "\$1" --arg c "\$2" --arg t "\$3" '{call: \$a, chan: \$c, text: \$t}' >>"$T/discord.log"
+  case \$1 in create_thread) echo '{"thread_id": "900000000000000001"}';; send_message) echo '{"success": true}';; *) echo '{}';; esac; }
+name100() { printf '%s' "\$1" | head -c 100; }
+S
+export ZZ_CHAN_ID=800000000000000001; }
+realdiscord() { jq --arg lk "$CHLK" '.[$lk] |= map(if .kind == "discord" then .deliver = ["bin/adapters/discord.sh", "deliver", "ZZ_CHAN_ID", "zz-dhelper.sh"] | .collect = ["bin/adapters/discord.sh", "collect", "ZZ_CHAN_ID", "zz-dhelper.sh"] else . end)' "$CH" >"$T/ch.new" && cat "$T/ch.new" >"$CH"; }
+askit() { jq -nc --argjson a "$2" --arg s "$3" --arg c "card-$1" '{class: "write", action: $a, summary: $s, card: $c}' >"$T/ask-$1.json"
+  STUB_WORKER_MARK=1 $PY "$B/event_untrusted.py" append --type approval-ask --what "card-$1" --detail "$(cat "$T/ask-$1.json")" >/dev/null 2>&1
+  $AP intake >"$T/intake-$1.out" 2>&1; }
 
 case $SECTION in
 t1a) # A1: non-owner id, card/comment/tool/model text, wrong nonce, unknown id, other message, other digest, expiry, replay; owner answer once
@@ -611,6 +628,164 @@ shown g5 owner-settings '"PLAIN_ZZ=plain-zz-secret-3"'
 ok '[ "$(pv g5 .action.new)" = "\"***\"" ] && ! grep -qF plain-zz-secret-3 "$T/p-g5"' "a scalar for a whole row that has redact keys: masked whole (as the event log masks it)"
 ID=$(mkreq g6 write "$(act settings:QUEUE_MAX g6)" card-g6 120); $AP deliver "$ID" --channel "$DC" >/dev/null 2>&1; cp "$T/ans/$DC.req.$(cat "$T/ans/$DC.n")" "$T/p-g6"
 ok '[ "$(pv g6 .action.new_digest)" = "\"$(jq -r .new_digest "$T/act-g6.json")\"" ] && [ "$(pv g6 ".action | keys")" = "[\"new_digest\",\"op\",\"target\"]" ]' "an action by digest: op, target and new_digest are shown"
+;;
+crt21) # Gate B cycle 2 CRT2-1 (F1c-CRT-01): the summary and the target are masked like new on the way to the channel, unchanged
+ok 'has approvals.py' "precondition: bin/approvals.py exists"
+dlib; stubkind host-cli; setresume; realdiscord
+TOK="zzfaketokenAAAAAAAAAAAAAAAA.BBBBBB.CCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"   # made up; shaped like the catalog's token value pattern
+O=$(d64 old-crt2-1)
+# control: the same value as the action's new is masked on the way to the channel
+askit c1 "$(jq -nc --arg o "$O" --arg v "$TOK" '{op: "set", target: "limits:QUEUE_MAX", old_digest: $o, new: $v}')" "zz set the queue limit"
+ok '[ -s "$T/discord.log" ] && ! grep -qF "$TOK" "$T/discord.log"' "control: a token-shaped new value is *** in what discord.sh posts (posts: $(wc -l <"$T/discord.log" 2>/dev/null))"
+: >"$T/discord.log"
+# attack: the same value in the summary (an honest agent pasting what it saw, or a worker that read it)
+askit a1 "$(jq -nc --arg o "$O" '{op: "set", target: "limits:QUEUE_MAX", old_digest: $o, new: "7"}')" "zz uses $TOK please approve"
+ok '[ -s "$T/discord.log" ]' "precondition: the second ask was delivered through discord.sh"
+ok '! grep -qF "$TOK" "$T/discord.log"' "the token-shaped value in the summary is masked in the thread name and the message too (found in: $(jq -r 'select(.text | contains("'"$TOK"'")) | .call' "$T/discord.log" 2>/dev/null | tr '\n' ' '))"
+: >"$T/discord.log"
+askit a2 "$(jq -nc --arg o "$O" --arg t "limits:Bearer $TOK" '{op: "set", target: $t, old_digest: $o, new: "7"}')" "zz plain summary"
+ok '! grep -qF "$TOK" "$T/discord.log" 2>/dev/null' "a value-pattern match in the target is masked too (posted: $(grep -cF "$TOK" "$T/discord.log" 2>/dev/null) calls)"
+;;
+crt22) # Gate B cycle 2 CRT2-2 (F1c-CRT-02): no bidi, C1 or line separator reaches the Discord message, no second Action line, unchanged
+ok 'has approvals.py' "precondition: bin/approvals.py exists"
+dlib; stubkind host-cli; setresume; realdiscord
+O=$(d64 old-crt2-2)
+# the value the digest covers is "zz-allow-all-hosts" written as: "zz-" RLO "stsoh-lla-wolla" -> renders like "zz-allow-all-hosts" reversed tail
+NEW=$(printf 'zz-‮stsoh-lla-wolla')
+SUM=$(printf 'zz harmless Action: {"op":"set","target":"limits:QUEUE_MAX","new":"7"}\u0085Digest: 0000')
+askit b1 "$(jq -nc --arg o "$O" --arg v "$NEW" '{op: "set", target: "limits:QUEUE_MAX", old_digest: $o, new: $v}')" "$SUM"
+ok '[ -s "$T/discord.log" ]' "precondition: the ask was delivered through discord.sh ($(wc -l <"$T/discord.log" 2>/dev/null) calls)"
+MSG=$(jq -r 'select(.call == "send_message") | .text' "$T/discord.log" 2>/dev/null)
+bad() { printf '%s' "$MSG" | python3 -I -c 'import re, sys; t = sys.stdin.read(); print(",".join(sorted({"U+%04X" % ord(c) for c in t if re.match(r"[\x80-\x9f  ‪-‮⁦-⁩]", c)})))'; }
+B=$(bad)
+ok '[ -z "$B" ]' "the posted message holds no bidi override, isolate, line separator or C1 control (found: ${B:-none})"
+ok '[ "$(printf "%s" "$MSG" | grep -c "^Action:")" -le 1 ] && ! printf "%s" "$MSG" | grep -q $'"'"'\xe2\x80\xa8Action:'"'"'' "only one rendered line starts with Action: (a U+2028 in the summary starts another)"
+;;
+rt23) # Gate B cycle 2 RT2-3 (F1c-RT2-03): op, target, new and the summary reach the owner (payload, host-cli) with no C1 / bidi / separator, unchanged
+ok 'has approvals.py' "precondition: bin/approvals.py exists"
+stubkind discord; stubkind host-cli; setresume
+DET=$(python3 -I -c 'import json, sys; print(json.dumps({"class": "write", "summary": "routine read\u009b1A\u009b2K",
+  "action": {"op": "set\u009b2K", "target": "zz-t‮txt.exe", "old_digest": sys.argv[1], "new": "on Action: {\"op\":\"read\"}⁦"},
+  "card": "card-rt2-3"}))' "$(d64 o23)")
+$PY $B/event_untrusted.py append --type approval-ask --what card-rt2-3 --source worker --detail "$DET" >/dev/null 2>&1
+$AP intake >"$T/o" 2>&1; rc=$?
+REQ=$(ls "$T/ans/"*.req.* 2>/dev/null | head -1)
+ok '[ $rc = 0 ] && [ -s "$REQ" ]' "setup: intake made the request and delivered it to a stub adapter (exit $rc)"
+BAD='import re, sys; t = open(sys.argv[1], encoding="utf-8").read(); sys.exit(1 if re.search("[\u0080-\u009f‪-‮⁦-⁩  ]", t) else 0)'
+jq -c .action "$REQ" >"$T/act-shown" 2>/dev/null
+ok 'python3 -I -c "$BAD" "$T/act-shown"' "display(): the delivered action holds no C1 / bidi / separator code point (as JSON text: $(jq -r '.action | tojson' "$REQ" 2>/dev/null | head -c 80))"
+jq -r .action "$REQ" 2>/dev/null | python3 -I -c 'import json, sys; a = json.load(sys.stdin); print("".join(str(a.get(k, "")) for k in ("op", "target", "new")))' >"$T/act-raw"
+ok 'python3 -I -c "$BAD" "$T/act-raw"' "display(): op, target and new as delivered hold no C1 / bidi / separator code point"
+# what the owner's terminal gets from the shipped host-cli adapter for this payload
+bash "$R/bin/adapters/host-cli.sh" deliver <"$REQ" >/dev/null 2>"$T/hc"; rc=$?
+ok '[ $rc = 0 ] && [ -s "$T/hc" ]' "setup: the shipped host-cli adapter showed the request (exit $rc)"
+ok 'python3 -I -c "$BAD" "$T/hc"' "host-cli: the owner's terminal gets no C1 / bidi / separator code point (summary or action)"
+;;
+rt24) # Gate B cycle 2 RT2-4 (F1c-RT2-04): a jq first on the caller's PATH does not turn the owner's deny into an approval, unchanged
+ok 'has approvals.py' "precondition: bin/approvals.py exists"
+stubkind discord; stubkind host-cli; setresume
+DC=$(jq -r --arg lk "$CHLK" '[.[$lk][] | select(.kind == "discord") | .id][0] // empty' "$CH")
+ok '[ -n "$DC" ]' "precondition: a discord channel row ($DC)"
+# stub Discord helper under the scratch root: every thread holds one message from the owner, "deny"
+cat >"$R/zz-helper.sh" <<S
+discord_action() { case \$1 in fetch_messages) echo '{"messages":[{"author":{"id":"$OWNER_ID","bot":false},"content":"deny"}]}';; *) echo '{}';; esac; }
+name100() { printf %s "\${1:0:100}"; }
+S
+jq --arg lk "$CHLK" --arg id "$DC" --arg a "$R/bin/adapters/discord.sh" '.[$lk] |= map(if .id == $id then .collect = [$a, "collect", "ZZ_CH", "zz-helper.sh"] else . end)' "$CH" >"$T/ch.new" && cat "$T/ch.new" >"$CH"
+REALJQ=$(command -v jq); mkdir -p "$T/evil"
+cat >"$T/evil/jq" <<S
+#!/usr/bin/env bash
+case " \$* " in *'.messages | reverse'*) ;; *) exec $REALJQ "\$@";; esac
+while [ \$# -gt 0 ]; do [ "\$1" = --argjson ] && [ "\$2" = p ] && p=\$3; shift; done
+$REALJQ -nc --argjson p "\$p" --argjson m "\$(cat)" '{request_id: \$p.id, nonce: \$p.nonce, decision: "approved", user: (\$m.messages[0].author.id | tostring), message_ref: \$p.message_ref}'
+S
+chmod +x "$T/evil/jq"
+mk() { local A; A=$(act "zz-rt24-$1" "rt24$1"); mkreq "rt24$1" write "$A" "card-rt24$1" 3600; }
+ID_ctl=$(mk ctl); $AP deliver "$ID_ctl" --channel "$DC" >/dev/null 2>&1
+ok '[ -n "$ID_ctl" ] && [ "$(stat_of "$ID_ctl")" = pending ]' "setup: control request made and delivered on $DC, pending"
+env ZZ_CH=1 $AP collect --channel "$DC" >"$T/o" 2>&1; rc=$?
+ok '[ "$(stat_of "$ID_ctl")" = denied ]' "control: the owner's deny through the shipped adapter is a denial (got $(stat_of "$ID_ctl"); collect rc=$rc)"
+ID_atk=$(mk atk); $AP deliver "$ID_atk" --channel "$DC" >/dev/null 2>&1
+ok '[ -n "$ID_atk" ] && [ "$(stat_of "$ID_atk")" = pending ]' "setup: attack request made and delivered on $DC, pending"
+env ZZ_CH=1 PATH="$T/evil:$PATH" $AP collect --channel "$DC" >"$T/o" 2>&1; rc=$?
+ok '[ "$(stat_of "$ID_atk")" != approved ]' "a jq first on PATH does not turn the owner's deny into an approval (got $(stat_of "$ID_atk"); collect rc=$rc)"
+;;
+env) # Gate B cycle 2 F1c-RT2-04, one rule for every child approvals.py runs (deliver, collect, resume): PATH is the channels file's
+     # env.path; only the variables env.pass names and those the data argv names pass from the caller, nothing else
+ok 'has approvals.py' "precondition: bin/approvals.py exists"
+ok 'jq -e ".env.path | length > 0 and all(startswith(\"/\") and (contains(\":\") | not))" "$CH" >/dev/null' "the shipped channels file names PATH as absolute folders (no : in one)"
+cat >"$T/envdump.sh" <<S
+#!/usr/bin/env bash
+env >"$T/env-\$1"; cat >/dev/null
+case \$1 in deliver) echo m-env-1;; esac
+S
+chmod +x "$T/envdump.sh"
+jq --arg lk "$CHLK" --arg a "$T/envdump.sh" --arg g "$(uuid)" --arg i "$IID" '.[$lk] += [{id: "zz-env", kind: "discord", deliver: [$a, "deliver", "ZZ_NAMED"], collect: [$a, "collect"], enabled: true, global_id: $g, install_id: $i}]
+  | .resume = {argv: [$a, "resume"], timeout_s: 10}' "$CH" >"$T/ch.new" && cat "$T/ch.new" >"$CH"
+WANT=$(jq -r '.env.path | join(":")' "$CH"); mkdir -p "$T/evil"; $OA init-key >/dev/null 2>&1
+ID=$(mkreq env write "$(act settings:QUEUE_MAX env)" card-env 120)
+env ZZ_NAMED=n1 ZZ_LEAK=l1 BASH_ENV="$T/nowhere" PATH="$T/evil:$PATH" $AP deliver "$ID" --channel zz-env >"$T/o" 2>&1
+env ZZ_LEAK=l1 BASH_ENV="$T/nowhere" PATH="$T/evil:$PATH" $AP collect --channel zz-env >"$T/o" 2>&1
+env ZZ_LEAK=l1 BASH_ENV="$T/nowhere" PATH="$T/evil:$PATH" st $AP answer "$ID" --decision denied >"$T/o" 2>&1
+for k in deliver collect resume; do
+  ok '[ -s "$T/env-$k" ] && grep -qx "PATH=$WANT" "$T/env-$k" && ! grep -qE "^(ZZ_LEAK|BASH_ENV)=" "$T/env-$k" && grep -qx "HOME=$HOME" "$T/env-$k"' "$k: PATH is the data's, a variable env.pass names (HOME) passes, the caller's ZZ_LEAK and BASH_ENV do not"
+done
+ok 'grep -qx "ZZ_NAMED=n1" "$T/env-deliver"' "deliver: the variable the row's argv names (an owner config key) passes"
+;;
+r13) # Gate B fix cycle 1 pass R13 (GB-4, GB-5: mutants AP3 AP6 AP7 AP9-AP13): an untrusted value fails alone; display masks every secret shape, unchanged
+ok 'has approvals.py' "precondition: bin/approvals.py exists"
+EU="$PY $B/event_untrusted.py"
+stubkind discord; stubkind host-cli; setresume
+DC=$(jq -r --arg lk "$CHLK" '[.[$lk][]? | select(.kind == "discord") | .id][0]' "$CH")
+UT=$R/$(ix .untrusted_events); mkdir -p "$(dirname "$UT")"
+O=$(d64 old-r13)
+ask() { jq -nc --argjson a "$1" --arg c "$2" '{class: "write", action: $a, summary: ("zz r13 " + $c), card: $c}'; }
+put() { STUB_WORKER_MARK=1 $EU append --type approval-ask --what "$2" --detail "$(ask "$1" "$2")" >/dev/null 2>&1; }
+reqof() { grep -l "\"card\": *\"$1\"" "$T/ans/$DC".req.* 2>/dev/null | head -1; }
+hasreq() { grep -lq "\"card\": \"$1\"" "$STORE"/requests/*.json 2>/dev/null; }
+VALID=$(jq -nc --arg o "$O" '{op: "set", target: "settings:QUEUE_MAX", old_digest: $o, new: "7"}')
+# (a1, AP3) an ask line nested 20 deep in an extra field (past WRITE_DEPTH 16, far below Python's recursion limit), then a valid ask
+G=$(uuid); DEEP=$(python3 -I -c 'import json,sys; v=0
+for _ in range(20): v=[v]
+print(json.dumps({"type":"approval-ask","trusted":False,"global_id":sys.argv[1],"what":"card-r13-deep","detail":sys.argv[2],"pad":v}))' "$G" "$(ask "$VALID" card-r13-deep)")
+printf '%s\n' "$DEEP" >>"$UT"; put "$VALID" card-r13-after-deep
+$AP intake >"$T/o1" 2>&1; rc=$?; cp "$T/o1" "$T/o"
+ok '[ $rc = 0 ] && ! hasreq card-r13-deep && hasreq card-r13-after-deep && grep -q STL-CFG-318 "$T/o1"' "an ask line nested past the writer's depth is refused (318) and makes no request; the next ask does (rc=$rc, $(codes "$T/o1"))"
+# (a2, AP6) an ask whose summary holds a lone surrogate (schema-valid text; fails only when the record is written), then a valid ask
+G=$(uuid); BADASK=$(jq -nc --argjson a "$VALID" '{class: "write", action: $a, summary: "zz SURR", card: "card-r13-surr"}' | sed 's/SURR/\\ud800/')
+python3 -I -c 'import json,sys; print(json.dumps({"type":"approval-ask","trusted":False,"global_id":sys.argv[1],"what":"card-r13-surr","detail":sys.argv[2]}))' "$G" "$BADASK" >>"$UT"
+put "$VALID" card-r13-after-surr
+$AP intake >"$T/o2" 2>&1; rc=$?; cp "$T/o2" "$T/o"
+ok '[ $rc = 0 ] && hasreq card-r13-after-surr && grep -q STL-OWN-829 "$T/o2"' "an ask that fails in an unexpected way costs its own line only (829): intake exit 0 and the next ask becomes a request (rc=$rc, $(codes "$T/o2"))"
+# (a3, AP7) an answer line whose nonce holds a lone surrogate, then the owner's valid answer: the valid one still decides
+A=$(act settings:QUEUE_MAX r13c); ID=$(mkreq c write "$A" card-r13-collect 600)
+$AP deliver "$ID" --channel "$DC" >/dev/null 2>&1; REF=$(lastref "$DC")
+printf '%s\n' "{\"request_id\":\"$ID\",\"nonce\":\"\\ud800\",\"decision\":\"approved\",\"user\":\"$OWNER_ID\",\"message_ref\":\"$REF\"}" >>"$T/ans/$DC.in"
+answer "$DC" "$ID" "$(rf c nonce)" approved "$OWNER_ID" "$REF" "$(rf c digest)"
+$AP collect --channel "$DC" >"$T/o3" 2>&1; rc=$?; cp "$T/o3" "$T/o"
+ok '[ -n "$ID" ] && [ "$(stat_of "$ID")" = approved ] && grep -q STL-OWN-830 "$T/o3"' "an answer line that fails in an unexpected way costs its own line only (830): the next valid answer still approves $ID (status: $(stat_of "$ID"), rc=$rc, $(codes "$T/o3"))"
+# (b) display: each ask's delivered payload, .action.new
+put "$(jq -nc --arg o "$O" '{op: "set", target: "owner-settings:ZZ_TOKEN", old_digest: $o, new: "zz-plain-a9"}')" card-r13-a9
+put "$(jq -nc --arg o "$O" '{op: "set", target: "owner-settings", old_digest: $o, new: "zz-plain-a10"}')" card-r13-a10
+put "$(jq -nc --arg o "$O" '{op: "set", target: "settings:QUEUE_MAX", old_digest: $o, new: {api_token: "zz-plain-a11", n: 1}}')" card-r13-a11
+put "$(jq -nc --arg o "$O" '{op: "set", target: "settings:QUEUE_MAX", old_digest: $o, new: "Bearer zzplaina12"}')" card-r13-a12
+put "$(jq -nc --arg o "$O" '{op: "set", target: "settings:QUEUE_MAX", old_digest: $o, new: "zz-shown-ctl"}')" card-r13-ctl
+$AP intake >"$T/o" 2>&1
+newof() { jq -c '.action.new' "$(reqof "$1")" 2>/dev/null; }
+ok '[ "$(newof card-r13-ctl)" = "\"zz-shown-ctl\"" ]' "control: a plain value of a plain setting is shown (got $(newof card-r13-ctl))"
+ok '[ "$(newof card-r13-a9)" = "\"***\"" ]' "a secret key's new value (owner-settings:ZZ_TOKEN) is masked (got $(newof card-r13-a9))"
+ok '[ "$(newof card-r13-a10)" = "\"***\"" ]' "a whole secret row's scalar (owner-settings) is masked (got $(newof card-r13-a10))"
+ok '[ "$(newof card-r13-a11)" = "{\"api_token\":\"***\",\"n\":1}" ]' "a nested secret key is masked, the rest shown (got $(newof card-r13-a11))"
+ok '[ "$(newof card-r13-a12)" = "\"***\"" ]' "a value a pattern hides (Bearer ...) is masked (got $(newof card-r13-a12))"
+# (b, AP13) fail closed: a value that cannot be judged. The registry gains a secret entry without store.data: redactor() and
+# proof_lines() still work, sensitive_row() (asked for a target with no key) raises inside display(); restored after the deliver
+A=$(jq -nc --arg o "$O" '{op: "set", target: "zz-row-a13", old_digest: $o, new: "zz-unjudged-a13"}' >"$T/a13.json"; echo "$T/a13.json")
+ID=$(mkreq f write "$A" card-r13-a13 600)
+SET=$R/$(ix '.files[] | select(.schema == "settings") | .path'); cp -p "$SET" "$T/set.keep"
+jq -c '.entries += [{key: "ZZ_S13", sensitivity: "secret", store: {key: "ZZ_S13"}}]' "$T/set.keep" >"$SET"
+$AP deliver "$ID" --channel "$DC" >"$T/o4" 2>&1; rc=$?; cp -p "$T/set.keep" "$SET"; cp "$T/o4" "$T/o"
+F=$(reqof card-r13-a13)
+ok '[ -n "$ID" ] && [ -n "$F" ] && [ "$(newof card-r13-a13)" = "\"***\"" ]' "a value that cannot be judged is delivered as *** (deliver rc=$rc $(codes "$T/o4"), delivered new: $([ -n "$F" ] && newof card-r13-a13 || echo none))"
 ;;
 esac
 finish
