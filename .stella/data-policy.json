@@ -62,7 +62,13 @@
     "feature": {
       "sync_class": "local-only"
     },
+    "profile": {
+      "sync_class": "local-only"
+    },
     "project": {
+      "sync_class": "local-only"
+    },
+    "role": {
       "sync_class": "local-only"
     },
     "role-assignment": {

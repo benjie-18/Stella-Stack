@@ -1,5 +1,5 @@
 {
-  "description": "The role table. A table is valid only when BOTH this schema and the validation in bin/roles.py pass; python3 bin/stella_data.py check and validate roles run both (roles.py also holds the rules this schema cannot say: a profile's role exists, fallback_role names a role and opens nothing, a hook has a file or a command and not both, a matcher compiles).",
+  "description": "The role table. A table is valid only when BOTH this schema and the validation in bin/roles.py pass; python3 bin/stella_data.py check and validate roles run both (roles.py also holds the rules this schema cannot say: a profile's role exists, fallback_role names a role and opens nothing, a hook has a file or a command and not both, a matcher compiles). Every profile row and every role entry is a record (product rule 14): it carries global_id and install_id; bin/roles.py also refuses a global_id that two records of the table share.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -169,7 +169,9 @@
     "profile": {
       "type": "object",
       "required": [
-        "role"
+        "role",
+        "global_id",
+        "install_id"
       ],
       "additionalProperties": false,
       "properties": {
@@ -201,6 +203,12 @@
         },
         "capability_fallback": {
           "type": "string"
+        },
+        "global_id": {
+          "$ref": "#/$defs/global_id"
+        },
+        "install_id": {
+          "$ref": "#/$defs/install_id"
         }
       }
     },
@@ -249,7 +257,9 @@
         "may_delegate",
         "may_create_cards",
         "may_review",
-        "allowed_overrides"
+        "allowed_overrides",
+        "global_id",
+        "install_id"
       ],
       "additionalProperties": false,
       "properties": {
@@ -404,8 +414,24 @@
             "type": "string",
             "pattern": "^[A-Za-z0-9_]+$"
           }
+        },
+        "global_id": {
+          "$ref": "#/$defs/global_id"
+        },
+        "install_id": {
+          "$ref": "#/$defs/install_id"
         }
       }
+    },
+    "global_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "The record's global id: a lower-case version 4 UUID, unique across the table and every data file (product rule 14). The record's name (its key in profiles or roles) stays its alias: every read by name works as before."
+    },
+    "install_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "The UUID of the install that made the record (its .stella/install.json); a record moved from another install keeps it."
     }
   }
 }
