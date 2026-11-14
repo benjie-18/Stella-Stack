@@ -99,7 +99,10 @@ Schemas use a small JSON Schema subset (the list is in the docstring of `bin/ste
 `x-ref: "<index row id>"` on a string says the value must be the id (alias) or `global_id` of a record of that row's merged
 view; `check` charges a value that is neither to the row of the file that holds it (`STL-CFG-310`, naming the field, never
 the value), and `validate <schema> <file>` refuses it with `STL-CFG-311` and one alert line (an x-ref naming no JSON row of
-the index is a `STL-CFG-310` error). A read also depends on the rows its schemas' x-refs name. `x-owner-only: true` marks a
+the index is a `STL-CFG-310` error). `x-ref: "<row id>/<key>"` names instead the list (objects with an `id`) or map under
+`<key>` inside that row's documents (`data-policy/sync_classes`). `x-ref-where: {field: value}` beside an x-ref says the
+record must also carry each value (JSON equality: `false` is not `0`); a record that does not counts as unknown (the
+line says which values). A read also depends on the rows its schemas' x-refs name. `x-owner-only: true` marks a
 field only the owner's path writes; `stella_data.py owner-only [--json]` lists, per schema, the JSON pointer of every marked
 field (`*` for any array item or map value; a marker reached through `$ref` counts), and fails closed (`STL-CFG-310`) when a
 schema cannot be read. A schema's identity is its name:
@@ -122,7 +125,7 @@ writes them (item W2). Numbers must fit a float (a number too large, or a non-ze
 (one limit for `check` and the read commands). Every data file needs `schema_version`. `check` also runs the
 cross-file rules: role assignments against the connections catalog, the effort modes and the data policy (a project scope
 needs `project`, a card scope needs `project` and `card`, a global scope has neither; project ids are lower case; one
-assignment per scope, role and effort mode; no chain entry names a provider that is switched off, and its provider allows every data class of the role (`requirements.allowed_data_classes`; an empty `data_classes_allowed` allows none) and lists the assignment's role in its `allowed_roles` (`[]` allows no role); one card id belongs to one project; the role table's
+assignment per scope, role and effort mode; no chain link names a provider that is switched off, and its provider allows every data class of the role (`requirements.allowed_data_classes`; an empty `data_classes_allowed` allows none) and lists the assignment's role in its `allowed_roles` (`[]` allows no role); one card id belongs to one project; the role table's
 `fallback_role` is not a role to assign or allow); `depends_on` in features (no missing target, no cycle, an `on` feature
 depends only on `on` features); `allowed_roles` against the role table; a setting's store, default and `code` (it must
 exist in the alert catalog) against the index and the registry itself; an extension is `enabled` only when `approved`; data
@@ -223,7 +226,7 @@ reads; `vault_vm`: a leased rotating vault entry, only when the owner allows a C
 unset, the default; true or false is the owner's record of the provider's terms); an `api` entry has none of these five.
 `terms_ok` and `credential_store` are `x-owner-only` (`stella_data.py owner-only` lists them): the owner sets them with
 `bin/stella-apply.py apply connections --from <candidate>` (dry run first; `rollback` restores the bytes). Routing refuses a
-`cli-login` link whose `terms_ok` is not true (W3). An `api` provider may be `aggregator: true` (one endpoint fronting
+`cli-login` link whose `terms_ok` is not true (see role assignments). An `api` provider may be `aggregator: true` (one endpoint fronting
 several upstream providers) and then names `broker_entries` {`unified`, `admin`, `upstream[]`}: broker entry names only.
 An app may be `integration_aggregator: true` (one key fronting many apps); its `data_policy.hosted` must be true. A hosted
 connection (the provider's cloud keeps data) may not allow a class that never reaches a cloud store (class rule `sync:
@@ -262,9 +265,20 @@ ids"). Both are `x-owner-only`. `stella_data.install_id()` is the one reader (ne
 ### `.stella/role-assignments.json`
 `effort_modes{}` (allowed localities and `no_silent_fallback` for standard, eco, max, local_only) and `assignments[]`:
 `scope` (`level` global, project or card, with `project` or `card`), `role`, `effort_mode`, and an ordered `chain[]` of
-`{provider, model, parameters}`; effort-mode ids are lower case ASCII like other ids. **Precedence:** the data policy first, then the card, then the project, then the global
+links `{connection, model, parameters}` (F1b D6): `connection` is the id or `global_id` of a provider in the catalog
+(x-ref `connections`, `x-ref-where` kind provider), `model` one of that connection's models. F1 wrote `provider`; the
+migration renames that key and nothing else: write the candidate with
+`jq '.assignments[].chain[] |= with_entries(if .key == "provider" then .key = "connection" else . end)'`, then
+`stella-apply.py apply role-assignments --from <candidate>` (dry run first). A data-only `rollback` of it is refused (the
+saved copy fails the schema a candidate must pass); undoing it means reverting the schema and the file together.
+effort-mode ids are lower case ASCII like other ids. **Precedence:** the data policy first, then the card, then the project, then the global
 assignment. An override never widens the data policy: `check` refuses a chain entry the policy forbids for its project.
-It also refuses an unknown provider, model, role or mode, an empty chain, and a provider whose locality the mode forbids.
+It also refuses an unknown connection, model, role or mode, an empty chain, and a provider whose locality the mode forbids.
+**Routing** (one rule, `route_problems`, beside the project policy's): a `cli-login` link needs `terms_ok` true. On a link
+whose connection is cloud or `data_policy.hosted`, each data class the role handles (`requirements.allowed_data_classes`)
+follows its `class_rules` `hosted`: `allowed` passes, `never` (and a class with no rule row) is refused outright, `grant`
+needs a `privacy_grants` entry for that class naming the connection (id or `global_id`) that has not expired
+(`expires_at` null or absent never expires). A private project never routes to a hosted connection (`policy_allows`).
 The resolver that applies the precedence is built in a later phase; this file is the data and the validator.
 *To add one:* append an assignment with a new `id`.
 

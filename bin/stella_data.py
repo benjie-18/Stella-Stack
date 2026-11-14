@@ -19,8 +19,9 @@ Schema subset: type, enum, const, properties, propertyNames, required, additiona
 uniqueItems, minLength, maxLength, pattern ($ matches only at the very end), minimum, maximum, $ref (#/$defs/x; sibling
 keywords still apply), $defs, $schema, $id, title, description, x-one-document (true: the schema is one document by
 nature, so a second file of it is refused), x-ref (an index row id: a string must be the id, the alias, or the global_id of a
-record of that row's merged view) and x-owner-only (true: only the owner's path writes the field; owner-only lists them). Any
-other keyword, or a wrong keyword value, is an error, never ignored.
+record of that row's merged view; "<row id>/<key>": of an item of the list or map under key in that row's documents),
+x-ref-where (beside an x-ref, {field: value}: the record must also carry each value) and x-owner-only (true: only the
+owner's path writes the field; owner-only lists them). Any other keyword, or a wrong keyword value, is an error, never ignored.
 A record is one entry of an index row with a list_key, or one file of a folder row: it carries global_id (a lower-case version
 4 UUID, unique across every data file) and install_id (the UUID of the install that made it); its old id is its alias. Both
 are required unless the install's one document says ids_required false (a migration in progress).
@@ -40,7 +41,7 @@ INDEX = ".stella/data-files.json"
 SCHEMAS = ".stella/schemas"
 KEYWORDS = {"$schema", "$id", "$ref", "$defs", "title", "description", "type", "enum", "const", "properties", "propertyNames",
             "required", "additionalProperties", "items", "minItems", "maxItems", "uniqueItems", "minLength", "maxLength",
-            "pattern", "minimum", "maximum", "x-one-document", "x-ref", "x-owner-only"}
+            "pattern", "minimum", "maximum", "x-one-document", "x-ref", "x-ref-where", "x-owner-only"}
 MAX_DEPTH = 64   # a data file nests far less; one limit makes `check` and the read commands agree on a deep object
 TABLE, FRAME, NOROW = "role-table", "data-files", "schema:"   # members that are no index row: the role table, the index, a schema with no JSON row
 MASK_LIMIT = 1024   # a value pattern never runs on a longer string (it is masked whole): a pattern's time grows with the length
@@ -401,8 +402,11 @@ def lint_schema(s, path="$", root=None):
     for k in ("title", "description", "$schema", "$id"):
         if k in s and not isinstance(s[k], str):
             bad(k, "must be a string")
-    if "x-ref" in s and not (isinstance(s["x-ref"], str) and re.fullmatch(r"[a-z0-9][a-z0-9._:-]*", s["x-ref"])):
-        bad("x-ref", "must be the id of an index row")
+    if "x-ref" in s and not (isinstance(s["x-ref"], str) and re.fullmatch(r"[a-z0-9][a-z0-9._:-]*(/[A-Za-z0-9_-]+)?", s["x-ref"])):
+        bad("x-ref", "must be the id of an index row, or <row id>/<key of a list in its documents>")
+    w = s.get("x-ref-where")
+    if "x-ref-where" in s and not ("x-ref" in s and isinstance(w, dict) and w and all(x is None or isinstance(x, (str, int, float, bool)) for x in w.values())):
+        bad("x-ref-where", "must be a non-empty object of field: value (a string, number, true, false or null) beside an x-ref")
     if "pattern" in s:
         try:
             rx(s["pattern"])
@@ -449,7 +453,7 @@ def same(a, b):
 
 
 def check_value(v, s, defs, p, errs, refs=None):
-    """Problems of v against schema s into errs; with a list refs, also every x-ref string as (path, value, index row id)."""
+    """Problems of v against schema s into errs; with a list refs, also every x-ref string as (path, value, x-ref, x-ref-where)."""
     if "$ref" in s:
         check_value(v, defs[s["$ref"].rsplit("/", 1)[-1]], defs, p, errs, refs)   # the siblings of $ref apply below
     t = s.get("type")
@@ -458,7 +462,7 @@ def check_value(v, s, defs, p, errs, refs=None):
         if not any(type_ok(v, x) for x in ts):
             return errs.append(f"{p}: expected {'/'.join(ts)}, got {desc(v)}")
     if refs is not None and isinstance(v, str) and "x-ref" in s:
-        refs.append((p, v, s["x-ref"]))
+        refs.append((p, v, s["x-ref"], s.get("x-ref-where", {})))
     if "const" in s and not same(v, s["const"]):
         errs.append(f"{p}: must be {s['const']!r}")
     if "enum" in s and not any(same(v, x) for x in s["enum"]):
@@ -502,7 +506,7 @@ def validate_doc(doc, schema, refs=None):
 def ref_rows(s):
     """The index row ids the x-ref keywords of a schema (or any part of one) name."""
     if isinstance(s, dict):
-        return ({s["x-ref"]} if isinstance(s.get("x-ref"), str) else set()).union(*map(ref_rows, s.values()))
+        return ({s["x-ref"].split("/")[0]} if isinstance(s.get("x-ref"), str) else set()).union(*map(ref_rows, s.values()))
     return set().union(*map(ref_rows, s)) if isinstance(s, list) else set()
 
 
@@ -511,18 +515,32 @@ def entry(ents, k):
     return ents[k] if k in ents else next((e for e in ents.values() if e.get("global_id") == k), None)
 
 
+def listed(docs, key):
+    """{id: item} of the list `key` (objects with an id) or map `key` (of objects) inside the documents of a row."""
+    out = {}
+    for _, d in docs:
+        x = d.get(key) if isinstance(d, dict) else None
+        out.update({k: e for k, e in x.items() if isinstance(e, dict)} if isinstance(x, dict) else
+                   {e["id"]: e for e in x if isinstance(e, dict) and isinstance(e.get("id"), str)} if isinstance(x, list) else {})
+    return out
+
 def ref_problems(refs, by, rs, refused=()):
     """[(kind, line)] for the x-ref values of one document: kind "row" when the schema names no JSON row of the index or the
-    row cannot be read, "id" when the value is no id or global_id of a record of that row's merged view (never the value)."""
+    row cannot be read, "id" when the value is no id or global_id of a record of that row's merged view (x-ref <row>/<key>: of
+    an item of that list in the row's documents) that also carries every field: value of its x-ref-where (never the value)."""
     out = []
-    for p, v, target in refs:
-        row = next((r for r in rs if r["id"] == target and r["format"] == "json"), None)
+    for p, v, target, where in refs:
+        rid, _, key = target.partition("/")
+        row = next((r for r in rs if r["id"] == rid and r["format"] == "json"), None)
         if row is None:
             out.append(("row", f"{p}: x-ref names {target!r}, which is no JSON row of the index"))
-        elif target in refused or target not in by["_rows"]:
-            out.append(("row", f"{p}: cannot be checked, {target} is refused"))
-        elif entry(by.get(row["schema"], {}), v) is None:
-            out.append(("id", f"{p} ({desc(v)}) is not an id or global_id of a record of {target}"))
+        elif rid in refused or rid not in by["_rows"]:
+            out.append(("row", f"{p}: cannot be checked, {rid} is refused"))
+        else:
+            e = entry(listed(by["_rows"][rid][0], key) if key else by.get(row["schema"], {}), v)
+            if e is None or not all(f in e and same(e[f], x) for f, x in where.items()):
+                with_ = " with " + ", ".join(f"{f} {json.dumps(x)}" for f, x in where.items()) if where else ""
+                out.append(("id", f"{p} ({desc(v)}) is not an id or global_id of a record of {target}{with_}"))
     return out
 
 
@@ -613,6 +631,25 @@ def policy_allows(pol, prov):
     return pol["mode"] == "open" or (pol["mode"] == "local_only" and prov["locality"] == "local") \
         or (pol["mode"] == "allowed_providers" and prov["id"] in pol["allowed_providers"])
 
+
+def route_problems(pols, need, prov, now):
+    """Why a link to provider prov may not serve a role that handles the data classes `need` (F1b D6; next to policy_allows, the one
+    routing rule): a cli-login link needs terms_ok true; on a cloud or hosted link, each class's hosted rule in every data policy:
+    never refuses, grant needs a privacy grant for that class naming this connection (id or global_id) that has not expired."""
+    out = [] if prov["type"] != "cli-login" or prov.get("terms_ok") is True else \
+        ["is cli-login, and the owner has not recorded terms_ok true (the provider's terms allow this use)"]
+    if prov["locality"] == "local" and not prov["data_policy"].get("hosted"):
+        return out
+    names = {prov["id"], prov.get("global_id")}
+    live = lambda g: "expires_at" not in g or g["expires_at"] is None or (when(g, "expires_at") or now) > now   # a bad date is no grant
+    for _, d in pols:
+        for k in need:
+            h = class_rule(d, k)["hosted"]
+            if h == "allowed" or h == "grant" and any(g["data_class"] == k and g["connection"] in names and live(g) for g in d["privacy_grants"]):
+                continue
+            out.append(f"is cloud or hosted, and data class {idn(k, True)} " + ("reaches one only under a privacy grant, and no grant that has not expired names this connection"
+                                                                            if h == "grant" else "never reaches one (its rule is hosted never, or it has no rule row)"))
+    return list(dict.fromkeys(out))
 
 def class_problems(table, classes):
     return [f"{n}: requirements.allowed_data_classes[{i}] ({desc(k)}) is not in data-policy data_classes" for n, r in table["roles"].items()
@@ -754,7 +791,7 @@ def rule_assignments(c):
     allroles = table["roles"]
     roles = set(allroles) - {table["fallback_role"]}   # the fail-closed row is no role to assign or allow
     projects = {k: v for _, d in pols for k, v in d["projects"].items()}
-    seen, cards = {}, {}
+    seen, cards, now = {}, {}, datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     for rid, ra in c["whole"].get("role-assignments", []):
         for a in ra["assignments"]:
             sc, lvl, aid = a["scope"], a["scope"]["level"], idn(a["id"])
@@ -780,11 +817,10 @@ def rule_assignments(c):
             policies = [projects[proj]] if proj else [d["default"] for _, d in pols]
             need = allroles.get(a["role"], {}).get("requirements", {}).get("allowed_data_classes", [])
             for i, ch in enumerate(a["chain"]):
-                prov, w = conn.get(ch["provider"]), f"{aid}: chain[{i}]"
+                prov, w = entry(conn, ch["connection"]), f"{aid}: chain[{i}]"
                 if prov is None or prov["kind"] != "provider":
-                    P(rid, f"{w}.provider ({desc(ch['provider'])}) is not a provider in the connections catalog")
-                    continue
-                pn = idn(ch["provider"])
+                    continue   # its x-ref (connections, kind provider) refuses it, naming the field
+                pn = idn(prov["id"])
                 if not prov["enabled"]:
                     P(rid, f"{w}: {pn} is switched off")
                 if ch["model"] not in [m["id"] for m in prov["models"]]:
@@ -793,6 +829,8 @@ def rule_assignments(c):
                     P(rid, f"{w}: {pn} is {prov['locality']}, which effort mode {idn(a['effort_mode'])} forbids")
                 if not all(policy_allows(p, prov) for p in policies):
                     P(rid, f"{w}: {pn} is not allowed by the data policy for {idn(proj) if proj else 'the default'} (an override never widens the policy)")
+                for m in route_problems(pols, need, prov, now):
+                    P(rid, f"{w}: {pn} {m}")
                 if any(k not in prov["data_policy"]["data_classes_allowed"] for k in need):   # an empty list allows no class
                     P(rid, f"{w}: {pn} does not allow every data class that role {idn(a['role'])} handles")
                 if a["role"] not in prov.get("allowed_roles", []):   # an empty list allows no role
@@ -1334,7 +1372,7 @@ def main(argv):
                 errs = class_problems(doc, policy_classes())
         label = "role table" if args[0] == "roles" else f"{args[0]} file"
         rs = rows() if refs and not errs else []
-        targets = sorted({t for _, _, t in refs if any(r["id"] == t and r["format"] == "json" for r in rs)})
+        targets = sorted({t.split("/")[0] for _, _, t, _ in refs if any(r["id"] == t.split("/")[0] and r["format"] == "json" for r in rs)})
         found = ref_problems(refs, served(targets) if targets else {"_rows": {}}, rs) if rs else []
         errs += [m for k, m in found if k == "row"]
         unknown = [m for k, m in found if k == "id"]

@@ -80,9 +80,14 @@
             "items": {
               "type": "object",
               "properties": {
-                "provider": {
+                "connection": {
                   "type": "string",
-                  "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+                  "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+                  "x-ref": "connections",
+                  "x-ref-where": {
+                    "kind": "provider"
+                  },
+                  "description": "The link's connection: the id (alias) or global_id of a provider in the connections catalog. A link is a connection plus a model of it (F1b D6)."
                 },
                 "model": {
                   "type": "string"
@@ -92,7 +97,7 @@
                 }
               },
               "required": [
-                "provider",
+                "connection",
                 "model",
                 "parameters"
               ],

@@ -20,18 +20,24 @@
       "items": {
         "type": "string",
         "maxLength": 128,
-        "x-ref": "connections"
+        "x-ref": "connections",
+        "x-ref-where": {
+          "kind": "app"
+        }
       },
       "uniqueItems": true,
       "maxItems": 32,
-      "description": "Connections of kind app the card may use. The catalog row is checked, not yet its kind; the kind check is a later rule (cards-and-vault doc in the contract folder)."
+      "description": "Connections of kind app the card may use."
     },
     "skills": {
       "type": "array",
       "items": {
         "type": "string",
         "maxLength": 128,
-        "x-ref": "capabilities"
+        "x-ref": "capabilities",
+        "x-ref-where": {
+          "kind": "skill"
+        }
       },
       "uniqueItems": true,
       "maxItems": 64
@@ -41,7 +47,10 @@
       "items": {
         "type": "string",
         "maxLength": 128,
-        "x-ref": "capabilities"
+        "x-ref": "capabilities",
+        "x-ref-where": {
+          "kind": "tool"
+        }
       },
       "uniqueItems": true,
       "maxItems": 64

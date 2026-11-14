@@ -82,10 +82,12 @@
       "additionalProperties": false
     },
     "sync_class": {
-      "enum": [
-        "local-only"
-      ],
-      "description": "shortcut: names the one non-cloud class; when the data policy gains a second class with cloud false, widen it (or add an x-ref-like keyword)."
+      "type": "string",
+      "x-ref": "data-policy/sync_classes",
+      "x-ref-where": {
+        "cloud": false
+      },
+      "description": "A sync class of the data policy whose cloud is false: a vault entry never reaches a cloud store."
     }
   },
   "required": [
