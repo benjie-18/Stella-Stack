@@ -54,6 +54,7 @@
   "boundary_paths": [
     "docs/hermes-local/alert-catalog.json",
     "package.json",
+    "bin/approvals.py",
     "bin/devices.py",
     "bin/event_untrusted.py",
     "bin/owner_auth.py",
