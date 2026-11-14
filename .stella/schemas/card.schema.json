@@ -22,7 +22,8 @@
         "maxLength": 128,
         "x-ref": "connections",
         "x-ref-where": {
-          "kind": "app"
+          "kind": "app",
+          "enabled": true
         }
       },
       "uniqueItems": true,
@@ -36,7 +37,8 @@
         "maxLength": 128,
         "x-ref": "capabilities",
         "x-ref-where": {
-          "kind": "skill"
+          "kind": "skill",
+          "status": "approved"
         }
       },
       "uniqueItems": true,
@@ -49,7 +51,8 @@
         "maxLength": 128,
         "x-ref": "capabilities",
         "x-ref-where": {
-          "kind": "tool"
+          "kind": "tool",
+          "status": "approved"
         }
       },
       "uniqueItems": true,

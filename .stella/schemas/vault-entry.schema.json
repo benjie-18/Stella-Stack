@@ -16,6 +16,7 @@
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     },
     "kind": {
+      "description": "A lower-case name for the kind of credential. B1 defines the kinds; this field becomes an x-ref to them then.",
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9._-]*$",
       "maxLength": 64

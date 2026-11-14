@@ -734,6 +734,15 @@ ok 'refuses xp validate qa-pn "$T/xp-bad.json" && grep -q "^STL-CFG-311 " "$T/o"
 ok 'refuses xp validate qa-pn "$T/xp-where.json" && grep -q "^STL-CFG-311 .*kind" "$T/o"' "234c an x-ref-where under propertyNames is applied too"
 mk xd; ed xd connections.json '.entries[0].qa_per_conn = {"qa-no-such-conn": 1}'; jq '."$defs".entry.properties.qa_per_conn = {"type":"object","propertyNames":{"type":"string","x-ref":"connections"}}' "$ROOT/.stella/schemas/connections.schema.json" >"$T/xd/.stella/schemas/connections.schema.json"
 ok 'refuses xd check && grep -q "^STL-CFG-310 .*connections: .*qa_per_conn.<name of" "$T/o" && ! grep -q qa-no-such-conn "$T/o"' "234d check applies an x-ref under propertyNames in a data file"
+# F1b W4 r2: one record named twice in a unique list, a global_id that is taken, a schema error and an unknown id together (any schema, no card code)
+echo '{"type":"object","properties":{"global_id":{"type":"string"},"apps":{"type":"array","uniqueItems":true,"items":{"type":"string","x-ref":"connections"}}},"additionalProperties":false}' >"$T/xr/.stella/schemas/qa-uq.schema.json"
+N0=$(jq -r '.entries[0].global_id' "$ROOT/.stella/connections.json"); NF=$(cat /proc/sys/kernel/random/uuid)
+echo "{\"global_id\":\"$NF\",\"apps\":[\"$NA\",\"$N0\"]}" >"$T/uq-dup.json"; echo "{\"global_id\":\"$NF\",\"apps\":[\"$NA\",\"$NG\"]}" >"$T/uq-ok.json"
+ok 'refuses xr validate qa-uq "$T/uq-dup.json" && grep -q "^STL-CFG-310 .*apps: item 1 names the same record" "$T/o" && ! grep -q "$N0" "$T/o" && sd xr validate qa-uq "$T/uq-ok.json" >"$T/o" 2>&1 && grep -qx valid "$T/o"' "252 a uniqueItems list of x-ref strings is unique by record: an alias and the global_id of one record are refused, two records pass"
+echo "{\"global_id\":\"$NG\",\"apps\":[]}" >"$T/uq-gid.json"
+ok 'refuses xr validate qa-uq "$T/uq-gid.json" && grep -q "^STL-CFG-310 .*global_id: already the global_id of a record" "$T/o" && ! grep -q "$NG" "$T/o"' "253 a document whose global_id is already the global_id of a record is refused, whatever its schema, and the id is not printed"
+n=$(alerts); echo "{\"global_id\":\"$NF\",\"apps\":[\"$NA\",\"qa-no-such-conn\"],\"zz\":1}" >"$T/uq-both.json"
+ok 'refuses xr validate qa-uq "$T/uq-both.json" && grep -q "^STL-CFG-310 .*zz. is not allowed" "$T/o" && grep -q "^STL-CFG-311 .*apps\[1\]" "$T/o" && ! grep -q qa-no-such-conn "$T/o" && [ "$(alerts)" -eq $((n+1)) ]' "254 a schema error and an unknown id are both reported: the 310 line, the 311 line and exactly one alert line"
 for s in '{"type":"integer","x-ref":"connections"}' '{"x-ref":"connections"}' '{"type":"array","items":{"type":"string"},"x-ref":"connections"}' '{"type":"object","x-ref":"connections","x-ref-where":{"kind":"app"}}'; do
   mk xn; echo "$s" >"$T/xn/.stella/schemas/qa-n.schema.json"
   ok 'refuses xn validate qa-n "$T/xr2-v.json" && grep -q "^STL-CFG-310 .*x-ref .*type string" "$T/o" && refuses xn owner-only && grep -q "^STL-CFG-310 .*x-ref" "$T/o"' "234e x-ref (and an x-ref-where beside it) stands only beside type string; anywhere else the lint refuses it: $s"; rm -rf "$T/xn"

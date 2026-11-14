@@ -459,7 +459,7 @@ def same(a, b):
 
 
 def check_value(v, s, defs, p, errs, refs=None):
-    """Problems of v against schema s into errs; with a list refs, also every x-ref string as (path, value, x-ref, x-ref-where)."""
+    """Problems of v against schema s into errs; with a list refs, also every x-ref string as (path, value, x-ref, x-ref-where, path of its unique list or None)."""
     if "$ref" in s:
         check_value(v, defs[s["$ref"].rsplit("/", 1)[-1]], defs, p, errs, refs)   # the siblings of $ref apply below
     t = s.get("type")
@@ -468,7 +468,7 @@ def check_value(v, s, defs, p, errs, refs=None):
         if not any(type_ok(v, x) for x in ts):
             return errs.append(f"{p}: expected {'/'.join(ts)}, got {desc(v)}")
     if refs is not None and isinstance(v, str) and "x-ref" in s:
-        refs.append((p, v, s["x-ref"], s.get("x-ref-where", {})))
+        refs.append((p, v, s["x-ref"], s.get("x-ref-where", {}), None))
     if "const" in s and not same(v, s["const"]):
         errs.append(f"{p}: must be {s['const']!r}")
     if "enum" in s and not any(same(v, x) for x in s["enum"]):
@@ -487,7 +487,10 @@ def check_value(v, s, defs, p, errs, refs=None):
         if s.get("uniqueItems") and len({json.dumps(x, sort_keys=True) for x in v}) != len(v):
             errs.append(f"{p}: items are not unique")
         for i, x in enumerate(v):
+            n = len(refs) if refs is not None else 0
             check_value(x, s.get("items", {}), defs, f"{p}[{i}]", errs, refs)
+            if refs is not None and s.get("uniqueItems") and isinstance(x, str):   # an x-ref'd item of a unique list: ref_problems compares the records
+                refs[n:] = [(*r[:4], p) for r in refs[n:]]
     if isinstance(v, dict):
         errs += [f"{p}: missing {k}" for k in s.get("required", []) if k not in v]
         props, extra = s.get("properties", {}), s.get("additionalProperties", True)
@@ -537,9 +540,10 @@ def listed(docs, key):
 def ref_problems(refs, by, rs, refused=()):
     """[(kind, line)] for the x-ref values of one document: kind "row" when the schema names no JSON row of the index or the
     row cannot be read, "id" when the value is no id or global_id of a record of that row's merged view (x-ref <row>/<key>: of
-    an item of that list in the row's documents) that also carries every field: value of its x-ref-where (never the value)."""
-    out = []
-    for p, v, target, where in refs:
+    an item of that list in the row's documents) that also carries every field: value of its x-ref-where (never the value);
+    kind "dup" when two items of a uniqueItems list resolve to one record (an alias and its global_id are one item)."""
+    out, seen = [], {}
+    for p, v, target, where, uniq in refs:
         rid, _, key = target.partition("/")
         row = next((r for r in rs if r["id"] == rid and r["format"] == "json"), None)
         if row is None:
@@ -551,6 +555,8 @@ def ref_problems(refs, by, rs, refused=()):
             if e is None or not all(f in e and same(e[f], x) for f, x in where.items()):
                 with_ = " with " + ", ".join(f"{f} {json.dumps(x)}" for f, x in where.items()) if where else ""
                 out.append(("id", f"{p} ({desc(v)}) is not an id or global_id of a record of {target}{with_}"))
+            elif uniq is not None and seen.setdefault((uniq, id(e)), v) != v:   # the same string twice is already "not unique"
+                out.append(("dup", f"{uniq}: item {p.rsplit('[', 1)[1][:-1]} names the same record as an earlier item"))
     return out
 
 
@@ -1145,6 +1151,7 @@ def judge(reads=None):
             if isinstance(a, str) and (at, a) in seen:
                 P(r["id"], f"{rel}: {at}: id {idn(a, True)} is listed twice")
             seen.add((at, a))
+    by["_gids"] = set(gids)   # every record's global_id, for validate
     for g, at in gids.items():
         for x in at:
             if len(at) > 1:
@@ -1403,17 +1410,22 @@ def main(argv):
             if not errs:
                 errs = class_problems(doc, policy_classes())
         label = "role table" if args[0] == "roles" else f"{args[0]} file"
-        rs = rows() if refs and not errs else []
-        targets = sorted({t.split("/")[0] for _, _, t, _ in refs if any(r["id"] == t.split("/")[0] and r["format"] == "json" for r in rs)})
-        found = ref_problems(refs, served(targets) if targets else {"_rows": {}}, rs) if rs else []
-        errs += [m for k, m in found if k == "row"]
+        rs = rows()
+        mine = doc.get("global_id") if isinstance(doc, dict) and args[0] != "roles" and not any(r["schema"] == args[0] for r in rs) else None   # a record's own file keeps its id; check judges it
+        targets = sorted({t.split("/")[0] for _, _, t, *_ in refs if any(r["id"] == t.split("/")[0] and r["format"] == "json" for r in rs)}
+                         | ({r["id"] for r in rs if r["format"] == "json"} if isinstance(mine, str) else set()))
+        by = served(targets) if targets else {"_rows": {}}
+        found = ref_problems(refs, by, rs) if refs else []
+        errs += [m for k, m in found if k != "id"]
+        if isinstance(mine, str) and mine in by.get("_gids", ()):   # product rule 14: a global_id is one record's
+            errs.append("$.global_id: already the global_id of a record in the data files")
         unknown = [m for k, m in found if k == "id"]
-        if unknown and not errs:   # unknown fails closed: STL-CFG-311 and one alert line, never the value
+        if unknown:   # unknown fails closed: STL-CFG-311 and one alert line, never the value, whatever else is wrong
             say("STL-CFG-311", f"{label}: {unknown[0]}" + (f" (and {len(unknown) - 1} more)" if len(unknown) > 1 else ""), alert=True)
-            return 1
         errs = [f"STL-CFG-310 {alert_catalog.render('STL-CFG-310', {'problem': f'{label}: {e}'})[0].split(chr(10))[1]}" for e in errs]
-        print("\n".join(errs) or "valid")
-        return 1 if errs else 0
+        if errs or not unknown:
+            print("\n".join(errs) or "valid")
+        return 1 if errs or unknown else 0
     if cmd == "list" and len(args) <= 1:
         if args:
             row = known_json(args[0])

@@ -104,8 +104,8 @@ Schemas use a small JSON Schema subset (the list is in the docstring of `bin/ste
 `x-ref: "<index row id>"` on a string says the value must be the id (alias) or `global_id` of a record of that row's merged
 view. The rule for an unknown id: `check` charges it to the row of the file that holds it as one more `STL-CFG-310` line
 (naming the field, never the value; no alert line: check reports a set, and the apply tool runs it on a temp copy), and
-`validate <schema> <file>` refuses it with `STL-CFG-311` and one alert line (an x-ref naming no JSON row of the index is a
-`STL-CFG-310` error). `x-ref` stands only beside `type: "string"` (a property name under `propertyNames` too, where it is
+`validate <schema> <file>` refuses it with `STL-CFG-311` and one alert line, also when the file has `STL-CFG-310` problems too (both are printed; an x-ref naming no JSON row of the index is a
+`STL-CFG-310` error). A `uniqueItems` list of x-ref strings compares the records the items resolve to: an alias and the global_id of one record are one item (`STL-CFG-310`, "names the same record"). `validate` also refuses a document whose `global_id` is already the global_id of a record in the data files (rule 14; not for a schema an index row uses, where `check` judges the file in its place). `x-ref` stands only beside `type: "string"` (a property name under `propertyNames` too, where it is
 applied to every key); anywhere else the schema lint refuses it, and so an `x-ref-where`, which needs an x-ref beside it. A
 document validated where no x-ref is resolved (the role table, an event line, a setting value) fails when its schema holds one. `x-ref: "<row id>/<key>"` names instead the list (objects with an `id`) or map under
 `<key>` inside that row's documents (`data-policy/sync_classes`). `x-ref-where: {field: value}` beside an x-ref says the
