@@ -39,13 +39,20 @@
   ],
   "actions": {
     "owner_write": [
-      ["owner-key"]
+      [
+        "owner-key"
+      ]
     ],
     "channel_answer": [
-      ["discord-owner"]
+      [
+        "discord-owner"
+      ]
     ],
     "identity_critical": [
-      ["owner-key", "typed-phrase"]
+      [
+        "owner-key",
+        "typed-phrase"
+      ]
     ]
   },
   "phrase": {
@@ -66,6 +73,7 @@
     ]
   },
   "identity_critical": [
+    "data-files",
     "grants",
     "owner-auth",
     "devices",
