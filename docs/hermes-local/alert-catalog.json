@@ -831,7 +831,7 @@
       "code": "STL-OWN-820",
       "area": "OWN",
       "severity": "warning",
-      "title": "an approval answer names an unknown request",
+      "title": "an approval answer names no request of the service",
       "message": "An approval answer was refused because it names no request the approval service made: {problem}. Nothing was decided.",
       "action": "none, unless you expected that request: then look for it with `bin/approvals.py status <id>`. See STL-OWN-820 in docs/alert-codes.md.",
       "cause": "The answer's request id is not in the approval store, or the store record has no trusted approval-request line (it was not made by bin/approvals.py).",
