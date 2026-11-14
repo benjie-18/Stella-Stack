@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """The device registry (F1c B6, design D5), stdlib only. Paired devices are the entries of the index row `devices` (owner_only);
 each is an owner-authenticator through the device-signature provider of the owner-auth policy (bin/owner_auth.py): it signs
-canonical {digest, nonce, expires_at, device_id[, phrase]} with its Ed25519 key, checked here with `openssl pkeyutl -verify -rawin`.
+canonical {digest, nonce, expires_at, device_id[, phrase]} with its Ed25519 key, checked here with `<openssl> pkeyutl -verify -rawin`
+(openssl: the provider's params.openssl, an absolute path; never looked up on PATH).
 Pairing and revoking are owner writes of that row through `stella-apply.py apply devices --from <file>` (identity-critical: the
 owner key and the typed phrase, or a paired device with its signed phrase); this tool never writes.
-Library: registry() -> (path, entries), valid; entry(device_id) -> the entry (id or global_id) or None; verify(pem, msg, sig_b64).
+Library: registry() -> (path, entries), valid; entry(device_id) -> the entry (id or global_id) or None;
+         verify(pem, msg, sig_b64, timeout, openssl).
 CLI: devices.py list [--json]     the entries (--json: a JSON array of the entries)
      devices.py check [--json]    the registry is valid: its schema, each id once, every public key an Ed25519 key
 Exit 1 with STL-CFG-310 and the problem when the registry is invalid (check --json also prints {ok, problems}); exit 2: usage."""
@@ -50,9 +52,12 @@ def entry(device_id):
     return sd.entry({e["id"]: e for e in registry()[1]}, device_id)
 
 
-def verify(pem, msg, sig_b64, timeout):
-    """Whether sig_b64 (standard base64 of a raw 64-byte Ed25519 signature) signs the bytes msg under the public key pem. OSError
-    or subprocess.TimeoutExpired when openssl cannot run."""
+def verify(pem, msg, sig_b64, timeout, openssl):
+    """Whether sig_b64 (standard base64 of a raw 64-byte Ed25519 signature) signs the bytes msg under the public key pem, by the
+    openssl at the absolute path openssl (a relative one is refused: no PATH lookup). OSError or subprocess.TimeoutExpired when it
+    cannot run."""
+    if not openssl.startswith("/"):
+        raise OSError("the openssl path is not absolute")
     try:
         sig = base64.b64decode(sig_b64, validate=True) if isinstance(sig_b64, str) else b""
     except ValueError:
@@ -65,7 +70,7 @@ def verify(pem, msg, sig_b64, timeout):
             with open(os.path.join(d, n), "wb") as f:
                 f.write(b)
         k, m, s = (os.path.join(d, n) for n in files)
-        r = subprocess.run(["openssl", "pkeyutl", "-verify", "-pubin", "-inkey", k, "-rawin", "-in", m, "-sigfile", s],
+        r = subprocess.run([openssl, "pkeyutl", "-verify", "-pubin", "-inkey", k, "-rawin", "-in", m, "-sigfile", s],
                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout)
     return r.returncode == 0
 

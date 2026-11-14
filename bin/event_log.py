@@ -20,11 +20,14 @@ event_writer_state (a private file: 0600, one link, this user's; made before the
 never printed). A line is written first, then the state: a writer killed between them leaves the log one genuine line ahead,
 which the next append continues from (so a failed state write after a synced line does not fail the append). With chained lines in the log and no usable state the writer refuses (STL-EVT-905) and
 never starts a new chain. `verify` reports edited (901), deleted (902), reordered or replayed (903), inserted unchained (904) and
-forged-writer (906) lines with their line numbers, and lines from before the chain as legacy; proof_lines() gives the lines that
-count as proof (a chained line of this writer whose mac verifies, each seq once). Agents write only to the untrusted stream
-(bin/event_untrusted.py), which nothing reads as proof. `append` and `verify` refuse in a worker environment (STL-CFG-312, asked
-of bin/worker_env.py); the library calls do not ask (the apply tool asks before it writes; shortcut: until E1 a worker process
-that runs the apply tool on a row that is not owner-only reads the key in-process; E1 runs the writer as the engine's own user).
+forged-writer (906: a writer id that is not the index's, or a writer install id that is not the line's own; an install id changed
+since is no forgery, the keyed mac is the proof) lines with their line numbers, and lines from before the chain as legacy;
+proof_lines() gives the lines that count as proof (a chained line of this writer whose mac verifies, each seq once). Agents write
+only to the untrusted stream (bin/event_untrusted.py), which nothing reads as proof. Every read or write of the writer key (so every
+append, chain check and proof_lines()) refuses in a worker environment (STL-CFG-312, asked of bin/worker_env.py by owner_only(),
+from append() and state_path(), whatever the entry point); reading the log's lines (tail, read_log) does not need the key.
+shortcut: until E1 a worker process can still open the state file itself (the hooks' path rules are the first line); E1 runs the
+writer as the engine's own user.
 CLI: event_log.py append --type T --what W [--old JSON] [--new JSON] [--code C] [--detail D] [--role R] [--channel C] [--user U]
      event_log.py tail [--json] [-n N]       the last N lines (default 20), masked again on the way out; lines that are not
                                              event objects are counted and reported on stderr (one STL-CFG-318 line)
@@ -324,8 +327,10 @@ def repeated(data, gid):
 
 def append(line, row_id=None, scrub_detail=True, install_id=None):
     """Mask, validate, chain and append one line under the lock and sync it, then the writer state; returns the line written.
-    EventError 313 (invalid, nothing written, also for a global_id already in the log), 905 (the writer state is not usable)
-    or 318 (not written). The line goes out in one write; if that or the state's write fails or is short, the file is cut back."""
+    EventError 312 (a worker environment, nothing touched), 313 (invalid, nothing written, also for a global_id already in the log),
+    905 (the writer state is not usable) or 318 (not written). The line goes out in one write; if that or the state's write fails or
+    is short, the file is cut back."""
+    owner_only()
     line, _ = prepare(line, row_id, scrub_detail, install_id)
     try:
         p = log_path()
@@ -347,7 +352,7 @@ def append(line, row_id=None, scrub_detail=True, install_id=None):
                     st, fresh = {"key": secrets.token_hex(32), "seq": 0, "mac": GENESIS}, True
                     save_state(st)   # the key exists before the first line that needs it
                 for s, d in lines:   # genuine lines past the state (its write failed or was killed after their line): the chain goes on from them
-                    if chained(d) and d.get("seq") == st["seq"] + 1 and d.get("prev") == st["mac"] and genuine(st["key"], line["writer"], s, d):
+                    if chained(d) and d.get("seq") == st["seq"] + 1 and d.get("prev") == st["mac"] and genuine(st["key"], line["writer"]["id"], s, d):
                         st = {**st, "seq": d["seq"], "mac": d["mac"]}
                 line = {**line, "seq": st["seq"] + 1, "prev": st["mac"]}
                 line["mac"] = mac_of(st["key"], line)
@@ -431,16 +436,29 @@ def canon(line):
 def mac_of(key, line):
     return hmac.new(bytes.fromhex(key), canon(line), hashlib.sha256).hexdigest()
 
-def genuine(key, wr, s, d):
-    """d (parsed from the bytes s) was written by this writer: its writer is wr, s is byte for byte as the writer writes d (a
+def ours(d, wid):
+    """d names this writer: the index's writer id wid and the install id the line itself carries (the mac covers both, so an install
+    id changed since the line was written is no forgery)."""
+    return d.get("writer") == {"id": wid, "install_id": d.get("install_id")}
+
+def genuine(key, wid, s, d):
+    """d (parsed from the bytes s) was written by this writer: ours(d, wid), s is byte for byte as the writer writes d (a
     duplicate key or a changed spacing is an edit), and its mac is the key's."""
     try:
-        return d.get("writer") == wr and json.dumps(d, ensure_ascii=True, separators=(",", ":")).encode() == s \
+        return ours(d, wid) and json.dumps(d, ensure_ascii=True, separators=(",", ":")).encode() == s \
             and hmac.compare_digest(str(d["mac"]), mac_of(key, d))
     except Exception:
         return False
 
+def owner_only():
+    """EventError STL-CFG-312 in a worker environment (bin/worker_env.py): the writer key and the trusted log are the owner's."""
+    w = worker_env.reason()
+    if w:
+        raise EventError("STL-CFG-312", f"{w}: the trusted event log is written and checked by the owner's tools only (agents write with event_untrusted.py); nothing was done")
+
 def state_path():
+    """The writer state's path; every read and write of the key comes through here, so here a worker environment is refused (312)."""
+    owner_only()
     return path(sd.load(sd.INDEX)["event_writer_state"])
 
 def load_state():
@@ -515,14 +533,14 @@ def chain():
         return [(st.code, None, st.problem)], legacy, []
     if st is None:
         return ([("STL-EVT-905", None, "the writer state is missing while the log holds chained lines")] if legacy < len(lines) else []), legacy, []
-    wr = {"id": sd.load(sd.INDEX)["event_writer_id"], "install_id": sd.install_id()}
+    wid = sd.load(sd.INDEX)["event_writer_id"]
     probs, proof, at, last_seq, last_mac = [], [], {}, 0, GENESIS   # at: seq -> line number of its first genuine copy
     for n, (s, d) in enumerate(lines[legacy:], legacy + 1):
         if not chained(d):
             probs.append(("STL-EVT-904", n, "a line without the chain after the chain started (inserted)"))
-        elif d.get("writer") != wr:
-            probs.append(("STL-EVT-906", n, "the line names another writer or install"))
-        elif not genuine(st["key"], wr, s, d):
+        elif not ours(d, wid):
+            probs.append(("STL-EVT-906", n, "the line names another writer, or a writer install that is not its own"))
+        elif not genuine(st["key"], wid, s, d):
             probs.append(("STL-EVT-901", n, "the line does not match its mac (edited, or forged without the key)"))
         else:
             q = d["seq"]
@@ -549,9 +567,10 @@ def chain():
 def proof_lines():
     """The lines that count as proof (a capability used, an approval, a grant, a QA pass), masked again, in file order: chained
     lines of this writer whose mac verifies, each seq once; never a legacy, unchained, forged or untrusted line. [] when there is no
-    chain yet. EventError 905 when the log holds chained lines and the writer state is missing or unsafe (never an empty proof)."""
+    chain yet. EventError when the writer state cannot be used: 905 with chained lines in the log and the state missing or unsafe,
+    312 in a worker environment (never an empty proof)."""
     probs, _, proof = chain()
-    bad = next((p for p in probs if p[0] == "STL-EVT-905"), None)
+    bad = next((p for p in probs if p[1] is None), None)   # a problem of the state, not of a line
     if bad:
         raise EventError(bad[0], bad[2])
     red = redactor()
@@ -587,9 +606,7 @@ def main(argv):
     o = ap.parse_args(argv)
     try:
         if o.cmd in ("append", "verify"):   # owner commands (append writes the chain, verify reads the key): never in a worker's environment
-            w = worker_env.reason()
-            if w:
-                return fail("STL-CFG-312", f"{w}: the trusted event log is written and checked by the owner's tools only (agents write with event_untrusted.py); nothing was done")
+            owner_only()
         if o.cmd == "append":
             who = {w: getattr(o, w) for w in ("role", "channel", "user") if getattr(o, w)}
             print(json.dumps(append(build(o.type, o.what, o.old, o.new, o.code, o.detail, who)), ensure_ascii=False))
