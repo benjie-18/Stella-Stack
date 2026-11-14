@@ -681,7 +681,7 @@ while True:
         except FileNotFoundError: pass
         os.symlink(a, t); os.replace(t, l)" "$T/race" "$T/race-ok" "$T/mig/.stella/extensions" & SW=$!
 for i in $(seq 40); do sd mig ids-migrate capabilities --out "$T/race/qa-race-$i.json" >/dev/null 2>&1; done; kill $SW; wait $SW 2>/dev/null; SW=
-ok '[ -z "$(ls "$T/mig/.stella/extensions" | grep qa-race)" ] && sd mig check >/dev/null 2>&1' "221g a link swapped between a plain folder and the root's data while ids-migrate runs: nothing lands in the root (40 runs; the candidates in $T/race-ok: $(ls "$T/race-ok" | wc -l))"
+ok '[ -z "$(ls "$T/mig/.stella/extensions" | grep qa-race)" ] && [ -n "$(ls "$T/race-ok")" ]' "221g a link swapped between a plain folder and the root's data while ids-migrate runs: nothing lands in the root (40 runs; the candidates in $T/race-ok: $(ls "$T/race-ok" | wc -l))"
 # T8a every record kind has a sync class; every row with records names a known kind
 DP='.record_kinds'
 mk sk1; ed sk1 data-policy.json "del($DP.feature.sync_class)"

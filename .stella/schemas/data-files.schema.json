@@ -2,6 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Data file index",
   "x-one-document": true,
+  "x-record-kind-of": {
+    "data-policy": "project"
+  },
   "type": "object",
   "properties": {
     "schema_version": {
@@ -70,7 +73,7 @@
           "record_kind": {
             "type": "string",
             "pattern": "^[a-z0-9][a-z0-9._:-]*$",
-            "description": "The kind of the row's records: a key of data-policy record_kinds, which gives their sync class. A row with records (a list_key, or a folder row) must name one."
+            "description": "The kind of the row's records: a key of data-policy record_kinds, which gives their sync class. A row with records (a list_key, or a folder row) must name one. x-record-kind-of pins it for the rows of a schema (the data policy's records are projects: a relabel would move the default and every project onto another kind's sync class)."
           },
           "global_id": {
             "type": "string",
