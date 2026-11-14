@@ -47,14 +47,17 @@ spends a proof). Then, inside the lock, an apply or rollback that writes needs a
 D4) for the action {op, target: the row, old_digest, new_digest} (sha256 of the bytes before and after): the proofs of the
 --proof file alone (a device-signed request), else one made with this host's owner key (none: 806). A change that touches an
 identity-critical target (owner-auth policy identity_critical, and registry settings marked so) needs class identity_critical:
-the typed phrase on the host terminal, shown with the changed keys and the masked diff (none, or another text: 808). The event
-line names the provider ids used ("auth"). The worker refusal is a second line only (its signals can be cleared by a caller);
+the typed phrase on the host terminal, shown with the changed keys and the masked diff (none, or another text: 808); a run that
+records bytes already in the file (adopt, finish) is judged against the document applied before them (unknown: fail closed). The
+event line names the provider ids used ("auth"). In a worker environment (a row that is not owner-only) the line goes to the
+untrusted stream (bin/event_untrusted.py) instead, and no line is read as proof (logged()). The worker refusal is a second line only (its signals can be cleared by a caller);
 the boundary is the hooks of every role refusing to run this tool at all; see the contract docs.
 Values under redact_keys / secret settings never appear in a diff, event, or message (***)."""
 import argparse, contextlib, datetime, difflib, errno, hashlib, json, os, pwd, re, secrets, shutil, signal, stat, subprocess, sys, tempfile
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
 import event_log as el
+import event_untrusted as eu
 import owner_auth
 import owner_config as oc
 import stella_data as sd
@@ -75,6 +78,7 @@ REFUSE = ["STL-CFG-313"]   # the code of a refusal: 313 for a command that chang
 UNDONE_OK = {"STL-CFG-318", "STL-CFG-314"}   # codes whose catalog frame stays true for a change that was undone whole
 SNAP = {}   # the start of a writing command: key, file, what it writes, and state_of() then; a failure is compared with it
 STOPPING = []   # the first interrupt received: from then on the run is stopping and further ones change nothing
+WORKER = {}   # why: worker_env.reason() of this run, asked once (worker())
 OWNER = {}   # proof: the --proof file of the command (None: the owner key of this host); auth: the provider ids owner() accepted
 
 class Interrupted(BaseException):
@@ -341,6 +345,21 @@ def gate(row):
     if row["owner_only"] and (why := worker_env.reason()):
         raise bad(f"{row['id']} is owner-only: {why}", "STL-CFG-312")
 
+def worker():
+    """Why this run is a worker's (or cannot be told), else None: its event lines go to the untrusted stream (GB-1)."""
+    if "why" not in WORKER:
+        WORKER["why"] = worker_env.reason()
+    return WORKER["why"]
+
+def preflight():
+    """The stream this run's line goes to can take it: the trusted log; a worker's stream is made by its append. The trusted log
+    is tried first, so a run whose log takes the line asks no worker question here (no process is started before the staging)."""
+    try:
+        el.preflight()
+    except EventError:
+        if not worker():
+            raise
+
 def action_of(row, op, cur, new):
     """The owner action of a change (F1c D2): the row, the sha256 of its bytes before and after (no file: of no bytes)."""
     return {"op": op, "target": row["id"], "old_digest": sha(cur or b""), "new_digest": sha(new or b"")}
@@ -348,10 +367,15 @@ def action_of(row, op, cur, new):
 def critical(row, old_doc, new_doc, unparsed, pol):
     """Whether the change touches an identity-critical target: the policy's identity_critical list (`<row>`: any change of the
     row; `<row>:<pointer>`: at or below it, * = any one segment) and the settings the registry marks identity_critical (an env
-    row's keys are /KEY). A side that does not parse cannot be told apart: it counts (fail closed)."""
+    row's keys are /KEY; for the registry row itself, the entries marked so in the old or the new registry). A side that does not
+    parse or is not known (unparsed: True or the reason) cannot be told apart: it counts (fail closed)."""
     rid = row["id"]
     want = [p[len(rid) + 1:] for p in pol["identity_critical"] if p == rid or p.startswith(rid + ":/")]
     want += ["/" + e["store"]["key"] for e in el.registry()["entries"] if e["sensitivity"] == "identity_critical" and e["store"]["data"] == rid]
+    if rid == next((r["id"] for r in sd.rows() if r["schema"] == "settings"), None):   # the registry row, found as el.registry() finds it
+        # an entry marked identity_critical before OR after the change is a target: lowering a setting is no way around its phrase
+        want += [f"/entries/{i}" for d in (old_doc, new_doc) if isinstance(d, dict) and isinstance(d.get("entries"), list)
+                 for i, e in enumerate(d["entries"]) if isinstance(e, dict) and e.get("sensitivity") == "identity_critical"]
     if "" in want or (want and unparsed):
         return bool(want)
     o, n = changes(row["format"], old_doc, new_doc)
@@ -365,7 +389,7 @@ def shown_change(row, rel, old_doc, new_doc, unparsed):
         note_secrets(d, red)
     o, n = changes(row["format"], old_doc, new_doc)
     names = ", ".join(qs(k) for k in dict.fromkeys([*o, *n])) or "none (formatting only)"
-    diff = ["the current file does not parse: it is replaced whole"] if unparsed else list(
+    diff = [unparsed if isinstance(unparsed, str) else "the current file does not parse: it is replaced whole"] if unparsed else list(
         difflib.unified_diff(text(row["format"], old_doc, red), text(row["format"], new_doc, red), lineterm=""))[2:]
     lines = [f"{row['id']} ({rel}): changes {names}", *diff]
     return "\n".join(re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]", "?", el.scrub(l)) for l in lines)
@@ -696,7 +720,9 @@ def logged(key, kind, token, name=None):
     (`done`); the log is read for it only where that fact is missing or being made: by the finish of a killed apply or adopt,
     by a rollback of a backup not marked done or that resumes a marked one, and by the undo of an event-line step (did its
     write land?). Only a line that counts as proof (event_log.proof_lines(): chained by the writer, its mac verified) is read: a
-    line copied, forged or written into the log by anything but the writer is never taken for the tool's own."""
+    line copied, forged or written into the log by anything but the writer is never taken for the tool's own, nor anything a worker wrote (its lines go to the untrusted stream)."""
+    if worker():   # a worker's own lines are untrusted (and it reads no proof): none is the tool's own
+        return False
     evs = el.proof_lines()
     shape = re.compile(r"(^|\s)" + re.escape((f"backup {name} " if name else "") + f"token {token}") + r"(\s|$)")
     return any(e.get("what") == key and e.get("type") == kind and shape.search(str(e.get("detail", ""))) for e in evs)
@@ -930,7 +956,13 @@ UNPARSED = {"unparsed": True}   # a side of an event line whose file exists and 
 def event(row, key, kind, old, new, detail, unparsed=(), iid=None):
     """One event line, built and judged (size, shape, schema) now, before anything changes; written later by log(). The detail is
     the tool's own text (hashes, the backup name, the token): it is not scrubbed by substring, which could garble the name or
-    the token when a masked value is a few characters long. iid: cand_iid() of an apply (None: the install's own id)."""
+    the token when a masked value is a few characters long. iid: cand_iid() of an apply (None: the install's own id).
+    A worker's line (GB-1; only a row that is not owner-only gets this far) is the bytes of an untrusted line (bin/event_untrusted.py):
+    the type, the key, the detail and the user, no values; it is proof of nothing and never goes to the trusted log."""
+    if worker():
+        u = untrusted(lambda: eu.line_of(kind, key, "stella-apply", detail)[0])
+        u["who"] = {**u["who"], **who()}   # the caller's own user (its name, else its number): data, like the rest of the line
+        return (json.dumps(u, ensure_ascii=True, separators=(",", ":")) + "\n").encode()   # as line_of() writes it
     o, n = changes(row["format"], old, new)
     line = el.build(kind, key, o, n, detail=detail, who=who())
     for k, d in (("old", old), ("new", new)):
@@ -941,7 +973,15 @@ def event(row, key, kind, old, new, detail, unparsed=(), iid=None):
     el.prepare(line, row["id"], scrub_detail=False, install_id=iid)
     return line
 
+def untrusted(f):
+    try:
+        return f()
+    except eu.Refused as e:
+        raise EventError(e.code, e.problem) from None
+
 def log(row, line, iid=None):
+    if isinstance(line, bytes):   # a worker's line: the agents' stream
+        return untrusted(lambda: eu.append(line))
     el.append(line, row["id"], scrub_detail=False, install_id=iid)
 
 def cand_iid(row, doc):
@@ -1184,7 +1224,7 @@ def do_apply(arg, src, dry):
 def dry_run(row, key, tgt, rel, cand):
     red = el.redactor(row["id"])
     writable(key, tgt)   # the refusals an apply makes before its first write, made here too (neither changes anything)
-    el.preflight()
+    preflight()
     new_doc = validate(row, rel, cand)
     tgt = path(rel)
     cur = read(tgt)
@@ -1232,12 +1272,25 @@ def prior_doc(row, key, good, rec):
             return parse_or_none(row, b)[0]
     return None
 
+def before(row, key, act, cur, cand, good, rec, old_doc, parses):
+    """(old_doc, unparsed) the owner proof judges a change against (GB-3): the document applied before it. A run that records
+    bytes already in the file (finish: the saved copy of the killed apply; adopt: prior_doc) is never judged against the file it
+    records; one not known counts as changed whole (critical(): fail closed)."""
+    if act == "finish":
+        name, meta = live_of(good)[-1]
+        d, p = parse_or_none(row, read(os.path.join(bdir(key), name, "file"), "STL-CFG-316") if meta["existed"] else None)
+        return d, not p
+    if act in ("adopt", "finish_adopt") or cur == cand:
+        d = prior_doc(row, key, good, None if act == "finish_adopt" else rec)
+        return d, d is None and "the content applied before is not known: the file is judged whole"
+    return old_doc, not parses
+
 def adopt(row, key, tgt, cand, new_doc, rec, good, resume):
     """Record bytes a hand edit put there: the applied state first (with a marker token), then the event line, then the older
     backups are set aside (in the applied state, then in their meta files) and the marker is cleared. A kill in between is
     finished by the next run, which writes the one `adopt` line."""
     red = el.redactor(row["id"])
-    el.preflight()
+    preflight()
     mode = os.lstat(tgt).st_mode & 0o7777
     old_doc = prior_doc(row, key, good, None if resume else rec)
     note_secrets(old_doc, red)
@@ -1303,14 +1356,15 @@ def apply_locked(row, key, tgt, rel, cand):
     if act == "none" and cur == cand and drift != "drift":
         out(f"no change: {key}")
         return 0
-    owner(row, rel, "apply", cur, cand, old_doc, new_doc, not parses)   # every way on from here writes
+    was, unknown = before(row, key, act, cur, cand, good, rec, old_doc, parses)
+    owner(row, rel, "apply", cur, cand, was, new_doc, unknown)   # every way on from here writes
     if act == "finish":
         return finish_apply(row, key, tgt, cand, new_doc, *live_of(good)[-1])
     if act in ("adopt", "finish_adopt"):
         return adopt(row, key, tgt, cand, new_doc, rec, good, act == "finish_adopt")
     if cur == cand:
         return adopt(row, key, tgt, cand, new_doc, rec, good, False)   # the bytes are already there (a hand edit): record them, no backup
-    el.preflight()
+    preflight()
     mode = os.lstat(tgt).st_mode & 0o7777 if cur is not None else 0o600 if row["owner_only"] or row["redact_keys"] else 0o644
     mode_ok(rel, mode)
     prev, seq = rec, next_seq(key, good)
@@ -1350,7 +1404,7 @@ def finish_apply(row, key, tgt, cand, new_doc, name, meta):
     bd = os.path.join(bdir(key), name)
     old_doc, _ = parse_or_none(row, read(os.path.join(bd, "file"), "STL-CFG-316") if meta["existed"] else None)
     note_secrets(old_doc, el.redactor(row["id"]))
-    el.preflight()
+    preflight()
     iid = cand_iid(row, new_doc)
     line = None if logged(key, "apply", meta["token"], name) else event(
         row, key, "apply", old_doc, new_doc, hashes(row, meta["sha256"], sha(cand)) + f"backup {name} token {meta['token']}", iid=iid)
@@ -1454,7 +1508,7 @@ def rollback_locked(row, key, tgt, rel, cur, now, again, red, good, junk, stale)
     same0, apply_logged = (rb["same"], rb["logged"]) if resumed else (same, bool(saved_d.get("done")) or logged(key, "apply", meta["token"], name))
     rbt = rb["token"] if resumed else secrets.token_hex(16)
     # shortcut: a restore that deletes a file (the apply created it) is not checked against the whole set, upgrade if a deleted row file can break a cross-file rule
-    el.preflight()
+    preflight()
     old_status, cur_rec = meta["status"], applied().get(key)
     was = try_read(os.path.join(bd, "file.applied"))   # the bytes the apply wrote: the old side of the line, also when the restore already happened
     was = was if was is not None and sha(was) == meta["new_sha256"] else cur
