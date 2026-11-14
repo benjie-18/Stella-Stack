@@ -395,4 +395,33 @@ ok 'bad ghostmark "mark for zz: no such selftest"' "42 a mark for a name that is
 ok 'bad badmark "test-map.json: ValueError"' "43 a mark that is neither hermetic nor shared fails the schema"
 ok '[ "$(sel src/a1.py | jq -c .shared)" = "[]" ] && [ "$(sel src/b/x/y.py | jq -c .shared)" = "[\"b\"]" ]' "44 select --json lists the selected targets that need the lock; a hermetic target is not listed"
 ok '[ "$(STELLA_ROOT=$T/nomark python3 -I "$TM" select --json src/b/x/y.py | jq -c .shared)" = "[\"b\"]" ] && [ "$(STELLA_ROOT=$T/nomark python3 -I "$TM" select --json src/a1.py | jq -c .shared)" = "[]" ] && [ "$(STELLA_ROOT=$T/nomarks python3 -I "$TM" select --json src/a1.py | jq -c .shared)" = "[\"a\"]" ]' "45 an unmarked target counts as shared in select"
+# Round 2 (W0-VER-01, W0-RT-02): on a FULL answer the whole suite runs, so `shared` is every suite selftest not marked hermetic
+# (an unmarked one, and every name when the map cannot be read, count as shared); a narrow answer still lists its targets only.
+root fullb; root fullnomarks 'del(.marks)'; root fullnb 'del(.marks.b)'; put fullmiss; root fulltwice; sed -i 's/^{/{"full": ["x"],/' "$T/fulltwice/.stella/test-map.json"
+shared() { STELLA_ROOT=$T/$1 python3 -I "$TM" select --json "${@:2}" 2>/dev/null | jq -c 'select(.full) | .shared'; }   # <root> <names>: the shared list of a full answer, nothing when narrow
+ok '[ "$(shared fullb new/x.sh)" = "[\"b\"]" ] && [ "$(shared fullb --)" = "[\"b\"]" ] && [ "$(shared fullb "src/a1.py ")" = "[\"b\"]" ]' "46 a full answer (a file no row matches, no file name, a name with white space) lists every shared suite selftest, not only the targets"
+ok '[ "$(shared fullnb new/x.sh)" = "[\"b\"]" ] && [ "$(shared fullnomarks new/x.sh)" = "[\"a\",\"b\"]" ]' "46b on a full answer an unmarked selftest counts as shared"
+ok '[ "$(shared fulltwice new/x.sh)" = "[\"a\",\"b\"]" ] && [ "$(shared fullmiss new/x.sh)" = "[\"a\",\"b\"]" ] && [ "$(shared s-notjson src/a1.py)" = "[\"a\",\"b\"]" ] && [ "$(shared s-always src/a1.py)" = "[\"a\",\"b\"]" ]' \
+   "46c a map that cannot be read or breaks its schema (a repeated key, missing, not JSON, always a string): every suite selftest is shared"
+ok '[ "$(STELLA_ROOT=$T/good python3 -I "$T/t-bad/bin/test-map.py" select --json new/x.sh 2>/dev/null | jq -c .shared)" = "[\"a\",\"b\"]" ]' "46d a schema that cannot be read: nothing the map says is trusted, every suite selftest is shared"
+put s-nothing; rm -f "$T"/s-nothing/bin/*
+ok '[ "$(shared s-nothing new/x.sh)" = "[\"*\"]" ]' "46e no map, no runner and no selftest file to name the suite: shared is [\"*\"], never []"
+# W0-VER-06: a schema that lets anything through (the file is {}) must not turn a marks of the wrong shape into a traceback:
+# check refuses by code, select answers full with every name shared.
+tool t-any; echo '{}' >"$T/t-any/.stella/schemas/test-map.schema.json"
+i=0; for f in '.marks = []' '.marks = "hermetic"' '.marks.a = "hermetic"' '.marks.a = {"mark": "maybe"}' '.marks.b = {"mark": "shared", "why": 7}' '.marks.a = null'; do
+  i=$((i+1)); root "mk$i" "$f"
+  ok '! STELLA_ROOT=$T/mk'$i' python3 -I "$T/t-any/bin/test-map.py" check >"$T/out" 2>&1 && grep -q "^STL-CFG-310 .*marks" "$T/out" && ! grep -q Traceback "$T/out" && o=$(STELLA_ROOT=$T/mk'$i' python3 -I "$T/t-any/bin/test-map.py" select --json src/a1.py 2>"$T/e") && ! grep -q Traceback "$T/e" && [ "$(jq -c "[.full, .shared]" <<<"$o")" = "[true,[\"a\",\"b\"]]" ]' \
+     "47.$i a marks of the wrong shape under a schema that checks nothing ($f): check refuses by code, select answers full with every name shared, no traceback"
+done
+# W0-RT-04: the selftest names of the map keys, the row targets, the suite list and the files are compared without regard to case
+# (the stack's own mount ignores it: two names can be one file); one coded line names the pair.
+root twin '.map[1].targets += ["B"] | .marks.B = {"mark": "hermetic"}' "a b B"; st "$T/twin/bin/B-selftest.sh"
+ok 'bad twin "selftest names B and b differ only in case"' "48 two selftest files, rows, marks and suite entries that differ only in case: check refuses the pair, by code"
+root twin2 '.marks.A = {"mark": "hermetic"}'
+ok 'bad twin2 "selftest names A and a differ only in case"' "48b a mark whose name differs only in case from a selftest: refused"
+root twin3 '.map[0].targets += ["A"]'
+ok 'bad twin3 "selftest names A and a differ only in case"' "48c a row target whose name differs only in case from a selftest: refused"
+root glob; cp -p "$T/glob/bin/b-selftest.sh" "$T/glob/bin/c[x]-selftest.sh"
+ok 'bad glob "bin/c\[x\]-selftest.sh has no mark"' "48d a selftest named with glob characters cannot be marked (the schema's name pattern): check refuses it, by name"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

@@ -11,7 +11,7 @@
       "type": "string"
     },
     "marks": {
-      "description": "Lock scope (owner's rule): per selftest, hermetic (runs fully in its own scratch copy with its own home, temp folders and free ports or stubs, touches no live resource: needs no lock, may run in parallel) or shared (touches the live stack, a fixed port, the real home folder, global config or the live alert log: needs the lock; `why` names it). An unmarked selftest counts as shared; bin/test-map.py check refuses it, and select --json lists the selected targets that are not hermetic in `shared`.",
+      "description": "Lock scope (owner's rule): per selftest, hermetic (runs fully in its own scratch copy with its own home, temp folders and free ports or stubs, touches no live resource: needs no lock, may run in parallel) or shared (touches the live stack, a fixed port, the real home folder, global config or the live alert log: needs the lock; `why` names it). An unmarked selftest counts as shared; bin/test-map.py check refuses it, and select --json lists in `shared` the selftests that run and are not hermetic: the selected targets, or on a full answer every selftest of the suite (every one when the map cannot be read).",
       "type": "object",
       "propertyNames": {
         "pattern": "^[A-Za-z0-9._-]+$"

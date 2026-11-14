@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "about": "Which selftests a changed file can affect (product rule 8). bin/test-map.py reads this: `check` is the lint (in npm test through bin/test-map-selftest.sh), `select` picks the targets. The map is finished: every tracked file has a row whose targets are the selftests that use it (from reach, or from reading, said in the row's why; \"unsure: the folder's tests\" where no use was found), and `check` refuses a tracked file no row matches. The full list ships empty: it stays in the schema and the tool for a stack that wants one (a file on it selects the full suite). The full suite runs once, at the end, on the final hash. `check` refuses a map whose rows leave out a selftest that can reach the file (see reach in bin/test-map.py); the error names what to add. `scan` rows are for selftests that read a whole folder; every glob of any other row starts with a literal folder or top-level file name (no wildcard in the first path component), so a file under a name no row spells selects the full suite. A row that, for a file, adds no target beyond the always gates and the scan rows matching it may match only prose: no code, executable, test-like file (its gate's own selftest and tool excepted), or file a code or data file (`data`; empty means every file) names. Removing a glob from `data` loosens that rule, and `check` accepts it (a known limit: nothing forces a review of such an edit; what holds is that every edit of this map runs `check`). This map, its schema and bin/test-map.py select their users like any other file, and `select` adds the tool's own selftest, which runs `check`, to every narrow answer whatever this map says. `select` answers full only for an input or a map it cannot trust: a name no row matches or that is not one plain file name, no name, names it cannot read, a map, schema or tool module that is missing, unreadable or broken, a map that breaks a rule needing no file list, an empty selection. Lock scope (owner's rule): `marks` gives every selftest hermetic or shared. Hermetic = runs fully inside its own scratch copy, with its own home, temp folders and free ports or stubs, and touches no live resource (the live stack, fixed ports, the real home folder, global config, the live alert log): it needs no lock and may run in parallel. Shared = touches one of those, and says which in `why`. An unmarked selftest counts as shared, and `check` refuses it. `select --json` lists the selected targets that need the lock in `shared`. A mark is judged from the selftest's code, not yet proved by a run under a hidden home and no network.",
+  "about": "Which selftests a changed file can affect (product rule 8). bin/test-map.py reads this: `check` is the lint (in npm test through bin/test-map-selftest.sh), `select` picks the targets. The map is finished: every tracked file has a row whose targets are the selftests that use it (from reach, or from reading, said in the row's why; \"unsure: the folder's tests\" where no use was found), and `check` refuses a tracked file no row matches. The full list ships empty: it stays in the schema and the tool for a stack that wants one (a file on it selects the full suite). The full suite runs once, at the end, on the final hash. `check` refuses a map whose rows leave out a selftest that can reach the file (see reach in bin/test-map.py); the error names what to add. `scan` rows are for selftests that read a whole folder; every glob of any other row starts with a literal folder or top-level file name (no wildcard in the first path component), so a file under a name no row spells selects the full suite. A row that, for a file, adds no target beyond the always gates and the scan rows matching it may match only prose: no code, executable, test-like file (its gate's own selftest and tool excepted), or file a code or data file (`data`; empty means every file) names. Removing a glob from `data` loosens that rule, and `check` accepts it (a known limit: nothing forces a review of such an edit; what holds is that every edit of this map runs `check`). This map, its schema and bin/test-map.py select their users like any other file, and `select` adds the tool's own selftest, which runs `check`, to every narrow answer whatever this map says. `select` answers full only for an input or a map it cannot trust: a name no row matches or that is not one plain file name, no name, names it cannot read, a map, schema or tool module that is missing, unreadable or broken, a map that breaks a rule needing no file list, an empty selection. Lock scope (owner's rule): `marks` gives every selftest hermetic or shared. Hermetic = runs fully inside its own scratch copy, with its own home, temp folders and free ports or stubs, and touches no live resource (the live stack, fixed ports, the real home folder, global config, the live alert log): it needs no lock and may run in parallel. Shared = touches one of those, and says which in `why`. An unmarked selftest counts as shared, and `check` refuses it. `select --json` lists in `shared` the selected targets that need the lock. A mark is judged from the selftest's code, not yet proved by a run under a hidden home and no network; marks do not isolate global git config: a hermetic selftest that runs git reads the real ~/.gitconfig. A full answer of `select --json` lists in `shared` every selftest of the suite that is not hermetic.",
   "runner": "bin/selftests.sh",
   "test_file": "bin/{name}-selftest.sh",
   "marks": {
@@ -8,21 +8,22 @@
       "mark": "hermetic"
     },
     "alert-page": {
-      "mark": "hermetic"
+      "mark": "shared",
+      "why": "its case 'the wrapper passes every other call through' runs the real `hermes --version` of the installed Hermes (alert-page-selftest.sh:119-121)"
     },
     "approval-evidence": {
       "mark": "hermetic"
     },
     "approval-sim": {
       "mark": "shared",
-      "why": "runs the installed Hermes venv and hermes-agent source from the real ~/.hermes"
+      "why": "runs the installed Hermes venv and the hermes-agent source from the real ~/.hermes (approval-sim-selftest.sh:9-10)"
     },
     "bench": {
       "mark": "hermetic"
     },
     "box": {
       "mark": "shared",
-      "why": "real bwrap boxes on live-shaped trees; runs serial and its header says to run it under the test lock"
+      "why": "serial; makes real bwrap boxes (nested namespaces) and imports the installed hermes-agent from the real home (box-selftest.sh:5, 815)"
     },
     "broker-put": {
       "mark": "hermetic"
@@ -35,8 +36,7 @@
       "mark": "hermetic"
     },
     "commit-guard": {
-      "mark": "shared",
-      "why": "asserts the live .supervisor alert log gained no line during the run, which a live stack writing there breaks"
+      "mark": "hermetic"
     },
     "complete-gate": {
       "mark": "hermetic"
@@ -46,7 +46,7 @@
     },
     "delegation": {
       "mark": "shared",
-      "why": "runs the installed Hermes python and hermes-agent source from the real $HOME/.hermes"
+      "why": "runs the installed Hermes python and the hermes-agent source from the real $HOME/.hermes (delegation-selftest.sh:22-37)"
     },
     "escalate": {
       "mark": "hermetic"
@@ -73,7 +73,8 @@
       "mark": "hermetic"
     },
     "hardcode-lint": {
-      "mark": "hermetic"
+      "mark": "shared",
+      "why": "cases 1-3 run the lint on this tree with the real home: it reads the real ~/.hermes/projects.db and profile homes and runs the real `hermes config get model` per home (hardcode-lint-selftest.sh:23, 35-37)"
     },
     "init-firewall": {
       "mark": "hermetic"
@@ -85,10 +86,12 @@
       "mark": "hermetic"
     },
     "matcher-audit": {
-      "mark": "hermetic"
+      "mark": "shared",
+      "why": "runs the installed Hermes python (default HERMES_PY under ~/.hermes/tools) and imports toolsets from the real ~/.hermes/hermes-agent; roles.role_tools reads it too (matcher-audit-selftest.sh:10-12, 23, 91)"
     },
     "merge-card": {
-      "mark": "hermetic"
+      "mark": "shared",
+      "why": "runs each card's merge test in real nested bwrap boxes (box.py exec ... nest), and case r6 C4 asserts the live owner settings file exists, which holds only through the runner's read-only bind of it (merge-card-selftest.sh:437, 456)"
     },
     "model-watch": {
       "mark": "hermetic"
@@ -101,16 +104,18 @@
     },
     "owner-leak": {
       "mark": "shared",
-      "why": "reads the real owner config (config/owner.env), the one selftest that does"
+      "why": "reads the real owner config (config/owner.env, the runner binds the live file read-only), the one selftest that does (owner-leak-selftest.sh:8-10)"
     },
     "owner-settings": {
-      "mark": "hermetic"
+      "mark": "shared",
+      "why": "its hooks_for runs roles.role_tools, which imports toolsets from the installed hermes-agent under the passwd home, not the scratch HOME (owner-settings-selftest.sh:109; roles.py:893)"
     },
     "post-edit-check": {
       "mark": "hermetic"
     },
     "profile-hooks": {
-      "mark": "hermetic"
+      "mark": "shared",
+      "why": "runs register-escalation-hook.sh, whose catch-all check runs roles.role_tools: it imports toolsets from the installed hermes-agent under the passwd home, not the scratch HOME (profile-hooks-selftest.sh:355; roles.py:893)"
     },
     "reviewer-claude": {
       "mark": "hermetic"
@@ -119,22 +124,22 @@
       "mark": "hermetic"
     },
     "roles": {
-      "mark": "hermetic"
+      "mark": "shared",
+      "why": "its role-guard cases (the g function, roles-selftest.sh:57) run without the hermes stub on PATH, so roles.py kanban() runs `hermes` with the passwd home through the runner's wrapper, which passes it to the real one and the live board (A05 saw it); roles.hooks_for/role_tools import toolsets from the installed hermes-agent (roles.py:893, 960-967)"
     },
     "roles-complete": {
       "mark": "hermetic"
     },
     "routing": {
       "mark": "shared",
-      "why": "roles.py check reads the real $HOME/.hermes tree"
+      "why": "`roles.py check \"$HOME/.hermes\"` reads the real ~/.hermes tree (routing-selftest.sh:41)"
     },
     "secret-read": {
-      "mark": "shared",
-      "why": "asserts the live .supervisor alert log gained no line during the run, which a live stack writing there breaks"
+      "mark": "hermetic"
     },
     "selftests": {
       "mark": "shared",
-      "why": "tests the runner itself: nested bwrap namespaces, flock on .scratch and timing asserts that parallel load can break"
+      "why": "tests the runner itself: nested bwrap namespaces, and timing asserts (jobs that must overlap, 1 s sleeps, a 60 s timeout) that parallel load can break (selftests-selftest.sh:16-27, 96, 129)"
     },
     "settings": {
       "mark": "hermetic"
@@ -153,7 +158,7 @@
     },
     "write-guard": {
       "mark": "shared",
-      "why": "asserts the live /workspace/.worktrees folder and alert log did not change during the run, which a live stack breaks"
+      "why": "timing: it waits up to 4 s (200 x 0.02 s) for each fake worker's pid file and proves the card from the live process tree, and flaked under parallel load in P1 (3/3 alone); its live .worktrees and alert-log asserts name the runner's copy, so they are no reason (write-guard-selftest.sh:53, 80, 147)"
     }
   },
   "test_like": [
