@@ -135,7 +135,8 @@
       "why": "`roles.py check \"$HOME/.hermes\"` reads the real ~/.hermes tree (routing-selftest.sh:41)"
     },
     "secret-read": {
-      "mark": "hermetic"
+      "mark": "shared",
+      "why": "its cases RT22-01 (runs `cat` of the owner settings file by a glob), the search_files secret-folder case and batch 6 (~/.hermes/profiles searches) fail in a copy that lacks the live owner settings file, with the home hidden or not (owner-rt rtW0-A05): they hold only through the runner's read-only bind of that file"
     },
     "selftests": {
       "mark": "shared",
