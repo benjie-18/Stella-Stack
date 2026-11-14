@@ -176,6 +176,35 @@ SCH=$(jq -r '.owner_data[0]' /workspace/docs/hermes-local/roles.json); mkdir -p 
 mkdir -p "$W/$(echo "$SCH" | tr a-z A-Z)"; echo y >"$W/$(echo "$SCH" | tr a-z A-Z)/new.json"; git -C "$W" add -f -A
 ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "owner data" "$T/err"' "K1b: a new file in another spelling (case) of an owner data folder: refused for a worker"
 git -C "$W" reset -q --hard; rm -rf "$W/$(echo "$SCH" | tr a-z A-Z)"
+# F1c W4a (B4, D0/D4): the new protected paths, named by the index (no path here but the device registry's, whose row W2b ships): the owner-key
+# stub, a file in the approval store, the event writer's state, the owner-only rows grants, host-access, the owner-auth policy and connections
+# (terms_ok), the owner settings file (unattended mode). A worker staging any is refused with the code and one alert line; the owner's commit of
+# a data row passes as before; the untrusted stream (the agents' own) is no protected path. A missing key or row names itself and fails.
+IX=/workspace/.stella/data-files.json; NP=()
+for x in owner_key approval_store event_writer_state; do NP+=("$(jq -r --arg x "$x" '.[$x] // "zz-no-index-key-\($x)"' "$IX")"); done
+NP[1]=${NP[1]}/requests/zz.json
+for i in grants host-access owner-auth connections; do NP+=("$(jq -r --arg i "$i" '[.files[] | select(.id == $i and .owner_only == true) | .path][0] // "zz-no-owner-row-\($i)"' "$IX")"); done
+NP+=("$(jq -r '.owner_settings[0]' /workspace/docs/hermes-local/roles.json)")
+for k in "${NP[@]}"; do
+  : >"$WGA"; mkdir -p "$W/$(dirname "$k")"; echo x >"$W/$k"; git -C "$W" add -f -- "$k"
+  ok '[ "$(guard "$W" "${WK[@]}")" = 1 ] && grep -q "STL-CFG-312" "$T/err" && [ "$(wc -l <"$WGA")" = 1 ]' "F1c W4a: a worker staging $k: refused, the code, one alert line"
+  git -C "$W" reset -q -- "$k"; rm -f -- "$W/$k"
+done
+# the device registry: its own row when the index has one, else a scratch index with the row W2b ships (the path protected before the file exists)
+DEVP=$(jq -r '[.files[] | select(.id == "devices") | .path][0] // empty' "$IX"); DCG=$CG
+if [ -z "$DEVP" ]; then DEVP=.stella/devices.json; DCG=$GT/bin/commit-guard.sh; jq --arg p "$DEVP" '.files += [{id: "devices", path: $p, owner_only: true}]' "$IX" >"$GT/.stella/data-files.json"; fi
+: >"$WGA"; mkdir -p "$W/${DEVP%/*}"; echo x >"$W/$DEVP"; git -C "$W" add -f -- "$DEVP"
+# the scratch guard copy has no alert module beside it, so its line is not asserted there (the coded refusal is the same function as above)
+ok '[ "$(CG=$DCG guard "$W" "${WK[@]}")" = 1 ] && grep -q "STL-CFG-312" "$T/err" && { [ "$DCG" != "$CG" ] || [ "$(wc -l <"$WGA")" = 1 ]; }' "F1c W4a: a worker staging the device registry $DEVP ($([ "$DCG" = "$CG" ] && echo "its index row, one alert line" || echo "the row W2b ships, in a scratch index")): refused, the code"
+git -C "$W" reset -q -- "$DEVP"; rm -f -- "$W/$DEVP"
+for k in "${NP[@]:3:2}"; do   # grants and host-access: owner data, which the owner commits
+  mkdir -p "$W/$(dirname "$k")"; echo x >"$W/$k"; git -C "$W" add -f -- "$k"
+  ok '[ "$(guard "$W")" = 0 ]' "F1c W4a: $k staged by the owner (no worker marker): allowed"
+  git -C "$W" reset -q -- "$k"; rm -f -- "$W/$k"
+done
+U=$(jq -r '.untrusted_events // empty' "$IX"); mkdir -p "$W/${U%/*}"; echo x >"$W/$U"; git -C "$W" add -f -- "$U"
+ok '[ -n "$U" ] && [ "$(guard "$W" "${WK[@]}")" = 0 ]' "F1c W4a control: a worker staging the untrusted stream ($U): allowed (not protected)"
+git -C "$W" reset -q -- "$U"; rm -f -- "$W/$U"
 for k in main_branch worker_pins; do
   jq "del(.$k)" /workspace/docs/hermes-local/roles.json >"$GT/docs/hermes-local/roles.json"; echo z >"$W/zz-k9"; git -C "$W" add zz-k9
   ok '[ "$(CG=$GT/bin/commit-guard.sh guard "$W" "${WK[@]}")" = 1 ] && grep -qi "cannot be read" "$T/err"' "K9: $k absent from the table: a worker's commit is refused, not passed"
