@@ -31,7 +31,8 @@ state outside its own scratch root and the runner's copy (no live board, no inst
 file, no write into the real home): it may run outside the test lock. Shared = anything else, with a `why` that is true under the runner
 (bin/selftests.sh binds each copy over /workspace, so a reason naming a path the runner already isolates is not true there). An
 unmarked selftest counts as shared. `select --json` has `shared`: the selftests that run and are not hermetic, so the ones that need the
-lock: the selected targets, or on a full answer every selftest of the suite (the runner's suite list, else the selftest files). When
+lock: the selected targets, or on a full answer every selftest of the suite (the suite lists of FALLBACK's runner and of the map's
+`runner` together, so a map can only add names; else the selftest files). When
 select could not trust what it read (an unreadable map or schema, a map of the wrong shape) no mark counts: every name is shared, and
 with no suite to name the answer is ["*"], never [].
 select: full is the answer for an input or a map that cannot be trusted; for a tracked file of a checked tree only when
@@ -488,7 +489,8 @@ def main(argv):
             notes += sel["reason"]
             trust = False   # whatever stopped select, nothing it read says which selftest may skip the lock
         # the selftests that need the lock: those run (the targets, or the whole suite when the answer is full) and not marked hermetic
-        sel["shared"] = sorted((set(sel["targets"]) | (suite(m) if sel["full"] else set())) - (hermetic(m) if trust else set()))
+        # the map's runner key is not checked here, so on a full answer it can only add names to FALLBACK's suite, never drop one
+        sel["shared"] = sorted((set(sel["targets"]) | (suite({}) | suite(m) if sel["full"] else set())) - (hermetic(m) if trust else set()))
         if os.environ.get("STELLA_ROOT"):
             sel["root"] = ROOT
         print(json.dumps(sel) if as_json else "full" if sel["full"] else "\n".join(sel["targets"]))
