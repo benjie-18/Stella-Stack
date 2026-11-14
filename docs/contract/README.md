@@ -285,7 +285,9 @@ id check off (see "Records and ids"). `stella_data.install_id()` is the one read
 
 ### `.stella/role-assignments.json`
 `effort_modes{}` (allowed localities and `no_silent_fallback` for standard, eco, max, local_only) and `assignments[]`:
-`scope` (`level` global, project or card, with `project` or `card`), `role`, `effort_mode`, and an ordered `chain[]` of
+`scope` (`level` global, project or card, with `project` or `card`; `project` is the alias or the `global_id` of a project of
+the data policy, both one project for its policy and the same-scope rule, or a project it does not list, which follows the
+`default`), `role`, `effort_mode`, and an ordered `chain[]` of
 links `{connection, model, parameters}` (F1b D6): `connection` is the id or `global_id` of a provider in the catalog
 (x-ref `connections`, `x-ref-where` kind provider), `model` one of that connection's models; typed links are `schema_version` 2.
 F1 wrote `provider` (version 1); the migration sets version 2 and renames that key, nothing else: write the candidate with
@@ -293,7 +295,8 @@ F1 wrote `provider` (version 1); the migration sets version 2 and renames that k
 `stella-apply.py apply role-assignments --from <candidate>` (dry run first). A data-only `rollback` of it is refused (the
 saved copy fails the schema a candidate must pass); undoing it means reverting the schema and the file together.
 effort-mode ids are lower case ASCII like other ids. **Precedence:** the data policy first, then the card, then the project, then the global
-assignment. An override never widens the data policy: `check` refuses a chain entry the policy forbids for its project.
+assignment. An override never widens the data policy: `check` refuses a chain entry the policy forbids for its project
+(its `allowed_providers` name connections by id or `global_id`).
 It also refuses an unknown connection, model, role or mode, an empty chain, and a provider whose locality the mode forbids.
 **Routing** (one rule, `route_problems`, beside the project policy's): a `cli-login` link needs `terms_ok` true. On a link
 whose connection is cloud or `data_policy.hosted`, each data class the role handles (`requirements.allowed_data_classes`)
