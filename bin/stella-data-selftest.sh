@@ -367,7 +367,7 @@ ed b2 data-files.json '(.files[] | select(.id == "data-policy")).path = ".stella
 ok 'refuses b2 check && grep -q "dp/b.json: .*one document" "$T/o"' "136 the same for the second file of a folder row"
 mk b2c; jq '."x-one-document" = "yes"' "$T/b2c/.stella/schemas/features.schema.json" >"$T/b2c/s" && mv "$T/b2c/s" "$T/b2c/.stella/schemas/features.schema.json"
 ok 'refuses b2c check && grep -q "x-one-document" "$T/o"' "137 x-one-document takes only true or false"
-mk b3; jq -n "{schema_version:1,entries:[$(conn two-prov provider hosted cloud)]}" >"$T/b3/.stella/conn2.json"
+mk b3; jq -n "{schema_version:2,entries:[$(conn two-prov provider hosted cloud)]}" >"$T/b3/.stella/conn2.json"
 ed b3 data-files.json '.files += [{id:"conn2",path:".stella/conn2.json",schema:"connections",format:"json",owner_only:true,redact_keys:[],list_key:"entries",id_field:"id"}]'; ed b3 data-files.json ".files[-1] += {$(rid connections)}"   # F1b D1: the fake record carries its own two ids
 ed b3 role-assignments.json '.assignments[0].chain = [{connection:"two-prov",model:"two-prov-model",parameters:{}}]'
 ok 'sd b3 check >"$T/o" 2>&1 && [ "$(sd b3 get conn2 two-prov --json | jq -r .id)" = two-prov ]' "138 control: a second connections row is one catalog with the first; an assignment may name its provider"
@@ -550,7 +550,7 @@ done
 # K3 W1-RT5-04 the catalog's own fault is locatable by position while its patterns cannot be read
 mk cp1; N=$(jq '[.entries[].kind] | index("channel") + 1' "$T/cp1/.stella/connections.json"); ed cp1 connections.json '(.entries[] | select(.kind == "channel")).redaction_patterns += ["("]'
 ok 'refuses cp1 check && grep -q "^STL-CFG-310 .*connections: a masked id (entry '"$N"' of its file): a redaction pattern is not a regular expression" "$T/o"' "199 a pattern that does not compile: the line says which entry by its position (entry $N)"
-mk cp2; printf '{"schema_version":1,"entries":[],"entries":[]}' >"$T/cp2/.stella/connections.json"
+mk cp2; printf '{"schema_version":2,"entries":[],"entries":[]}' >"$T/cp2/.stella/connections.json"
 ok 'refuses cp2 check && grep -q "connections\.json: repeated key a masked key (key 3 of its object)" "$T/o"' "200 a repeated key in the catalog: the line says which key by its position"
 # K3 W1-VER5-04 a row id that is a name the tool uses for something that is no row is refused
 jq '.entries |= map(.id += "-2")' "$ROOT/.stella/capabilities.json" >"$T/c2.json"; jq '.entries |= [to_entries[] | .value + {global_id: ("00000000-0000-4000-8000-" + ("00000000000\(.key)" | .[-12:]))}]' "$T/c2.json" >"$T/c2.n" && mv "$T/c2.n" "$T/c2.json"   # F1b D1: each copy its own global_id

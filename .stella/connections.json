@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "entries": [
     {
       "id": "local-model-server",
@@ -94,9 +94,7 @@
       "auth_types": [
         "oauth_subscription"
       ],
-      "secrets": [
-        "CLAUDE_CODE_OAUTH_TOKEN"
-      ],
+      "secrets": [],
       "actions": [
         {
           "id": "complete",

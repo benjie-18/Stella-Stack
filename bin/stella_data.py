@@ -651,20 +651,24 @@ def why(e):
     return str(e) if isinstance(e, (DataError, ValueError)) else type(e).__name__
 
 
+def reach(prov):
+    """A link's locality for routing: an aggregator fronts upstream providers, so it is cloud whatever its own locality (W2-CRT-01)."""
+    return "cloud" if prov.get("aggregator") else prov["locality"]
+
 def policy_allows(pol, prov):
     if pol.get("private") and prov["data_policy"].get("hosted"):   # a private project never uses a hosted connection, whatever its mode
         return False
-    return pol["mode"] == "open" or (pol["mode"] == "local_only" and prov["locality"] == "local") \
+    return pol["mode"] == "open" or (pol["mode"] == "local_only" and reach(prov) == "local") \
         or (pol["mode"] == "allowed_providers" and prov["id"] in pol["allowed_providers"])
 
 
 def route_problems(pols, need, prov, now):
     """Why a link to provider prov may not serve a role that handles the data classes `need` (F1b D6; next to policy_allows, the one
-    routing rule): a cli-login link needs terms_ok true; on a cloud or hosted link, each class's hosted rule in every data policy:
+    routing rule): a cli-login link needs terms_ok true; on a cloud (by reach()) or hosted link, each class's hosted rule in every data policy:
     never refuses, grant needs a privacy grant for that class naming this connection (id or global_id) that has not expired."""
     out = [] if prov["type"] != "cli-login" or prov.get("terms_ok") is True else \
         ["is cli-login, and the owner has not recorded terms_ok true (the provider's terms allow this use)"]
-    if prov["locality"] == "local" and not prov["data_policy"].get("hosted"):
+    if reach(prov) == "local" and not prov["data_policy"].get("hosted"):
         return out
     names = {prov["id"], prov.get("global_id")}
     live = lambda g: "expires_at" not in g or g["expires_at"] is None or (when(g, "expires_at") or now) > now   # a bad date is no grant
@@ -728,8 +732,9 @@ def D(c, sch, k=None):
 
 
 def rule_policy(c):
-    """The data policy and the catalog against each other: providers it names exist, classes exist, local providers are local; a hosted
-    connection takes no class that never reaches a cloud store and no private project names it; an input source's subkind is a class."""
+    """The data policy and the catalog against each other: providers it names exist, classes exist, a connection marked local lists only
+    local hosts; a hosted connection takes no class that never reaches a cloud store and no private project names it; an input source's
+    subkind is a class whose rule is sync never."""
     conn, pols, P = c["by"].get("connections", {}), c["whole"].get("data-policy", []), c["P"]
     if not pols:   # a folder row with no file: nothing to judge against (the assignments say so)
         return
@@ -753,10 +758,12 @@ def rule_policy(c):
                 P(D(c, "connections", c_["id"]), f"{idn(c_['id'])}: data_classes_allowed[{i}] ({desc(k)}) is not in data-policy data_classes")
             elif hosted and k in barred:
                 P(D(c, "connections", c_["id"]), f"{idn(c_['id'])}: data_classes_allowed[{i}] {idn(k, True)} never reaches a cloud store, and this connection is hosted")
-        if c_["kind"] == "input_source" and c_["subkind"] not in classes:   # an input source's subkind is the class of what it produces
-            P(D(c, "connections", c_["id"]), f"{idn(c_['id'])}: an input source's subkind ({desc(c_['subkind'])}) is not in data-policy data_classes")
+        # an input source's subkind is the class of what it produces: a sensitive feed, one whose rule (or the strictest, with no row) is sync never
+        if c_["kind"] == "input_source" and (c_["subkind"] not in classes or any(class_rule(d, c_["subkind"])["sync"] != "never" for _, d in pols)):
+            P(D(c, "connections", c_["id"]), f"{idn(c_['id'])}: an input source's subkind ({desc(c_['subkind'])}) is not a data-policy data class whose rule is sync never")
         hosts = [h["host"] for h in c_["hosts"]]
-        if c_["kind"] == "provider" and c_["locality"] == "local" and (not hosts or not set(hosts) <= local):
+        # every kind marked local is held to local_hosts; a provider must also name the host it is reached on
+        if c_["locality"] == "local" and (not set(hosts) <= local or c_["kind"] == "provider" and not hosts):
             P(D(c, "connections", c_["id"]), f"{idn(c_['id'])}: locality is local, but it lists no host or a host outside the data policy local_hosts")
 
 
@@ -851,8 +858,8 @@ def rule_assignments(c):
                     P(rid, f"{w}: {pn} is switched off")
                 if ch["model"] not in [m["id"] for m in prov["models"]]:
                     P(rid, f"{w}.model ({desc(ch['model'])}) is not listed for {pn}")
-                if mode and prov["locality"] not in mode["allowed_localities"]:
-                    P(rid, f"{w}: {pn} is {prov['locality']}, which effort mode {idn(a['effort_mode'])} forbids")
+                if mode and reach(prov) not in mode["allowed_localities"]:
+                    P(rid, f"{w}: {pn} is {reach(prov)} for routing, which effort mode {idn(a['effort_mode'])} forbids")
                 if not all(policy_allows(p, prov) for p in policies):
                     P(rid, f"{w}: {pn} is not allowed by the data policy for {idn(proj) if proj else 'the default'} (an override never widens the policy)")
                 for m in route_problems(pols, need, prov, now):
@@ -916,6 +923,8 @@ def rule_catalog(c):
                 say_(f"{f} is a field of a cli-login entry, and this one is {e['type']}")
         if cli and e["kind"] not in ("provider", "app"):
             say_("only a provider or an app may be cli-login")
+        if cli and e.get("credential_store") == "engine_cli_store" and e["secrets"]:   # X1/X3: the token stays in the CLI's own store
+            say_("its credential stays in the engine's CLI store, so it lists no broker secrets")
         if e.get("aggregator") and (cli or e["kind"] != "provider"):
             say_("an aggregator is an api provider")
         if e.get("aggregator") and "broker_entries" not in e:
