@@ -1048,4 +1048,30 @@ mk oi; ed oi data-files.json '(.files[] | select(.schema == "install")).owner_on
 ok 'refuses oi check && grep -q "^STL-CFG-310 .*install: .*owner_only.*install" "$T/o"' "263b the install row not owner_only is refused, even with no x-owner-only mark in its schema"
 mk oc; ed oc data-files.json '(.files[] | select(.schema == "capabilities")).owner_only = false'; ed oc schemas/install.schema.json 'walk(if type == "object" then del(."x-owner-only") else . end)'
 ok 'sd oc check >"$T/o" 2>&1 && [ "$(jq "[.files[] | select(.schema == \"capabilities\")][0].owner_only" "$T/oc/.stella/data-files.json")" = false ]' "263c control: a row whose schema marks no owner-only field may be open"
+# F1c-RT2-02 (RT2-2, product rule 14): the role table's records join the one global_id set of the data files, in check and validate roles
+mk gt; GT=$T/gt/$(jq -r .role_table "$ROOT/.stella/data-files.json"); cp "$GT" "$T/gt.keep"
+GC=$(jq -r '[.entries[] | .global_id // empty][0] // empty' "$ROOT/.stella/connections.json")
+GP=$(jq -r '.profiles | keys[0]' "$GT"); GL=$(jq -r '.roles | keys[0]' "$GT")
+ok '[ -n "$GC" ] && [ -n "$GP" ] && [ -n "$GL" ] && sd gt check >"$T/o" 2>&1' "264a control: a connections global_id, a profile and a role exist, and the copy checks clean"
+jq --arg p "$GP" --arg r "$GL" '.profiles[$p].global_id = .roles[$r].global_id' "$T/gt.keep" >"$GT"
+ok 'refuses gt check' "264b control: a profile sharing a role's global_id is refused"
+jq --arg p "$GP" --arg g "$GC" '.profiles[$p].global_id = $g' "$T/gt.keep" >"$GT"
+ok 'refuses gt check && grep -q "^STL-CFG-310 .*role-table: .*global_id is also the global_id of" "$T/o" && ! grep -q "$GC" "$T/o"' "264c a profile whose global_id is a connections record's is refused by check, and the id is not printed"
+jq --arg r "$GL" --arg g "$GC" '.roles[$r].global_id = $g' "$T/gt.keep" >"$GT"
+ok 'refuses gt check && grep -q "^STL-CFG-310 .*connections: .*global_id is also the global_id of" "$T/o"' "264d a role whose global_id is a connections record's is refused by check, on both rows"
+cp "$T/gt.keep" "$GT"; jq --arg r "$GL" --arg g "$GC" '.roles[$r].global_id = $g' "$T/gt.keep" >"$T/gt-cand.json"
+ok 'refuses gt validate roles "$T/gt-cand.json" && grep -q "^STL-CFG-310 .*global_id: already the global_id of a record" "$T/o" && ! grep -q "$GC" "$T/o" && sd gt validate roles "$T/gt.keep" >"$T/o" 2>&1 && grep -qx valid "$T/o"' "264e validate roles refuses a candidate role holding a connections global_id; the table as shipped validates"
+# F1c-CRT-03 (CRT2-3, GB-1 family): the data reader every tool imports refuses the files that hold a key (owner key, writer state) in a worker
+mk wk; WT=$T/wk/$(jq -r .role_table "$ROOT/.stella/data-files.json"); jq '.worker_markers = ["STUB_WORKER_MARK"]' "$WT" >"$T/wk.rt" && cp "$T/wk.rt" "$WT"
+FK=$(printf 'ab%.0s' $(seq 32))   # a made-up key: the case shows it never comes back
+for k in owner_key event_writer_state; do p=$T/wk/$(jq -r ".$k" "$ROOT/.stella/data-files.json"); mkdir -p "$(dirname "$p")"; echo "{\"key\":\"$FK\",\"seq\":0}" >"$p"; done
+KR() { STELLA_ROOT=$T/wk python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import stella_data as sd
+for k in sys.argv[2:]:
+    try:
+        print(k + (":GOT" if sd.load(sd.load(sd.INDEX)[k]) else ":EMPTY"))
+    except sd.DataError as e:
+        print(k + ":" + getattr(e, "code", "DataError"))' "$BIN" owner_key event_writer_state 2>&1; }
+ok 'r=$(STUB_WORKER_MARK=1 KR); [ "$(echo $r)" = "owner_key:STL-CFG-312 event_writer_state:STL-CFG-312" ] && ! echo "$r" | grep -q "$FK"' "265a in a worker, stella_data.load() of the owner key and of the writer state refuses with STL-CFG-312, the key never returned"
+ok 'STUB_WORKER_MARK=1 STELLA_ROOT=$T/wk python3 -I "$SD" validate event "$T/wk/$(jq -r .event_writer_state "$ROOT/.stella/data-files.json")" >"$T/o" 2>&1; [ $? = 1 ] && grep -q "^STL-CFG-312 " "$T/o" && ! grep -q "$FK" "$T/o"' "265b in a worker, the CLI reading the writer state as a file refuses with one STL-CFG-312 line, no key"
+ok 'STUB_WORKER_MARK=1 sd wk get connections --json >/dev/null 2>"$T/o" && STUB_WORKER_MARK=1 sd wk check >"$T/o" 2>&1' "265c control: in a worker, reads of non-secret data (get, check) still work"
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
