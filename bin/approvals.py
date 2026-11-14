@@ -436,11 +436,11 @@ def main(argv):
                 raise Refusal("STL-OWN-829", f"the action file cannot be read: {e}") from None
             with lock():
                 rec = request(o.__dict__["class"], action, o.summary, o.card, ttl, o.requester)
-            print(json.dumps(rec, indent=2, ensure_ascii=False) if o.json else rec["id"])
+            print(json.dumps(rec, indent=2, ensure_ascii=True) if o.json else rec["id"])
             return 0
         if o.cmd == "intake":
             made, bad = intake()
-            print(json.dumps(made, indent=2, ensure_ascii=False) if o.json else "\n".join(f"{r['id']}\t{r['card']}" for r in made))
+            print(json.dumps(made, indent=2, ensure_ascii=True) if o.json else "\n".join(f"{r['id']}\t{r['card']}" for r in made))
             return 0
         if o.cmd == "deliver":
             doc, row = channel(o.channel)
