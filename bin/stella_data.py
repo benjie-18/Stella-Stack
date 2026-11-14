@@ -753,9 +753,9 @@ def rule_policy(c):
     for rid, pol in pols:
         for proj, p in [("default", pol["default"])] + list(pol["projects"].items()):
             for i, prov in enumerate(p["allowed_providers"]):
-                if prov not in conn:
+                if entry(conn, prov) is None:   # an alias or a global_id (FIN-CRT-02)
                     P(rid, f"{'default' if proj == 'default' else kname(proj)}: allowed_providers[{i}] ({desc(prov)}) is not in the connections catalog")
-                elif p.get("private") and conn[prov]["data_policy"].get("hosted"):
+                elif p.get("private") and entry(conn, prov)["data_policy"].get("hosted"):
                     P(rid, f"{kname(proj)}: allowed_providers[{i}] {idn(prov, True)} is hosted, and a private project never uses a hosted connection")
     for c_ in conn.values():
         hosted = c_["data_policy"].get("hosted")
@@ -837,16 +837,20 @@ def rule_assignments(c):
     for rid, ra in c["whole"].get("role-assignments", []):
         for a in ra["assignments"]:
             sc, lvl, aid = a["scope"], a["scope"]["level"], idn(a["id"])
+            # FIN-CRT-02: a project named by its alias or its global_id is one project; one the policy does not list keeps its own string
+            pid = sc.get("project")
+            proj = pid if pid in projects else next((k for k, v in projects.items() if pid and v.get("global_id") == pid), None)
+            pid = proj or pid
             want = {"global": (), "project": ("project",), "card": ("project", "card")}[lvl]
             for k in ("project", "card"):
                 if (k in want) != (k in sc):
                     P(rid, f"{aid}: scope.level {lvl} {'needs' if k in want else 'has no'} {k}")
-            key = (lvl, sc.get("project"), sc.get("card"), a["role"], a["effort_mode"])
+            key = (lvl, pid, sc.get("card"), a["role"], a["effort_mode"])
             if key in seen:
                 P(rid, f"{aid}: same scope, role and effort mode as {idn(seen[key])}")
             seen[key] = a["id"]
             if "card" in sc:
-                if cards.setdefault(sc["card"], (sc.get("project"), a["id"]))[0] != sc.get("project"):
+                if cards.setdefault(sc["card"], (pid, a["id"]))[0] != pid:
                     P(rid, f"{aid}: its card is also filed under another project, in {idn(cards[sc['card']][1])}")
             if a["role"] not in roles:
                 P(rid, f"{aid}: {nm(a['role'], allroles, 'role')} is not an assignable role in the role table")
@@ -855,8 +859,9 @@ def rule_assignments(c):
                 P(rid, f"{aid}: effort_mode ({desc(a['effort_mode'])}) is not defined")
             if not pols:
                 P(rid, f"{aid}: cannot be judged, the data policy has no file")
-            proj = sc.get("project") if sc.get("project") in projects else None
-            policies = [projects[proj]] if proj else [d["default"] for _, d in pols]
+            # allowed_providers may name a connection by its global_id: policy_allows compares aliases, so it gets them resolved
+            policies = [dict(p, allowed_providers=[(entry(conn, x) or {}).get("id", x) for x in p["allowed_providers"]])
+                        for p in ([projects[proj]] if proj else [d["default"] for _, d in pols])]
             need = allroles.get(a["role"], {}).get("requirements", {}).get("allowed_data_classes", [])
             for i, ch in enumerate(a["chain"]):
                 prov, w = entry(conn, ch["connection"]), f"{aid}: chain[{i}]"
