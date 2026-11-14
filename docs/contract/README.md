@@ -21,6 +21,9 @@ problem). Read with `list`, `get <id> [<entry>]` and `search <words>`; every rea
    It scans only the files git tracks (a walk of the root where there is no git).
    The lint does not scan the instruction documents at the top of the repository (the `*.md` skip row of
    `docs/hermes-local/hardcode-allow.json`): decided by the owner on 2026-11-12, as data the owner may change.
+   The same lint fails (`STL-CFG-324`) when a data file keeps a copy of a list another data file owns (the allow list's
+   `lists` rows; a row that finds no ids in its owner is refused). Data files are the JSON files the data index names (the
+   `*.json` of a folder row too) and the allow list's `data_files` patterns; any other JSON is named on a "not checked" line.
 7. **Unknown fails closed.** An unknown role, provider, app or extension gets the most restrictive treatment plus one
    alert (`STL-CFG-311`), never open access.
 8. **Apply contract.** Anything the app writes is applied by an idempotent script with check (drift), dry run, backup
