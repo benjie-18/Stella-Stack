@@ -43,6 +43,7 @@ ok 'lint --dump | grep -q "	"' "--dump prints the counts"
 fresh; python3 - "$S/.stella/connections.json" "$fp" "$fm" "$fh" <<'P'
 import json, sys
 p, i, m, h = sys.argv[1:]; d = json.load(open(p)); e = json.loads(json.dumps(next(x for x in d["entries"] if x["kind"] == "provider" and x["locality"] != "local")))   # a remote provider: a local one must name a local host
+e["global_id"] = str(__import__("uuid").uuid4())   # a copy is a new record: its own global id (F1b W1)
 e["id"], e["hosts"], e["models"] = i, [{"host": h, "port": 1, "purpose": "test"}], [dict(e["models"][0], id=m)]
 d["entries"].append(e); json.dump(d, open(p, "w"))
 P
@@ -248,4 +249,93 @@ ok 'fails_on "\"$fp\"" && grep -qF -- "$f" <<<"$out"' "VER4-03: a provider id in
 # W5 r6 (VER5-06): the root's own allow list as a tracked link to outside the root is refused in every mode, --list too
 gitroot; cp "$S/$AL" "$T/al-out.json"; rm -f "$S/$AL"; ln -s "$T/al-out.json" "$S/$AL"; track "$AL"
 ok 'refused --list && refused --check' "Q7: the default allow list linked outside the root is refused by --list and --check (exit 2, the code)"
+# W5 (D8): one list, one owner. A list kept in a second data file fails; a list of plain ids is a reference and passes.
+V=.stella/versions.json; C=.stella/capabilities.json
+setkey() { jq --argjson v "$1" '.zzdup = $v' "$S/$V" >"$T/x" && cp "$T/x" "$S/$V"; }   # setkey <json>: a planted list in the second data file
+dup_ids() {  # dup_ids <kind>: two ids the owner of that kind holds, as JSON; owner, path, id and where come from the allow list's row
+  local r; r=$(jq -c --arg k "$1" '.lists[] | select(.kind == $k)' "$A")
+  jq -c --argjson r "$r" 'reduce ($r.path | split("."))[] as $q ([.]; map(objects | .[$q | rtrimstr("[]")]) | if ($q | endswith("[]")) then map(arrays[]) else . end)
+    | def fits: . as $m | all(($r.where // {}) | to_entries[]; $m[.key] == .value);
+      [.[] | if type == "array" then .[] | objects | select(fits) | .[$r.id // "id"] | strings
+             elif type == "object" then to_entries[] | select((.value | type) == "object" and (.value | fits)) | .key else empty end] | unique | .[:2]' "$S/$(jq -r .owner <<<"$r")"; }
+dups_fail() { out=$(lint); [ $? = 1 ] && grep -q "STL-CFG-324" <<<"$out" && grep -qF -- "$V: keeps the $1 list" <<<"$out" && [ "$(grep -c "$V: " <<<"$out")" = 1 ]; }
+for k in $(jq -r '.lists[] | select(.owner != null) | .kind' "$A"); do
+  fresh; ids=$(dup_ids "$k"); ok '[ "$(jq length <<<"$ids")" = 2 ]' "D8: the scratch data holds two $k ids to plant"
+  setkey "$(jq -c '[.[] | {id: ., host: ., name: .}]' <<<"$ids")"
+  ok 'dups_fail "$k"' "D8: a $k list kept as objects in a second data file fails (STL-CFG-324, one line for the file)"
+  fresh; setkey "$(jq -c 'map({(.): {}}) | add' <<<"$ids")"
+  ok 'dups_fail "$k"' "D8: a $k list kept as a map of objects in a second data file fails"
+  fresh; setkey "$ids"
+  ok 'lint >/dev/null' "D8: the $k ids as plain strings (a reference) pass"
+  fresh; setkey "$(jq -c '[.[0] | {id: ., host: .}]' <<<"$ids")"
+  ok 'lint >/dev/null' "D8: one $k id as an object is no list kept twice and passes"
+done
+for k in $(jq -r '.lists[] | select(.owner == null) | .kind' "$A"); do
+  fresh; jq --arg k "$k" '.[$k] = [{"id": "zza"}]' "$S/$V" >"$T/x" && cp "$T/x" "$S/$V"
+  ok 'lint >/dev/null' "D8: a $k list in one data file passes (no owner yet, defined once)"
+  jq --arg k "$k" '.[$k] = {"zzb": {}}' "$S/$C" >"$T/x" && cp "$T/x" "$S/$C"
+  ok 'out=$(lint); [ $? = 1 ] && grep -q "STL-CFG-324" <<<"$out" && grep -qF -- "$V: keeps a $k list" <<<"$out" && grep -qF -- "$C: keeps a $k list" <<<"$out"' "D8: a $k list in two data files fails, one line per file"
+done
+# W5 round 2 (W5-T-02): approvals are records of their own kind (an index row's record_kind) keyed by the owned id: a lists row's
+# "refs" names such kinds; they refer to the hosts by id, so they are no second copy. A real copy in any other file still fails.
+fresh; hs=$(jq -c --arg i "$(jq -r .install_id "$S/.stella/install.json")" '[.entries[].hosts[]?.host] | unique | .[:2] | map({host: ., port: 443, scope: "x", approved_at: "2026-11-13T00:00:00Z", approved_by: "owner", expires_at: null, global_id: "", install_id: $i})' "$S/.stella/connections.json")
+jq --argjson h "$hs" '.hosts = $h' "$S/.stella/approved-hosts.json" >"$T/x" && cp "$T/x" "$S/.stella/approved-hosts.json"
+ok '[ "$(jq length <<<"$hs")" = 2 ] && lint >/dev/null' "W5-T-02: approvals for two hosts a connection names (records of the approved-host kind, keyed by host and port) are no duplicate list"
+setkey "$(jq -c 'map({host, port})' <<<"$hs")"
+ok 'dups_fail hosts' "W5-T-02: the same two hosts as objects in another file still fail while the approvals file holds them too"
+# W5 r3 (W5-T-04): changed case (was: the lint run with HARDCODE_ALLOW only, so the real root's home was read): lint() like every other case
+fresh; edit '.lists |= map(if .kind == "hosts" then .refs = [{"record_kind": "zz-no-such-kind", "why": "x"}] else . end)'
+ok 'refused && grep -qF zz-no-such-kind <<<"$out"' "W5-T-02: a refs row naming a record kind no index row has is refused (exit 2, the code; lint() sets STELLA_ROOT= and HARDCODE_HOME= to the scratch root and home)"
+# W5-T-01: a duplicate list has its own catalog text, not the hard-coded-name text
+fresh; setkey "$(jq -c '[.[] | {id: .}]' <<<"$(dup_ids models)")"
+ok 'out=$(lint); [ $? = 1 ] && grep -q "STL-CFG-324" <<<"$out" && ! grep -qiE "script or a prompt|raise the baseline|STL-CFG-320" <<<"$out"' "W5-T-01: a duplicate list prints its own code (STL-CFG-324), not the hard-coded-name text"
+# ---- W5 r3: written before the fix ----
+own_kinds=$(jq -r '.lists[] | select(.owner != null) | .kind' "$A")
+# W5-RT-01: a row whose owned list resolves to no ids is refused (exit 2, the row named), never a silent pass
+for k in $own_kinds; do
+  for e in '.path = "zz-no-such-key"' '.where = {"zz-no-such-field": "zz"}'; do
+    fresh; edit --arg k "$k" ".lists |= map(if .kind == \$k then $e else . end)"
+    ok 'refused && grep -qF "the $k list" <<<"$out"' "W5-RT-01: a $k row whose owned list resolves to no ids ($e) is refused (exit 2, the row named)"
+  done
+done
+for e in '.path = "entries[].model"' '.id = "name"' '.path = "entries" | .id = "zz"'; do   # the red team's A04 rows
+  fresh; edit ".lists |= map(if .kind == \"models\" then $e else . end)"
+  ok 'refused && grep -qF "the models list" <<<"$out"' "W5-RT-01: a models row that finds no ids ($e) is refused (exit 2)"
+done
+fresh; edit '.lists |= map(if .owner != null then .where = "x" else . end)'
+ok 'refused' "W5-RT-02: a lists row whose where is not an object of field values is refused"
+# W5-VER-02: a copied list is found by the ids of its object members, whatever else the list or map holds
+for k in $own_kinds; do
+  fresh; ids=$(dup_ids "$k"); setkey "$(jq -c '[.[] | {id: ., host: ., name: .}] + ["a trailing note"]' <<<"$ids")"
+  ok 'dups_fail "$k"' "W5-VER-02: a $k list of objects with a trailing string in a second data file fails"
+  fresh; setkey "$(jq -c 'map({(.): {}}) | add | ._comment = "a note"' <<<"$ids")"
+  ok 'dups_fail "$k"' "W5-VER-02: a $k map of objects with a _comment key in a second data file fails"
+done
+# W5-VER-03: every data file is checked: the JSON data the allow list's globs name and the files of a folder row of the index
+mids=$(dup_ids models)
+for f in docs/hermes-local/fallback-routing.json docs/hermes-local/watchdog-settings.json .stella/test-map.json; do
+  fresh; ok '[ -f "$S/$f" ]' "W5-VER-03: the lint lists $f (a data file it checks), so a scratch root holds it"
+  [ -f "$S/$f" ] || cp "$W/$f" "$S/$f"; jq --argjson v "$(jq -c 'map({id: .})' <<<"$mids")" '.zzdup = $v' "$S/$f" >"$T/x" && cp "$T/x" "$S/$f"
+  ok 'out=$(lint); [ $? = 1 ] && grep -q STL-CFG-324 <<<"$out" && grep -qF -- "$f: keeps the models list" <<<"$out"' "W5-VER-03: a models list copied into $f fails"
+done
+xf=$(jq -r '[.files[] | select(.format == "json" and (.path | endswith(".json") | not))][0].path' "$W/$idx")
+fresh; mkdir -p "$S/$xf"; jq -n --argjson v "$(jq -c 'map({id: .})' <<<"$mids")" '{schema_version: 1, zzdup: $v}' >"$S/$xf/zz.json"
+ok 'out=$(lint); [ $? = 1 ] && [ "$xf" != null ] && grep -qF -- "$xf/zz.json: keeps the models list" <<<"$out"' "W5-VER-03: a models list copied into a file of the index's folder row ($xf) fails"
+fresh; printf '{"zz": 1}\n' >"$S/zz-tool.json"
+ok 'out=$(lint); [ $? = 0 ] && grep "not checked" <<<"$out" | grep -qF zz-tool.json' "W5-VER-03: JSON that is no data file is named on a not-checked line"
+# W5-VER-04: a kind with no owner has nothing to refer to: two files that hold two or more equal ids of it fail, in any shape
+for k in $(jq -r '.lists[] | select(.owner == null) | .kind' "$A"); do
+  for c in '["zza", "zzb"]' '[{"id": "zza"}, {"id": "zzb"}]' '{"zza": 1, "zzb": 2}'; do
+    fresh; jq --arg k "$k" '.[$k] = ["zza", "zzb"]' "$S/$V" >"$T/x" && cp "$T/x" "$S/$V"; jq --arg k "$k" --argjson c "$c" '.[$k] = $c' "$S/$C" >"$T/x" && cp "$T/x" "$S/$C"
+    ok 'out=$(lint); [ $? = 1 ] && grep -q STL-CFG-324 <<<"$out" && grep -qF -- "$V: keeps a $k list" <<<"$out" && grep -qF -- "$C: keeps a $k list" <<<"$out"' "W5-VER-04: $k kept as plain ids in one file and as $c in another fails"
+  done
+  fresh; jq --arg k "$k" '.[$k] = ["zza"]' "$S/$V" >"$T/x" && cp "$T/x" "$S/$V"; jq --arg k "$k" '.[$k] = ["zzb", "zza"]' "$S/$C" >"$T/x" && cp "$T/x" "$S/$C"
+  ok 'lint >/dev/null' "W5-VER-04: $k plain ids in two files that share one id pass"
+done
+# W5-RT-02: a row matches only the owner's entries its where names: ids of entries of another kind are no copy of it
+two=$(jq -c '[.entries[] | select(.kind != "provider") | .id][:1] + [.entries[] | select(.kind == "provider") | .id][:1]' "$S/.stella/connections.json")
+fresh; setkey "$(jq -c 'map({id: .})' <<<"$two")"
+ok '[ "$(jq length <<<"$two")" = 2 ] && lint >/dev/null' "W5-RT-02: a channel id and a provider id as objects in a second data file are no providers list"
+fresh; jq --argjson n "$two" '.entries[0] as $c | .entries += [$n[] as $i | $c | .id = $i | .kind = "tool" | .status = "proposed"]' "$S/$C" >"$T/x" && cp "$T/x" "$S/$C"
+ok 'lint >/dev/null' "W5-RT-02: two capability tools named like a channel and a provider are no providers list (the red team's A06)"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

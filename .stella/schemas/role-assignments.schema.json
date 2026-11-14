@@ -5,7 +5,7 @@
   "type": "object",
   "properties": {
     "schema_version": {
-      "const": 1
+      "const": 2
     },
     "effort_modes": {
       "type": "object",
@@ -80,9 +80,14 @@
             "items": {
               "type": "object",
               "properties": {
-                "provider": {
+                "connection": {
                   "type": "string",
-                  "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+                  "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+                  "x-ref": "connections",
+                  "x-ref-where": {
+                    "kind": "provider"
+                  },
+                  "description": "The link's connection: the id (alias) or global_id of a provider in the connections catalog. A link is a connection plus a model of it (F1b D6)."
                 },
                 "model": {
                   "type": "string"
@@ -92,13 +97,23 @@
                 }
               },
               "required": [
-                "provider",
+                "connection",
                 "model",
                 "parameters"
               ],
               "additionalProperties": false
             },
             "minItems": 1
+          },
+          "global_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            "description": "The record's global id: a lower-case version 4 UUID, unique across every data file (product rule 14). The record's old id stays its alias: every read that takes an entry id accepts either."
+          },
+          "install_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "description": "The UUID of the install that made the record (its .stella/install.json); a record moved from another install keeps it."
           }
         },
         "required": [

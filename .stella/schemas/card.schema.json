@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Stella card fields",
+  "description": "The fields Stella adds to a board card: the apps, skills and tools it uses, and its two record ids. An id that is in no catalog is refused (STL-CFG-311).",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "global_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "install_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "apps": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 128,
+        "x-ref": "connections",
+        "x-ref-where": {
+          "kind": "app",
+          "enabled": true
+        }
+      },
+      "uniqueItems": true,
+      "maxItems": 32,
+      "description": "Connections of kind app the card may use."
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 128,
+        "x-ref": "capabilities",
+        "x-ref-where": {
+          "kind": "skill",
+          "status": "approved"
+        }
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 128,
+        "x-ref": "capabilities",
+        "x-ref-where": {
+          "kind": "tool",
+          "status": "approved"
+        }
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "schema_version",
+    "global_id",
+    "install_id",
+    "apps",
+    "skills",
+    "tools"
+  ],
+  "additionalProperties": false
+}

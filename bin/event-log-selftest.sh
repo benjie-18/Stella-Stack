@@ -2,7 +2,8 @@
 # Hermetic self-test for bin/event_log.py (F1 W3): the one writer of the event log. Runs in a scratch root (STELLA_ROOT: a copy of
 # .stella/ and the role table); never the live log. Proves: a valid line is appended, masked (index redact_keys, registry
 # `secret` settings) before it is written or printed; an invalid line is refused and nothing is written; the log is only ever
-# appended to; tail --json; an unwritable log refuses with STL-CFG-318; concurrent appends do not interleave.
+# appended to; tail --json; an unwritable log refuses with STL-CFG-318; concurrent appends do not interleave; (F1b W6, T7d) every
+# new line has global_id and install_id, a repeated global_id or an unreadable install id is refused, old lines still read.
 set -u
 H=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 T=$(mktemp -d -t event-log-selftest.XXXXXX); trap 'rm -rf "$T"' EXIT
@@ -10,7 +11,7 @@ R=$T/root; mkdir -p "$R/docs/hermes-local" "$R/config" "$R/.supervisor/logs"
 cp -r "$H/.stella" "$R/"; cp "$H/docs/hermes-local/roles.json" "$R/docs/hermes-local/"
 cp -r "$H/docs/hermes-local/hooks" "$R/docs/hermes-local/hooks"   # the table check looks hook files up under the root
 # a registry setting marked secret, in a data file that has no redact_keys of its own
-jq '.entries += [(.entries[2] | .key = "PLANTED_SETTING" | .sensitivity = "secret" | .type = "string" | .validation = {} | .default = null | .store.key = "PLANTED_SETTING")]' \
+jq --arg g "$(python3 -I -c "import uuid; print(uuid.uuid4())")" '.entries += [(.entries[2] | .global_id = $g | .key = "PLANTED_SETTING" | .sensitivity = "secret" | .type = "string" | .validation = {} | .default = null | .store.key = "PLANTED_SETTING")]' \
   "$R/.stella/settings.json" > "$T/s" && mv "$T/s" "$R/.stella/settings.json"
 printf "OWNER_TIMEZONE='UTC'\n" >"$T/owner-fake.env"   # a fake owner file: no failure message makes the alert code read the real one
 export STELLA_ROOT=$R ESCALATE_SUP_DIR=$T/sup OWNER_CONFIG=$T/owner-fake.env
@@ -20,7 +21,7 @@ fails=0
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 
 ok 'o=$(python3 -I $H/bin/stella_data.py check) && [ "$(echo "$o" | head -1)" = "data OK" ]' "the scratch root validates"
-ok '$EL append --type note --what first >/dev/null && [ "$(wc -l <"$LOG")" = 1 ] && jq -e ".schema_version == 1 and .type == \"note\" and (.time | test(\"Z$\"))" "$LOG" >/dev/null' "a valid line is appended as one JSON line"
+ok '$EL append --type note --what first >/dev/null && [ "$(wc -l <"$LOG")" = 1 ] && jq -e ".schema_version == 2 and .type == \"note\" and (.time | test(\"Z$\"))" "$LOG" >/dev/null' "a valid line is appended as one JSON line"
 cp "$LOG" "$T/before"
 out=$($EL append --type change --what x --old '{"API_TOKEN":"plant-aaa","name":"n1"}' --new '{"PLANTED_SETTING":"plant-bbb","/a/b/PASSWORD":"plant-ccc","name":"n2"}' 2>&1); rc=$?
 ok '[ $rc = 0 ] && [ "$(wc -l <"$LOG")" = 2 ]' "a second line is appended"
@@ -181,5 +182,53 @@ for n in names:
 print(bad); sys.exit(1 if bad else 0)" "$H/bin" >"$T/mk" 2>&1; rc=$?
 ok '[ $rc = 0 ] && [ ! -e "$LOG" ]' "R6 a log that an append creates and cannot write its line to is removed again, whatever call stops it: the event log is as before (W3-CRT5-06): $(tail -n 1 "$T/mk")"
 $EL append --type note --what x >/dev/null 2>&1; ok '[ $? = 0 ] && [ "$(wc -l <"$LOG")" = 1 ]' "R6 and the next append creates the log and writes its line"
+# ---- F1b W6 (T7d): every new line carries global_id and install_id; lines from before stay as they are and still read ----
+IID=$(jq -r .install_id "$R/.stella/install.json"); SD="python3 -I $H/bin/stella_data.py"
+U4='^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+rm -f "$LOG"; printf '%s\n' '{"schema_version":1,"time":"2026-01-01T00:00:00Z","type":"apply","who":{"role":null,"channel":null,"user":"owner"},"what":"features","detail":"backup b1 token t1"}' >"$LOG"; chmod 600 "$LOG"
+cp "$LOG" "$T/before"; $EL append --type note --what w6a >/dev/null 2>&1; $EL append --type note --what w6b >/dev/null 2>&1
+ok 'tail -n 2 "$LOG" | jq -se --arg i "$IID" --arg u "$U4" "length == 2 and all(.schema_version == 2 and .install_id == \$i and (.global_id | test(\$u))) and .[0].global_id != .[1].global_id" >/dev/null' "T7d each new line has schema_version 2, its own global_id (UUID4) and this install's install_id"
+ok 'head -c "$(wc -c <"$T/before")" "$LOG" | cmp -s - "$T/before"' "T7d a line written before the ids is never rewritten"
+ok '$EL tail --json -n 3 2>"$T/e" | jq -e ".[0].what == \"features\" and .[0].schema_version == 1 and (.[0] | has(\"global_id\") | not)" >/dev/null && [ ! -s "$T/e" ]' "T7d tail reads an old line (version 1, no ids) by its position and fields, not as unreadable"
+python3 -I $H/bin/stella-apply.py history features --json >"$T/o" 2>"$T/e"; rc=$?
+ok '[ $rc = 0 ] && jq -e ".unreadable_lines == 0 and (.events | map(.detail) | index(\"backup b1 token t1\") != null)" "$T/o" >/dev/null' "T7d stella-apply history still finds an old line by its what (exit $rc)"
+sed -n 1p "$LOG" >"$T/ev1.json"; sed -n 2p "$LOG" >"$T/ev2.json"
+ok '$SD validate event "$T/ev1.json" >/dev/null && $SD validate event "$T/ev2.json" >/dev/null' "T7d the event schema accepts an old line (version 1) and a new one (version 2)"
+ok '! $SD validate event <(jq -c ".global_id = \"x\"" "$T/ev2.json") >/dev/null 2>&1 && ! $SD validate event <(jq -c ".install_id = \"x\"" "$T/ev2.json") >/dev/null 2>&1' "T7d a global_id or install_id that is not a UUID is refused by the schema"
+G=$(tail -n 1 "$LOG" | jq -r .global_id); cp "$LOG" "$T/before"
+python3 -I -c "
+import sys, uuid; sys.path.insert(0, sys.argv[1]); import event_log as e
+g = str(uuid.uuid4())
+assert e.append({**e.build('note', 'own'), 'global_id': g})['global_id'] == g   # a caller's own new id is kept
+for d in (g, sys.argv[2]):
+    try:
+        e.append({**e.build('note', 'dup'), 'global_id': d}); sys.exit(1)
+    except e.EventError as x:
+        assert x.code == 'STL-CFG-313', x.code" "$H/bin" "$G" 2>/dev/null
+ok '[ $? = 0 ] && [ "$(wc -l <"$LOG")" = $(( $(wc -l <"$T/before") + 1 )) ] && head -c "$(wc -c <"$T/before")" "$LOG" | cmp -s - "$T/before" && ! grep -q "\"dup\"" "$LOG"' "T7d a caller's own new global_id is kept; a line whose global_id repeats one already in the log is refused (313), nothing written"
+python3 -I -c "
+import sys; sys.path.insert(0, sys.argv[1]); import event_log as e
+e.append({**e.build('note', 'v1shape'), 'schema_version': 1, 'install_id': '00000000-0000-4000-8000-000000000000'})" "$H/bin" 2>/dev/null
+ok 'tail -n 1 "$LOG" | jq -e --arg i "$IID" --arg u "$U4" ".what == \"v1shape\" and .schema_version == 2 and .install_id == \$i and (.global_id | test(\$u))" >/dev/null' "T7d a caller's line in the old shape, or naming another install, is written as version 2 with this install's ids"
+cp "$R/.stella/install.json" "$T/install.keep"
+for how in 'jq "del(.install_id)" "$T/install.keep" >"$R/.stella/install.json"' 'rm "$R/.stella/install.json"'; do
+  eval "$how"; cp "$LOG" "$T/before"; $EL append --type note --what noid >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 1 ] && grep -q STL-CFG-310 "$T/o" && cmp -s "$LOG" "$T/before" && ! grep -q Traceback "$T/o"' "T7d the install id cannot be read ($how): refused with STL-CFG-310, no line written"
+done
+cp "$T/install.keep" "$R/.stella/install.json"
+cp "$R/.stella/data-files.json" "$T/index.keep"
+for plant in '(.files[] | select(.schema == "versions")) |= del(.global_id)' '(.files[] | select(.schema == "data-files")).owner_only = false'; do
+  jq "$plant" "$T/index.keep" >"$R/.stella/data-files.json"
+  cp "$LOG" "$T/before"; $EL append --type note --what idxbad >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 0 ] && ! $SD check >/dev/null 2>&1 && [ "$(wc -l <"$LOG")" = $(( $(wc -l <"$T/before") + 1 )) ] && tail -n 1 "$LOG" | jq -e --arg i "$IID" ".what == \"idxbad\" and .install_id == \$i" >/dev/null' "T7d an index problem outside the install row does not stop a line: the install id is read by the install row's own check (W6-CVER-01; $plant; exit $rc)"
+done
+cp "$T/index.keep" "$R/.stella/data-files.json"
+echo '{"schema_version":1,"id":"r1","requested_at":"2026-11-10T12:00:00Z","requester":{"role":"builder","channel":null,"user":null},"approval_class":"post","action":"a","summary":"s","target":null,"card":null,"expires_at":null}' >"$T/rq.json"
+echo '{"schema_version":1,"request_id":"r1","decided_at":"2026-11-10T12:01:00Z","decision":"approved","decided_by":{"channel":"app","user":"owner"},"note":null}' >"$T/dc.json"
+ids() { jq --arg g "$(python3 -I -c 'import uuid; print(uuid.uuid4())')" --arg i "$IID" ".schema_version = 2 | .global_id = \$g | .install_id = \$i" "$1"; }
+for k in rq:approval-request dc:approval-decision; do
+  ok '$SD validate ${k#*:} "$T/${k%%:*}.json" >/dev/null && $SD validate ${k#*:} <(ids "$T/${k%%:*}.json") >/dev/null' "T7d ${k#*:}: an old record (version 1) and one with global_id and install_id (version 2) validate"
+  ok '! $SD validate ${k#*:} <(ids "$T/${k%%:*}.json" | jq ".global_id = \"r1\"") >/dev/null 2>&1 && ! $SD validate ${k#*:} <(ids "$T/${k%%:*}.json" | jq ".install_id = 5") >/dev/null 2>&1' "T7d ${k#*:}: a global_id or install_id that is not a UUID is refused"
+done
 $EL bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "usage error exits 2"
 [ $fails = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

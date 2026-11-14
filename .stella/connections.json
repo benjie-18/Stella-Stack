@@ -1,10 +1,11 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "entries": [
     {
       "id": "local-model-server",
       "kind": "provider",
       "subkind": "openai-compatible-local",
+      "type": "api",
       "label": "Local model server",
       "enabled": true,
       "locality": "local",
@@ -71,12 +72,15 @@
         "look",
         "proposer"
       ],
-      "risk_class": "read"
+      "risk_class": "read",
+      "global_id": "d80849c2-33a3-4d6c-b2fb-3ec8a71bfe64",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "claude-subscription",
       "kind": "provider",
       "subkind": "direct-subscription",
+      "type": "cli-login",
       "label": "Claude subscription (Claude Code CLI)",
       "enabled": true,
       "locality": "cloud",
@@ -90,9 +94,7 @@
       "auth_types": [
         "oauth_subscription"
       ],
-      "secrets": [
-        "CLAUDE_CODE_OAUTH_TOKEN"
-      ],
+      "secrets": [],
       "actions": [
         {
           "id": "complete",
@@ -157,12 +159,23 @@
         "subscription_login_by_agent": "unverified"
       },
       "allowed_roles": [],
-      "risk_class": "send"
+      "risk_class": "send",
+      "cli": "claude-code",
+      "quota_source": [
+        "cli_usage",
+        "limit_errors"
+      ],
+      "concurrency_limit": 1,
+      "credential_store": "engine_cli_store",
+      "terms_ok": null,
+      "global_id": "13c8eb10-3bc8-4adf-b361-cce9c550754b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "fallback-gateway",
       "kind": "provider",
       "subkind": "openai-compatible-aggregator",
+      "type": "api",
       "label": "Fallback gateway (aggregator proxy)",
       "enabled": true,
       "locality": "cloud",
@@ -219,12 +232,15 @@
         "subscription_login_by_agent": "unverified"
       },
       "allowed_roles": [],
-      "risk_class": "send"
+      "risk_class": "send",
+      "global_id": "794222aa-6875-4855-8f25-6d4f751ee4d4",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "discord",
       "kind": "channel",
       "subkind": "chat",
+      "type": "api",
       "label": "Discord (connected chat channel)",
       "enabled": true,
       "locality": "cloud",
@@ -279,7 +295,9 @@
       "redaction_patterns": [
         "[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{6}\\.[A-Za-z0-9_-]{25,}",
         "(?i)bearer\\s+[A-Za-z0-9._~+/=-]+"
-      ]
+      ],
+      "global_id": "98021278-cfb6-4a61-b750-625e4ce5e025",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

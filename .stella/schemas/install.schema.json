@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Install identity",
+  "description": "The one document that names this install. Records made here carry its install_id (product rule 14).",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "install_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "x-owner-only": true,
+      "description": "This install's UUID (lower case, version 4), made once when the install is set up."
+    }
+  },
+  "required": [
+    "schema_version",
+    "install_id"
+  ],
+  "additionalProperties": false
+}

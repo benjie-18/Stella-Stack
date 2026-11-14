@@ -12,11 +12,12 @@ T=$(mktemp -d -t stella-apply-selftest.XXXXXX); trap 'chmod -R u+w "$T" 2>/dev/n
 mkdir -p "$T/tmp"; export TMPDIR=$T/tmp   # the tool stages its whole-set check in the temp folder: keep it inside the scratch folder
 R=$T/root; C=$T/cand; mkdir -p "$R/docs/hermes-local" "$R/config" "$R/.supervisor/logs" "$C" "$T/sup/logs"
 cp -r "$H/.stella" "$R/"
-jq '(.files[] | select(.id == "connections" or .id == "extensions" or .id == "limits") | .owner_only) = false' "$R/.stella/data-files.json" >"$T/nx" && cp "$T/nx" "$R/.stella/data-files.json"   # the cases need these rows not owner-only, whatever the shipped flags say
+jq '(.files[] | select(.id == "connections" or .id == "extensions" or .id == "limits") | .owner_only) = false' "$R/.stella/data-files.json" >"$T/nx" && cp "$T/nx" "$R/.stella/data-files.json" && jq 'walk(if type == "object" then del(."x-owner-only") else . end)' "$R/.stella/schemas/connections.schema.json" >"$T/nx" && cp "$T/nx" "$R/.stella/schemas/connections.schema.json"   # the cases need these rows not owner-only, whatever the shipped flags say (and an open row carries no x-owner-only field: FIN-CRT-05)
 jq '. + {worker_markers: ["STUB_WORKER_MARK"]}' "$H/docs/hermes-local/roles.json" >"$R/docs/hermes-local/roles.json"
 cp -r "$H/docs/hermes-local/hooks" "$R/docs/hermes-local/hooks"   # the table check looks hook files up under the root
 jq '.entries += [(.entries[2] | .key = "PLANTED_SETTING" | .sensitivity = "secret" | .type = "string" | .validation = {} | .default = null | .store.key = "PLANTED_SETTING")]' \
   "$R/.stella/settings.json" >"$T/s" && mv "$T/s" "$R/.stella/settings.json"
+jq --arg g "$(cat /proc/sys/kernel/random/uuid)" '.entries[-1].global_id = $g' "$R/.stella/settings.json" >"$T/s" && mv "$T/s" "$R/.stella/settings.json"   # F1b D1: the fake record carries its own ids
 printf "WORKER_GIT_NAME='Fake One'\nWORKER_GIT_EMAIL='fake@example.invalid'\nAPI_TOKEN='sekrit-token-111'\n" >"$R/config/owner.env"
 printf "CALL_TIMEOUT=600\nPLANTED_SETTING='sekrit-setting-333'\n" >"$R/.supervisor/limits.env"
 chmod 600 "$R/config/owner.env"; chmod 640 "$R/.supervisor/limits.env"
@@ -170,6 +171,8 @@ ok '[ "$(tree)" = "$B" ]' "two rollbacks return the file to its first state"
 
 # a folder row
 echo '{"schema_version":1,"id":"fake-ext","kind":"mcp_server","summary":"fake extension for gizmos","hosts":["gizmo.example.invalid:443"],"secrets":["GIZMO_KEY"],"tools":["gizmo_get"],"allowed_roles":["reviewer"],"risk_class":"read","enabled":false,"status":"proposed","source":"fake"}' >"$C/fake-ext.json"
+IID=$(python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; print(s.install_id())" "$H/bin")
+jq --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$IID" '. + {global_id: $g, install_id: $i}' "$C/fake-ext.json" >"$T/x" && mv "$T/x" "$C/fake-ext.json"   # F1b D1: the fake record carries its own ids
 B=$(tree); e0=$(nev)
 ap apply extensions/fake-ext.json --from "$C/fake-ext.json" >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && cmp -s "$C/fake-ext.json" "$R/.stella/extensions/fake-ext.json" && [ "$(nev)" = $((e0+1)) ] && ap check extensions >/dev/null 2>&1 && o=$(python3 -I $H/bin/stella_data.py check) && [ "$(echo "$o" | head -1)" = "data OK" ]' "a folder row: extensions/<file> applies, checks, still validates as a whole"
@@ -185,7 +188,7 @@ ok 'STELLA_ROOT=$(dirname "$H") python3 -I -c "import sys; sys.path.insert(0, \"
 ROLES=$R/docs/hermes-local/roles.json; SET0=$R/.stella/settings.json
 mkr() {  # <name>: a fresh scratch root with fake files and a git baseline; R, LOG and STELLA_ROOT point at it
   R=$T/$1; LOG=$R/.supervisor/logs/events.jsonl; mkdir -p "$R/docs/hermes-local" "$R/config" "$R/.supervisor/logs"
-  cp -r "$H/.stella" "$R/"; jq '(.files[] | select(.id == "connections" or .id == "extensions" or .id == "limits") | .owner_only) = false' "$R/.stella/data-files.json" >"$T/nx" && cp "$T/nx" "$R/.stella/data-files.json"   # the cases need these rows not owner-only, whatever the shipped flags say
+  cp -r "$H/.stella" "$R/"; jq '(.files[] | select(.id == "connections" or .id == "extensions" or .id == "limits") | .owner_only) = false' "$R/.stella/data-files.json" >"$T/nx" && cp "$T/nx" "$R/.stella/data-files.json" && jq 'walk(if type == "object" then del(."x-owner-only") else . end)' "$R/.stella/schemas/connections.schema.json" >"$T/nx" && cp "$T/nx" "$R/.stella/schemas/connections.schema.json"   # the cases need these rows not owner-only, whatever the shipped flags say (and an open row carries no x-owner-only field: FIN-CRT-05)
   cp "$ROLES" "$R/docs/hermes-local/roles.json"; cp "$SET0" "$R/.stella/settings.json"; cp -r "$H/docs/hermes-local/hooks" "$R/docs/hermes-local/hooks"
   printf "WORKER_GIT_NAME='Fake One'\nWORKER_GIT_EMAIL='fake@example.invalid'\nAPI_TOKEN='sekrit-token-111'\n" >"$R/config/owner.env"
   printf "CALL_TIMEOUT=600\nPLANTED_SETTING='sekrit-setting-333'\n" >"$R/.supervisor/limits.env"; chmod 600 "$R/config/owner.env"; chmod 640 "$R/.supervisor/limits.env"
@@ -203,6 +206,7 @@ sys.exit(sa.main(sys.argv[3:]))' "$H/bin/stella-apply.py" "$@"
 }
 BK() { echo "$R/.supervisor/state/backups"; }
 echo '{"schema_version":1,"id":"fake-ext2","kind":"mcp_server","summary":"fake extension two","hosts":["gizmo.example.invalid:443"],"secrets":["GIZMO_KEY"],"tools":["gizmo_get"],"allowed_roles":["reviewer"],"risk_class":"read","enabled":false,"status":"proposed","source":"fake"}' >"$C/fake-ext2.json"
+jq --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$IID" '. + {global_id: $g, install_id: $i}' "$C/fake-ext2.json" >"$T/x" && mv "$T/x" "$C/fake-ext2.json"   # F1b D1: the fake record carries its own ids
 
 # G1 the gate says what it is
 mkr g1; jq '.worker_markers = []' "$ROLES" >"$R/docs/hermes-local/roles.json"
@@ -889,11 +893,11 @@ ap check connections >/dev/null 2>&1; ok '[ "$(whole)" = "$w0" ] && [ -z "$(stag
 
 # Q2 what a row IS: the data tool's one rule (stella_data.folder_row); the disk and the applied record are compared with it
 mkr q2; mkdir -p "$R/.stella/qa-folder.json" "$R/.stella/qa-caps"; cp "$C/fake-ext.json" "$R/.stella/qa-single"; cp "$C/fake-ext.json" "$R/.stella/qa-folder.json/a.json"
-jq '.entries = [.entries[0] | .id = "qa-cap-one"]' "$R/.stella/capabilities.json" >"$R/.stella/qa-caps/a.json"
-q2row() { printf '{"id":"%s","path":"%s","schema":"%s","format":"json","owner_only":false,"redact_keys":[],"list_key":%s,"id_field":"%s"}' "$@"; }
-jq --argjson a "$(q2row qa-single .stella/qa-single extension null id)" --argjson b "$(q2row qa-folder .stella/qa-folder.json extension null id)" \
-   --argjson c "$(q2row qa-caps .stella/qa-caps capabilities '"entries"' id)" \
-   --argjson d "$(jq -c '.files[]|select(.id=="limits")|.id="qa-env"|.path="qa-newdir/qa.env"|.owner_only=false' "$R/.stella/data-files.json")" \
+jq --arg g "$(cat /proc/sys/kernel/random/uuid)" '.entries = [.entries[0] | .id = "qa-cap-one" | .global_id = $g]' "$R/.stella/capabilities.json" >"$R/.stella/qa-caps/a.json"   # F1b D1: the fake record carries its own ids
+q2row() { printf '{"id":"%s","path":"%s","schema":"%s","format":"json","owner_only":false,"redact_keys":[],"list_key":%s,"id_field":"%s","record_kind":"%s","global_id":"%s","install_id":"%s"}' "$@" "$(cat /proc/sys/kernel/random/uuid)" "$IID"; }   # F1b D1: the fake record carries its own ids and kind
+jq --argjson a "$(q2row qa-single .stella/qa-single extension null id extension)" --argjson b "$(q2row qa-folder .stella/qa-folder.json extension null id extension)" \
+   --argjson c "$(q2row qa-caps .stella/qa-caps capabilities '"entries"' id capability)" \
+   --argjson d "$(jq -c --arg g "$(cat /proc/sys/kernel/random/uuid)" '.files[]|select(.id=="limits")|.id="qa-env"|.path="qa-newdir/qa.env"|.owner_only=false|.global_id=$g' "$R/.stella/data-files.json")" \
    '.files += [$a, $b, $c, $d]' "$R/.stella/data-files.json" >"$T/x" && cp "$T/x" "$R/.stella/data-files.json"
 git -C "$R" add -A >/dev/null 2>&1; git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qm kinds
 jq '.entries[0].summary = "Q2 caps"' "$R/.stella/qa-caps/a.json" >"$C/q2c.json"; printf 'QA_X=1\n' >"$C/q2d.env"; w0=$(whole | quiet)
@@ -1107,7 +1111,7 @@ for a in rows:
             bad.append((a["id"], b["id"], r))
 print(n, "pairs", bad[:2]); sys.exit(1 if bad or n < 20 else 0)' "$H/bin/stella-apply.py" >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ]' "R3 for every pair of shipped json rows: a candidate that adds a problem line to a row that already had one is refused naming that row and the way out, one that adds none passes, a reworded line is refused the same way: $(tail -n 1 "$T/o" | head -c 300)"
-mkr r3; jq '.assignments += [.assignments[0] | .id = "r3-twin"]' "$R/.stella/role-assignments.json" >"$T/x" && cp "$T/x" "$R/.stella/role-assignments.json"; git -C "$R" commit -qam old-problem
+mkr r3; jq --arg g "$(cat /proc/sys/kernel/random/uuid)" '.assignments += [.assignments[0] | .id = "r3-twin" | .global_id = $g]' "$R/.stella/role-assignments.json" >"$T/x" && cp "$T/x" "$R/.stella/role-assignments.json"; git -C "$R" commit -qam old-problem
 jq '.entries[0].enabled = false' "$R/.stella/connections.json" >"$C/r3off.json"; p0=$(python3 -I "$H/bin/stella_data.py" check --json 2>/dev/null | jq '.problems | length')
 ap apply connections --from "$C/r3off.json" >"$T/o" 2>&1; rc=$?; ap apply connections --from "$C/r3off.json" --dry-run >"$T/o2" 2>&1; r2=$?
 ok '[ "$p0" = 1 ] && [ $rc = 1 ] && [ $r2 = 1 ] && grep -q "STL-CFG-313.*fix role-assignments first.*already had a problem" "$T/o" && grep -q "fix role-assignments first" "$T/o2" && cmp -s "$T/conn.orig" "$R/.stella/connections.json"' "R3 by use: one old problem in the role assignments does not hide the new ones a catalog candidate adds there (apply and its dry run refuse, naming that row; W3-CRT5-03; exit $rc $r2, $p0 problem before: $(head -c 220 "$T/o"))"
@@ -1165,7 +1169,7 @@ mkdir "$(BK)/$k/qa-planted"; ap apply "$k" --from "$C/c1b.json" >"$T/o" 2>&1
 ok '[ $? = 1 ] && grep -q "^STL-CFG-316" "$T/o" && grep -F "whole text: " "$T/o" | grep -qF "$(BK | sed "s|$R/||")/$k/qa-planted"' "C the line for an unrecorded folder under a long name gives its whole path on the line after the coded one"
 rmdir "$(BK)/$k/qa-planted"
 for n in "$(head -c 250 /dev/zero | tr '\0' m).json" "$(head -c 249 /dev/zero | tr '\0' m).json"; do   # 255 bytes: the longest name the file system takes
-  jq --arg i "c-${#n}" '.id = $i' "$C/c1a.json" >"$C/c1n.json"; ap apply "extensions/$n" --from "$C/c1n.json" >"$T/o" 2>&1; r1=$?; ap rollback "extensions/$n" >"$T/o2" 2>&1
+  jq --arg i "c-${#n}" --arg g "$(cat /proc/sys/kernel/random/uuid)" '.id = $i | .global_id = $g' "$C/c1a.json" >"$C/c1n.json"; ap apply "extensions/$n" --from "$C/c1n.json" >"$T/o" 2>&1; r1=$?; ap rollback "extensions/$n" >"$T/o2" 2>&1
   ok '[ $r1 = 0 ] && [ $? = 0 ] && [ ! -e "$R/.stella/extensions/$n" ]' "C a name of ${#n} bytes, which the file system allows, is applied and rolled back (its lock file has a name that fits): $(head -c 150 "$T/o")"
 done
 n300=$(head -c 295 /dev/zero | tr '\0' x).json; w0=$(whole)
@@ -1173,6 +1177,50 @@ for c in "apply extensions/$n300 --from $C/c1a.json" "apply extensions/$n300 --f
   ap $c >"$T/o" 2>&1; rc=$?
   ok '[ $rc = 1 ] && [ "$(grep -c "^STL-CFG-3" "$T/o")" = 1 ] && [ "$(grep -vc "^STL-CFG-3\|^whole text: " "$T/o")" = 0 ] && grep -q "shorter name.*255 bytes" "$T/o" && ! grep -q Traceback "$T/o" && [ "$(whole)" = "$w0" ]' "C a name of 300 characters, which the file system refuses, is refused before any write with one coded line (and its whole text where the name makes it longer than the catalog's cut), the root byte-identical: ${c%% *} ($rc: $(head -c 160 "$T/o"))"
 done
+
+# T-TERMS (F1b D5): terms_ok is owner-only in the schema; the owner sets it through apply (dry run first) and rollback restores the
+# bytes, one event line each; the connections row keeps its shipped owner_only flag here, so a simulated worker is refused
+mkr terms; cp "$H/.stella/data-files.json" "$R/.stella/data-files.json"; cp "$H/.stella/schemas/connections.schema.json" "$R/.stella/schemas/"; git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qam shipped-flags
+SD="python3 -I $H/bin/stella_data.py"; CF=$R/.stella/connections.json; cp "$CF" "$T/terms.orig"
+jq '(.entries[] | select(.type == "cli-login")).terms_ok = true' "$CF" >"$C/terms.json"
+ok '$SD owner-only --json | jq -e ".connections | index(\"/entries/*/terms_ok\")" >/dev/null && [ "$(jq "[.files[] | select(.schema == \"connections\")] | all(.owner_only)" "$R/.stella/data-files.json")" = true ]' "T-TERMS the schema marks terms_ok owner-only, on a row that is owner-only"
+ok '[ "$(jq "[.entries[] | select(.type == \"cli-login\")] | length" "$CF")" -ge 1 ] && ! cmp -s "$C/terms.json" "$CF"' "T-TERMS the candidate sets terms_ok on every cli-login entry"
+B=$(tree); e0=$(nev); ap apply connections --from "$C/terms.json" --dry-run >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && grep -q terms_ok "$T/o" && [ "$(tree)" = "$B" ] && [ "$(nev)" = "$e0" ]' "T-TERMS dry run: the diff names terms_ok, nothing changed, no event"
+export STUB_WORKER_MARK=1; ap apply connections --from "$C/terms.json" >"$T/o" 2>&1; rc=$?; unset STUB_WORKER_MARK
+ok '[ $rc = 1 ] && grep -q STL-CFG-312 "$T/o" && [ "$(tree)" = "$B" ] && [ "$(nev)" = "$e0" ]' "T-TERMS a simulated worker cannot set it: STL-CFG-312, nothing changed"
+ap apply connections --from "$C/terms.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$C/terms.json" "$CF" && [ "$(nev)" = $((e0+1)) ] && $SD get connections --json | jq -e "[.entries[] | select(.type == \"cli-login\")] | all(.terms_ok == true)" >/dev/null' "T-TERMS the owner's apply sets terms_ok: the file is the candidate, one event line, the read serves true"
+ap rollback connections >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$T/terms.orig" "$CF" && [ "$(tree)" = "$B" ] && [ "$(nev)" = $((e0+2)) ] && [ "$(ap history connections --json | jq -r ".events | map(.type) | join(\",\")")" = "apply,rollback" ]' "T-TERMS rollback restores the bytes, one more event line"
+
+# F1b W6 r2: an event line reads the install id by the install row's own check (W6-CVER-01), and `apply <install row> --from <file>`
+# takes it from the candidate once that passes the install schema (W6-CRT-01, owner decision 2026-11-14 b); every other apply
+# stays fail-closed on a damaged install row
+mkr iid; IK=$(jq -r '.files[] | select(.schema == "install") | .id' "$R/.stella/data-files.json"); IP=$R/$(jq -r '.files[] | select(.schema == "install") | .path' "$R/.stella/data-files.json")
+IID=$(jq -r .install_id "$IP"); cp "$IP" "$C/install-good.json"; last() { tail -n 1 "$LOG" | jq -r "$1"; }
+jq '(.files[] | select(.schema == "versions")) |= del(.global_id)' "$R/.stella/data-files.json" >"$T/x" && cp "$T/x" "$R/.stella/data-files.json"
+git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qam index-row-without-id
+$SD ids-migrate data-files --out "$C/iid-idx.json" >"$T/o" 2>&1; r1=$?; e0=$(nev); ap apply data-files --from "$C/iid-idx.json" >"$T/o2" 2>&1; rc=$?
+ok '[ $r1 = 0 ] && [ $rc = 0 ] && cmp -s "$C/iid-idx.json" "$R/.stella/data-files.json" && [ "$(nev)" = $((e0+1)) ] && [ "$(last .install_id)" = "$IID" ] && $SD check >/dev/null 2>&1' "W6-CVER-01 an index row without global_id: ids-migrate data-files, then its apply goes through with one event line ($r1/$rc: $(head -c 160 "$T/o2"))"
+cp "$R/.stella/data-files.json" "$C/iid-idx-ok.json"; jq '(.files[] | select(.schema == "data-files")).owner_only = false' "$C/iid-idx-ok.json" >"$R/.stella/data-files.json"
+git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qam index-problem
+e0=$(nev); ap apply data-files --from "$C/iid-idx-ok.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$C/iid-idx-ok.json" "$R/.stella/data-files.json" && [ "$(nev)" = $((e0+1)) ] && [ "$(last .install_id)" = "$IID" ] && $SD check >/dev/null 2>&1' "W6-CVER-01 a problem of the index itself (every read depends on it) does not stop its repair: apply data-files --from a fixed copy, one event line ($rc: $(head -c 160 "$T/o"))"
+jq '.entries[0].owner_phase = "w6 r2"' "$R/.stella/features.json" >"$C/iid-feat.json"; cp "$R/.stella/features.json" "$T/feat.keep"
+jq 'del(.install_id)' "$C/install-good.json" >"$IP"; git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qam install-damaged
+e0=$(nev); ap apply features --from "$C/iid-feat.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q "STL-CFG-310.*install id cannot be read" "$T/o" && [ "$(nev)" = $e0 ] && cmp -s "$T/feat.keep" "$R/.stella/features.json"' "W6-CVER-01 a damaged install row still refuses every other apply: 310, no line, the file unchanged"
+jq '.install_id |= ascii_upcase' "$C/install-good.json" >"$C/install-bad.json"; cp "$IP" "$T/ins.keep"
+ap apply "$IK" --from "$C/install-bad.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q "STL-CFG-313.*candidate is invalid" "$T/o" && [ "$(nev)" = $e0 ] && cmp -s "$T/ins.keep" "$IP"' "W6-CRT-01 a damaged install file and a candidate that fails the install schema: refused, no line, nothing changed"
+ap apply "$IK" --from "$C/install-good.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$C/install-good.json" "$IP" && [ "$(nev)" = $((e0+1)) ] && [ "$(last .what)" = "$IK" ] && [ "$(last .install_id)" = "$IID" ]' "W6-CRT-01 a damaged install file is repaired by apply --from a good copy: one event line with the candidate's install id ($rc: $(head -c 160 "$T/o"))"
+ap apply features --from "$C/iid-feat.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && [ "$(nev)" = $((e0+2)) ] && [ "$(last .install_id)" = "$IID" ] && cmp -s "$C/iid-feat.json" "$R/.stella/features.json"' "W6-CRT-01 after the repair another row applies again, its line with the install id"
+N2=$(cat /proc/sys/kernel/random/uuid); jq --arg i "$N2" '.install_id = $i' "$C/install-good.json" >"$C/install-new.json"
+ap apply "$IK" --from "$C/install-new.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && [ "$(nev)" = $((e0+3)) ] && [ "$(last .install_id)" = "$N2" ]' "W6-CRT-01 an apply of the install row takes its line's install id from the candidate also when the current file is readable"
 
 $AP bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "usage error exits 2"
 [ $fails = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

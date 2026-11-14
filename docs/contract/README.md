@@ -3,6 +3,8 @@
 Every core card ships all fourteen items below. The contract data lives in `.stella/`; `bin/stella_data.py` reads and
 checks it. Check everything with `python3 bin/stella_data.py check` (exit 0 = valid; exit 1 = one `STL-CFG-310` line per
 problem). Read with `list`, `get <id> [<entry>]` and `search <words>`; every read command takes `--json`.
+`ids-migrate <id>[/<file>] --out <file>` writes a candidate with record ids added (see "Records and ids"), and
+`owner-only [--json]` lists the fields each schema marks `x-owner-only`.
 
 ## The 14 items
 
@@ -19,6 +21,9 @@ problem). Read with `list`, `get <id> [<entry>]` and `search <words>`; every rea
    It scans only the files git tracks (a walk of the root where there is no git).
    The lint does not scan the instruction documents at the top of the repository (the `*.md` skip row of
    `docs/hermes-local/hardcode-allow.json`): decided by the owner on 2026-11-12, as data the owner may change.
+   The same lint fails (`STL-CFG-324`) when a data file keeps a copy of a list another data file owns (the allow list's
+   `lists` rows; a row that finds no ids in its owner is refused). Data files are the JSON files the data index names (the
+   `*.json` of a folder row too) and the allow list's `data_files` patterns; any other JSON is named on a "not checked" line.
 7. **Unknown fails closed.** An unknown role, provider, app or extension gets the most restrictive treatment plus one
    alert (`STL-CFG-311`), never open access.
 8. **Apply contract.** Anything the app writes is applied by an idempotent script with check (drift), dry run, backup
@@ -40,10 +45,14 @@ when its format is `json` and its path does not end in `.json`; every other row 
 the list key and not the disk; `stella_data.folder_row(row)` is that rule for this tool and the apply tool), `schema` (a plain name
 such as `settings`, lower case letters, digits and `-`, read as `.stella/schemas/<schema>.schema.json`; null for an env file), `format` (`json` or `env`), `owner_only` (only the
 owner's path writes it), `redact_keys` (key names whose values are masked in logs), `list_key` (the array or map that
-holds the entries) and `id_field` (several fields, comma separated, make an id joined with `:`; approved hosts use `host,port`).
+holds the entries), `id_field` (several fields, comma separated, make an id joined with `:`; approved hosts use `host,port`)
+and, on a row with records, `record_kind` (a kind of the data policy's `record_kinds`; a row with records that names none, or
+names a kind the policy does not list, is refused).
 It also names the event log, the backup folder, the applied-state file and the role table. Every path in the index is
 relative, has no `..` part and must resolve (symlinks followed) inside the stack root; `check` refuses one that does not,
-and `get`, `list` and `search` never read it. The index row of the index is `owner_only`: it decides which files are.
+and `get`, `list` and `search` never read it. The index row of the index is `owner_only`: it decides which files are. A row
+whose schema marks any field `x-owner-only`, and the row of the `install` schema, must be `owner_only` too (the apply gate is per
+row, so an open row would let any role write an owner-only field); `check` refuses either one left open, naming the row.
 **A row is charged for its own fault only**, also for where its path points. A JSON row whose path, a folder in that path below
 the stack root, or an entry file of its folder is a symbolic link is refused, that row alone ("must not be a symbolic link",
 naming the row and the path): it is compared with no other row, so the row whose file the link points to (the settings
@@ -63,8 +72,11 @@ refused unread; when the index of that root cannot be read or is not valid, `val
 another root can have `validate` open a file that is an owner setting of the first root (the secret guard, not this tool, is
 the control for a command that names such a path). Env rows and owner settings keep the identity rule only (no link rule here;
 the apply tool has its own), so an env row that resolves to a JSON row's file still closes both rows. A folder row lists the
-`*.json` names of its folder (by name: `[`, `*`, `?` in
-the row path or the stack root are plain characters, never a glob). When the role table cannot be read, `check` says so, only
+`*.json` names (any case) of its folder (by name: `[`, `*`, `?` in
+the row path or the stack root are plain characters, never a glob). A folder entry's file name has one rule, `stella_data.ENTRY`,
+shared by `check`, `ids-migrate` and the apply tool: letters, digits, dot, dash and underscore, no leading dot, ends in `.json`.
+A listed name that fails it is a problem of its row in `check` (STL-CFG-310, the name JSON-escaped), and that file is opened for
+no reader, so no tool reads an entry another one skips. When the role table cannot be read, `check` says so, only
 the files of env rows stay closed, and the rules that read the table do not run: the rows they judge (role assignments,
 capabilities, extensions, connections) are refused, the others are still judged and served.
 
@@ -78,7 +90,40 @@ schema does not run; the rows those rules judge get one line "not judged by the 
 refused". A rule that fails anyway is one line naming every row it read (never the index). That merged view is what `check`
 judges and what the read commands serve.
 
-Schemas use a small JSON Schema subset (the list is in the docstring of `bin/stella_data.py`). A schema's identity is its name:
+**Records and ids (product rule 14).** A record is one entry of a row with a `list_key` (the index's own rows too), or one
+file of a folder row; the parts inside it (a connection's models and actions) are not records. Every record carries
+`global_id` (a lower-case version 4 UUID, unique across every data file: one value in two records is a line on every row that
+holds it) and `install_id` (the UUID of the install that made it; a record moved from another install keeps its own). An
+object deeper in a file whose schema declares a `global_id` (a privacy grant) is a record too, found from the schema: its
+`global_id` joins the same check and its `id` is unique in its list. The old `id` (or the row's `id_field`) is the record's
+alias and stays unique per schema as before, and no alias equals the `global_id` of another record in any data file: the reads of `stella_data.py` (`get <id> <entry>`) and every `x-ref` accept the
+alias or the `global_id`; `bin/settings.py get/set` take the key only. Both fields are always required: there is no switch
+that turns the check off (owner decision 2026-11-13). **A migration that changes what a schema requires ships with its code**
+(the run branch carries the migrated files) **and is undone by reverting that merge, code and data together**; the apply
+contract's `rollback` covers value changes only, since it restores only bytes that pass the current checks.
+**The ids migration** (for live data that diverged before that merge): `stella_data.py ids-migrate <id> --out <file>`
+(`<id>/<file>.json` for a folder row; a file name the entry rule refuses gets the apply tool's own STL-CFG-313 line) writes a new file (never over an existing one, never inside a stack tree: the root,
+the tree the tool runs from, or any folder that holds an index, where a file could be a live entry at once, outside the apply
+contract; refused with STL-CFG-313; the folder is opened once, checked as opened, and the file made through it) that is the row's file with `global_id` and `install_id`
+added to every record that lacks them and nothing else changed; apply it with `stella-apply.py apply <id> --from <file>`
+(dry run first). It reads the install id from the install file checked by its own schema, so it runs while the index itself
+lacks ids. On a row already migrated it adds nothing, and its apply is no change.
+
+Schemas use a small JSON Schema subset (the list is in the docstring of `bin/stella_data.py`). Two keywords are Stella's own:
+`x-ref: "<index row id>"` on a string says the value must be the id (alias) or `global_id` of a record of that row's merged
+view. The rule for an unknown id: `check` charges it to the row of the file that holds it as one more `STL-CFG-310` line
+(naming the field, never the value; no alert line: check reports a set, and the apply tool runs it on a temp copy), and
+`validate <schema> <file>` refuses it with `STL-CFG-311` and one alert line, also when the file has `STL-CFG-310` problems too (both are printed; an x-ref naming no JSON row of the index is a
+`STL-CFG-310` error). A `uniqueItems` list of x-ref strings compares the records the items resolve to: an alias and the global_id of one record are one item (`STL-CFG-310`, "names the same record"). `validate` also refuses a document whose `global_id` is already the global_id of a record in the data files (rule 14; not for a schema an index row uses, where `check` judges the file in its place). `x-ref` stands only beside `type: "string"` (a property name under `propertyNames` too, where it is
+applied to every key); anywhere else the schema lint refuses it, and so an `x-ref-where`, which needs an x-ref beside it. A
+document validated where no x-ref is resolved (the role table, an event line, a setting value) fails when its schema holds one. `x-ref: "<row id>/<key>"` names instead the list (objects with an `id`) or map under
+`<key>` inside that row's documents (`data-policy/sync_classes`). `x-ref-where: {field: value}` beside an x-ref says the
+record must also carry each value (JSON equality: `false` is not `0`); a record that does not counts as unknown (the
+line says which values). A read also depends on the rows its schemas' x-refs name. `x-owner-only: true` marks a
+field only the owner's path writes; `stella_data.py owner-only [--json]` lists, per schema, the JSON pointer of every marked
+field (`*` for any array item or map value; a marker reached through `$ref` counts), and fails closed (`STL-CFG-310`) when a
+schema cannot be read. `x-record-kind-of: {"<schema name>": "<record kind>"}` (in the index schema) says an index row of
+that schema must name that `record_kind`; any other value is refused by the schema lint. A schema's identity is its name:
 the file `<name>.schema.json` in `.stella/schemas/`. A schema file that is a symbolic link is refused; a byte copy under
 another name is another schema, which the cross-file rules do not read (the schemas folder is owner data). A schema that uses any
 other keyword is an error, never ignored; so is a keyword with a wrong value (`required` as a string, an external `$ref`).
@@ -98,7 +143,7 @@ writes them (item W2). Numbers must fit a float (a number too large, or a non-ze
 (one limit for `check` and the read commands). Every data file needs `schema_version`. `check` also runs the
 cross-file rules: role assignments against the connections catalog, the effort modes and the data policy (a project scope
 needs `project`, a card scope needs `project` and `card`, a global scope has neither; project ids are lower case; one
-assignment per scope, role and effort mode; no chain entry names a provider that is switched off, and its provider allows every data class of the role (`requirements.allowed_data_classes`; an empty `data_classes_allowed` allows none) and lists the assignment's role in its `allowed_roles` (`[]` allows no role); one card id belongs to one project; the role table's
+assignment per scope, role and effort mode; no chain link names a provider that is switched off, and its provider allows every data class of the role (`requirements.allowed_data_classes`; an empty `data_classes_allowed` allows none) and lists the assignment's role in its `allowed_roles` (`[]` allows no role); one card id belongs to one project; the role table's
 `fallback_role` is not a role to assign or allow); `depends_on` in features (no missing target, no cycle, an `on` feature
 depends only on `on` features); `allowed_roles` against the role table; a setting's store, default and `code` (it must
 exist in the alert catalog) against the index and the registry itself; an extension is `enabled` only when `approved`; data
@@ -179,27 +224,95 @@ Unknown means `null` or `"unverified"`: never write a capability, cost or term y
 ## One section per data file
 
 ### `.stella/connections.json` (connections catalog)
-Providers, apps and channels as one list (`entries[]`, `kind` is provider, app or channel). Fields: `id`, `kind`, `subkind`
-(for example `openai-compatible-aggregator`), `label`, `enabled`, `locality` (local or cloud), `hosts[]` (host, port,
+`schema_version` 2 (owner decision 2026-11-14: version 1 was the F1 shape, before types, aggregators and input sources; a
+version 1 file is refused). Providers, apps, channels and input sources as one list (`entries[]`, `kind` is provider, app, channel or input_source). Fields: `id`, `kind`, `subkind`
+(for example `openai-compatible-aggregator`), `label`, `enabled`, `locality` (local, cloud or hub), `hosts[]` (host, port,
 purpose), `auth_types[]`, `secrets[]` (names), `actions[]` (id and approval class: read is automatic; write, post, send,
 pay, delete need approval first; sign_in is an escalation), `models[]` (id, probed `capabilities`: `tool_calling`,
 `json_mode`, `context_tokens`, `vision`, `streaming`, each a value or null for not probed; `probed_at`, `probe_source`),
 `data_policy` (retention, training use, region, zero retention, `data_classes_allowed`; an empty list allows no class)
 `tos` (`status`, `unverified` is a legal value; `subscription_login_by_agent` is required and is the declared automated-agent terms flag:
 `unverified`, `allowed`, `forbidden` or `not_applicable`; no other key), `scopes[]` (the access scopes it asks for), `redaction_patterns[]`
-(Python regular expressions masked in its logs) and `allowed_roles[]` and `risk_class` (required on a provider and a channel; `[]` allows no role). *To add one:* append an entry; an aggregator proxy is a provider with
+(Python regular expressions masked in its logs) and `allowed_roles[]` and `risk_class` (required on every kind but an app; `[]` allows no role). *To add one:* append an entry; an aggregator proxy is a provider with
 `subkind: openai-compatible-aggregator`, disabled until the owner turns it on, with its own outbound hosts in `hosts`.
+
+Connection types (F1b D5; the schema subset has no conditionals, so `check` states the per-type and per-kind rules in
+`rule_catalog` and `rule_policy` of `bin/stella_data.py`). Every entry has `type`: `api` (a key or OAuth token the broker
+holds) or `cli-login` (a coding CLI logged in to the owner's own subscription; only a provider or an app). A `cli-login` entry
+names `cli` (the CLI's id, a versions.json pin id where one exists), `quota_source[]` (`cli_usage`, `limit_errors`),
+`concurrency_limit` (>= 1), `credential_store` (`engine_cli_store`: the CLI's own store on the engine, which Stella never
+reads, so the entry lists no `secrets`: the broker holds nothing for it; `vault_vm`: a leased rotating vault entry, only when the owner allows a CLI login inside VMs) and `terms_ok` (null =
+unset, the default; true or false is the owner's record of the provider's terms); an `api` entry has none of these five.
+`terms_ok` and `credential_store` are `x-owner-only` (`stella_data.py owner-only` lists them): the owner sets them with
+`bin/stella-apply.py apply connections --from <candidate>` (dry run first; `rollback` restores the bytes). Routing refuses a
+`cli-login` link whose `terms_ok` is not true (see role assignments). An `api` provider may be `aggregator: true` (one endpoint fronting
+several upstream providers) and then names `broker_entries` {`unified`, `admin`, `upstream[]`}: broker entry names only.
+Routing judges an aggregator (what it is given goes on to its upstreams) and a hosted connection (its provider's cloud keeps
+data) as cloud whatever its `locality`: a class's hosted rule (grant or never), a Local only project and an effort mode that
+allows local links only all apply to it. One function (`stella_data.reach()`) says whether a link leaves the machine, and
+these three checks read only it. The shipped
+`fallback-gateway` stays unmarked (owner decision 2026-11-14): B1 marks it `aggregator: true` when it defines its broker entries.
+Every entry marked `locality: local`, whatever its kind, lists only hosts of the data policy `local_hosts` (a provider names
+at least one).
+An app may be `integration_aggregator: true` (one key fronting many apps); its `data_policy.hosted` must be true. A hosted
+connection (the provider's cloud keeps data) may not allow a class that never reaches a cloud store (class rule `sync:
+never` or `hosted: never`, a class with no rule row, or the `data_class` of a `never_cloud` record kind: secrets, vault
+content), a private project may not name it in `allowed_providers`, and routing never sends a private project to it, whatever
+the project's mode. Kind `input_source` (schema only): a camera, microphone or sensor feed; its `subkind` is the data class of
+what it produces (a class of the data policy whose rule is `sync: never`, as camera, microphone and sensor are; a class with
+no rule row counts as never) and its `locality` is `local` or `hub` (a home-automation hub; only an input
+source is on a hub). A provider may carry `realtime` {`audio`, `video`} for models that take live audio or video (schema only).
+The shipped Claude Code login (`claude-subscription`, CLI `claude-code`, used by the builder-claude and reviewer-claude
+profiles) is `cli-login` with `terms_ok` null; every other shipped entry is `api`.
 
 ### `.stella/data-policy.json`
 `data_classes[]`, `local_hosts[]` (the host names that count as local; a provider declared local may list only these), a `default` and `projects{}`; each has `mode` (`open`, `local_only`, `allowed_providers`) and
-`allowed_providers[]`. *To add a project rule:* add a key under `projects`.
+`allowed_providers[]`; a project (a record, with its two ids) may also carry `private` (owner-marked) and its own
+`sync_class`. *To add a project rule:* add a key under `projects`.
+**Sync classes (item 8).** `sync_classes[]` (`id`, `cloud`, `description`): where records may be copied; `local-only`
+(`cloud: false`) is the default every shipped kind uses. `record_kinds{}`: every kind of record and its `sync_class`, with an
+optional `data_class` and `never_cloud`. The kinds of data-file records are the `record_kind` of their index rows; the kinds
+kept outside the data files (`card`, `project`, `vault-entry`, `secret`, `event`, `device`, `approval`) must be listed. A
+kind with no sync class, or an unknown sync class or data class, is refused. A kind with `never_cloud` (the schema requires
+it on `vault-entry` and `secret`) or whose data class is never synced may only have a sync class whose `cloud` is false; so
+may a private or `local_only` project (its own `sync_class`, else the kind of the data-policy row's records, which the index
+schema pins with `x-record-kind-of` so a relabelled row is refused), the `default` too (every project the policy does not list follows it). A move-primary
+transfer to the owner's own paired device, end-to-end encrypted (U1), is not a sync class.
+**Data-class rules (item 9).** `class_rules{}`: per data class `sync` (never, allowed), `store` (owner_asks, allowed),
+`hosted` (grant, allowed, never) and `context` (text_only, allowed). `camera`, `microphone`, `sensor` and `host-screen` are
+never synced, stored only when the owner asks, sent to a hosted model only under a privacy grant and only text results
+reach a worker's or the supervisor's context; `secret` is never synced and never hosted. A class with no rule row gets the
+most restrictive rules (never, owner_asks, never, text_only); a rule row for a class `data_classes` does not define is
+refused. `privacy_grants[]` (`id`, `global_id`, `install_id`, `data_class`, `connection` (an x-ref to the catalog),
+`granted_at`, optional `expires_at`) is `x-owner-only` and ships empty; routing (F2) reads it.
+
+### `.stella/install.json`
+The install's one document, owner-only: `install_id` (this install's UUID, made once, `x-owner-only`). No switch turns the
+id check off (see "Records and ids"). `stella_data.install_id()` is the one reader (new event lines and approval records use it).
 
 ### `.stella/role-assignments.json`
 `effort_modes{}` (allowed localities and `no_silent_fallback` for standard, eco, max, local_only) and `assignments[]`:
-`scope` (`level` global, project or card, with `project` or `card`), `role`, `effort_mode`, and an ordered `chain[]` of
-`{provider, model, parameters}`; effort-mode ids are lower case ASCII like other ids. **Precedence:** the data policy first, then the card, then the project, then the global
-assignment. An override never widens the data policy: `check` refuses a chain entry the policy forbids for its project.
-It also refuses an unknown provider, model, role or mode, an empty chain, and a provider whose locality the mode forbids.
+`scope` (`level` global, project or card, with `project` or `card`; `project` is the alias or the `global_id` of a project of
+the data policy, both one project for its policy and the same-scope rule, or a project it does not list, which follows the
+`default`), `role`, `effort_mode`, and an ordered `chain[]` of
+links `{connection, model, parameters}` (F1b D6): `connection` is the id or `global_id` of a provider in the catalog
+(x-ref `connections`, `x-ref-where` kind provider), `model` one of that connection's models; typed links are `schema_version` 2.
+F1 wrote `provider` (version 1); the migration sets version 2 and renames that key, nothing else: write the candidate with
+`jq '.schema_version = 2 | .assignments[].chain[] |= with_entries(if .key == "provider" then .key = "connection" else . end)'`, then
+`stella-apply.py apply role-assignments --from <candidate>` (dry run first). A data-only `rollback` of it is refused (the
+saved copy fails the schema a candidate must pass); undoing it means reverting the schema and the file together.
+effort-mode ids are lower case ASCII like other ids. **Precedence:** the data policy first, then the card, then the project, then the global
+assignment. An override never widens the data policy: `check` refuses a chain entry the policy forbids for its project
+(its `allowed_providers` name connections by id or `global_id`).
+It also refuses an unknown connection, model, role or mode, an empty chain, and a provider whose locality the mode forbids.
+**Routing** (one rule, `route_problems`, beside the project policy's): a `cli-login` link needs `terms_ok` true. On a link
+whose connection is cloud or `data_policy.hosted`, each data class the role handles (`requirements.allowed_data_classes`)
+follows its `class_rules` `hosted`: `allowed` passes, `never` (and a class with no rule row) is refused outright, `grant`
+needs a `privacy_grants` entry for that class naming the connection (id or `global_id`) that is in force: `granted_at` a
+real date not in the future, and `expires_at` (null or absent never expires) a real date after `granted_at` and not past;
+any other grant grants nothing. A private project never routes to a hosted connection (`policy_allows`). Card app rules are
+F2's: when F2 routes by card, it refuses a `cli-login` app whose `terms_ok` is not true, and a hosted integration aggregator app
+(`integration_aggregator: true`) on a card that carries secrets or belongs to a private project.
 The resolver that applies the precedence is built in a later phase; this file is the data and the validator.
 *To add one:* append an assignment with a new `id`.
 
@@ -236,14 +349,18 @@ that compiles, an enum with values). Patterns are read with `$` as the very end 
 
 ### Event and approval schemas
 `.stella/schemas/event.schema.json`, `approval-request.schema.json` and `approval-decision.schema.json` are schemas for
-lines and messages, not data files. Check a sample with `stella_data.py validate <schema> <file>`.
+lines and messages, not data files. Check a sample with `stella_data.py validate <schema> <file>`. schema_version 2 (F1b) adds
+`global_id` (a lower-case UUID4) and `install_id` (a UUID) to every new line and record; a version 1 line or record from before
+is never rewritten, validates as it is and is still found by what identified it then (an event line by its place in the log and
+its fields, a request by `id`, a decision by `request_id`). The schema subset has no conditional, so the schemas take the ids as
+optional; that a version 2 line or record has both is its writer's rule (the event log's below; approvals have no writer yet).
 
 ## The apply tool and the event log (`bin/stella-apply.py`, `bin/event_log.py`)
 
 `stella-apply.py apply <id> --from <file> [--dry-run]`, `check [<id>] [--json]` (`--check` is accepted for `check`), `rollback <id>`,
 `history <id> [--json]`.
-A single-file row is addressed by its id only; a folder row by `<id>/<name>`, where the name is letters, digits, dot, dash and
-underscore, starts with a letter, digit or underscore, and ends in `.json`. Exit 0 ok, 1 refused or failed (or drift), 2 usage.
+A single-file row is addressed by its id only; a folder row by `<id>/<name>`, where the name passes the entry rule of the
+data tool (`stella_data.ENTRY`: letters, digits, dot, dash and underscore, no leading dot, ends in `.json`). Exit 0 ok, 1 refused or failed (or drift), 2 usage.
 Every failure is one catalog code and its plain message: 310 data unreadable, 311 unknown id, 312 owner-only, 313 a change
 refused before it wrote anything (invalid candidate, a link, a path clash, a read-only folder, a restore that no longer
 validates), 314 drift or a hand edit rollback would overwrite, a setting's own code (today 315) for an env candidate that breaks
@@ -318,7 +435,8 @@ key, or by the key's hash when that name would be longer than a file name may be
   way out (fix that row first, then run the command again). The same rule judges the saved copy a rollback restores and a dry
   run. **A rollback restores saved bytes the row's reader cannot parse as they are** (they were in use so; the apply replaced
   them without asking them to parse); saved bytes that parse are checked like a candidate (registry, whole set), and a refusal
-  says the reason and the one way out.
+  says the reason and the one way out. So rollback undoes value changes; a change of what a schema requires (a migration such
+  as the record ids) ships with its code and is undone by reverting that merge, code and data together.
 - **What a row is.** Whether a row is one file or a folder of entries is the data tool's one rule, `stella_data.folder_row`
   (a json row whose path does not end in `.json` is a folder of entries; every other row is one file): not the list key, not the
   disk, not the applied record. The disk and the record are compared with it: a folder row whose folder is missing or is a file,
@@ -438,7 +556,14 @@ key, or by the key's hash when that name would be longer than a file name may be
   same masking as an apply line, and the hashes unless the row is private), then the older backups of the key are set aside
   (status `superseded`: kept as history, no longer used by rollback, no longer holding the row in the index) and the marker is
   cleared; a kill in between is finished by the next apply of the same bytes.
-- **Event log.** One JSON line per state change, ASCII only (no value can hold a line separator), written whole or not at all
+- **Event log.** One JSON line per state change; each line written is schema_version 2 with a `global_id` (the caller's, else a
+  new UUID4; a line whose global_id is already in the log is refused, 313, nothing written) and this install's `install_id` from
+  `stella_data.install_id()` (if that cannot be read, nothing is written: 310). That reader judges the install row by its own
+  check only (its one file passes the install schema), so a problem elsewhere, the index's own included, never blocks the
+  apply that repairs it. `apply <install row> --from <file>` takes its line's install id from the candidate once it passes
+  the install schema, so a damaged install file is repaired through the contract (owner decision 2026-11-14); every other
+  apply and rollback stays refused (310) while the install id cannot be read. The ids are set after masking; older lines stay
+  as they are. ASCII only (no value can hold a line separator), written whole or not at all
   under the log's lock: a log that does not end in a newline gets one first, and after a failed or short write the file is cut
   back to its earlier size (318). Readers split on `\n` only; a line that is not a JSON object, is larger than 4 MiB, nests
   deeper than 64 levels, or cannot be parsed, masked or printed for any reason is counted as unreadable and reported
@@ -509,3 +634,5 @@ not readable through this tool) are used by `stella_data.py`.
 
 ## How the suite runs (decided by the owner 2026-11-12)
 Two tiers. The full suite (`npm test`, `bin/selftests.sh`) runs at merge and on the final hash. The quick tier (`npm run test:quick`, `bin/selftests.sh --quick`) is what the 15-minute watchdog runs; its list is the `quick` key of `.stella/test-map.json` (data: `bin/test-map.py quick` prints it, `check` refuses a name outside the suite list). Either way each selftest runs isolated in its own copy of the tree and a bubblewrap mount namespace (own tree, alert log and temp folder), at most `test_rerun.parallel` at once (watchdog settings); a selftest whose file holds the line `# selftest: serial` runs alone after the batch. Inside a box that forbids nested namespaces the suite fails, by design. Output is in list order; `SELFTESTS_TIMES=<file>` records the seconds per selftest.
+
+Lock scope: `marks` in `.stella/test-map.json` gives every selftest `hermetic` (touches no live state outside its scratch root and the runner's copy: no live board, no installed Hermes, no real `~/.hermes`, no live owner settings file, no write into the real home; it may run outside the test lock) or `shared` (anything else, with a `why` that is true under the runner, which binds each copy over `/workspace`). An unmarked selftest counts as shared and `check` refuses it, as it refuses a mark of the wrong shape and two selftest names that differ only in case. `bin/test-map.py select --json` lists in `shared` the selftests that run and are not hermetic: the selected targets, or on a full answer the whole suite (the suite lists of the stack's own runner and of the map's `runner` together, so a map can only add names; every name when the map or its schema cannot be read, `["*"]` when no suite can be named). Marks do not isolate global git config.

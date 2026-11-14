@@ -4,7 +4,7 @@
   "type": "object",
   "properties": {
     "schema_version": {
-      "const": 1
+      "const": 2
     },
     "entries": {
       "type": "array",
@@ -30,11 +30,20 @@
           "enum": [
             "provider",
             "app",
-            "channel"
-          ]
+            "channel",
+            "input_source"
+          ],
+          "description": "provider, app or channel; input_source: a camera, microphone or sensor feed (schema only, nothing uses it yet), whose subkind is the data class of what it produces and whose locality is local or hub."
         },
         "subkind": {
           "type": "string"
+        },
+        "type": {
+          "enum": [
+            "api",
+            "cli-login"
+          ],
+          "description": "api: a key or OAuth token held by the broker. cli-login: a coding CLI logged in to the owner's own subscription, its token in that CLI's own store on the engine (Stella never reads it). Only a provider or an app may be cli-login; a cli-login entry needs cli, quota_source, concurrency_limit, credential_store and terms_ok, an api entry has none of them."
         },
         "label": {
           "type": "string"
@@ -45,8 +54,10 @@
         "locality": {
           "enum": [
             "local",
-            "cloud"
-          ]
+            "cloud",
+            "hub"
+          ],
+          "description": "hub: from a home-automation hub; only an input_source may be on a hub, and an input_source is local or hub."
         },
         "hosts": {
           "type": "array",
@@ -249,6 +260,10 @@
               "items": {
                 "type": "string"
               }
+            },
+            "hosted": {
+              "type": "boolean",
+              "description": "true: the provider's own cloud keeps data (an integration aggregator's connected-account tokens). A hosted connection never allows a class that may not reach a cloud store (class rule sync never or hosted never, or the data class of a never_cloud record kind: secrets, vault content), and no private project uses it."
             }
           },
           "required": [
@@ -309,12 +324,117 @@
             "delete",
             "sign_in"
           ]
+        },
+        "global_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "description": "The record's global id: a lower-case version 4 UUID, unique across every data file (product rule 14). The record's old id stays its alias: every read that takes an entry id accepts either."
+        },
+        "install_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "description": "The UUID of the install that made the record (its .stella/install.json); a record moved from another install keeps it."
+        },
+        "cli": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "description": "cli-login: the id of the CLI (a versions.json pin id where one exists)."
+        },
+        "quota_source": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "cli_usage",
+              "limit_errors"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "cli-login: where its quota is read: the CLI's usage output, observed limit errors, or both."
+        },
+        "concurrency_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "cli-login: how many runs may use this login at once."
+        },
+        "credential_store": {
+          "enum": [
+            "engine_cli_store",
+            "vault_vm"
+          ],
+          "x-owner-only": true,
+          "description": "cli-login: where the login lives: the CLI's own store on the engine, or (only when the owner allows a CLI login inside VMs) a leased rotating vault entry. Owner-only: moving a login into VMs is the owner's call."
+        },
+        "terms_ok": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "x-owner-only": true,
+          "description": "cli-login: the owner's record that the provider's terms allow this use. null (unset) is the default; the owner sets it through the apply contract. Routing refuses a cli-login link whose terms_ok is not true."
+        },
+        "aggregator": {
+          "type": "boolean",
+          "description": "An api provider that is one endpoint fronting several upstream providers; it then names its broker_entries."
+        },
+        "broker_entries": {
+          "type": "object",
+          "properties": {
+            "unified": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9]*_[A-Z0-9_]*$",
+              "maxLength": 64
+            },
+            "admin": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9]*_[A-Z0-9_]*$",
+              "maxLength": 64
+            },
+            "upstream": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9]*_[A-Z0-9_]*$",
+                "maxLength": 64
+              },
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "unified",
+            "admin",
+            "upstream"
+          ],
+          "additionalProperties": false,
+          "description": "An aggregator's broker entries, names only: its unified token, its admin key and its upstream keys (the broker injects them)."
+        },
+        "integration_aggregator": {
+          "type": "boolean",
+          "description": "An app that is one key fronting many apps as tools. Its connected-account tokens stay in its provider's cloud (a recorded exception to the broker rule; the broker holds only its API key), so its data_policy must say hosted true."
+        },
+        "realtime": {
+          "type": "object",
+          "properties": {
+            "audio": {
+              "type": "boolean"
+            },
+            "video": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "audio",
+            "video"
+          ],
+          "additionalProperties": false,
+          "description": "A provider whose models take live audio or video (schema only, nothing uses it yet)."
         }
       },
       "required": [
         "id",
         "kind",
         "subkind",
+        "type",
         "label",
         "enabled",
         "locality",

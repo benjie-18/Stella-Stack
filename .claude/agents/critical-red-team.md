@@ -1,7 +1,7 @@
 ---
 name: critical-red-team
 description: Red team for work items tagged critical: tries to break a scratch copy of the frozen hash, one concrete repro per finding.
-model: fable
+model: opus
 effort: high
 tools: Read, Write, Bash, Grep, Glob
 ---

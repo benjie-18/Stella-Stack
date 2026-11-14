@@ -15,7 +15,7 @@ cp -r "$H/.stella" "$R/"
 jq '.worker_markers = ["STUB_WORKER_MARK"]' "$H/docs/hermes-local/roles.json" >"$R/docs/hermes-local/roles.json"
 cp -r "$H/docs/hermes-local/hooks" "$R/docs/hermes-local/hooks"   # the table check looks hook files up under the root
 # a planted secret entry whose value lives in the fake owner file; the test greps for it everywhere
-jq '.entries += [(.entries[2] | .key = "PLANTED_SECRET" | .sensitivity = "secret" | .type = "string" | .validation = {} | .default = null | .store = {data: "owner-settings", key: "PLANTED_SECRET"})]' \
+jq --arg g "$(python3 -I -c "import uuid; print(uuid.uuid4())")" '.entries += [(.entries[2] | .global_id = $g | .key = "PLANTED_SECRET" | .sensitivity = "secret" | .type = "string" | .validation = {} | .default = null | .store = {data: "owner-settings", key: "PLANTED_SECRET"})]' \
   "$R/.stella/settings.json" >"$T/s" && mv "$T/s" "$R/.stella/settings.json"
 printf "# fake owner file\nWORKER_GIT_NAME='Fake One'\nWORKER_GIT_EMAIL='fake@example.invalid'\nPLANTED_SECRET='sekrit-owner-111'\n" >"$R/config/owner.env"
 printf "CALL_TIMEOUT=600\n" >"$R/.supervisor/limits.env"

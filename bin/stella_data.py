@@ -5,20 +5,36 @@ CLI: stella_data.py check [--json] [<id>]       validate every data file against
                                                 With an id: that file's problems plus every cross-file problem.
      stella_data.py validate <schema> <file>    one JSON file against .stella/schemas/<schema>.schema.json
      stella_data.py list [--json] [<id>]        the data files, or the entries of one
-     stella_data.py get [--json] <id> [<entry>] a whole data file, or one entry (secret values are masked)
+     stella_data.py get [--json] <id> [<entry>] a whole data file, or one entry by its id (alias) or global_id (secrets masked)
      stella_data.py search [--json] <words...>  entries whose values hold all the words; approved first. Finding grants nothing.
+     stella_data.py ids-migrate <id>[/<file>] --out <file>  a candidate of that row's file (<id>/<file>.json for a folder row)
+                                                with global_id and install_id added to every record that lacks them, nothing
+                                                else changed; apply it with stella-apply.py apply. Never writes over a file,
+                                                never inside a stack tree (the root, this tool's own tree, any folder that
+                                                holds an index: STL-CFG-313).
+     stella_data.py owner-only [--json]         the paths (JSON pointer, * for any item) each schema marks x-owner-only
 Exit: 0 ok; 1 a problem (one line per problem or unreadable file, code STL-CFG-310) or an unknown id (STL-CFG-311, one
 alert line); 2 usage. No command ends in a traceback.
 The stack root is the parent of this file's folder, or STELLA_ROOT (a scratch root in tests; the alert line then goes under it).
 Data files must be strict JSON: a repeated key, NaN and Infinity are errors. A problem message never prints the rejected value.
 Schema subset: type, enum, const, properties, propertyNames, required, additionalProperties, items, minItems, maxItems,
 uniqueItems, minLength, maxLength, pattern ($ matches only at the very end), minimum, maximum, $ref (#/$defs/x; sibling
-keywords still apply), $defs, $schema, $id, title, description, and x-one-document (true: the schema is one document by
-nature, so a second file of it is refused). Any other keyword, or a wrong keyword value, is an error, never ignored.
+keywords still apply), $defs, $schema, $id, title, description, x-one-document (true: the schema is one document by
+nature, so a second file of it is refused), x-ref (an index row id: a string must be the id, the alias, or the global_id of a
+record of that row's merged view; "<row id>/<key>": of an item of the list or map under key in that row's documents),
+x-ref-where (beside an x-ref, {field: value}: the record must also carry each value), x-owner-only (true: only the
+owner's path writes the field; owner-only lists them; check refuses a row of that schema not owner_only) and x-record-kind-of (in the index schema, {schema name: record kind}:
+an index row of that schema must name that record_kind). Any other keyword, or a wrong keyword value, is an error, never ignored.
+x-ref (and so x-ref-where) stands only beside type string, property names included, and is applied wherever it stands; a
+document validated where no x-ref is resolved (validate_doc without refs) fails when its schema holds one.
+A record is one entry of an index row with a list_key, or one file of a folder row: it carries global_id (a lower-case version
+4 UUID, unique across every data file) and install_id (the UUID of the install that made it); its old id is its alias. Both
+are always required. An object deeper in a file whose schema has a global_id property (a privacy grant) is a record too: its
+global_id joins the same check, and its id is unique in its list.
 Every file an index row names is judged by every rule of its schema (all rows of a schema form one merged view, which is what
 check judges and what the read commands serve). A file that fails its schema feeds no rule. A read is judged by exactly the
 files its rules use (RULES, DEPS): it is served only when none of them has a problem, and its refusal names the first one."""
-import datetime, functools, json, os, re, sys
+import datetime, functools, json, os, re, sys, uuid
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -31,10 +47,15 @@ INDEX = ".stella/data-files.json"
 SCHEMAS = ".stella/schemas"
 KEYWORDS = {"$schema", "$id", "$ref", "$defs", "title", "description", "type", "enum", "const", "properties", "propertyNames",
             "required", "additionalProperties", "items", "minItems", "maxItems", "uniqueItems", "minLength", "maxLength",
-            "pattern", "minimum", "maximum", "x-one-document"}
+            "pattern", "minimum", "maximum", "x-one-document", "x-ref", "x-ref-where", "x-owner-only", "x-record-kind-of"}
 MAX_DEPTH = 64   # a data file nests far less; one limit makes `check` and the read commands agree on a deep object
 TABLE, FRAME, NOROW = "role-table", "data-files", "schema:"   # members that are no index row: the role table, the index, a schema with no JSON row
 MASK_LIMIT = 1024   # a value pattern never runs on a longer string (it is masked whole): a pattern's time grows with the length
+UUID4 = r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"   # global_id
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"   # install_id: any UUID (a record may come from another install)
+INSTALL = "install"   # the schema of the install's one document (install_id)
+CLI_LOGIN = ("cli", "quota_source", "concurrency_limit", "credential_store", "terms_ok")   # every cli-login entry has these, no api entry
+STRICTEST = {"sync": "never", "store": "owner_asks", "hosted": "never", "context": "text_only"}   # a data class with no rule row
 TYPES = {"object": dict, "array": list, "string": str, "integer": int, "number": (int, float), "boolean": bool, "null": type(None)}
 
 
@@ -208,9 +229,20 @@ def kind_problem(row, p):
     return None
 
 
+ENTRY = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._-]*\.json")   # a folder entry's file name: the one rule of check, ids-migrate and the apply tool
+
+
+def bad_entry(name, said):
+    """The one refusal of a folder entry's file name, worded alike in every tool: None when `name` passes ENTRY; `said` is how
+    the caller names the file (the command's <id>/<name>, or its path)."""
+    return None if ENTRY.fullmatch(name) else \
+        f"{json.dumps(said)}: not a plain file name (letters, digits, dot, dash, underscore; no leading dot; ends in .json)"
+
+
 def files_of(row):
-    """[(relative path, absolute path)]: the file a row names, or every *.json of a folder row's folder (folder_row() says which;
-    a path whose disk disagrees is returned as itself, so it is still compared with the other rows, and layout() closes it).
+    """[(relative path, absolute path)]: the file a row names, or every *.json (any case) of a folder row's folder (folder_row()
+    says which; a path whose disk disagrees is returned as itself, so it is still compared with the other rows, and layout()
+    closes it). An entry whose name fails ENTRY is listed too: layout() reports it and opens it for no reader.
     A JSON row's path and each entry file must be free of symbolic links (plain()); a row this tool never opens (env) is found
     by where it resolves, inside the root (safe())."""
     if row["format"] != "json":
@@ -219,7 +251,7 @@ def files_of(row):
     if not folder_row(row) or not os.path.isdir(p):
         return [(row["path"], p)]
     out = []
-    for n in sorted(n for n in os.listdir(p) if n.endswith(".json") and not n.startswith(".")):   # by name: never a glob
+    for n in sorted(n for n in os.listdir(p) if n.casefold().endswith(".json")):   # by name: never a glob
         a = os.path.join(p, n)
         if os.path.islink(a):
             raise linked(os.path.relpath(a, ROOT), a)
@@ -252,8 +284,10 @@ def layout(rs, owner):
             probs.append((r["id"], str(e)))
             continue
         named.append((r, fs))
-        for _, a in fs:
+        for rel, a in fs:
             by_file.setdefault(a, []).append(r)
+            if rel != r["path"] and (why := bad_entry(os.path.basename(rel), rel)):   # a folder entry (a row's own path is returned as itself)
+                probs.append((r["id"], why))
         bad = kind_problem(r, fs[0][1]) if fs and fs[0][0] == r["path"] else None   # a listed folder agrees with its kind
         if bad:
             probs.append((r["id"], bad))
@@ -270,7 +304,8 @@ def layout(rs, owner):
             shut.add(id(r))
             if r["format"] != "env" or not r["owner_only"]:
                 probs.append((r["id"], f"{rel} is an owner setting of the role table: its row must be format env and owner_only, and it is never opened here"))
-    return probs, [(r, fs) for r, fs in named if r["format"] == "json" and id(r) not in shut]
+    return probs, [(r, [f for f in fs if f[0] == r["path"] or ENTRY.fullmatch(os.path.basename(f[0]))])
+                   for r, fs in named if r["format"] == "json" and id(r) not in shut]
 
 
 _pats = "unread"
@@ -292,7 +327,7 @@ def value_pats():
         _pats, out, n = None, [], 0
         try:
             idx = load(INDEX)
-            if validate_doc(idx, schema_of("data-files")):
+            if validate_doc(idx, schema_of("data-files"), []):
                 raise DataError("index")
             try:
                 table = load(idx["role_table"])
@@ -381,12 +416,21 @@ def lint_schema(s, path="$", root=None):
     for k in ("minimum", "maximum"):
         if k in s and not (isinstance(s[k], (int, float)) and not isinstance(s[k], bool)):
             bad(k, "must be a number")
-    for k in ("uniqueItems", "x-one-document"):
+    for k in ("uniqueItems", "x-one-document", "x-owner-only"):
         if k in s and not isinstance(s[k], bool):
             bad(k, "must be true or false")
     for k in ("title", "description", "$schema", "$id"):
         if k in s and not isinstance(s[k], str):
             bad(k, "must be a string")
+    if "x-ref" in s and not (isinstance(s["x-ref"], str) and re.fullmatch(r"[a-z0-9][a-z0-9._:-]*(/[A-Za-z0-9_-]+)?", s["x-ref"])):
+        bad("x-ref", "must be the id of an index row, or <row id>/<key of a list in its documents>")
+    if "x-ref" in s and s.get("type") != "string":   # the one place check_value applies it: never accepted and then ignored
+        bad("x-ref", "stands only beside type string")
+    w = s.get("x-ref-where")
+    if "x-ref-where" in s and not ("x-ref" in s and isinstance(w, dict) and w and all(x is None or isinstance(x, (str, int, float, bool)) for x in w.values())):
+        bad("x-ref-where", "must be a non-empty object of field: value (a string, number, true, false or null) beside an x-ref")
+    if "x-record-kind-of" in s and not (isinstance(s["x-record-kind-of"], dict) and all(isinstance(x, str) and re.fullmatch(r"[a-z0-9][a-z0-9._:-]*", x) for x in s["x-record-kind-of"].values())):
+        bad("x-record-kind-of", "must be an object of schema name: record kind")
     if "pattern" in s:
         try:
             rx(s["pattern"])
@@ -432,14 +476,17 @@ def same(a, b):
     return type(a) is type(b) and a == b
 
 
-def check_value(v, s, defs, p, errs):
+def check_value(v, s, defs, p, errs, refs=None):
+    """Problems of v against schema s into errs; with a list refs, also every x-ref string as (path, value, x-ref, x-ref-where, path of its unique list or None)."""
     if "$ref" in s:
-        check_value(v, defs[s["$ref"].rsplit("/", 1)[-1]], defs, p, errs)   # the siblings of $ref apply below
+        check_value(v, defs[s["$ref"].rsplit("/", 1)[-1]], defs, p, errs, refs)   # the siblings of $ref apply below
     t = s.get("type")
     if t is not None:
         ts = [t] if isinstance(t, str) else t
         if not any(type_ok(v, x) for x in ts):
             return errs.append(f"{p}: expected {'/'.join(ts)}, got {desc(v)}")
+    if refs is not None and isinstance(v, str) and "x-ref" in s:
+        refs.append((p, v, s["x-ref"], s.get("x-ref-where", {}), None))
     if "const" in s and not same(v, s["const"]):
         errs.append(f"{p}: must be {s['const']!r}")
     if "enum" in s and not any(same(v, x) for x in s["enum"]):
@@ -458,26 +505,92 @@ def check_value(v, s, defs, p, errs):
         if s.get("uniqueItems") and len({json.dumps(x, sort_keys=True) for x in v}) != len(v):
             errs.append(f"{p}: items are not unique")
         for i, x in enumerate(v):
-            check_value(x, s.get("items", {}), defs, f"{p}[{i}]", errs)
+            n = len(refs) if refs is not None else 0
+            check_value(x, s.get("items", {}), defs, f"{p}[{i}]", errs, refs)
+            if refs is not None and s.get("uniqueItems") and isinstance(x, str):   # an x-ref'd item of a unique list: ref_problems compares the records
+                refs[n:] = [(*r[:4], p) for r in refs[n:]]
     if isinstance(v, dict):
         errs += [f"{p}: missing {k}" for k in s.get("required", []) if k not in v]
         props, extra = s.get("properties", {}), s.get("additionalProperties", True)
         for k, x in v.items():
             if "propertyNames" in s:
-                check_value(k, s["propertyNames"], defs, f"{p}.<name of {desc(k)}>", errs)
+                check_value(k, s["propertyNames"], defs, f"{p}.<name of {desc(k)}>", errs, refs)
             if k in props:
-                check_value(x, props[k], defs, f"{p}.{k}", errs)
+                check_value(x, props[k], defs, f"{p}.{k}", errs, refs)
             elif extra is False:
                 errs.append(f"{p}: {kname(k)} is not allowed")
             elif isinstance(extra, dict):
-                check_value(x, extra, defs, f"{p}.{'<a masked key>' if hidden(k) else k}", errs)
+                check_value(x, extra, defs, f"{p}.{'<a masked key>' if hidden(k) else k}", errs, refs)
 
 
-def validate_doc(doc, schema):
+def validate_doc(doc, schema, refs=None):
+    """Problems of doc against schema. refs: a list that collects the x-ref values for the caller to resolve; without one (the
+    role table, an event line, a setting value), a schema that holds an x-ref fails closed: it would be accepted unresolved."""
     errs = lint_schema(schema)
+    if not errs and refs is None and ref_rows(schema):
+        return ["schema: holds an x-ref, which is not resolved where this document is validated"]
     if not errs:
-        check_value(doc, schema, schema.get("$defs", {}), "$", errs)
+        check_value(doc, schema, schema.get("$defs", {}), "$", errs, refs)
     return errs
+
+
+def ref_rows(s):
+    """The index row ids the x-ref keywords of a schema (or any part of one) name."""
+    if isinstance(s, dict):
+        return ({s["x-ref"].split("/")[0]} if isinstance(s.get("x-ref"), str) else set()).union(*map(ref_rows, s.values()))
+    return set().union(*map(ref_rows, s)) if isinstance(s, list) else set()
+
+
+def entry(ents, k):
+    """The entry of {entry id: entry} whose id (its alias) or global_id is k; None when there is none."""
+    return ents[k] if k in ents else next((e for e in ents.values() if e.get("global_id") == k), None)
+
+
+def listed(docs, key):
+    """{id: item} of the list `key` (objects with an id) or map `key` (of objects) inside the documents of a row."""
+    out = {}
+    for _, d in docs:
+        x = d.get(key) if isinstance(d, dict) else None
+        out.update({k: e for k, e in x.items() if isinstance(e, dict)} if isinstance(x, dict) else
+                   {e["id"]: e for e in x if isinstance(e, dict) and isinstance(e.get("id"), str)} if isinstance(x, list) else {})
+    return out
+
+def ref_problems(refs, by, rs, refused=()):
+    """[(kind, line)] for the x-ref values of one document: kind "row" when the schema names no JSON row of the index or the
+    row cannot be read, "id" when the value is no id or global_id of a record of that row's merged view (x-ref <row>/<key>: of
+    an item of that list in the row's documents) that also carries every field: value of its x-ref-where (never the value);
+    kind "dup" when two items of a uniqueItems list resolve to one record (an alias and its global_id are one item)."""
+    out, seen = [], {}
+    for p, v, target, where, uniq in refs:
+        rid, _, key = target.partition("/")
+        row = next((r for r in rs if r["id"] == rid and r["format"] == "json"), None)
+        if row is None:
+            out.append(("row", f"{p}: x-ref names {target!r}, which is no JSON row of the index"))
+        elif rid in refused or rid not in by["_rows"]:
+            out.append(("row", f"{p}: cannot be checked, {rid} is refused"))
+        else:
+            e = entry(listed(by["_rows"][rid][0], key) if key else by.get(row["schema"], {}), v)
+            if e is None or not all(f in e and same(e[f], x) for f, x in where.items()):
+                with_ = " with " + ", ".join(f"{f} {json.dumps(x)}" for f, x in where.items()) if where else ""
+                out.append(("id", f"{p} ({desc(v)}) is not an id or global_id of a record of {target}{with_}"))
+            elif uniq is not None and seen.setdefault((uniq, id(e)), v) != v:   # the same string twice is already "not unique"
+                out.append(("dup", f"{uniq}: item {p.rsplit('[', 1)[1][:-1]} names the same record as an earlier item"))
+    return out
+
+
+def owner_paths(s, defs, at="", seen=()):
+    """The paths (JSON pointer; * for any array item or map value) of what a schema marks x-owner-only, through $ref too."""
+    if not isinstance(s, dict):
+        return []
+    out = [at or "/"] if s.get("x-owner-only") is True else []
+    r = s.get("$ref")
+    if isinstance(r, str) and r not in seen:   # a definition already on this path is not walked again (a tree of itself)
+        out += owner_paths(defs.get(r.rsplit("/", 1)[-1]), defs, at, seen + (r,))
+    for k, sub in (s.get("properties") or {}).items():
+        out += owner_paths(sub, defs, f"{at}/{k.replace('~', '~0').replace('/', '~1')}", seen)
+    for k in ("items", "additionalProperties"):
+        out += owner_paths(s.get(k), defs, f"{at}/*", seen)
+    return list(dict.fromkeys(out))
 
 
 # ---- the index and the entries ----
@@ -492,8 +605,8 @@ def schema_of(name):
 
 def checked(doc, rel, schema):
     """doc if it passes its schema, else a DataError naming the file. The read commands of this tool also run the cross-file
-    rules on what they serve (served()), so they never serve data `check` refuses."""
-    errs = validate_doc(doc, schema_of(schema))
+    rules on what they serve (served()), so they never serve data `check` refuses; check resolves the x-refs (judge())."""
+    errs = validate_doc(doc, schema_of(schema), [])
     if errs:
         raise DataError(f"{rel}: {errs[0]}" + (f" (and {len(errs) - 1} more)" if len(errs) > 1 else ""))
     return doc
@@ -505,6 +618,11 @@ def rows():
 
 def is_folder(row):
     return folder_row(row)
+
+
+def has_records(row):
+    """A row whose entries are records (each with global_id and install_id): a JSON row with a list key, or a folder row."""
+    return row["format"] == "json" and (row["list_key"] is not None or folder_row(row))
 
 
 def file_entries(row, rel, d):
@@ -526,15 +644,64 @@ def file_entries(row, rel, d):
     return pairs
 
 
+def records_in(v, s, defs, p="$"):
+    """[(where, alias, object)] of every object below v whose schema declares a global_id property: the records of a file, found
+    from its schema wherever they sit (a privacy grant too, not only the entries under list_key). where: the path of its list or
+    map (of itself under a fixed property); alias: its key in a map, else its id."""
+    if isinstance(v, dict):
+        props, extra = look(s, "properties", defs) or {}, look(s, "additionalProperties", defs)
+        kids = [(x, props[k] if k in props else extra if isinstance(extra, dict) else {}, f"{p}.{'<a masked key>' if hidden(k) else k}",
+                 None if k in props else k) for k, x in v.items()]
+    elif isinstance(v, list):
+        kids = [(x, look(s, "items", defs) or {}, f"{p}[{i}]", None) for i, x in enumerate(v)]
+    else:
+        return []
+    out = []
+    for x, sub, at, key in kids:
+        if isinstance(x, dict) and "global_id" in (look(sub, "properties", defs) or {}):
+            out.append((p if key is not None or isinstance(v, list) else at, key if key is not None else x.get("id"), x))
+        out += records_in(x, sub, defs, at)
+    return out
+
+
 # ---- check ----
 def why(e):
     return str(e) if isinstance(e, (DataError, ValueError)) else type(e).__name__
 
 
+def reach(prov):
+    """A link's locality for routing, the one place that says whether a link leaves the machine: an aggregator fronts upstream
+    providers (W2-CRT-01) and a hosted connection's provider keeps data in its cloud (FIN-CRT-01), so each is cloud whatever its
+    own locality. The Local only policy, the effort modes and the class rules read only this."""
+    return "cloud" if prov.get("aggregator") or prov["data_policy"].get("hosted") else prov["locality"]
+
 def policy_allows(pol, prov):
-    return pol["mode"] == "open" or (pol["mode"] == "local_only" and prov["locality"] == "local") \
+    if pol.get("private") and prov["data_policy"].get("hosted"):   # a private project never uses a hosted connection, whatever its mode
+        return False
+    return pol["mode"] == "open" or (pol["mode"] == "local_only" and reach(prov) == "local") \
         or (pol["mode"] == "allowed_providers" and prov["id"] in pol["allowed_providers"])
 
+
+def route_problems(pols, need, prov, now):
+    """Why a link to provider prov may not serve a role that handles the data classes `need` (F1b D6; next to policy_allows, the one
+    routing rule): a cli-login link needs terms_ok true; on a cloud link (by reach(): hosted counts), each class's hosted rule in every data policy:
+    never refuses, grant needs a privacy grant for that class naming this connection (id or global_id) that is in force (live)."""
+    out = [] if prov["type"] != "cli-login" or prov.get("terms_ok") is True else \
+        ["is cli-login, and the owner has not recorded terms_ok true (the provider's terms allow this use)"]
+    if reach(prov) == "local":
+        return out
+    names = {prov["id"], prov.get("global_id")}
+    def live(g):   # in force: granted_at a real date not in the future; expires_at (if any) a real date after it, not past; a bad date is no grant
+        a, x = when(g, "granted_at"), (when(g, "expires_at") if "expires_at" in g else None)
+        return bool(a) and a <= now and (x is None or bool(x) and a < x and now < x)
+    for _, d in pols:
+        for k in need:
+            h = class_rule(d, k)["hosted"]
+            if h == "allowed" or h == "grant" and any(g["data_class"] == k and g["connection"] in names and live(g) for g in d["privacy_grants"]):
+                continue
+            out.append(f"is cloud or hosted, and data class {idn(k, True)} " + ("reaches one only under a privacy grant, and no grant in force (started, not ended) names this connection"
+                                                                            if h == "grant" else "never reaches one (its rule is hosted never, or it has no rule row)"))
+    return list(dict.fromkeys(out))
 
 def class_problems(table, classes):
     return [f"{n}: requirements.allowed_data_classes[{i}] ({desc(k)}) is not in data-policy data_classes" for n, r in table["roles"].items()
@@ -587,24 +754,85 @@ def D(c, sch, k=None):
 
 
 def rule_policy(c):
-    """The data policy and the catalog against each other: providers it names exist, classes exist, local providers are local."""
+    """The data policy and the catalog against each other: providers it names exist, classes exist, a connection marked local lists only
+    local hosts; a hosted connection takes no class that never reaches a cloud store and no private project names it; an input source's
+    subkind is a class whose rule is sync never."""
     conn, pols, P = c["by"].get("connections", {}), c["whole"].get("data-policy", []), c["P"]
     if not pols:   # a folder row with no file: nothing to judge against (the assignments say so)
         return
     classes = set.intersection(*(set(d["data_classes"]) for _, d in pols))
     local = set.intersection(*(set(d["local_hosts"]) for _, d in pols))
+    # what a hosted connection (the provider's cloud keeps it) may never take: a class never synced or never hosted, and the
+    # class of a never_cloud record kind (secrets, vault content)
+    barred = {k for _, d in pols for k in d["data_classes"] if class_rule(d, k)["sync"] == "never" or class_rule(d, k)["hosted"] == "never"} \
+        | {kd["data_class"] for _, d in pols for kd in d["record_kinds"].values() if kd.get("never_cloud") and "data_class" in kd}
     for rid, pol in pols:
         for proj, p in [("default", pol["default"])] + list(pol["projects"].items()):
             for i, prov in enumerate(p["allowed_providers"]):
-                if prov not in conn:
+                if entry(conn, prov) is None:   # an alias or a global_id (FIN-CRT-02)
                     P(rid, f"{'default' if proj == 'default' else kname(proj)}: allowed_providers[{i}] ({desc(prov)}) is not in the connections catalog")
+                elif p.get("private") and entry(conn, prov)["data_policy"].get("hosted"):
+                    P(rid, f"{kname(proj)}: allowed_providers[{i}] {idn(prov, True)} is hosted, and a private project never uses a hosted connection")
     for c_ in conn.values():
+        hosted = c_["data_policy"].get("hosted")
         for i, k in enumerate(c_["data_policy"]["data_classes_allowed"]):
             if k not in classes:
                 P(D(c, "connections", c_["id"]), f"{idn(c_['id'])}: data_classes_allowed[{i}] ({desc(k)}) is not in data-policy data_classes")
+            elif hosted and k in barred:
+                P(D(c, "connections", c_["id"]), f"{idn(c_['id'])}: data_classes_allowed[{i}] {idn(k, True)} never reaches a cloud store, and this connection is hosted")
+        # an input source's subkind is the class of what it produces: a sensitive feed, one whose rule (or the strictest, with no row) is sync never
+        if c_["kind"] == "input_source" and (c_["subkind"] not in classes or any(class_rule(d, c_["subkind"])["sync"] != "never" for _, d in pols)):
+            P(D(c, "connections", c_["id"]), f"{idn(c_['id'])}: an input source's subkind ({desc(c_['subkind'])}) is not a data-policy data class whose rule is sync never")
         hosts = [h["host"] for h in c_["hosts"]]
-        if c_["kind"] == "provider" and c_["locality"] == "local" and (not hosts or not set(hosts) <= local):
+        # every kind marked local is held to local_hosts; a provider must also name the host it is reached on
+        if c_["locality"] == "local" and (not set(hosts) <= local or c_["kind"] == "provider" and not hosts):
             P(D(c, "connections", c_["id"]), f"{idn(c_['id'])}: locality is local, but it lists no host or a host outside the data policy local_hosts")
+
+
+def class_rule(pol, k):
+    """The rules of data class k in one data policy; a class with no rule row gets the most restrictive (fail closed)."""
+    return pol["class_rules"].get(k, STRICTEST)
+
+
+def rule_sync(c):
+    """Sync classes (item 8) and data-class rules (item 9): every record kind names a known sync class (and a known data class);
+    a kind that never reaches a cloud store (never_cloud, or a data class whose rule is sync never) and a private or local_only
+    project (its own sync class, else its row's kind's, which the index schema pins; the default too) have a sync class whose cloud is false; rule rows and grants name known
+    classes; every index row with records names a kind of the data policy."""
+    P, pols = c["P"], c["whole"].get("data-policy", [])
+    for rid, pol in pols:
+        sc, classes, kinds = {x["id"]: x["cloud"] for x in pol["sync_classes"]}, set(pol["data_classes"]), pol["record_kinds"]
+        if len(sc) != len(pol["sync_classes"]):
+            P(rid, "sync_classes: an id is listed twice")
+        for k in pol["class_rules"]:
+            if k not in classes:
+                P(rid, f"class_rules: a key ({desc(k)}) is not in data_classes")
+        for k, kd in kinds.items():
+            w = f"record kind {kname(k)}"
+            if kd["sync_class"] not in sc:
+                P(rid, f"{w}: sync_class ({desc(kd['sync_class'])}) is not in sync_classes")
+            if "data_class" in kd and kd["data_class"] not in classes:
+                P(rid, f"{w}: data_class ({desc(kd['data_class'])}) is not in data_classes")
+            if sc.get(kd["sync_class"]) and (kd.get("never_cloud") or "data_class" in kd and class_rule(pol, kd["data_class"])["sync"] == "never"):
+                P(rid, f"{w}: sync class {idn(kd['sync_class'], True)} is a cloud class, but this kind never reaches a cloud store (never_cloud, or a data class that is never synced)")
+        pk = next((r.get("record_kind") for r in c["rs"] if r["id"] == rid), None)
+        for name, p in [(None, pol["default"])] + list(pol["projects"].items()):   # the default is every project not listed
+            w, own = "the default (every project not listed)" if name is None else f"project {kname(name)}", p.get("sync_class")
+            if own is not None and own not in sc:
+                P(rid, f"{w}: sync_class ({desc(own)}) is not in sync_classes")
+            eff = own if own is not None else kinds.get(pk, {}).get("sync_class")
+            if sc.get(eff) and (p.get("private") or p["mode"] == "local_only"):
+                P(rid, f"{w}: a private or local_only project never reaches a cloud store, but its sync class {idn(eff, True)} is a cloud class")
+        for i, g in enumerate(pol["privacy_grants"]):
+            if g["data_class"] not in classes:
+                P(rid, f"privacy_grants[{i}].data_class ({desc(g['data_class'])}) is not in data_classes")
+    known = set.intersection(*(set(d["record_kinds"]) for _, d in pols)) if pols else set()
+    pins = schema_of(FRAME).get("x-record-kind-of", {})   # a row's label cannot move its records (the projects) onto another kind
+    for r in c["rs"]:
+        if r["schema"] in pins and r.get("record_kind") != pins[r["schema"]]:
+            P(r["id"], f"record_kind ({desc(r.get('record_kind'))}) is not the kind the index schema pins for rows of schema {r['schema']} ({pins[r['schema']]})")
+        if has_records(r) and isinstance(r.get("record_kind"), str) and r["record_kind"] not in known:
+            P(r["id"], f"record_kind ({desc(r['record_kind'])}) is not a kind of the data policy's record_kinds")
 
 
 def rule_role_classes(c):
@@ -621,20 +849,24 @@ def rule_assignments(c):
     allroles = table["roles"]
     roles = set(allroles) - {table["fallback_role"]}   # the fail-closed row is no role to assign or allow
     projects = {k: v for _, d in pols for k, v in d["projects"].items()}
-    seen, cards = {}, {}
+    seen, cards, now = {}, {}, datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     for rid, ra in c["whole"].get("role-assignments", []):
         for a in ra["assignments"]:
             sc, lvl, aid = a["scope"], a["scope"]["level"], idn(a["id"])
+            # FIN-CRT-02: a project named by its alias or its global_id is one project; one the policy does not list keeps its own string
+            pid = sc.get("project")
+            proj = pid if pid in projects else next((k for k, v in projects.items() if pid and v.get("global_id") == pid), None)
+            pid = proj or pid
             want = {"global": (), "project": ("project",), "card": ("project", "card")}[lvl]
             for k in ("project", "card"):
                 if (k in want) != (k in sc):
                     P(rid, f"{aid}: scope.level {lvl} {'needs' if k in want else 'has no'} {k}")
-            key = (lvl, sc.get("project"), sc.get("card"), a["role"], a["effort_mode"])
+            key = (lvl, pid, sc.get("card"), a["role"], a["effort_mode"])
             if key in seen:
                 P(rid, f"{aid}: same scope, role and effort mode as {idn(seen[key])}")
             seen[key] = a["id"]
             if "card" in sc:
-                if cards.setdefault(sc["card"], (sc.get("project"), a["id"]))[0] != sc.get("project"):
+                if cards.setdefault(sc["card"], (pid, a["id"]))[0] != pid:
                     P(rid, f"{aid}: its card is also filed under another project, in {idn(cards[sc['card']][1])}")
             if a["role"] not in roles:
                 P(rid, f"{aid}: {nm(a['role'], allroles, 'role')} is not an assignable role in the role table")
@@ -643,23 +875,25 @@ def rule_assignments(c):
                 P(rid, f"{aid}: effort_mode ({desc(a['effort_mode'])}) is not defined")
             if not pols:
                 P(rid, f"{aid}: cannot be judged, the data policy has no file")
-            proj = sc.get("project") if sc.get("project") in projects else None
-            policies = [projects[proj]] if proj else [d["default"] for _, d in pols]
+            # allowed_providers may name a connection by its global_id: policy_allows compares aliases, so it gets them resolved
+            policies = [dict(p, allowed_providers=[(entry(conn, x) or {}).get("id", x) for x in p["allowed_providers"]])
+                        for p in ([projects[proj]] if proj else [d["default"] for _, d in pols])]
             need = allroles.get(a["role"], {}).get("requirements", {}).get("allowed_data_classes", [])
             for i, ch in enumerate(a["chain"]):
-                prov, w = conn.get(ch["provider"]), f"{aid}: chain[{i}]"
+                prov, w = entry(conn, ch["connection"]), f"{aid}: chain[{i}]"
                 if prov is None or prov["kind"] != "provider":
-                    P(rid, f"{w}.provider ({desc(ch['provider'])}) is not a provider in the connections catalog")
-                    continue
-                pn = idn(ch["provider"])
+                    continue   # its x-ref (connections, kind provider) refuses it, naming the field
+                pn = idn(prov["id"])
                 if not prov["enabled"]:
                     P(rid, f"{w}: {pn} is switched off")
                 if ch["model"] not in [m["id"] for m in prov["models"]]:
                     P(rid, f"{w}.model ({desc(ch['model'])}) is not listed for {pn}")
-                if mode and prov["locality"] not in mode["allowed_localities"]:
-                    P(rid, f"{w}: {pn} is {prov['locality']}, which effort mode {idn(a['effort_mode'])} forbids")
+                if mode and reach(prov) not in mode["allowed_localities"]:
+                    P(rid, f"{w}: {pn} is {reach(prov)} for routing, which effort mode {idn(a['effort_mode'])} forbids")
                 if not all(policy_allows(p, prov) for p in policies):
                     P(rid, f"{w}: {pn} is not allowed by the data policy for {idn(proj) if proj else 'the default'} (an override never widens the policy)")
+                for m in route_problems(pols, need, prov, now):
+                    P(rid, f"{w}: {pn} {m}")
                 if any(k not in prov["data_policy"]["data_classes_allowed"] for k in need):   # an empty list allows no class
                     P(rid, f"{w}: {pn} does not allow every data class that role {idn(a['role'])} handles")
                 if a["role"] not in prov.get("allowed_roles", []):   # an empty list allows no role
@@ -705,10 +939,38 @@ def rule_extensions_on(c):
 
 
 def rule_catalog(c):
-    """A provider or channel states allowed_roles and risk_class; every redaction pattern compiles."""
+    """A provider or channel states allowed_roles and risk_class; the fields of each type, aggregator, integration aggregator, realtime
+    and input source go with their kind (F1b D5, what the schema subset cannot say); every redaction pattern compiles."""
     for k, e in c["by"].get("connections", {}).items():
+        say_ = lambda m: c["P"](D(c, "connections", k), f"{idn(e['id'])}: {m}")
         if e["kind"] != "app" and not {"allowed_roles", "risk_class"} <= set(e):
-            c["P"](D(c, "connections", k), f"{idn(e['id'])}: a provider or channel states its allowed_roles and risk_class")
+            say_("a provider or channel states its allowed_roles and risk_class")
+        cli = e["type"] == "cli-login"
+        for f in CLI_LOGIN:
+            if cli and f not in e:
+                say_(f"a cli-login entry names its {f}")
+            elif not cli and f in e:
+                say_(f"{f} is a field of a cli-login entry, and this one is {e['type']}")
+        if cli and e["kind"] not in ("provider", "app"):
+            say_("only a provider or an app may be cli-login")
+        if cli and e.get("credential_store") == "engine_cli_store" and e["secrets"]:   # X1/X3: the token stays in the CLI's own store
+            say_("its credential stays in the engine's CLI store, so it lists no broker secrets")
+        if e.get("aggregator") and (cli or e["kind"] != "provider"):
+            say_("an aggregator is an api provider")
+        if e.get("aggregator") and "broker_entries" not in e:
+            say_("an aggregator names its broker_entries (names only)")
+        if "broker_entries" in e and not e.get("aggregator"):
+            say_("broker_entries belong to an aggregator only")
+        if e.get("integration_aggregator") and e["kind"] != "app":
+            say_("only an app may be an integration_aggregator")
+        if e.get("integration_aggregator") and not e["data_policy"].get("hosted"):
+            say_("an integration_aggregator keeps its tokens in its provider's cloud: its data_policy says hosted true")
+        if "realtime" in e and e["kind"] != "provider":
+            say_("realtime is for a provider (its models take live audio or video)")
+        if e["locality"] == "hub" and e["kind"] != "input_source":
+            say_("locality hub is for an input source only")
+        if e["kind"] == "input_source" and e["locality"] == "cloud":
+            say_("an input source's locality is local or hub")
         for p in e.get("redaction_patterns", []):
             try:
                 re.compile(p)
@@ -743,6 +1005,7 @@ def rule_settings(c):
 # (name, the schemas whose rows it judges, the schemas it reads, the rule). A read of a row of schema S depends on DEPS[S]: S and
 # every schema a rule that judges S reads. The index is the frame of every rule (its row ids, its redact_keys), not one of them.
 RULES = [("data policy and catalog", ("data-policy", "connections"), ("data-policy", "connections"), rule_policy),
+         ("sync classes and record kinds", ("data-policy",), ("data-policy",), rule_sync),
          ("role data classes", (TABLE,), (TABLE, "data-policy"), rule_role_classes),
          ("role assignments", ("role-assignments",), ("role-assignments", "connections", "data-policy", TABLE), rule_assignments),
          ("features", ("features",), ("features",), rule_features),
@@ -792,6 +1055,17 @@ def plan(rs, reads):
     ids, TABLE (the role table), FRAME (the index) and NOROW + a schema name (a schema with no JSON row). A rule runs when it reads a
     member: a rule that raises is a problem of every row it read."""
     dep = set().union(*(DEPS.get(r["schema"], {r["schema"]}) for r in rs if r["id"] in reads and r["schema"]))
+    todo = list(dep)
+    while todo:   # the rows an x-ref of a schema it depends on names, and theirs
+        sch = todo.pop()
+        try:
+            names = set() if sch == TABLE else ref_rows(schema_of(sch))
+        except Exception:
+            continue   # an unreadable schema is a problem of its own rows
+        for r in rs:
+            if r["id"] in names and r["schema"] and r["schema"] not in dep:
+                dep.add(r["schema"])
+                todo.append(r["schema"])
     run = [R for R in RULES if set(R[2]) & dep]
     members = set(reads) | {FRAME} | {r["id"] for r in rs if r["schema"] in dep} | {NOROW + s for s in dep - {TABLE}}
     return dep | {s for R in run for s in R[2]}, run, members | ({TABLE} if TABLE in dep else set())
@@ -809,7 +1083,7 @@ def judge(reads=None):
         probs.append((d, m, frozenset(members or (d,))))
     try:
         idx = load(INDEX)
-        errs = validate_doc(idx, schema_of("data-files"))
+        errs = validate_doc(idx, schema_of("data-files"), [])   # its x-refs are resolved with its row's file below
         if errs:
             return [(FRAME, e, frozenset({FRAME})) for e in errs], None, {}
         rs = idx["files"]
@@ -831,6 +1105,8 @@ def judge(reads=None):
                 re.compile(p)
             except re.error:
                 P(r["id"], f"redact_keys[{i}] is not a regular expression")
+        if has_records(r) and not r.get("record_kind"):
+            P(r["id"], "a row with records names its record_kind (a kind of the data policy's record_kinds)")
     for rel in [idx[k] for k in ("event_log", "backup_dir", "applied_state", "role_table")]:
         try:
             safe(rel)
@@ -844,9 +1120,19 @@ def judge(reads=None):
     for d, m in found:
         P(d, m)
     refused = {d for d, _ in found}   # rows whose files feed no rule
+    for r in rs:
+        if r["schema"] and not r["owner_only"]:   # x-owner-only is enforced by the row's gate alone (FIN-CRT-05)
+            try:
+                sch = schema_of(r["schema"])
+                marked = owner_paths(sch, sch.get("$defs", {}))
+            except Exception:
+                marked = []   # a schema that cannot be read refuses the row where it is opened
+            if marked or r["schema"] == INSTALL:
+                P(r["id"], "this row must be owner_only: " + (f"its schema marks x-owner-only fields ({', '.join(marked)})" if marked
+                                                               else f"it holds the install id (schema {INSTALL})"))
     head = len(probs)
     want, run, members = plan(rs, reads) if reads is not None else (None, RULES, None)
-    loaded, nfiles, good, onedoc = [], {}, [], {}
+    loaded, nfiles, good, onedoc, nested = [], {}, [], {}, {}
     for r, fs in opened:
         if want is not None and r["id"] not in reads and r["schema"] not in want:
             continue
@@ -863,12 +1149,13 @@ def judge(reads=None):
         for rel, _ in fs:
             nfiles.setdefault(r["schema"], []).append((r, rel))
             try:
-                d = load(rel)
-                errs = ([] if isinstance(d, dict) and "schema_version" in d else ["schema_version is missing"]) + validate_doc(d, sch)
+                d, refs = load(rel), []
+                errs = ([] if isinstance(d, dict) and "schema_version" in d else ["schema_version is missing"]) + validate_doc(d, sch, refs)
                 for e in errs:
                     P(r["id"], f"{rel}: {e}")
                 if not errs:
-                    good.append((r, rel, d, file_entries(r, rel, d)))
+                    good.append((r, rel, d, file_entries(r, rel, d), refs))
+                    nested[(r["id"], rel)] = records_in(d, sch, sch.get("$defs", {}))
             except Exception as e:
                 P(r["id"], why(e) if isinstance(e, DataError) else f"{rel}: {why(e)}")
                 errs = [e]
@@ -883,13 +1170,20 @@ def judge(reads=None):
     for r in loaded:
         if r["id"] not in refused:
             by["_rows"][r["id"]] = ([], {})
-    for r, rel, d, pairs in good:
+    gids = {}   # global_id -> [(row id, file, record as a line names it, schema)]: one global_id in two records is a problem of every row that holds it
+    for r, rel, d, pairs, _ in good:
         if r["id"] in refused:
             continue
         name, (docs, ents) = r["schema"], by["_rows"][r["id"]]
         whole.setdefault(name, []).append((r["id"], d))
         docs.append((rel, d))
         for n, (k, e) in enumerate(pairs):
+            for f, pat in (("global_id", UUID4), ("install_id", UUID)) if has_records(r) else ():
+                v = e.get(f)
+                if not (isinstance(v, str) and re.fullmatch(pat, v)):
+                    P(r["id"], f"{rel}: entry {idn(k, True)}: {f} is " + ("missing" if v is None else "not a lower-case UUID" + (" of version 4" if f == "global_id" else "")))
+            if has_records(r) and isinstance(e.get("global_id"), str):
+                gids.setdefault(e["global_id"], []).append((r["id"], rel, f"entry {idn(k, True)}", name))
             if k in where.setdefault(name, {}):
                 P(r["id"], f"{rel}: duplicate entry id {idn(k, True)}" + ("" if where[name][k] == rel else f", also in {where[name][k]}"))
                 continue
@@ -897,6 +1191,27 @@ def judge(reads=None):
             by.setdefault(name, {})[k] = ents[k] = e
             by["_src"].setdefault(name, {})[k] = r["id"]
             by["_at"].setdefault(name, {})[k] = n + 1
+        mine, seen = {id(e) for _, e in pairs}, set()
+        for at, a, e in nested.get((r["id"], rel), []):   # the records not under the row's list_key
+            if id(e) in mine:
+                continue
+            if isinstance(e.get("global_id"), str):
+                gids.setdefault(e["global_id"], []).append((r["id"], rel, f"record {idn(a, True)} of {at}" if a is not None else f"a record of {at}", None))
+            if isinstance(a, str) and (at, a) in seen:
+                P(r["id"], f"{rel}: {at}: id {idn(a, True)} is listed twice")
+            seen.add((at, a))
+    by["_gids"] = set(gids)   # every record's global_id, for validate
+    for g, at in gids.items():   # an alias anywhere that is another record's global_id: a read by that string is ambiguous
+        other = list(dict.fromkeys(by["_src"][n][g] for n in by if not n.startswith("_") and g in by[n] and by[n][g].get("global_id") != g))
+        for x in at:
+            if len(at) > 1:
+                P(x[0], f"{x[1]}: {x[2]}: its global_id is also the global_id of " + ", ".join(f"{y[2]} of {y[1]}" for y in at if y is not x))
+            if other:
+                P(x[0], f"{x[1]}: {x[2]}: its global_id is the id of another entry (of {', '.join(other)})")
+    for r, rel, _, _, refs in good:   # x-ref values against the merged view of the row they name
+        if r["id"] not in refused:
+            for _, m in ref_problems(refs, by, rs, refused):
+                P(r["id"], f"{rel}: {m}")
     mid = len(probs)
     table_ok = table is not None
     if reads is None or TABLE in want:
@@ -1005,6 +1320,17 @@ def policy_classes():
     if not docs or len(opened) < sum(1 for r in rs if r["format"] == "json" and r["schema"] == "data-policy"):
         raise DataError("the data policy cannot be read (no file of its schema, or a row of it that is not opened)")
     return set.intersection(*(set(d["data_classes"]) for d in docs))
+
+
+def install_id():
+    """This install's id: install_id of the one document of the install schema, judged by that row's own check only (its file
+    passes the install schema; exactly one JSON row of it in the index), never by the rest of the data: a problem elsewhere,
+    the index's own included, must not stop the event line of its repair (W6-CVER-01). A DataError when that row fails. New
+    event lines, approval records and ids-migrate read it here."""
+    ids = [r for r in rows() if r["format"] == "json" and r["schema"] == INSTALL]
+    if len(ids) != 1:
+        raise DataError(f"the index has {len(ids)} JSON rows of schema {INSTALL}; exactly one holds the install id")
+    return checked(jload(plain(ids[0]["path"]), ids[0]["path"]), ids[0]["path"], INSTALL)["install_id"]
 
 
 def find_entries(row, by):
@@ -1123,16 +1449,29 @@ def main(argv):
             rows()   # the index says which files are never opened (closed_ids): without it nothing is opened
         except DataError:
             raise DataError(f"{INDEX}: cannot be read or is not valid (run check), so validate opens no file") from None
-        doc = jload(args[1])   # refused unread when it is an owner setting (closed_ids)
-        errs = [] if args[0] == "roles" else validate_doc(doc, schema_of(args[0]))
+        doc, refs = jload(args[1]), []   # refused unread when it is an owner setting (closed_ids)
+        errs = [] if args[0] == "roles" else validate_doc(doc, schema_of(args[0]), refs)
         if args[0] == "roles":   # the role table has two judges, and a data class must be one the data policy defines
             errs = role_problems(doc)
             if not errs:
                 errs = class_problems(doc, policy_classes())
         label = "role table" if args[0] == "roles" else f"{args[0]} file"
+        rs = rows()
+        mine = doc.get("global_id") if isinstance(doc, dict) and args[0] != "roles" and not any(r["schema"] == args[0] for r in rs) else None   # a record's own file keeps its id; check judges it
+        targets = sorted({t.split("/")[0] for _, _, t, *_ in refs if any(r["id"] == t.split("/")[0] and r["format"] == "json" for r in rs)}
+                         | ({r["id"] for r in rs if r["format"] == "json"} if isinstance(mine, str) else set()))
+        by = served(targets) if targets else {"_rows": {}}
+        found = ref_problems(refs, by, rs) if refs else []
+        errs += [m for k, m in found if k != "id"]
+        if isinstance(mine, str) and mine in by.get("_gids", ()):   # product rule 14: a global_id is one record's
+            errs.append("$.global_id: already the global_id of a record in the data files")
+        unknown = [m for k, m in found if k == "id"]
+        if unknown:   # unknown fails closed: STL-CFG-311 and one alert line, never the value, whatever else is wrong
+            say("STL-CFG-311", f"{label}: {unknown[0]}" + (f" (and {len(unknown) - 1} more)" if len(unknown) > 1 else ""), alert=True)
         errs = [f"STL-CFG-310 {alert_catalog.render('STL-CFG-310', {'problem': f'{label}: {e}'})[0].split(chr(10))[1]}" for e in errs]
-        print("\n".join(errs) or "valid")
-        return 1 if errs else 0
+        if errs or not unknown:
+            print("\n".join(errs) or "valid")
+        return 1 if errs or unknown else 0
     if cmd == "list" and len(args) <= 1:
         if args:
             row = known_json(args[0])
@@ -1157,10 +1496,10 @@ def main(argv):
             whole, one, defs = shapes(row)
             emit(masked(row, ents, {"additionalProperties": one}, defs) if is_folder(row) else masked(row, docs[0][1], whole, defs), True)
             return 0
-        ents = find_entries(row, by)
-        if args[1] not in ents:
+        e = entry(find_entries(row, by), args[1])   # the old id is the record's alias; its global_id finds it too
+        if e is None:
             refuse(f"entry of {args[0]}", args[1])
-        emit(masked(row, ents[args[1]], shapes(row)[1], shapes(row)[2]), True)
+        emit(masked(row, e, shapes(row)[1], shapes(row)[2]), True)
         return 0
     if cmd == "search" and args:
         words, hits, rs = [w.casefold() for w in args], [], rows()
@@ -1175,6 +1514,58 @@ def main(argv):
                     hits.append({"data": r["id"], "id": k, "status": e.get("status", ""), "summary": e.get("summary") or e.get("label") or ""})
         hits.sort(key=lambda h: (h["status"] != "approved", h["data"], h["id"]))
         emit(hits, as_json, lambda h: f"{h['data']}\t{shown(h['id'])}\t{h['status']}\t{h['summary']}")
+        return 0
+    if cmd == "ids-migrate" and len(args) == 3 and args[1] == "--out":
+        rid, _, name = args[0].partition("/")
+        row = known_json(rid)
+        if not has_records(row) or folder_row(row) != bool(name):
+            print(f"ids-migrate: {rid} takes " + ("<id>/<file>.json (a folder row)" if folder_row(row) else "<id> alone" if has_records(row)
+                                                 else "nothing: its row has no records"), file=sys.stderr)
+            return 2
+        if name and (why := bad_entry(name, args[0])):
+            say("STL-CFG-313", why, alert=True)   # the apply tool's refusal of that name, line for line
+            return 1
+        import event_log as el   # here: event_log imports this module
+        d, base = os.path.split(os.path.abspath(args[2]))
+        try:   # the folder is opened once and checked as opened; the candidate is made through that descriptor (no swap after the check)
+            dfd = el.open_dir(os.path.realpath(d))
+        except (OSError, ValueError) as e:
+            raise DataError(f"{args[2]}: cannot be written ({type(e).__name__}); ids-migrate never writes over a file") from None
+        try:
+            real = os.readlink(f"/proc/self/fd/{dfd}")
+            ups, u = [real], os.path.dirname(real)
+            while u != ups[-1]:
+                ups.append(u)
+                u = os.path.dirname(u)
+            # a stack tree holds live data: the root, the tree this tool runs from, any folder holding an index (case as the disk sees it)
+            if any(el.inside(real, t) for t in (ROOT, el.OWN)) or any(os.path.exists(os.path.join(u, INDEX)) for u in ups):
+                say("STL-CFG-313", f"ids-migrate --out {args[2]} is inside a stack tree, where a candidate would be live with no apply; write it outside every stack tree")
+                return 1
+            rel = f"{row['path'].rstrip('/')}/{name}" if name else row["path"]
+            doc, iid, n = jload(plain(rel), rel), install_id(), 0
+            for _, e in file_entries(row, rel, doc):
+                n += "global_id" not in e or "install_id" not in e
+                e.setdefault("global_id", str(uuid.uuid4()))
+                e.setdefault("install_id", iid)
+            try:   # O_EXCL: never over an existing file nor through a link
+                fd = os.open(base, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=dfd)
+                with open(fd, "w", encoding="utf-8") as f:
+                    f.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+            except OSError as e:
+                raise DataError(f"{args[2]}: cannot be written ({type(e).__name__}); ids-migrate never writes over a file") from None
+        finally:
+            os.close(dfd)
+        print(f"{rel}: {n} records given ids; apply with: stella-apply.py apply {args[0]} --from {args[2]}")
+        return 0
+    if cmd == "owner-only" and not args:
+        out = {}
+        for n in sorted(x[:-len(".schema.json")] for x in os.listdir(os.path.join(ROOT, SCHEMAS)) if x.endswith(".schema.json")):
+            sch = schema_of(n)
+            errs = lint_schema(sch)
+            if errs:   # fail closed: a schema that cannot be read hides no owner-only field
+                raise DataError(f"{SCHEMAS}/{n}.schema.json: {errs[0]}")
+            out[n] = owner_paths(sch, sch.get("$defs", {}))
+        print(json.dumps(out, indent=2) if as_json else "\n".join(f"{n}\t{p}" for n, ps in out.items() for p in ps))
         return 0
     print(__doc__.split("\n", 1)[1], file=sys.stderr)
     return 2
