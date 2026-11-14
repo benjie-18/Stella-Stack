@@ -100,7 +100,13 @@ object deeper in a file whose schema declares a `global_id` (a privacy grant) is
 `global_id` joins the same check and its `id` is unique in its list. The old `id` (or the row's `id_field`) is the record's
 alias and stays unique per schema as before, and no alias equals the `global_id` of another record in any data file: the reads of `stella_data.py` (`get <id> <entry>`) and every `x-ref` accept the
 alias or the `global_id`; `bin/settings.py get/set` take the key only. Both fields are always required: there is no switch
-that turns the check off (owner decision 2026-11-13). **A migration that changes what a schema requires ships with its code**
+that turns the check off (owner decision 2026-11-13). The role table (`docs/hermes-local/roles.json`, no index row) holds
+records too (FV-01, F1c): every profile row and every role entry carries `global_id` and `install_id`, required by
+`roles.schema.json`; `bin/roles.py check` (STL-CFG-303) and `stella_data.py check` (STL-CFG-310) refuse one missing or
+malformed and a `global_id` two records of the table share; the profile or role name stays the alias, and the data policy's
+record kinds `profile` and `role` are local-only. An env row (an index row of format `env`, a KEY=value file: the limits,
+the owner settings) has no per-value id and its file format does not change: a value of an env row is identified by the
+index row's `global_id` plus its key (owner decision 2026-11-14). **A migration that changes what a schema requires ships with its code**
 (the run branch carries the migrated files) **and is undone by reverting that merge, code and data together**; the apply
 contract's `rollback` covers value changes only, since it restores only bytes that pass the current checks.
 **The ids migration** (for live data that diverged before that merge): `stella_data.py ids-migrate <id> --out <file>`
