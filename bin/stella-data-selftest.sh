@@ -1025,4 +1025,20 @@ ok 'jq -e "[.entries[] | select(.type == \"cli-login\" and .credential_store == 
 # owner decision (d) 2026-11-14: the connections schema is version 2 (types, aggregators, input sources)
 mk cv; ed cv connections.json '.schema_version = 1'
 ok '[ "$(jq .schema_version "$ROOT/.stella/connections.json")" = 2 ] && refuses cv check && grep -q "^STL-CFG-310 .*connections.*schema_version" "$T/o"' "261 the shipped catalog is schema_version 2, and a catalog at version 1 is refused"
+# FIN-CRT-01 a hosted connection (the provider's cloud keeps data) leaves the machine whatever its locality: reach() says cloud for it,
+# and the Local only policy, the effort mode and the class rules all read reach(); the plain local model server is the control
+mk hl; ed hl connections.json ".entries += [($(conn qa-hloc provider hosted local) | $HOSTED | .hosts = [{host:\"$LH\",port:443,purpose:\"api\"}])]"
+ed hl data-policy.json ".projects[\"qa-lo\"] = $(PJ local_only "")"
+ed hl role-assignments.json ".assignments += [{id:\"qa-lo-builder\",scope:{level:\"project\",project:\"qa-lo\"},role:\"builder\",effort_mode:\"$LO\",chain:[{connection:\"local-model-server\",model:\"$(jq -r "$LMS.models[0].id" "$ROOT/.stella/connections.json")\",parameters:{}}],$(ids)}]"
+ok '[ "$LO" != null ] && sd hl check >"$T/o" 2>&1' "262 control: a Local only project in a local-only effort mode routed to the plain local model server passes (a hosted connection on a local host is listed)"
+rm -rf "$T/hlp"; cp -r "$T/hl" "$T/hlp"; ed hlp role-assignments.json '(.assignments[] | select(.id == "qa-lo-builder")).chain = [{connection:"qa-hloc",model:"qa-hloc-model",parameters:{}}]'
+ok 'refuses hlp check && grep -q "^STL-CFG-310 .*role-assignments: .*qa-lo-builder: chain\[0\]: .*qa-hloc.*not allowed by the data policy" "$T/o"' "262a a Local only project routed to a hosted connection marked local is refused by the policy"
+ok 'grep -q "^STL-CFG-310 .*role-assignments: .*qa-lo-builder: chain\[0\]: .*qa-hloc.*is cloud for routing, which effort mode .*$LO.* forbids" "$T/o"' "262b and by the effort mode that allows local links only"
+HLC() { rm -rf "$T/$1"; cp -r "$T/hl" "$T/$1"; ed "$1" ../docs/hermes-local/roles.json ".roles.builder.requirements.allowed_data_classes += [\"$2\"]"; ed "$1" connections.json "($LMS, (.entries[] | select(.id == \"qa-hloc\"))).data_policy.data_classes_allowed += [\"$2\"]"
+  ed "$1" role-assignments.json ".assignments += [{id:\"qa-hloc-builder\",scope:{level:\"global\"},role:\"builder\",effort_mode:\"eco\",chain:[{connection:\"qa-hloc\",model:\"qa-hloc-model\",parameters:{}}],$(ids)}]"; }   # <root> <class>: the builder handles it, both links allow it
+HLC hlc camera
+ok 'refuses hlc check && grep -q "^STL-CFG-310 .*role-assignments: .*qa-hloc-builder: chain\[0\]: .*qa-hloc.*camera.*grant" "$T/o" && ! grep -q "global-builder\|qa-lo-builder" "$T/o"' "262c a camera-class role routed to a hosted connection marked local, with no privacy grant, is refused; the plain local links need none"
+HLC hls secret
+ok 'refuses hls check && grep -q "^STL-CFG-310 .*role-assignments: .*qa-hloc-builder: chain\[0\]: .*qa-hloc.*secret.*never" "$T/o" && ! grep -q "global-builder\|qa-lo-builder" "$T/o"' "262d a secret-class role routed to a hosted connection marked local is refused; the plain local links take it"
+ok 'python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; p = {\"locality\": \"local\", \"data_policy\": {}}; assert s.reach(p) == \"local\" and s.reach(dict(p, aggregator=True)) == \"cloud\" and s.reach(dict(p, data_policy={\"hosted\": True})) == \"cloud\"" "$BIN"' "262e reach() is the one place: local only for a link that is local, no aggregator and not hosted"
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

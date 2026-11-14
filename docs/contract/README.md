@@ -245,8 +245,10 @@ unset, the default; true or false is the owner's record of the provider's terms)
 `bin/stella-apply.py apply connections --from <candidate>` (dry run first; `rollback` restores the bytes). Routing refuses a
 `cli-login` link whose `terms_ok` is not true (see role assignments). An `api` provider may be `aggregator: true` (one endpoint fronting
 several upstream providers) and then names `broker_entries` {`unified`, `admin`, `upstream[]`}: broker entry names only.
-Routing judges an aggregator as cloud whatever its `locality` (what it is given goes on to its upstreams): a class's hosted
-rule (grant or never), a Local only project and an effort mode that allows local links only all apply to it. The shipped
+Routing judges an aggregator (what it is given goes on to its upstreams) and a hosted connection (its provider's cloud keeps
+data) as cloud whatever its `locality`: a class's hosted rule (grant or never), a Local only project and an effort mode that
+allows local links only all apply to it. One function (`stella_data.reach()`) says whether a link leaves the machine, and
+these three checks read only it. The shipped
 `fallback-gateway` stays unmarked (owner decision 2026-11-14): B1 marks it `aggregator: true` when it defines its broker entries.
 Every entry marked `locality: local`, whatever its kind, lists only hosts of the data policy `local_hosts` (a provider names
 at least one).

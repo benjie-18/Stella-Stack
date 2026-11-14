@@ -670,8 +670,10 @@ def why(e):
 
 
 def reach(prov):
-    """A link's locality for routing: an aggregator fronts upstream providers, so it is cloud whatever its own locality (W2-CRT-01)."""
-    return "cloud" if prov.get("aggregator") else prov["locality"]
+    """A link's locality for routing, the one place that says whether a link leaves the machine: an aggregator fronts upstream
+    providers (W2-CRT-01) and a hosted connection's provider keeps data in its cloud (FIN-CRT-01), so each is cloud whatever its
+    own locality. The Local only policy, the effort modes and the class rules read only this."""
+    return "cloud" if prov.get("aggregator") or prov["data_policy"].get("hosted") else prov["locality"]
 
 def policy_allows(pol, prov):
     if pol.get("private") and prov["data_policy"].get("hosted"):   # a private project never uses a hosted connection, whatever its mode
@@ -682,11 +684,11 @@ def policy_allows(pol, prov):
 
 def route_problems(pols, need, prov, now):
     """Why a link to provider prov may not serve a role that handles the data classes `need` (F1b D6; next to policy_allows, the one
-    routing rule): a cli-login link needs terms_ok true; on a cloud (by reach()) or hosted link, each class's hosted rule in every data policy:
+    routing rule): a cli-login link needs terms_ok true; on a cloud link (by reach(): hosted counts), each class's hosted rule in every data policy:
     never refuses, grant needs a privacy grant for that class naming this connection (id or global_id) that is in force (live)."""
     out = [] if prov["type"] != "cli-login" or prov.get("terms_ok") is True else \
         ["is cli-login, and the owner has not recorded terms_ok true (the provider's terms allow this use)"]
-    if reach(prov) == "local" and not prov["data_policy"].get("hosted"):
+    if reach(prov) == "local":
         return out
     names = {prov["id"], prov.get("global_id")}
     def live(g):   # in force: granted_at a real date not in the future; expires_at (if any) a real date after it, not past; a bad date is no grant
