@@ -1194,5 +1194,33 @@ ok '[ $rc = 0 ] && cmp -s "$C/terms.json" "$CF" && [ "$(nev)" = $((e0+1)) ] && $
 ap rollback connections >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && cmp -s "$T/terms.orig" "$CF" && [ "$(tree)" = "$B" ] && [ "$(nev)" = $((e0+2)) ] && [ "$(ap history connections --json | jq -r ".events | map(.type) | join(\",\")")" = "apply,rollback" ]' "T-TERMS rollback restores the bytes, one more event line"
 
+# F1b W6 r2: an event line reads the install id by the install row's own check (W6-CVER-01), and `apply <install row> --from <file>`
+# takes it from the candidate once that passes the install schema (W6-CRT-01, owner decision 2026-11-14 b); every other apply
+# stays fail-closed on a damaged install row
+mkr iid; IK=$(jq -r '.files[] | select(.schema == "install") | .id' "$R/.stella/data-files.json"); IP=$R/$(jq -r '.files[] | select(.schema == "install") | .path' "$R/.stella/data-files.json")
+IID=$(jq -r .install_id "$IP"); cp "$IP" "$C/install-good.json"; last() { tail -n 1 "$LOG" | jq -r "$1"; }
+jq '(.files[] | select(.schema == "versions")) |= del(.global_id)' "$R/.stella/data-files.json" >"$T/x" && cp "$T/x" "$R/.stella/data-files.json"
+git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qam index-row-without-id
+$SD ids-migrate data-files --out "$C/iid-idx.json" >"$T/o" 2>&1; r1=$?; e0=$(nev); ap apply data-files --from "$C/iid-idx.json" >"$T/o2" 2>&1; rc=$?
+ok '[ $r1 = 0 ] && [ $rc = 0 ] && cmp -s "$C/iid-idx.json" "$R/.stella/data-files.json" && [ "$(nev)" = $((e0+1)) ] && [ "$(last .install_id)" = "$IID" ] && $SD check >/dev/null 2>&1' "W6-CVER-01 an index row without global_id: ids-migrate data-files, then its apply goes through with one event line ($r1/$rc: $(head -c 160 "$T/o2"))"
+cp "$R/.stella/data-files.json" "$C/iid-idx-ok.json"; jq '(.files[] | select(.schema == "data-files")).owner_only = false' "$C/iid-idx-ok.json" >"$R/.stella/data-files.json"
+git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qam index-problem
+e0=$(nev); ap apply data-files --from "$C/iid-idx-ok.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$C/iid-idx-ok.json" "$R/.stella/data-files.json" && [ "$(nev)" = $((e0+1)) ] && [ "$(last .install_id)" = "$IID" ] && $SD check >/dev/null 2>&1' "W6-CVER-01 a problem of the index itself (every read depends on it) does not stop its repair: apply data-files --from a fixed copy, one event line ($rc: $(head -c 160 "$T/o"))"
+jq '.entries[0].owner_phase = "w6 r2"' "$R/.stella/features.json" >"$C/iid-feat.json"; cp "$R/.stella/features.json" "$T/feat.keep"
+jq 'del(.install_id)' "$C/install-good.json" >"$IP"; git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qam install-damaged
+e0=$(nev); ap apply features --from "$C/iid-feat.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q "STL-CFG-310.*install id cannot be read" "$T/o" && [ "$(nev)" = $e0 ] && cmp -s "$T/feat.keep" "$R/.stella/features.json"' "W6-CVER-01 a damaged install row still refuses every other apply: 310, no line, the file unchanged"
+jq '.install_id |= ascii_upcase' "$C/install-good.json" >"$C/install-bad.json"; cp "$IP" "$T/ins.keep"
+ap apply "$IK" --from "$C/install-bad.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q "STL-CFG-313.*candidate is invalid" "$T/o" && [ "$(nev)" = $e0 ] && cmp -s "$T/ins.keep" "$IP"' "W6-CRT-01 a damaged install file and a candidate that fails the install schema: refused, no line, nothing changed"
+ap apply "$IK" --from "$C/install-good.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$C/install-good.json" "$IP" && [ "$(nev)" = $((e0+1)) ] && [ "$(last .what)" = "$IK" ] && [ "$(last .install_id)" = "$IID" ]' "W6-CRT-01 a damaged install file is repaired by apply --from a good copy: one event line with the candidate's install id ($rc: $(head -c 160 "$T/o"))"
+ap apply features --from "$C/iid-feat.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && [ "$(nev)" = $((e0+2)) ] && [ "$(last .install_id)" = "$IID" ] && cmp -s "$C/iid-feat.json" "$R/.stella/features.json"' "W6-CRT-01 after the repair another row applies again, its line with the install id"
+N2=$(cat /proc/sys/kernel/random/uuid); jq --arg i "$N2" '.install_id = $i' "$C/install-good.json" >"$C/install-new.json"
+ap apply "$IK" --from "$C/install-new.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && [ "$(nev)" = $((e0+3)) ] && [ "$(last .install_id)" = "$N2" ]' "W6-CRT-01 an apply of the install row takes its line's install id from the candidate also when the current file is readable"
+
 $AP bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "usage error exits 2"
 [ $fails = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

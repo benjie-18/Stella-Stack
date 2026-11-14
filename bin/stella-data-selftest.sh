@@ -783,6 +783,11 @@ ok 'jq -e "[.entries[] | select(.source == \"bin/stella_data.py\") | .keywords[]
 # the install id is readable through one function (W6's event lines read it there)
 mk ii; ed ii install.json '.install_id = "x"'
 ok '[ -n "$IID" ] && [ "$(python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; print(s.install_id())" "$BIN")" = "$IID" ] && ! STELLA_ROOT=$T/ii python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; s.install_id()" "$BIN" 2>/dev/null' "238 stella_data.install_id() returns this install's id and refuses a bad install file"
+IIDOF() { STELLA_ROOT=$T/$1 python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; print(s.install_id())" "$BIN" 2>/dev/null; }
+mk ij; ed ij data-files.json '(.files[] | select(.schema == "versions")) |= del(.global_id)'
+mk ij2; ed ij2 data-files.json '(.files[] | select(.schema == "data-files")).owner_only = false'   # a problem of the index itself, which every read depends on
+mk ik; ed ik data-files.json '.files += [(.files[] | select(.schema == "install") | .id = "qa-install2" | .path = ".stella/qa-install2.json" | .global_id = "'"$(cat /proc/sys/kernel/random/uuid)"'")]'; cp "$T/ik/$INS" "$T/ik/.stella/qa-install2.json"
+ok 'refuses ij check && refuses ij2 check && [ "$(IIDOF ij)" = "$IID" ] && [ "$(IIDOF ij2)" = "$IID" ] && ! IIDOF ik >/dev/null' "238b install_id() judges the install row by its own check only: an index row without global_id, or a problem of the index itself, does not stop it (W6-CVER-01); a second install row refuses"
 # F1b D5 connection types (items 1, 5, 9): fake entries of each new shape validate and load with no code change (T1a-c, T9a)
 API='{type:"api"}'
 CLI='{type:"cli-login",cli:"qa-cli",quota_source:["cli_usage","limit_errors"],concurrency_limit:2,credential_store:"engine_cli_store",terms_ok:null}'
