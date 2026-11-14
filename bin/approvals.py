@@ -18,7 +18,10 @@ runs once, with the card id and the decision word. Expiry is a decision too (fai
 request past expires_at (intake, collect, deliver, answer, status, wait) writes one trusted "expired" line under the lock and
 runs resume once; a later answer is refused 822.
 Untrusted input (a stream line, an ask's detail, an adapter's answer line) goes through untrusted(): the writer's size and depth
-limits, any failure reported with a code and skipped (GB-4). A channel is given the exact action, masked by display() (GB-5).
+limits, any failure reported with a code and skipped (GB-4). A channel is given the exact action, masked by display() (GB-5),
+and every free text it may show (summary, target, op, new) only through for_owner(): masked like new, controls, bidi controls and
+line separators made ?, so an adapter prints already-safe text. Adapters and resume run with a fixed environment (run(): PATH
+from the channels file's env.path, absolute folders; only the variables env.pass and the row's argv name pass).
 CLI: approvals.py request --class C --action F --summary S --card K --ttl SECONDS [--requester PROFILE] [--json]
      approvals.py intake [--json]                 one request per new approval-ask line, delivered on every answering channel
      approvals.py deliver ID --channel CH         the row's deliver argv gets the request on stdin; prints the message ref
@@ -42,6 +45,8 @@ ID = re.compile(r"[a-z0-9][a-z0-9._:-]{0,127}")      # request ids, channel ids 
 CARD = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")   # never starts with "-": it becomes an argument of resume
 REF = re.compile(r"[\x21-\x7e]{1,200}")               # a message ref: one printable token
 DECISIONS = ("approved", "denied")   # an answer's; "expired" is the service's own (a denial: fail closed)
+SHOWN_NOT = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]")   # never shown to the owner (stella-apply shown_change's rule)
+ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]*")   # a data argv word that names an environment variable (an owner config key)
 Refusal = oa.Refusal
 
 
@@ -159,10 +164,25 @@ def skipped(x, code):
     sd.say(*((x.code, x.problem) if isinstance(x, Refusal) else (code, f"{type(x).__name__}, an unexpected failure")))
 
 
+def for_owner(v):
+    """Text shown to the owner, the one rule for every field a channel gets to show (summary, target, op, new): a string is ***
+    when a value pattern hides any part of it (sd.hidden: also too long to check, or patterns unreadable), else each control
+    character, line or paragraph separator and bidi control is ? (one line, read in stored order); object keys too, and an
+    object whose keys would then read the same is *** whole. Other values are returned as they are."""
+    if isinstance(v, str):
+        return el.MASK if sd.hidden(v) else SHOWN_NOT.sub("?", v)
+    if isinstance(v, list):
+        return [for_owner(x) for x in v]
+    if isinstance(v, dict):
+        d = {for_owner(k): for_owner(x) for k, x in v.items()}
+        return d if len(d) == len(v) else el.MASK
+    return v
+
+
 def display(action):
-    """The action as the owner is shown it (GB-5): op, target, and new (or new_digest). new is *** when the target names a
-    secret (its key is one the event log masks; a whole row with redact keys or a secret setting: a scalar), its keys the
-    redactor names are ***, and it is *** whole when a value pattern hides any part (sd.hidden) or it cannot be judged."""
+    """The action as the owner is shown it (GB-5): op, target, and new (or new_digest), through for_owner(). new is *** when the
+    target names a secret (its key is one the event log masks; a whole row with redact keys or a secret setting: a scalar), its
+    keys the redactor names are ***, and it is *** whole when a value pattern hides any part (sd.hidden) or it cannot be judged."""
     a = {k: action[k] for k in ("op", "target", "new_digest") if k in action}
     if "new" in action:
         v = action["new"]
@@ -175,7 +195,7 @@ def display(action):
         except Exception:   # fail closed: what cannot be judged is not shown
             v = el.MASK
         a["new"] = v
-    return a
+    return for_owner(a)
 
 
 def channel_doc():
@@ -200,11 +220,15 @@ def channel(cid):
     return doc, rows[cid]
 
 
-def run(argv, payload, limit, code):
-    """(exit code, stdout) of argv with payload (JSON) on stdin; argv[0] relative = under the stack root. Else Refusal(code)."""
+def run(argv, payload, limit, code, doc, extra=()):
+    """(exit code, stdout) of the data argv plus extra with payload (JSON) on stdin; argv[0] relative = under the stack root.
+    Else Refusal(code). Its environment is fixed (RT2-4): PATH is the channels file's env.path, and of the caller's variables
+    only those env.pass names and those the data argv names pass (a planted program on the caller's PATH, BASH_ENV: never)."""
+    e = doc["env"]
+    env = {k: os.environ[k] for k in [*e["pass"], *filter(ENV_NAME.fullmatch, argv[1:])] if k in os.environ} | {"PATH": ":".join(e["path"])}
     try:
         exe = argv[0] if os.path.isabs(argv[0]) else sd.safe(argv[0])
-        p = subprocess.Popen([exe, *argv[1:]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, start_new_session=True)
+        p = subprocess.Popen([exe, *argv[1:], *extra], stdin=subprocess.PIPE, stdout=subprocess.PIPE, start_new_session=True, env=env)
     except (OSError, sd.DataError) as e:
         raise Refusal(code, f"{sd.shown(argv[0])} cannot start ({type(e).__name__})") from None
     try:   # its own session: a timeout kills it and everything it started
@@ -259,8 +283,10 @@ def deliver(rid, cid, doc, row):
         raise Refusal(*refusal_of(rid, word))
     if cid in rec["deliveries"]:   # delivering twice shows it once
         return rec["deliveries"][cid]
-    payload = {k: rec[k] for k in ("id", "nonce", "summary", "approval_class", "card", "target", "expires_at", "digest")} | {"action": display(rec["action"])}
-    rc, out = run(row["deliver"], payload, doc["adapter_timeout_s"], "STL-OWN-830")
+    # id, nonce, class, card, times and digest are pattern-checked tokens; the free text goes through for_owner()
+    payload = {k: rec[k] for k in ("id", "nonce", "approval_class", "card", "expires_at", "digest")} | {
+        "summary": for_owner(rec["summary"]), "target": for_owner(rec["target"]), "action": display(rec["action"])}
+    rc, out = run(row["deliver"], payload, doc["adapter_timeout_s"], "STL-OWN-830", doc)
     ref = (out.splitlines() or [""])[0].strip()
     if rc != 0 or not REF.fullmatch(ref):
         raise Refusal("STL-OWN-830", f"channel {cid}: deliver exited {rc}" + ("" if REF.fullmatch(ref) else " and gave no message ref"))
@@ -286,7 +312,7 @@ def accept(rec, req, decision, cid, used, doc):
     save(rec)
     r = doc["resume"]
     try:
-        rc, _ = run([*r["argv"], rec["card"], decision], {"request_id": rid, "card": rec["card"], "decision": decision}, r["timeout_s"], "STL-OWN-831")
+        rc, _ = run(r["argv"], {"request_id": rid, "card": rec["card"], "decision": decision}, r["timeout_s"], "STL-OWN-831", doc, (rec["card"], decision))
         if rc != 0:
             raise Refusal("STL-OWN-831", f"resume for card {rec['card']} exited {rc}")
     except Refusal as x:
@@ -429,7 +455,7 @@ def main(argv):
             v = view()
             pending = [{"id": r["id"], "nonce": r["nonce"], "message_ref": r["deliveries"][o.channel]} for r in records()
                        if o.channel in r["deliveries"] and state(r["id"], v)[3] == "pending"]
-            rc, out = run(row["collect"], pending, doc["adapter_timeout_s"], "STL-OWN-830")
+            rc, out = run(row["collect"], pending, doc["adapter_timeout_s"], "STL-OWN-830", doc)
             refused = 0
             if rc != 0:
                 refused += 1

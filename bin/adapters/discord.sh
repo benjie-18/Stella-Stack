@@ -22,8 +22,9 @@ case $1 in
     th=$(jq -r '.thread_id // empty' <<<"$res" 2>/dev/null)
     [ -n "$th" ] || { echo "$me: create_thread failed: $(jq -r '.error // "no thread id"' <<<"$res" 2>/dev/null | head -c 300)" >&2; exit 1; }
     # the exact action (JSON: op, target, new or new_digest, masked by approvals.py) and the digest first; the agent's summary
-    # last, on one line (no line break in it can forge an Action line), and short enough that the post fits one message
-    res=$(discord_action send_message "$th" "$(jq -r '"Approval \(.id) for card \(.card) (class \(.approval_class))\nAction: \(.action | tojson)\nDigest: \(.digest)\nExpires: \(.expires_at)\nThe agent says: \(.summary[:300] | explode | map(if . < 32 or . == 127 then 32 else . end) | implode)\nReply in this thread with approve or deny."' <<<"$r")")
+    # last, short enough that the post fits one message; approvals.py for_owner() already masked every field and made each control,
+    # bidi control and line separator ?, so no text in it can forge an Action line or reorder one
+    res=$(discord_action send_message "$th" "$(jq -r '"Approval \(.id) for card \(.card) (class \(.approval_class))\nAction: \(.action | tojson)\nDigest: \(.digest)\nExpires: \(.expires_at)\nThe agent says: \(.summary[:300])\nReply in this thread with approve or deny."' <<<"$r")")
     jq -e '.success' <<<"$res" >/dev/null 2>&1 || { echo "$me: send_message failed: $(jq -r '.error // "no answer"' <<<"$res" 2>/dev/null | head -c 300)" >&2; exit 1; }
     echo "$th";;
   collect)

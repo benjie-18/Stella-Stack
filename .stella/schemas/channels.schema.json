@@ -25,6 +25,16 @@
       "maximum": 2592000,
       "description": "The ttl (seconds) of a request intake makes from an agent's approval-ask."
     },
+    "env": {
+      "type": "object",
+      "description": "The fixed environment every deliver, collect and resume runs with (RT2-4: nothing else of the caller's environment is inherited, so a program planted in a folder on the caller's PATH, or BASH_ENV, never runs). path: PATH, in order, absolute folders only (no : in one; put folders agents can write last, so they never shadow a system tool). pass: the caller's variables passed by name when set (scratch roots, owner config file, Discord helper). A row's argv words that are variable names (an owner config key such as its channel id) pass for that argv too.",
+      "properties": {
+        "path": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^/[^:]*$"}},
+        "pass": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}}
+      },
+      "required": ["path", "pass"],
+      "additionalProperties": false
+    },
     "resume": {
       "type": "object",
       "description": "Runs once per decision (an accepted answer approved or denied, or the expiry: expired), never while pending: argv plus the request's card id and the decision word, and the decision as JSON on stdin (board unblock).",
@@ -60,6 +70,6 @@
       "items": {"type": "string", "minLength": 1}
     }
   },
-  "required": ["schema_version", "host_kind", "adapter_timeout_s", "ask_ttl_s", "resume", "entries"],
+  "required": ["schema_version", "host_kind", "adapter_timeout_s", "ask_ttl_s", "env", "resume", "entries"],
   "additionalProperties": false
 }
