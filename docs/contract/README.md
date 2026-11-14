@@ -50,7 +50,9 @@ and, on a row with records, `record_kind` (a kind of the data policy's `record_k
 names a kind the policy does not list, is refused).
 It also names the event log, the backup folder, the applied-state file and the role table. Every path in the index is
 relative, has no `..` part and must resolve (symlinks followed) inside the stack root; `check` refuses one that does not,
-and `get`, `list` and `search` never read it. The index row of the index is `owner_only`: it decides which files are.
+and `get`, `list` and `search` never read it. The index row of the index is `owner_only`: it decides which files are. A row
+whose schema marks any field `x-owner-only`, and the row of the `install` schema, must be `owner_only` too (the apply gate is per
+row, so an open row would let any role write an owner-only field); `check` refuses either one left open, naming the row.
 **A row is charged for its own fault only**, also for where its path points. A JSON row whose path, a folder in that path below
 the stack root, or an entry file of its folder is a symbolic link is refused, that row alone ("must not be a symbolic link",
 naming the row and the path): it is compared with no other row, so the row whose file the link points to (the settings
@@ -242,8 +244,10 @@ unset, the default; true or false is the owner's record of the provider's terms)
 `bin/stella-apply.py apply connections --from <candidate>` (dry run first; `rollback` restores the bytes). Routing refuses a
 `cli-login` link whose `terms_ok` is not true (see role assignments). An `api` provider may be `aggregator: true` (one endpoint fronting
 several upstream providers) and then names `broker_entries` {`unified`, `admin`, `upstream[]`}: broker entry names only.
-Routing judges an aggregator as cloud whatever its `locality` (what it is given goes on to its upstreams): a class's hosted
-rule (grant or never), a Local only project and an effort mode that allows local links only all apply to it. The shipped
+Routing judges an aggregator (what it is given goes on to its upstreams) and a hosted connection (its provider's cloud keeps
+data) as cloud whatever its `locality`: a class's hosted rule (grant or never), a Local only project and an effort mode that
+allows local links only all apply to it. One function (`stella_data.reach()`) says whether a link leaves the machine, and
+these three checks read only it. The shipped
 `fallback-gateway` stays unmarked (owner decision 2026-11-14): B1 marks it `aggregator: true` when it defines its broker entries.
 Every entry marked `locality: local`, whatever its kind, lists only hosts of the data policy `local_hosts` (a provider names
 at least one).
