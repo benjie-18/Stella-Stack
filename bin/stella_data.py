@@ -17,7 +17,8 @@ CLI: stella_data.py check [--json] [<id>]       validate every data file against
                                                 features phase_order: exit 1 and STL-OWN-810 when any is, 0 when none; an
                                                 unknown phase is a usage error (2)
 Exit: 0 ok; 1 a problem (one line per problem or unreadable file, code STL-CFG-310) or an unknown id (STL-CFG-311, one
-alert line); 2 usage. No command ends in a traceback.
+alert line) or, in a worker environment, a read of a file that holds a key (KEY_STATE: STL-CFG-312); 2 usage. No command ends
+in a traceback.
 The stack root is the parent of this file's folder, or STELLA_ROOT (a scratch root in tests; the alert line then goes under it).
 Data files must be strict JSON: a repeated key, NaN and Infinity are errors. A problem message never prints the rejected value.
 Schema subset: type, enum, const, properties, propertyNames, required, additionalProperties, items, minItems, maxItems,
@@ -33,7 +34,7 @@ document validated where no x-ref is resolved (validate_doc without refs) fails 
 A record is one entry of an index row with a list_key, or one file of a folder row: it carries global_id (a lower-case version
 4 UUID, unique across every data file) and install_id (the UUID of the install that made it); its old id is its alias. Both
 are always required. An object deeper in a file whose schema has a global_id property (a privacy grant) is a record too: its
-global_id joins the same check, and its id is unique in its list.
+global_id joins the same check, and its id is unique in its list. So does every record of the role table (check, validate roles).
 Every file an index row names is judged by every rule of its schema (all rows of a schema form one merged view, which is what
 check judges and what the read commands serve). A file that fails its schema feeds no rule. A read is judged by exactly the
 files its rules use (RULES, DEPS): it is served only when none of them has a problem, and its refusal names the first one."""
@@ -52,6 +53,7 @@ KEYWORDS = {"$schema", "$id", "$ref", "$defs", "title", "description", "type", "
             "required", "additionalProperties", "items", "minItems", "maxItems", "uniqueItems", "minLength", "maxLength",
             "pattern", "minimum", "maximum", "dependentRequired", "x-one-document", "x-ref", "x-ref-where", "x-owner-only", "x-record-kind-of"}
 MAX_DEPTH = 64   # a data file nests far less; one limit makes `check` and the read commands agree on a deep object
+KEY_STATE = ("owner_key", "event_writer_state")   # the index keys of the state files that hold a key: never read in a worker environment
 TABLE, FRAME, NOROW = "role-table", "data-files", "schema:"   # members that are no index row: the role table, the index, a schema with no JSON row
 MASK_LIMIT = 1024   # a value pattern never runs on a longer string (it is masked whole): a pattern's time grows with the length
 UUID4 = r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"   # global_id
@@ -64,6 +66,10 @@ TYPES = {"object": dict, "array": list, "string": str, "integer": int, "number":
 
 class DataError(Exception):
     """A data file or path this tool cannot use; the message names it and never holds a data value."""
+
+class Refused(DataError):
+    """A read of a file that holds a key (KEY_STATE) in a worker environment: STL-CFG-312, whoever imports this reader (GB-1)."""
+    code = "STL-CFG-312"
 
 
 # ---- strict JSON loading, paths inside the root ----
@@ -114,17 +120,23 @@ def _sound(doc):
                 raise ValueError("a string is not valid Unicode text") from None
 
 
-_closed = None
+_closed = _keys = None
 
 
 def closed_ids():
     """(device, inode) of every file this tool never opens: the role table's owner_settings and the file of every env row.
-    A hard link or a link swapped during the run shares the identity, so jload compares it before a byte is read."""
-    global _closed
+    A hard link or a link swapped during the run shares the identity, so jload compares it before a byte is read.
+    Also sets _keys: the identities of the KEY_STATE files, which jload opens for the owner only."""
+    global _closed, _keys
     if _closed is None:
-        _closed, paths = set(), set()   # empty while the index and the role table themselves are read
+        _closed, _keys, paths, keys = set(), set(), set(), set()   # empty while the index and the role table themselves are read
         try:
             idx = load(INDEX)
+            for k in KEY_STATE:
+                try:
+                    keys.add(safe(idx[k]))
+                except Exception:
+                    pass   # check reports a state path that is missing or leaves the root
             for r in idx["files"]:
                 try:
                     if r["format"] == "env":
@@ -137,15 +149,27 @@ def closed_ids():
                 pass
         except Exception:
             pass   # no readable index: check says so; then only the caller's own path rules hold
-        ids = set()
-        for p in paths:
-            try:
-                st = os.stat(p)
-                ids.add((st.st_dev, st.st_ino))
-            except OSError:
-                pass
-        _closed = ids
+        def ids(ps):
+            out = set()
+            for p in ps:
+                try:
+                    st = os.stat(p)
+                    out.add((st.st_dev, st.st_ino))
+                except OSError:
+                    pass
+            return out
+        _closed, _keys = ids(paths), ids(keys)
     return _closed
+
+def key_gate(what):
+    """Refused (STL-CFG-312) in a worker environment (bin/worker_env.py): a file that holds a key is the owner's (GB-1)."""
+    import worker_env   # it imports this module, so not at the top
+    try:
+        w = worker_env.reason()
+    except Exception:
+        w = "it cannot be told that this is not a worker"
+    if w:
+        raise Refused(f"{what}: holds a key, which only the owner's tools read ({w}); nothing was read")
 
 
 def jload(path, label=None):
@@ -154,9 +178,13 @@ def jload(path, label=None):
     try:
         if shut and ident(os.stat(path)) in shut:
             raise no
+        if _keys and ident(os.stat(path)) in _keys:
+            key_gate(label or path)
         with open(path, encoding="utf-8") as f:
             if shut and ident(os.fstat(f.fileno())) in shut:   # swapped between the stat and the open: nothing is read
                 raise no
+            if _keys and ident(os.fstat(f.fileno())) in _keys:
+                key_gate(label or path)
             doc = json.load(f, object_pairs_hook=_pairs, parse_constant=_bad_const, parse_float=_float, parse_int=_int)
         _sound(doc)
         return doc
@@ -1218,7 +1246,15 @@ def judge(reads=None):
             if isinstance(a, str) and (at, a) in seen:
                 P(r["id"], f"{rel}: {at}: id {idn(a, True)} is listed twice")
             seen.add((at, a))
-    by["_gids"] = set(gids)   # every record's global_id, for validate
+    try:   # product rule 14: the role table's records join the one global_id set; an unreadable table or schema is a role-table problem below
+        rsch = schema_of("roles")
+        trecs = records_in(table, rsch, rsch.get("$defs", {})) if table is not None else []
+    except DataError:
+        trecs = []
+    for at, a, e in trecs:
+        if isinstance(e.get("global_id"), str):
+            gids.setdefault(e["global_id"], []).append((TABLE, idx["role_table"], f"record {idn(a, True)} of {at}", None))
+    by["_gids"] = {g: {x[0] for x in at} for g, at in gids.items()}   # every record's global_id -> the members that hold it, for validate
     for g, at in gids.items():   # an alias anywhere that is another record's global_id: a read by that string is ambiguous
         other = list(dict.fromkeys(by["_src"][n][g] for n in by if not n.startswith("_") and g in by[n] and by[n][g].get("global_id") != g))
         for x in at:
@@ -1476,13 +1512,17 @@ def main(argv):
         label = "role table" if args[0] == "roles" else f"{args[0]} file"
         rs = rows()
         mine = doc.get("global_id") if isinstance(doc, dict) and args[0] != "roles" and not any(r["schema"] == args[0] for r in rs) else None   # a record's own file keeps its id; check judges it
+        theirs = [(at, a, e["global_id"]) for at, a, e in records_in(doc, schema_of("roles"), schema_of("roles").get("$defs", {}))
+                  if isinstance(e.get("global_id"), str)] if args[0] == "roles" else []   # product rule 14: the table's records too
         targets = sorted({t.split("/")[0] for _, _, t, *_ in refs if any(r["id"] == t.split("/")[0] and r["format"] == "json" for r in rs)}
-                         | ({r["id"] for r in rs if r["format"] == "json"} if isinstance(mine, str) else set()))
+                         | ({r["id"] for r in rs if r["format"] == "json"} if isinstance(mine, str) or theirs else set()))
         by = served(targets) if targets else {"_rows": {}}
         found = ref_problems(refs, by, rs) if refs else []
         errs += [m for k, m in found if k != "id"]
         if isinstance(mine, str) and mine in by.get("_gids", ()):   # product rule 14: a global_id is one record's
             errs.append("$.global_id: already the global_id of a record in the data files")
+        errs += [f"{at}.{idn(a)}.global_id: already the global_id of a record in the data files"
+                 for at, a, g in theirs if by.get("_gids", {}).get(g, set()) - {TABLE}]   # the live table's own ids are the candidate's to keep
         unknown = [m for k, m in found if k == "id"]
         if unknown:   # unknown fails closed: STL-CFG-311 and one alert line, never the value, whatever else is wrong
             say("STL-CFG-311", f"{label}: {unknown[0]}" + (f" (and {len(unknown) - 1} more)" if len(unknown) > 1 else ""), alert=True)
@@ -1609,7 +1649,7 @@ if __name__ == "__main__":
     try:
         sys.exit(main(sys.argv[1:]))
     except DataError as e:   # a file this tool cannot read: one catalog line naming it, never a traceback
-        say("STL-CFG-310", str(e))
+        say(getattr(e, "code", "STL-CFG-310"), str(e))
         sys.exit(1)
     except RecursionError:
         say("STL-CFG-310", "a data file is nested too deeply")
