@@ -230,6 +230,19 @@
       "record_kind": "channel",
       "global_id": "39d8ca98-ad4d-455b-b9d5-353b7b98b940",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "loopback-api",
+      "path": ".stella/loopback-api.json",
+      "schema": "loopback-api",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": "endpoints",
+      "id_field": "id",
+      "record_kind": "endpoint",
+      "global_id": "7eb8dcdd-3861-4208-8e88-1c5a9301e51d",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

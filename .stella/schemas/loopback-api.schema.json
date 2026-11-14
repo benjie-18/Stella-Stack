@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Loopback API contract",
+  "description": "The local HTTP API's contract (F1c B5, design D6 incl. DG-4): its endpoints with their scope, the loopback host names and origins it accepts, and the names of its token, CSRF and owner-proof headers. bin/loopback_guard.py judges every request against it (STL-OWN-850..858); a new endpoint is a new row, no code change. Owner-only: only the owner path writes it.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "port_source": {
+      "enum": ["bound"],
+      "description": "Where the port in Host and in an origin's {port} comes from: bound = the port the server is bound to (the guard's session.port); no port is fixed in data or code."
+    },
+    "hosts": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"enum": ["127.0.0.1", "localhost", "::1", "[::1]"]},
+      "description": "The host names a request's Host header may carry, each followed by :<port> (an IPv6 address in brackets). Loopback names only: any other name (DNS rebinding) is refused, STL-OWN-850."
+    },
+    "origins": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z][a-z0-9+.-]*://[^*\\s/]+$"},
+      "description": "The Origin values accepted: scheme://host[:port], {port} standing for the bound port. No wildcard and no null: an Origin not listed is refused on every request (STL-OWN-851); a state-changing request needs one of these (STL-OWN-852)."
+    },
+    "token_header": {"$ref": "#/$defs/header", "description": "The header carrying the API token (every request, every scope; STL-OWN-854)."},
+    "csrf_header": {"$ref": "#/$defs/header", "description": "The header carrying the CSRF token (every state-changing request; STL-OWN-853)."},
+    "proof_header": {"$ref": "#/$defs/header", "description": "The header carrying an owner-write request's owner proof: the compact JSON of an owner_auth.py proof (object or list) over the action {op: http, target: \"<METHOD> <path>\", old_digest: 64 zeros, new_digest: sha256 of the raw body}."},
+    "owner_class": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "description": "The owner-auth policy action class an owner-write proof must meet (owner_auth.require)."
+    },
+    "endpoints": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]*$"},
+          "method": {"type": "string", "pattern": "^[A-Z]+$", "description": "Matched exactly. GET, HEAD and OPTIONS are the only methods that are not state-changing."},
+          "path": {"type": "string", "pattern": "^/[^\\s?#]*$", "description": "Matched exactly (a trailing slash or a query string makes another, unknown path)."},
+          "scope": {"enum": ["read", "owner-write"], "description": "read: the API token is enough; owner-write: the API token and an owner proof."},
+          "global_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+          "install_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+        },
+        "required": ["id", "method", "path", "scope", "global_id", "install_id"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "$defs": {
+    "header": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*$"}
+  },
+  "required": ["schema_version", "port_source", "hosts", "origins", "token_header", "csrf_header", "proof_header", "owner_class", "endpoints"],
+  "additionalProperties": false
+}

@@ -5,7 +5,8 @@
 # and docs/; own HOME, TMPDIR, alert log, owner key and store; stub `hermes` boards on PATH); never the live tree, key or store.
 # Codes: 850 Host, 851 foreign Origin (any method, DG-4), 852 no Origin on a state-changing request, 853 CSRF, 854 API token,
 # 855 owner-write without an owner proof, 856 owner proof refused (cause = the owner_auth code), 857 unknown endpoint.
-# Cases from the F1c tester's wave-3 T5a, unchanged (below the harness).
+# W5's own cases (a repeated header, an unlisted method, an unusable contract or session), then the F1c tester's wave-3 T5a
+# cases, unchanged.
 set -u
 H=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 TREE=$H
@@ -32,6 +33,35 @@ fails=0; n=0
 ok() { n=$((n+1)); if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); cat "$T/o" "$T/ve" 2>/dev/null | sed 's/^/     | /' | tail -n 3; fi; rm -f "$T/o" "$T/ve"; }
 finish() { echo "# loopback-selftest: $n cases, $fails failed"; [ "$fails" = 0 ] && echo "selftest PASS" || echo "selftest FAIL"; [ "$fails" = 0 ]; exit $?; }
 has() { [ -f "$B/$1" ] || { echo "     (precondition: bin/$1 does not exist in TREE)"; return 1; }; }
+# ---- W5's own cases (beyond T5a): a repeated header, an unlisted method over HTTP, an unusable contract or session ----
+LC0=$R/.stella/loopback-api.json
+$PY -c '
+import json, sys
+sys.path.insert(0, sys.argv[1]); import loopback_guard as g
+d = json.load(open(sys.argv[2])); tk = d["token_header"]; s = {"api_token": "t1", "csrf_token": "c1", "port": 54321}
+rp = next(e["path"] for e in d["endpoints"] if e["method"] == "GET" and e["scope"] == "read")
+base = [("Host", "127.0.0.1:54321"), (tk, "t1")]
+o = d["origins"][0].replace("{port}", "54321")
+r = [g.check("GET", rp, base, b"", s), g.check("GET", rp, base + [("Origin", o), ("origin", o)], b"", s),
+     g.check("GET", rp, base + [("HOST", "127.0.0.1:54321")], b"", s), g.check("GET", rp, base + [(tk.upper(), "t1")], b"", s),
+     g.check("GET", rp, base, b"", {"api_token": "t1", "port": 54321}), g.check("GET", rp, base, b"", dict(s, port="54321"))]
+print(json.dumps([list(x) for x in r]))' "$R/bin" "$LC0" >"$T/o" 2>&1
+ok '[ "$(jq -c . "$T/o" 2>/dev/null)" = "[[true,null],[false,\"STL-OWN-851\"],[false,\"STL-OWN-850\"],[false,\"STL-OWN-854\"],[false,\"STL-OWN-858\"],[false,\"STL-OWN-858\"]]" ]' \
+  "W5: a header sent twice matches nothing (Origin 851, Host 850, token 854, names in any case); a session without its CSRF token or with a text port refuses everything (858)"
+printf '{"api_token":"t1","csrf_token":"c1"}' >"$T/s0.json"
+$PY "$R/bin/loopback-api-double.py" --port 0 --session "$T/s0.json" >"$T/d0.out" 2>"$T/d0.err" & D0=$!
+for _ in $(seq 50); do P0=$(head -n 1 "$T/d0.out" 2>/dev/null); [[ $P0 =~ ^[0-9]+$ ]] && break; P0=; sleep 0.2; done
+curl -sS --noproxy '*' --max-time 10 -X PROPFIND -o "$T/o" -w '%{http_code}' -H "Host: 127.0.0.1:${P0:-1}" "http://127.0.0.1:${P0:-1}/" >"$T/st0" 2>"$T/ve"
+ok '[ "$(cat "$T/st0")" = 404 ] && jq -e ".ok == false and .code == \"STL-OWN-857\"" "$T/o" >/dev/null' "W5: a method the server has no handler for (PROPFIND) reaches the guard: 404 STL-OWN-857, never a 501"
+kill "$D0" 2>/dev/null; wait "$D0" 2>/dev/null
+cp "$LC0" "$T/lc0.keep"; jq '.endpoints += [.endpoints[0] | .id = "zz-dup"]' "$T/lc0.keep" >"$LC0"
+$PY "$R/bin/loopback-api-double.py" --port 0 --session "$T/s0.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-858 "$T/o"' "W5: a contract with one method + path twice is refused at start (858; a read and an owner-write row could disagree)"
+jq '.token_header = .csrf_header' "$T/lc0.keep" >"$LC0"
+jq -n --arg p "$(jq -r '.endpoints[0].path' "$T/lc0.keep")" '{method: "GET", path: $p, headers: {Host: "127.0.0.1:54321"}, body: "", session: {api_token: "t1", csrf_token: "c1", port: 54321}}' >"$T/rq0.json"
+$PY "$R/bin/loopback_guard.py" check "$T/rq0.json" >"$T/o" 2>"$T/ve"; rc=$?
+ok '[ $rc = 1 ] && jq -e ".ok == false and .code == \"STL-OWN-858\"" "$T/o" >/dev/null' "W5: a contract whose token and CSRF headers share a name refuses every request (858)"
+cp "$T/lc0.keep" "$LC0"
 # ---- T5a (qa/wave3/T5a.sh from its line 11, unchanged) ----
 DPID=
 stopd() { if [ -n "$DPID" ]; then kill "$DPID" 2>/dev/null; wait "$DPID" 2>/dev/null; DPID=; fi; }

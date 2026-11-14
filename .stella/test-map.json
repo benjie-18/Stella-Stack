@@ -166,6 +166,9 @@
     },
     "approvals": {
       "mark": "hermetic"
+    },
+    "loopback": {
+      "mark": "hermetic"
     }
   },
   "test_like": [
@@ -1973,7 +1976,9 @@
     },
     {
       "globs": [
-        "docs/contract/*.md",
+        "docs/contract/README.md",
+        "docs/contract/approval-service.md",
+        "docs/contract/cards-and-vault.md",
         ".gitignore"
       ],
       "targets": [],
@@ -2423,6 +2428,73 @@
         "write-guard"
       ],
       "why": "F1c W3: the channels row is owner-only: approvals.py reads it, stella-apply stage() copies every json row and the schemas folder, stella_data check validates it, and the protected-path selftests name their paths from the index"
+    },
+    {
+      "globs": [
+        "bin/loopback_guard.py",
+        "bin/loopback-api-double.py",
+        "bin/loopback-selftest.sh",
+        "docs/contract/loopback-api.md"
+      ],
+      "targets": [
+        "loopback"
+      ],
+      "why": "F1c W5: the loopback API guard, its test double, its selftest (the tester's wave-3 T5a cases) and the contract document it names the codes in"
+    },
+    {
+      "globs": [
+        ".stella/loopback-api.json",
+        ".stella/schemas/loopback-api.schema.json"
+      ],
+      "targets": [
+        "commit-guard",
+        "loopback",
+        "owner-settings",
+        "stella-apply",
+        "stella-data",
+        "write-guard"
+      ],
+      "why": "F1c W5: the loopback-api row is owner-only: the guard and the double read it, stella-apply stage() copies every json row and the schemas folder, stella_data check validates it, and the protected-path selftests name their paths from the index"
+    },
+    {
+      "globs": [
+        ".stella/data-files.json",
+        ".stella/schemas/event.schema.json",
+        ".supervisor/limits.env",
+        "SUPERVISOR.md",
+        "bin/alert-catalog.sh",
+        "bin/alert.sh",
+        "bin/alert_catalog.py",
+        "bin/apply-hermes-local.sh",
+        "bin/escalation-complete.sh",
+        "bin/escalation-discord.sh",
+        "bin/escalation-on-block.sh",
+        "bin/escalation-on-claim.sh",
+        "bin/escalation-on-complete.sh",
+        "bin/escalation-thread.sh",
+        "bin/event_log.py",
+        "bin/event_untrusted.py",
+        "bin/kanban-board.sh",
+        "bin/kanban-guard.sh",
+        "bin/owner-config.sh",
+        "bin/owner_auth.py",
+        "bin/owner_config.py",
+        "bin/register-escalation-hook.sh",
+        "bin/register-toolsets.sh",
+        "bin/role-guard.py",
+        "bin/roles.py",
+        "bin/stella-apply.py",
+        "bin/stella_data.py",
+        "bin/worker_env.py",
+        "docs/alert-codes.md",
+        "docs/hermes-local/alert-catalog.json",
+        "docs/hermes-local/board.md",
+        "docs/hermes-local/roles.json"
+      ],
+      "targets": [
+        "loopback"
+      ],
+      "why": "F1c W5: what the loopback selftest reaches (bin/test-map.py reach): the guard imports owner_auth and stella_data, owner_auth asks worker_env (roles, the board), every refusal renders an alert from the catalog"
     }
   ]
 }
