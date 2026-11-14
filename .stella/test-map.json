@@ -1005,7 +1005,7 @@
         "watchdog",
         "write-guard"
       ],
-      "why": "the install document (F1b W1): read by bin/stella_data.py on every check (ids_required, install_id), so the same selftests as the data index"
+      "why": "the install document (F1b W1): read by bin/stella_data.py on every check (install_id), so the same selftests as the data index"
     },
     {
       "globs": [

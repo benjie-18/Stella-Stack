@@ -48,7 +48,7 @@
         "record"
       ],
       "inputs": "an index row id (<id>/<file>.json for a folder row) and --out <new file>",
-      "outputs": "the candidate file; exit 1 with a catalog code when the row is unknown or the file cannot be written",
+      "outputs": "the candidate file; exit 1 with a catalog code when the row is unknown, --out lies inside the stack root, or the file cannot be written",
       "allowed_roles": [
         "dispatcher",
         "builder",
