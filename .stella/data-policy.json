@@ -38,6 +38,9 @@
     "card": {
       "sync_class": "local-only"
     },
+    "channel": {
+      "sync_class": "local-only"
+    },
     "connection": {
       "sync_class": "local-only"
     },

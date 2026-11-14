@@ -287,4 +287,5 @@ cp "$T/f.keep" "$F"
 $SD check >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && [ "$(head -1 "$T/o")" = "data OK" ]' "stella_data.py check passes on the shipped data"
 echo "# owner-auth-selftest: $n cases, $fails failed"
-[ "$fails" = 0 ]
+[ "$fails" = 0 ] || { echo "selftest FAIL"; exit 1; }
+echo "selftest PASS"

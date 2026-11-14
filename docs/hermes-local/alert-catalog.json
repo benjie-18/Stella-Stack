@@ -712,7 +712,7 @@
       "area": "OWN",
       "severity": "warning",
       "title": "an owner proof was refused: provider not allowed",
-      "message": "An owner proof was refused because its provider is unknown, switched off, or not one this action allows: {problem}. Nothing was changed.",
+      "message": "An owner proof was refused because its provider is not in the policy, is switched off, or is not one this action allows: {problem}. Nothing was changed.",
       "action": "make the change again with a proof the owner-auth policy allows for it (.stella/owner-auth.json, actions); an account login is never an owner proof. See STL-OWN-801 in docs/alert-codes.md.",
       "cause": "A proof named a provider that is not in the owner-auth policy, is disabled, or is in no alternative of the action class asked for.",
       "check": "the command output and .supervisor/logs/alerts.log; owner_auth.py check.",
