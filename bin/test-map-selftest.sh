@@ -426,4 +426,8 @@ root twin3 '.map[0].targets += ["A"]'
 ok 'bad twin3 "selftest names A and a differ only in case"' "48c a row target whose name differs only in case from a selftest: refused"
 root glob; cp -p "$T/glob/bin/b-selftest.sh" "$T/glob/bin/c[x]-selftest.sh"
 ok 'bad glob "bin/c\[x\]-selftest.sh has no mark"' "48d a selftest named with glob characters cannot be marked (the schema's name pattern): check refuses it, by name"
+# W0r2-RT-01: on a full answer the map's `runner` key cannot shrink `shared`: the suite is the FALLBACK runner's list and the map's
+# runner's list together, so a map that names another script (whose loop names fewer selftests) can only add names.
+root other '.runner = "bin/other.sh"'; printf '#!/usr/bin/env bash\nfor t in a; do\n  :\ndone\n' >"$T/other/bin/other.sh"
+ok '[ "$(shared other new/x.sh)" = "[\"b\"]" ] && [ "$(shared other --)" = "[\"b\"]" ]' "49 a map whose runner key names another script: a full answer still lists every shared selftest of the real runner"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
