@@ -1349,7 +1349,19 @@ sap apply connections --from "$C/gb3-c2.json" >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && [ "$(nev)" = $e0 ]' "GB-3 recording an identity-critical hand edit (terms_ok -> true) with no terminal: STL-OWN-808, no line ($rc: $(head -c 120 "$T/o"))"
 ap check connections >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 1 ] && grep -q STL-CFG-314 "$T/o"' "GB-3 the drift alarm of that hand edit is not silenced without the phrase"
+# GB-3 (RT2-1, Gate B fix 2): a plain apply over the hand edit (the candidate differs from the file elsewhere, here its formatting,
+# as `settings.py set` does with one key) is judged against the document applied before AND the file: refused, no line, still drift
+jq . "$CN" >"$C/gb3-c3.json"
+sap apply connections --from "$C/gb3-c3.json" >"$T/o" 2>&1; rc=$?; ap check connections >/dev/null 2>&1; r2=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && [ "$(nev)" = $e0 ] && [ $r2 = 1 ]' "GB-3 RT2-1 an apply over the identity-critical hand edit that changes only the formatting, key and no terminal: STL-OWN-808, no line, still drift ($rc/$r2: $(head -c 120 "$T/o"))"
+jq . "$C/gb3-c0.json" >"$C/gb3-c4.json"
+sap apply connections --from "$C/gb3-c4.json" >"$T/o" 2>&1; rc=$?; ap check connections >/dev/null 2>&1; r2=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && [ "$(nev)" = $e0 ] && [ $r2 = 1 ]' "GB-3 RT2-1 the file side too: an apply that takes the hand edit back out (terms_ok in the file -> the candidate) needs the phrase ($rc/$r2)"
 cp "$C/gb3-c0.json" "$CN"; ap check connections >/dev/null 2>&1; ok '[ $? = 0 ]' "GB-3 the file put back by hand: no drift"
+jq . "$C/gb3-c0.json" >"$CN"; jq --indent 4 . "$C/gb3-c0.json" >"$C/gb3-c5.json"
+sap apply connections --from "$C/gb3-c5.json" >"$T/o" 2>&1; rc=$?; ap check connections >/dev/null 2>&1; r2=$?
+ok '[ $rc = 0 ] && [ "$(nev)" = $((e0+1)) ] && [ $r2 = 0 ]' "GB-3 RT2-1 control: a hand edit and an apply that touch no identity-critical target on either side (formatting only; the document applied before known) take the key alone ($rc/$r2: $(head -c 120 "$T/o"))"
+sap apply connections --from "$C/gb3-c0.json" >/dev/null 2>&1; e0=$(nev); ok 'cmp -s "$CN" "$C/gb3-c0.json"' "GB-3 RT2-1 the fixture applied back"
 # GB-3, same rule, the finish of an apply killed after its replace: judged against the saved copy, not the file it finishes
 owner_fix; PATH=$PB:$OWNER kill_at event apply connections --from "$C/gb3-c1.json" >/dev/null 2>&1; cp "$H/.stella/owner-auth.json" "$R/.stella/owner-auth.json"
 ok 'cmp -s "$CN" "$C/gb3-c1.json"' "GB-3 setup: an identity-critical apply killed after its replace (the file holds terms_ok true)"
@@ -1386,5 +1398,43 @@ ok '[ $rc = 0 ] && cmp -s "$CAPF" "$T/cap.keep" && [ "$(nev)" = $e0 ] && [ "$(nu
 ap apply capabilities --from "$C/cap1.json" >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && [ "$(nev)" = $((e0+1)) ] && [ "$(nu)" = $((u0+2)) ] && LAST | jq -e ".type == \"apply\" and .what == \"capabilities\" and (has(\"trusted\") | not)" >/dev/null' "GB-1 the host's apply of the same row: its line in the trusted log ($rc)"
 
+# R14 (fix pass, GB-1 apply side; qa/fix1-pass/R14, assertions as there): with the real event writer, a worker's apply of a row that
+# is not owner-only lands and its line goes to the untrusted stream, never the trusted log: a plain apply; the finish of its own apply
+# killed before its applied state; a trusted log the worker cannot append to does not stop it
+ixp() { jq -r --arg i "$1" '.files[] | select(.id == $i) | .path' "$R/.stella/data-files.json"; }
+VR=$R/$(ixp versions); nut() { cat "$UNTR" 2>/dev/null | grep -c '"versions"'; }; sig() { [ -f "$LOG" ] && sha256sum <"$LOG" || echo none; }
+W() { STUB_WORKER_MARK=1 PATH=$PB:$OWNER "$@"; }; ver() { jq --arg v "$1" '.pins[0].version = $v' "$VR" >"$C/v.$1"; echo "$C/v.$1"; }
+F=$(ver 9.9.1); u0=$(nut); l0=$(sig)
+W $AP apply versions --from "$F" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$VR" "$F" && [ "$(nut)" -gt "$u0" ] && [ "$(sig)" = "$l0" ]' "R14 a worker's apply of versions lands; its line is in the untrusted stream ($u0 -> $(nut)), the trusted log unchanged ($rc: $(head -c 120 "$T/o"))"
+F=$(ver 9.9.2); W kill_at applied apply versions --from "$F" >/dev/null 2>&1; krc=$?; u0=$(nut); l0=$(sig)
+W $AP apply versions --from "$F" >"$T/o" 2>&1; rc=$?
+ok '[ $krc = 137 ] && [ $rc = 0 ] && grep -q "interrupted apply was finished" "$T/o" && [ "$(nut)" -gt "$u0" ] && [ "$(sig)" = "$l0" ]' "R14 a worker finishes its own killed apply: the bookkeeping is done, the line goes to the untrusted stream (kill $krc, $rc)"
+[ -e "$LOG" ] || { mkdir -p "$(dirname "$LOG")"; : >"$LOG"; }; chmod 0400 "$LOG"
+F=$(ver 9.9.3); u0=$(nut)
+W $AP apply versions --from "$F" >"$T/o" 2>&1; rc=$?; chmod 0600 "$LOG"
+ok '[ $rc = 0 ] && cmp -s "$VR" "$F" && [ "$(nut)" -gt "$u0" ]' "R14 a trusted log the worker cannot append to does not stop its apply: the line goes to the untrusted stream ($rc)"
+# R15 (fix pass, GB-2 and GB-3; qa/fix1-pass/R15, assertions as there): the shipped flags and policy, the owner key and no terminal
+mkr r15; cp "$H/.stella/data-files.json" "$R/.stella/data-files.json"; cp "$H/.stella/schemas/connections.schema.json" "$R/.stella/schemas/"; cp "$H/.stella/owner-auth.json" "$R/.stella/owner-auth.json"
+git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qam shipped-flags-and-policy
+SETF=$R/$(ixp settings); LAF=$R/$(ixp loopback-api); CN=$R/$(ixp connections); POLF=$R/$(ixp owner-auth)
+try() { local f=$1 c=$2; shift 2; cp -p "$f" "$T/keep"; sap apply "$c" --from "$@" >"$T/o" 2>&1; rc=$?; }
+jq -c . "$SETF" >"$C/r15-s0.json"; try "$SETF" settings "$C/r15-s0.json"
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$SETF" "$T/keep"' "R15 (1) a formatting-only change of the settings registry needs the typed phrase: 808, file unchanged ($rc)"
+jq -c . "$LAF" >"$C/r15-l0.json"; try "$LAF" loopback-api "$C/r15-l0.json"
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$LAF" "$T/keep"' "R15 (1) a formatting-only change of loopback-api needs the typed phrase: 808, file unchanged ($rc)"
+jq '.identity_critical -= ["settings"]' "$POLF" >"$T/pol.new" && cat "$T/pol.new" >"$POLF"
+ok 'jq -e "(.identity_critical | index(\"settings\")) == null" "$POLF" >/dev/null' "R15 setup: the scratch policy no longer lists the whole settings row"
+jq '(.entries | map(.sensitivity == "identity_critical") | index(true)) as $i | .entries[$i].sensitivity = "plain"' "$SETF" >"$C/r15-s1.json"; try "$SETF" settings "$C/r15-s1.json"
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$SETF" "$T/keep"' "R15 (2) lowering an identity_critical registry entry (marked so in the old registry) needs the typed phrase: 808 ($rc)"
+jq '(.entries | map(.sensitivity == "plain") | index(true)) as $i | .entries[$i].sensitivity = "identity_critical"' "$SETF" >"$C/r15-s2.json"; try "$SETF" settings "$C/r15-s2.json"
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$SETF" "$T/keep"' "R15 (2) raising a registry entry to identity_critical (marked so in the new registry) needs the typed phrase: 808 ($rc)"
+jq -c . "$CN" >"$C/r15-c4.json"; PATH=$PB:$OWNER kill_at applied apply connections --from "$C/r15-c4.json" </dev/null >/dev/null 2>&1; krc=$?
+try "$CN" connections "$C/r15-c4.json"
+ok '[ $krc = 137 ] && [ $rc = 0 ] && grep -q "interrupted apply was finished" "$T/o"' "R15 (4) the finish of a killed formatting-only apply is judged against the saved copy: done with the key only (kill $krc, $rc)"
+jq '.entries |= map(select(has("terms_ok") | not))' "$CN" >"$C/r15-c3.json"; cat "$C/r15-c3.json" >"$CN"
+rm -f "$(BK)"/connections/*/file.applied
+try "$CN" connections "$C/r15-c3.json"
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o"' "R15 (3) recording a hand edit whose applied-before content is not known is judged whole (fail closed): 808 ($rc)"
 $AP bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "usage error exits 2"
 [ $fails = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

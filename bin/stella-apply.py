@@ -394,16 +394,17 @@ def shown_change(row, rel, old_doc, new_doc, unparsed):
     lines = [f"{row['id']} ({rel}): changes {names}", *diff]
     return "\n".join(re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]", "?", el.scrub(l)) for l in lines)
 
-def owner(row, rel, op, cur, new, old_doc, new_doc, unparsed):
+def owner(row, rel, op, cur, new, olds, new_doc):
     """An owner-only row changes only with an owner proof (F1c D4): the --proof file's proofs alone, else a proof made with this
     host's owner key; class identity_critical (the typed phrase, shown with the change) when an identity-critical target is
-    touched, else owner_write. Refusals keep the owner_auth code (801..813). The provider ids go on the event line."""
+    touched between any of olds (the (doc, unparsed) sides the change is judged against: before()) and new_doc, else
+    owner_write. Refusals keep the owner_auth code (801..813). The provider ids go on the event line."""
     if not row["owner_only"]:
         return
     act = action_of(row, op, cur, new)
     try:
         pol = owner_auth.policy()
-        crit = critical(row, old_doc, new_doc, unparsed, pol)
+        crit = next(((d, u) for d, u in olds if critical(row, d, new_doc, u, pol)), None)   # the first side that touches a target is shown
         cls = "identity_critical" if crit else "owner_write"
         if OWNER.get("proof") is None:
             proofs = owner_auth.prove(cls, act)
@@ -412,7 +413,7 @@ def owner(row, rel, op, cur, new, old_doc, new_doc, unparsed):
                 proofs = sd.jload(OWNER["proof"])
             except sd.DataError:
                 raise owner_auth.Refusal("STL-OWN-802", "the proof file cannot be read as JSON") from None
-        OWNER["auth"] = owner_auth.require(cls, act, proofs, show=shown_change(row, rel, old_doc, new_doc, unparsed) if crit else None)
+        OWNER["auth"] = owner_auth.require(cls, act, proofs, show=shown_change(row, rel, crit[0], new_doc, crit[1]) if crit else None)
     except owner_auth.Refusal as r:
         raise bad(r.problem, r.code) from None
 
@@ -1272,18 +1273,20 @@ def prior_doc(row, key, good, rec):
             return parse_or_none(row, b)[0]
     return None
 
-def before(row, key, act, cur, cand, good, rec, old_doc, parses):
-    """(old_doc, unparsed) the owner proof judges a change against (GB-3): the document applied before it. A run that records
+def before(row, key, act, cur, cand, good, rec, old_doc, parses, drift):
+    """[(old_doc, unparsed)...] the owner proof judges a change against (GB-3): the document applied before it. A run that records
     bytes already in the file (finish: the saved copy of the killed apply; adopt: prior_doc) is never judged against the file it
-    records; one not known counts as changed whole (critical(): fail closed)."""
+    records; a change over a hand edit (drift) is judged against both the document applied before and the file, so a hand edit
+    is never recorded by a candidate that differs elsewhere; one not known counts as changed whole (critical(): fail closed)."""
     if act == "finish":
         name, meta = live_of(good)[-1]
         d, p = parse_or_none(row, read(os.path.join(bdir(key), name, "file"), "STL-CFG-316") if meta["existed"] else None)
-        return d, not p
-    if act in ("adopt", "finish_adopt") or cur == cand:
-        d = prior_doc(row, key, good, None if act == "finish_adopt" else rec)
-        return d, d is None and "the content applied before is not known: the file is judged whole"
-    return old_doc, not parses
+        return [(d, not p)]
+    cur_side = [] if act in ("adopt", "finish_adopt") or cur == cand else [(old_doc, not parses)]
+    if cur_side and drift != "drift":
+        return cur_side
+    d = prior_doc(row, key, good, None if act == "finish_adopt" else rec)
+    return cur_side + [(d, d is None and "the content applied before is not known: the file is judged whole")]
 
 def adopt(row, key, tgt, cand, new_doc, rec, good, resume):
     """Record bytes a hand edit put there: the applied state first (with a marker token), then the event line, then the older
@@ -1356,8 +1359,7 @@ def apply_locked(row, key, tgt, rel, cand):
     if act == "none" and cur == cand and drift != "drift":
         out(f"no change: {key}")
         return 0
-    was, unknown = before(row, key, act, cur, cand, good, rec, old_doc, parses)
-    owner(row, rel, "apply", cur, cand, was, new_doc, unknown)   # every way on from here writes
+    owner(row, rel, "apply", cur, cand, before(row, key, act, cur, cand, good, rec, old_doc, parses, drift), new_doc)   # every way on from here writes
     if act == "finish":
         return finish_apply(row, key, tgt, cand, new_doc, *live_of(good)[-1])
     if act in ("adopt", "finish_adopt"):
@@ -1516,7 +1518,7 @@ def rollback_locked(row, key, tgt, rel, cur, now, again, red, good, junk, stale)
     new_doc, _ = parse_or_none(row, back)
     for d in (old_doc, new_doc):
         note_secrets(d, red)
-    owner(row, rel, "rollback", cur, back, old_doc, new_doc, (was is not None and old_doc is None) or (back is not None and new_doc is None))
+    owner(row, rel, "rollback", cur, back, [(old_doc, (was is not None and old_doc is None) or (back is not None and new_doc is None))], new_doc)
     cur_mode = os.lstat(tgt).st_mode & 0o7777 if cur is not None else 0o644
     new_rec = saved_d.get("prev_applied", meta["prev_applied"])   # the applied state's own copy where it has one
     if new_rec is None and back is not None and git_blob(rel) is None:   # a file git does not track keeps the restored hash as its baseline

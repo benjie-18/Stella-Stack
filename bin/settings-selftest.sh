@@ -288,6 +288,17 @@ PATH=$PB:$OWNER $AP check owner-settings >/dev/null 2>&1; r2=$?
 ok '[ $rc = 0 ] && grep -q WORKER_GIT_NAME "$T/o" && grep -qF "\"$PHR\"" "$T/o" && [ $r2 = 0 ] && [ "$(nev)" = $((e0+1)) ]' "GB-3 the same with the phrase typed: the terminal names the key and the phrase; recorded, one line, no drift ($rc/$r2)"
 cp "$T/own.w4b" "$OWN"; PHRASE=$PHR ptap apply owner-settings --from "$T/own.w4b" >/dev/null 2>&1
 ok 'cmp -s "$OWN" "$T/own.w4b" && PATH=$PB:$OWNER $AP check owner-settings >/dev/null 2>&1' "GB-3 the fixture put back and recorded"
+# GB-3 (RT2-1, Gate B fix 2): `set` writes the file as it is plus one key, so over a hand edit it is judged against what was applied
+# before AND the file: a hand edit of an identity-critical key (QUEUE_MAX, made so in the scratch policy) is not recorded by setting another key
+jq '.identity_critical += ["limits:/QUEUE_MAX"]' "$T/pol.keep" >"$POL"; cp -p "$LIM" "$T/lim.keep"; PATH=$PB:$OWNER $AP check limits >/dev/null 2>&1; r0=$?
+{ grep -v '^QUEUE_MAX=' "$T/lim.keep"; echo "QUEUE_MAX=42"; } >"$LIM"; cp "$LIM" "$T/lim.hand"; e0=$(nev)
+PATH=$PB:$OWNER $AP check limits >/dev/null 2>&1; r1=$?
+st set CALL_TIMEOUT 902 >"$T/o" 2>&1; rc=$?
+PATH=$PB:$OWNER $AP check limits >/dev/null 2>&1; r2=$?
+ok '[ $r1 = 1 ] && [ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$LIM" "$T/lim.hand" && [ $r2 = 1 ] && [ "$(nev)" = $e0 ]' "GB-3 RT2-1 set of a plain key over a hand edit of an identity-critical key, key and no terminal: STL-OWN-808, unchanged, no line, still drift ($r1/$rc/$r2)"
+cp "$T/lim.keep" "$LIM"; cp "$T/pol.keep" "$POL"
+PATH=$PB:$OWNER $AP check limits >/dev/null 2>&1; r3=$?
+ok 'cmp -s "$LIM" "$T/lim.keep" && [ $r3 = $r0 ]' "GB-3 RT2-1 the fixture put back (check as before the case: $r0/$r3)"
 # an identity_critical alternative a --proof meets alone (a command provider standing in for a paired device, which signs the phrase): no terminal
 TRUE=$(type -P true)   # the binary, not the shell builtin
 jq --arg a "$TRUE" --arg g "$(python3 -I -c 'import uuid; print(uuid.uuid4())')" '.providers += [{id: "zz-remote", kind: "command", params: {argv: [$a], timeout_s: 5}, enabled: true, global_id: $g, install_id: .providers[0].install_id}] | .actions.identity_critical += [["zz-remote"]]' "$T/pol.keep" >"$POL"
