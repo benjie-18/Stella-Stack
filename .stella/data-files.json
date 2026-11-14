@@ -193,6 +193,30 @@
       "id_field": "schema_version",
       "global_id": "eff77c54-519c-4d78-b84a-b287d3bf047e",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "grants",
+      "path": ".stella/grants.json",
+      "schema": "grants",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "024110db-139c-4655-8048-e7f5288a5411",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "host-access",
+      "path": ".stella/host-access.json",
+      "schema": "host-access",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "28285f8d-59bb-4d53-b416-20dd7ad617e9",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

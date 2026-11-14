@@ -90,6 +90,26 @@
       "code": "STL-CFG-315",
       "global_id": "32f40408-682b-4886-bae6-ebe3bf079b64",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "key": "UNATTENDED_MODE",
+      "label": "Unattended mode",
+      "type": "boolean",
+      "validation": {},
+      "scope": "global",
+      "sensitivity": "identity_critical",
+      "default": false,
+      "store": {
+        "data": "owner-settings",
+        "key": "UNATTENDED_MODE"
+      },
+      "apply": {
+        "script": "bin/stella-apply.py",
+        "needs_restart": false
+      },
+      "code": "STL-CFG-315",
+      "global_id": "3c9f7eb0-ed7b-494b-b1d7-a909cfaa7b48",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }
