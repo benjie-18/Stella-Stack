@@ -50,9 +50,7 @@ and, on a row with records, `record_kind` (a kind of the data policy's `record_k
 names a kind the policy does not list, is refused).
 It also names the event log, the backup folder, the applied-state file and the role table. Every path in the index is
 relative, has no `..` part and must resolve (symlinks followed) inside the stack root; `check` refuses one that does not,
-and `get`, `list` and `search` never read it. The index row of the index is `owner_only`: it decides which files are. A row
-whose schema marks any field `x-owner-only`, and the row of the `install` schema, must be `owner_only` too (the apply gate is per
-row, so an open row would let any role write an owner-only field); `check` refuses either one left open, naming the row.
+and `get`, `list` and `search` never read it. The index row of the index is `owner_only`: it decides which files are.
 **A row is charged for its own fault only**, also for where its path points. A JSON row whose path, a folder in that path below
 the stack root, or an entry file of its folder is a symbolic link is refused, that row alone ("must not be a symbolic link",
 naming the row and the path): it is compared with no other row, so the row whose file the link points to (the settings
