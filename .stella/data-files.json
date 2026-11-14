@@ -230,6 +230,19 @@
       "record_kind": "channel",
       "global_id": "39d8ca98-ad4d-455b-b9d5-353b7b98b940",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "devices",
+      "path": ".stella/devices.json",
+      "schema": "devices",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": "entries",
+      "id_field": "id",
+      "record_kind": "device",
+      "global_id": "a37e787a-80eb-4059-ad4e-46fa82184870",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

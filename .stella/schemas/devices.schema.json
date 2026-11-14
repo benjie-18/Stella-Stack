@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Paired devices",
+  "description": "The device registry (F1c B6, design D5): each paired device is an owner-authenticator (the device-signature provider of .stella/owner-auth.json) that signs every owner action with its Ed25519 key, bound to a nonce and expiry. Pairing and revoking are owner writes of this row through stella-apply.py (identity-critical: the owner key and the typed phrase). bin/devices.py list|check.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+            "description": "The device id the device signs (device_id of its proofs)."
+          },
+          "global_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            "description": "The record's global id: a lower-case version 4 UUID, unique across every data file (product rule 14). The record's old id stays its alias: every read that takes an entry id accepts either."
+          },
+          "install_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "description": "The UUID of the install that made the record (its .stella/install.json); a record moved from another install keeps it."
+          },
+          "kind": {
+            "enum": ["phone", "computer"]
+          },
+          "public_key": {
+            "type": "string",
+            "pattern": "^-----BEGIN PUBLIC KEY-----\n[A-Za-z0-9+/=\n]+-----END PUBLIC KEY-----\n?$",
+            "description": "The device's Ed25519 public key, PEM (SubjectPublicKeyInfo); the private key never leaves the device. devices.py check refuses any other key type."
+          },
+          "role": {
+            "enum": ["primary", "secondary", "phone", "worker-node"]
+          },
+          "paired_at": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+          },
+          "revoked_at": {
+            "type": ["string", "null"],
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+            "description": "Set once to revoke the device (one place): any proof it signs is then refused (STL-OWN-812). null while paired."
+          }
+        },
+        "required": ["id", "global_id", "install_id", "kind", "public_key", "role", "paired_at", "revoked_at"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["schema_version", "entries"],
+  "additionalProperties": false
+}

@@ -356,7 +356,7 @@
         "phrase"
       ],
       "inputs": "an action file {op, target, old_digest, new_digest | new}, an action class and, to verify, a proof file",
-      "outputs": "a proof (JSON) or the provider ids used; STL-CFG-312 in a worker environment, STL-CFG-310 for an invalid policy, STL-OWN-801..809 for a refused proof or key",
+      "outputs": "a proof (JSON) or the provider ids used; STL-CFG-312 in a worker environment, STL-CFG-310 for an invalid policy, STL-OWN-801..809 and 811..813 for a refused proof or key; an accepted device-signed request writes one remote alert (policy remote.alert_code)",
       "allowed_roles": [],
       "risk_class": "write",
       "hosts": [],
@@ -453,6 +453,57 @@
         "result": "shipped"
       },
       "global_id": "ffb93179-0a25-47f9-a5cf-c16abda683ad",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "devices",
+      "kind": "command",
+      "summary": "List the paired devices of the device registry, or check it (schema, each id once, Ed25519 public keys); pairing and revoking are owner writes of the devices row through apply",
+      "keywords": [
+        "device",
+        "paired device",
+        "phone",
+        "revoke",
+        "registry",
+        "ed25519"
+      ],
+      "inputs": "list or check, optional --json",
+      "outputs": "the entries (JSON array with --json), or check's verdict; exit 1 with STL-CFG-310 when the registry is invalid",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/devices.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "32fd50e6-f009-4ef7-9ff6-dceef9c3a59a",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "lease-double",
+      "kind": "command",
+      "summary": "Test double of the primary lease: claim, release or show the one lease per account in a state file (U1 builds the real lease)",
+      "keywords": [
+        "lease",
+        "primary",
+        "account",
+        "engine",
+        "test double"
+      ],
+      "inputs": "claim|release|show with --state FILE --account A [--engine E] [--ttl S]",
+      "outputs": "the lease (JSON, the primary-lease contract) or null; STL-OWN-814 when another engine holds it or a non-holder releases",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/lease_double.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "72c0dd38-7348-4693-957c-4ac211381d93",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
