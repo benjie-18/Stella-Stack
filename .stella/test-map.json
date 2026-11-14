@@ -163,6 +163,9 @@
     },
     "owner-auth": {
       "mark": "hermetic"
+    },
+    "devices": {
+      "mark": "hermetic"
     }
   },
   "test_like": [
@@ -297,7 +300,8 @@
         "stella-apply",
         "stella-data",
         "watchdog",
-        "write-guard"
+        "write-guard",
+        "devices"
       ],
       "why": "reached by base name: selftests that name the settings registry (.stella/settings.json) also count for this file"
     },
@@ -907,7 +911,8 @@
       "targets": [
         "stella-apply",
         "stella-data",
-        "owner-auth"
+        "owner-auth",
+        "devices"
       ],
       "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
     },
@@ -976,7 +981,8 @@
         "test-map",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "devices"
       ],
       "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field); plus the selftests that reach it since the merge of build/F1 69edb47 (bin/test-map.py reach)"
     },
@@ -1067,7 +1073,8 @@
         "stella-data",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "devices"
       ],
       "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
     },
@@ -1121,7 +1128,8 @@
         "stella-apply",
         "stella-data",
         "watchdog",
-        "write-guard"
+        "write-guard",
+        "devices"
       ],
       "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
     },
@@ -1217,7 +1225,8 @@
         "test-map",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "devices"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1291,7 +1300,8 @@
         "test-map",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "devices"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1406,7 +1416,8 @@
         "test-map",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "devices"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1440,7 +1451,8 @@
         "stella-data",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "devices"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1526,7 +1538,8 @@
         "test-map",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "devices"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1576,7 +1589,8 @@
         "settings",
         "stella-apply",
         "watchdog",
-        "write-guard"
+        "write-guard",
+        "devices"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1610,7 +1624,8 @@
         "stella-data",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "devices"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1645,7 +1660,8 @@
         "test-map",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "devices"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach); plus the selftests that reach it since the merge of build/F1 69edb47 (bin/test-map.py reach)"
     },
@@ -2073,7 +2089,8 @@
         "bin/settings.py"
       ],
       "targets": [
-        "merge-card"
+        "merge-card",
+        "devices"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py check after F1 W4 round 3)"
     },
@@ -2261,7 +2278,8 @@
         "stella-data",
         "event-log",
         "roles",
-        "owner-auth"
+        "owner-auth",
+        "devices"
       ],
       "why": "F1c G0, conservative: the one worker-environment answer and its policy; every owner command and the event writer use it (W2a/W4b narrow this when their selftests land)"
     },
@@ -2271,7 +2289,8 @@
         "bin/owner-auth-selftest.sh"
       ],
       "targets": [
-        "owner-auth"
+        "owner-auth",
+        "devices"
       ],
       "why": "F1c W2a: the owner-authenticator and its selftest (which also runs stella_data.py stubs over the features file)"
     },
@@ -2321,7 +2340,8 @@
         "stella-apply",
         "stella-data",
         "watchdog",
-        "write-guard"
+        "write-guard",
+        "devices"
       ],
       "why": "F1c W1: the agents' untrusted stream (event-log-selftest runs it); bin/event_log.py imports its line limits, so every selftest that reaches the writer reaches it"
     },
@@ -2379,6 +2399,59 @@
         "write-guard"
       ],
       "why": "F1c W4b: bin/settings.py and bin/stella-apply.py import owner_auth (the owner proof of an owner-only change), so every selftest that reaches them reaches it (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "bin/lease_double.py",
+        "bin/devices-selftest.sh",
+        ".stella/schemas/devices.schema.json",
+        ".stella/schemas/primary-lease.schema.json"
+      ],
+      "targets": [
+        "devices"
+      ],
+      "why": "F1c W2b: the device registry, the device-signature check it serves to owner_auth, the primary-lease contract and its test double, and their selftest"
+    },
+    {
+      "globs": [
+        "bin/devices.py"
+      ],
+      "targets": [
+        "owner-auth",
+        "devices",
+        "alert-page",
+        "approval-evidence",
+        "complete-gate",
+        "delegation",
+        "escalate",
+        "escalation-reply-poll",
+        "event-log",
+        "kanban-board",
+        "kanban-guard",
+        "merge-card",
+        "model-watch",
+        "omniroute-run",
+        "reviewer-claude",
+        "role-guard",
+        "roles",
+        "routing",
+        "settings",
+        "stella-apply",
+        "write-guard"
+      ],
+      "why": "F1c W2b: bin/owner_auth.py imports the device registry (the device-signature provider), so whatever reaches owner_auth reaches it"
+    },
+    {
+      "globs": [
+        ".stella/devices.json"
+      ],
+      "targets": [
+        "devices",
+        "commit-guard",
+        "owner-settings",
+        "write-guard"
+      ],
+      "why": "F1c W2b: the device registry is an owner-only row; the guards' selftests protect its path"
     }
   ]
 }

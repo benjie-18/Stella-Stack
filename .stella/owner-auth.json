@@ -35,12 +35,25 @@
       "enabled": true,
       "global_id": "e1cad284-c86a-498e-ae99-fe1787df7245",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "paired-device",
+      "kind": "device-signature",
+      "params": {
+        "timeout_s": 10
+      },
+      "enabled": true,
+      "global_id": "c1847ec9-b854-485b-b08e-f54d8c4e4cb6",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ],
   "actions": {
     "owner_write": [
       [
         "owner-key"
+      ],
+      [
+        "paired-device"
       ]
     ],
     "channel_answer": [
@@ -52,6 +65,10 @@
       [
         "owner-key",
         "typed-phrase"
+      ],
+      [
+        "paired-device",
+        "device-phrase"
       ]
     ]
   },
@@ -59,6 +76,13 @@
     "template": "change {what}"
   },
   "proof_ttl_s": 300,
+  "remote": {
+    "rate_limit": {
+      "count": 10,
+      "window_s": 3600
+    },
+    "alert_code": "STL-OWN-815"
+  },
   "worker_signals": {
     "token_env": [
       "STELLA_AGENT_TOKEN",

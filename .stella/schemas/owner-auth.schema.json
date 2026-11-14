@@ -11,14 +11,14 @@
     "providers": {
       "type": "array",
       "minItems": 1,
-      "description": "The owner-authenticator providers (F1c D2). The kind is code (bin/owner_auth.py); which ones exist and what each action class needs is this data. A new provider of a known kind (a command, say) is a new row: no code change. owner_auth.py check also requires each id once and the params of its kind: local-key, typed-phrase, device-phrase none; channel-identity channel_kind and owner_config_key; command argv and timeout_s.",
+      "description": "The owner-authenticator providers (F1c D2). The kind is code (bin/owner_auth.py); which ones exist and what each action class needs is this data. A new provider of a known kind (a command, say) is a new row: no code change. owner_auth.py check also requires each id once and the params of its kind: local-key, typed-phrase, device-phrase none; device-signature timeout_s (of its openssl check); channel-identity channel_kind and owner_config_key; command argv and timeout_s.",
       "items": {
         "type": "object",
         "properties": {
           "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]*$"},
           "kind": {
-            "enum": ["local-key", "channel-identity", "command", "typed-phrase", "device-phrase"],
-            "description": "local-key: an HMAC with the owner key file (index owner_key) on the host. channel-identity: the answer's user id equals the owner config value named by owner_config_key, on the message the caller delivered. command: argv runs with the request as JSON on stdin; exit 0 = valid, within timeout_s. typed-phrase: the rendered phrase typed on the host terminal. device-phrase: the device-signed payload's phrase equals the rendered phrase (stands only beside a device-signature provider)."
+            "enum": ["local-key", "channel-identity", "command", "typed-phrase", "device-phrase", "device-signature"],
+            "description": "local-key: an HMAC with the owner key file (index owner_key) on the host. channel-identity: the answer's user id equals the owner config value named by owner_config_key, on the message the caller delivered. command: argv runs with the request as JSON on stdin; exit 0 = valid, within timeout_s. typed-phrase: the rendered phrase typed on the host terminal. device-phrase: the device-signed payload's phrase equals the rendered phrase (stands only beside a device-signature provider). device-signature: a paired device of the devices row (not revoked) signed {digest, nonce, expires_at, device_id[, phrase]} with its Ed25519 key; each accepted one is a remote owner change (remote: one alert, rate limited)."
           },
           "params": {
             "type": "object",
@@ -63,6 +63,24 @@
       "minimum": 1,
       "maximum": 3600,
       "description": "How long a proof made on the host stays valid (prove's default and maximum); a proof that expires later than this from now is refused."
+    },
+    "remote": {
+      "type": "object",
+      "description": "Owner changes from a remote device (F1c B6, D5): every accepted device-signature proof writes one alert with alert_code (a catalog code) and counts toward rate_limit; the next one past count within window_s seconds is refused STL-OWN-813. Required when a device-signature provider is listed (owner_auth.py check).",
+      "properties": {
+        "rate_limit": {
+          "type": "object",
+          "properties": {
+            "count": {"type": "integer", "minimum": 1, "maximum": 10000},
+            "window_s": {"type": "integer", "minimum": 1, "maximum": 604800}
+          },
+          "required": ["count", "window_s"],
+          "additionalProperties": false
+        },
+        "alert_code": {"type": "string", "pattern": "^STL-[A-Z]+-[0-9]{3}$", "description": "The alert-catalog code of the alert each remote owner change raises."}
+      },
+      "required": ["rate_limit", "alert_code"],
+      "additionalProperties": false
     },
     "worker_signals": {
       "type": "object",

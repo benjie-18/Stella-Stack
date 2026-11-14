@@ -2,8 +2,9 @@
 """The owner-authenticator (F1c B1/B3, design D2), stdlib only. Which proofs an owner action needs is data: the owner-auth policy
 (index row owner-auth) lists providers {id, kind, params, enabled} and, per action class, alternatives (lists of provider ids that
 must all pass; one passing alternative is enough). The kinds are code: local-key, channel-identity, command, typed-phrase,
-device-phrase (device-signature is W2b: one more entry of VERIFY and of the schema's kind list). No provider, class or path is named
-in this file.
+device-phrase, device-signature (a paired device of bin/devices.py signed the request). No provider, class or path is named in this
+file. Every accepted device-signed request is a remote owner change: it counts toward the policy's remote.rate_limit (the next one
+past it is STL-OWN-813) and writes one alert with remote.alert_code.
 An action is {op, target, old_digest, new_digest | new}; its digest is the sha256 of its canonical JSON. A proof is {provider, digest,
 nonce, expires_at, ...its kind's fields}; it counts once: its nonce is recorded under the index approval_store (<store>/nonces).
 Library: require(action_class, action, proofs, bound=None, show=None) -> the provider ids used, or raises Refusal(code, problem);
@@ -22,11 +23,13 @@ CLI: owner_auth.py check                    the policy is valid (schema, ids, pa
                                             the proof (or list of proofs) in P meets an alternative of class C: prints the
                                             provider ids used, and the nonces are spent
 Refused (exit 1, the code and its plain message, one alert line): init-key, prove and verify in a worker environment
-(bin/worker_env.py), STL-CFG-312; an invalid policy, STL-CFG-310; STL-OWN-801..809 (docs/alert-codes.md). Exit 2: usage, or an
+(bin/worker_env.py), STL-CFG-312; an invalid policy, STL-CFG-310; STL-OWN-801..809, 811..813 (docs/alert-codes.md). Exit 2: usage, or an
 action file that is not an action. The key never appears in any output."""
-import datetime, hashlib, hmac, json, os, re, secrets, signal, stat, subprocess, sys, time
+import datetime, fcntl, hashlib, hmac, json, os, re, secrets, signal, stat, subprocess, sys, time
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
+import alert_catalog
+import devices
 import owner_config as oc
 import stella_data as sd
 import worker_env
@@ -36,9 +39,9 @@ HEX64, NONCE = re.compile(r"[0-9a-f]{64}"), re.compile(r"[0-9a-f]{32}")
 TIME = "%Y-%m-%dT%H:%M:%SZ"
 ENVELOPE = ("provider", "digest", "nonce", "expires_at")
 PARAMS = {"local-key": set(), "channel-identity": {"channel_kind", "owner_config_key"}, "command": {"argv", "timeout_s"},
-          "typed-phrase": set(), "device-phrase": set()}
-PROVED = {"local-key", "channel-identity", "command"}   # kinds whose pass is a proof object; the others decide at verify time
-SIGNED = set()   # kinds whose proof is signed by the owner's device and may carry the phrase (W2b adds device-signature)
+          "typed-phrase": set(), "device-phrase": set(), "device-signature": {"timeout_s"}}
+PROVED = {"local-key", "channel-identity", "command", "device-signature"}   # kinds whose pass is a proof object; the others decide at verify time
+SIGNED = {"device-signature"}   # kinds whose proof is signed by the owner's device and may carry the phrase
 
 
 class Refusal(Exception):
@@ -80,6 +83,11 @@ def problems(doc):
                 out.append(f"actions.{c}[{n}]: an alternative holds at least one provider whose pass is a proof (a phrase alone proves no owner)")
             if any(kinds.get(i) == "device-phrase" for i in alt) and not any(kinds.get(i) in SIGNED for i in alt):
                 out.append(f"actions.{c}[{n}]: a device-phrase provider stands only beside a device-signature provider (it checks the phrase that device signed)")
+    if any(k in SIGNED for k in kinds.values()):
+        if "remote" not in doc:
+            out.append("a device-signature provider needs remote (the rate limit and alert of remote owner changes)")
+        elif doc["remote"]["alert_code"] not in alert_catalog.catalog():
+            out.append("remote.alert_code is not a code of the alert catalog")
     return out
 
 
@@ -238,8 +246,29 @@ def v_device_phrase(prov, proof, ctx):
         raise Refusal("STL-OWN-808", "no device-signed confirmation phrase equal to the one for this change")
 
 
+def v_device_signature(prov, proof, ctx):
+    if not (set(proof) - {"phrase"} == {*ENVELOPE, "device_id", "signature"} and all(isinstance(proof[k], str) for k in proof)):
+        raise Refusal("STL-OWN-802", f"the {prov['id']} proof is not a device-signed request (device_id, signature[, phrase])")
+    try:
+        dev = devices.entry(proof["device_id"])
+    except sd.DataError as e:
+        raise Refusal("STL-CFG-310", str(e)) from None
+    if dev is None:
+        raise Refusal("STL-OWN-811", f"device {sd.shown(proof['device_id'])} is not in the device registry")
+    if dev["revoked_at"] is not None:
+        raise Refusal("STL-OWN-812", f"device {dev['id']} was revoked at {dev['revoked_at']}")
+    signed = canon({k: proof[k] for k in ("digest", "nonce", "expires_at", "device_id", "phrase") if k in proof}).encode()
+    try:
+        good = devices.verify(dev["public_key"], signed, proof["signature"], prov["params"]["timeout_s"])
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise Refusal("STL-OWN-809", f"the {prov['id']} signature check (openssl) could not run ({type(e).__name__})") from None
+    if not good:
+        raise Refusal("STL-OWN-802", f"the {prov['id']} proof is not signed by the key of device {dev['id']}")
+    ctx["devices"].append(dev["id"])
+
+
 VERIFY = {"local-key": v_local_key, "channel-identity": v_channel_identity, "command": v_command,
-          "typed-phrase": v_typed_phrase, "device-phrase": v_device_phrase}
+          "typed-phrase": v_typed_phrase, "device-phrase": v_device_phrase, "device-signature": v_device_signature}
 
 
 def when(s):
@@ -252,7 +281,8 @@ def when(s):
 def require(cls, action, proofs, bound=None, show=None):
     """The provider ids of the first alternative of class cls the proofs meet, every check passed and every nonce spent; else
     Refusal. Order per proof: provider allowed (801), valid (802/806/809), for this action (805), not expired (803), unused (804);
-    then the phrase providers (808), the typed phrase last; then the nonces are spent (804 if one was spent meanwhile)."""
+    then the phrase providers (808), the typed phrase last; then the nonces are spent (804 if one was spent meanwhile), and a
+    device-signed request is a remote owner change: within remote.rate_limit (813), then one remote.alert_code alert."""
     need_host("an owner proof")
     pol, dg = policy(), digest(action)
     proofs = [proofs] if isinstance(proofs, dict) else proofs
@@ -271,7 +301,7 @@ def require(cls, action, proofs, bound=None, show=None):
     alt = next((a for a in alts if all(provs[i]["enabled"] and (provs[i]["kind"] not in PROVED or i in given) for i in a)), None)
     if alt is None:
         raise Refusal("STL-OWN-801", f"the proofs given meet no alternative of {cls}")
-    ctx = {"cls": cls, "action": action, "pol": pol, "bound": bound, "show": show, "used": []}
+    ctx = {"cls": cls, "action": action, "pol": pol, "bound": bound, "show": show, "used": [], "devices": []}
     nonces = os.path.join(store_dir(), "nonces")
     for i in [i for i in alt if i in given]:
         x, p = given[i], provs[i]
@@ -289,13 +319,45 @@ def require(cls, action, proofs, bound=None, show=None):
     for i in sorted((i for i in alt if i not in given), key=lambda i: provs[i]["kind"] == "typed-phrase"):   # the owner types last
         VERIFY[provs[i]["kind"]](provs[i], None, ctx)
     os.makedirs(nonces, mode=0o700, exist_ok=True)
-    for _, x in ctx["used"]:
+    if ctx["devices"]:
+        remote_change(pol, ctx, nonces)
+    else:
+        spend(ctx["used"], nonces)
+    return list(alt)
+
+
+def spend(used, nonces):
+    for _, x in used:
         try:   # O_EXCL: two verifications racing for one proof, one wins
             os.close(os.open(os.path.join(nonces, x["nonce"]), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
         except FileExistsError:
             raise Refusal("STL-OWN-804", f"the {x['provider']} proof was already used") from None
     # shortcut: spent nonces stay forever (one empty file each); prune those past their expiry when the store grows large
-    return list(alt)
+
+
+def remote_change(pol, ctx, nonces):
+    """An accepted device-signed request: one more remote owner change in <store>/remote (one file per change, named
+    <epoch>-<nonce>; a name that is not that counts as recent), refused STL-OWN-813 at remote.rate_limit within its window; else
+    the nonces are spent and one alert with remote.alert_code is written."""
+    lim, d = pol["remote"]["rate_limit"], os.path.join(store_dir(), "remote")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    fd = os.open(d, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)   # two racing requests never both take the last place
+        now, recent = int(time.time()), []
+        for n in os.listdir(d):
+            t = n.split("-", 1)[0]
+            if t.isdigit() and int(t) <= now - lim["window_s"]:
+                os.unlink(os.path.join(d, n))
+            else:
+                recent.append(n)
+        if len(recent) >= lim["count"]:
+            raise Refusal("STL-OWN-813", f"{len(recent)} remote owner changes in the last {lim['window_s']} s, the limit is {lim['count']}")
+        spend(ctx["used"], nonces)
+        os.close(os.open(os.path.join(d, f"{now}-{ctx['used'][0][1]['nonce']}"), os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600))
+    finally:
+        os.close(fd)
+    sd.say(pol["remote"]["alert_code"], f"{ctx['action']['op']} {ctx['action']['target']} ({ctx['cls']}), signed by device {', '.join(ctx['devices'])}", alert=True)
 
 
 def store_dir():

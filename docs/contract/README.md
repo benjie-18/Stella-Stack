@@ -322,6 +322,17 @@ The resolver that applies the precedence is built in a later phase; this file is
 `hosts[]`: host (a host name; a wildcard `*.` needs at least two labels after it, so `*.com` is refused), port, scope and approved_by (not empty), approved_at and expires_at
 (`YYYY-MM-DDTHH:MM:SSZ`, UTC, real dates; expires_at may be null and is after approved_at). One entry per host and port. Ships empty. The live firewall does not read it yet.
 
+### `.stella/devices.json` (device registry) and the primary lease
+`entries[]`: id, global_id, install_id, kind (phone, computer), public_key (an Ed25519 PEM), role (primary, secondary, phone,
+worker-node), paired_at, revoked_at (null while paired). Owner-only and identity-critical; ships empty. A paired device is the
+owner-auth provider of kind `device-signature`: it signs canonical `{digest, nonce, expires_at, device_id[, phrase]}` (raw
+Ed25519, base64 in `signature`), checked with `openssl pkeyutl -verify -rawin`; unknown STL-OWN-811, revoked 812. Every accepted
+device-signed request writes one alert (`remote.alert_code` of the policy) and counts toward `remote.rate_limit` (813 past it).
+*To pair or revoke:* an owner write of the row (`stella-apply.py apply devices --from <file>`; set revoked_at to revoke).
+`bin/devices.py list|check [--json]`. The primary lease is a contract only (`.stella/schemas/primary-lease.schema.json`:
+account, engine_id, install_id, lease_id, acquired_at, expires_at; one engine per account); `bin/lease_double.py` is its test
+double (814 for a second holder); U1 builds the real lease.
+
 ### `.stella/capabilities.json` (capability registry)
 One schema for tools, skills, MCP servers, commands and extensions: `id`, `kind`, `summary`, `keywords`, `inputs`,
 `outputs`, `allowed_roles`, `risk_class`, `hosts`, `secrets`, `status` (proposed, approved, disabled), `source`, `triage`.

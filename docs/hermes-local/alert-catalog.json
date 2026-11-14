@@ -900,6 +900,66 @@
       "check": "`bin/event_log.py verify` (it names every problem with its line); the event log path and event_writer_state in `.stella/data-files.json`; .supervisor/logs/alerts.log."
     },
     {
+      "code": "STL-OWN-811",
+      "area": "OWN",
+      "severity": "warning",
+      "title": "an owner proof was refused: device not paired",
+      "message": "A device-signed owner proof was refused because its device is not paired: {problem}. Nothing was changed.",
+      "action": "pair the device first (an owner write of the devices row on the host); if you do not know this device, someone is trying to act as you. See STL-OWN-811 in docs/alert-codes.md.",
+      "cause": "The proof's device_id is not an entry of the device registry (index row devices).",
+      "check": "the command output; bin/devices.py list --json; .supervisor/logs/alerts.log.",
+      "related": "F1c B6, D5; bin/owner_auth.py, bin/devices.py, .stella/devices.json, .stella/owner-auth.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-OWN-812",
+      "area": "OWN",
+      "severity": "warning",
+      "title": "an owner proof was refused: device revoked",
+      "message": "A device-signed owner proof was refused because its device is revoked: {problem}. Nothing was changed.",
+      "action": "use a paired device; if this device was revoked because it was lost, someone may hold it. See STL-OWN-812 in docs/alert-codes.md.",
+      "cause": "The device's registry entry has revoked_at set.",
+      "check": "the command output; bin/devices.py list --json; .supervisor/logs/alerts.log.",
+      "related": "F1c B6, D5; bin/owner_auth.py, bin/devices.py, .stella/devices.json, .stella/owner-auth.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-OWN-813",
+      "area": "OWN",
+      "severity": "warning",
+      "title": "remote owner changes: rate limit reached",
+      "message": "An owner change from a remote device was refused because the rate limit for remote owner changes is reached: {problem}. Nothing was changed.",
+      "action": "wait for the window to pass, or make the change on the host; if you did not make the earlier changes, revoke the device. See STL-OWN-813 in docs/alert-codes.md.",
+      "cause": "More device-signed owner changes were accepted within the window than the owner-auth policy remote.rate_limit allows.",
+      "check": "the command output; .supervisor/logs/alerts.log (the remote change alerts); owner-auth policy remote.",
+      "related": "F1c B6, D5; bin/owner_auth.py, bin/devices.py, .stella/devices.json, .stella/owner-auth.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-OWN-814",
+      "area": "OWN",
+      "severity": "warning",
+      "title": "the primary lease is held by another engine",
+      "message": "The primary lease was refused: {problem}. Nothing was changed.",
+      "action": "only one engine per account is the primary; move the primary with a planned hand-over, or wait until the lease expires. See STL-OWN-814 in docs/alert-codes.md.",
+      "cause": "Another engine holds the account's primary lease and it has not expired (or the engine releasing it is not its holder).",
+      "check": "the command output; lease_double.py show --state <file> --account <account> (test double; U1 builds the real lease).",
+      "related": "F1c B6, D5; .stella/schemas/primary-lease.schema.json, bin/lease_double.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-OWN-815",
+      "area": "OWN",
+      "severity": "warning",
+      "title": "an owner change was made from a remote device",
+      "message": "An owner change was accepted from a paired remote device: {problem}.",
+      "action": "nothing if it was you; if not, revoke that device at once (owner write of the devices row on the host) and check what changed. See STL-OWN-815 in docs/alert-codes.md.",
+      "cause": "A device-signature proof passed for an owner action; every remote owner change raises this alert (owner-auth policy remote.alert_code).",
+      "check": "the event log line of the change; bin/devices.py list --json; .supervisor/logs/alerts.log.",
+      "related": "F1c B6, D5; bin/owner_auth.py, bin/devices.py, .stella/devices.json, .stella/owner-auth.json",
+      "resolvable": false
+    },
+    {
       "code": "STL-GEN-000",
       "area": "GEN",
       "severity": "warning",

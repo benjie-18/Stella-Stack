@@ -45,7 +45,7 @@ BASEPATH=$PATH; export PATH=$T/pb-ok:$BASEPATH
 cd "$T" || exit 1
 fails=0; n=0
 ok() { n=$((n+1)); if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); cat "$T/o" "$T/ve" 2>/dev/null | sed 's/^/     | /' | tail -n 3; fi; rm -f "$T/o" "$T/ve"; }
-finish() { echo "# devices-selftest: $n cases, $fails failed"; [ "$fails" = 0 ]; exit $?; }
+finish() { echo "# devices-selftest: $n cases, $fails failed"; [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }; exit 0; }
 has() { [ -f "$B/$1" ] || { echo "     (precondition: bin/$1 does not exist)"; return 1; }; }
 # worker signals (D0): one at a time. Tokens are named from the policy's token_env (data), one case each.
 SIGNALS="marker user sandbox worktree board-worker board-down policy-unreadable $(jq -r '.worker_signals.token_env[]? | "token:" + .' "$POL" 2>/dev/null | tr '\n' ' ')"
@@ -256,6 +256,19 @@ ok '[ $rc = 1 ] && c STL-OWN-801 && grep -qx CALL_TIMEOUT=600 "$LIMF"' "settings
 $OA init-key >/dev/null 2>&1
 st $ST set CALL_TIMEOUT 900 --proof "$T/sess2" >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 1 ] && c STL-OWN-801 && grep -qx CALL_TIMEOUT=600 "$LIMF"' "the same with an owner key on the host: still refused STL-OWN-801 (the session is not topped up by the key)"
+
+# ---- W2b's own: the policy and the registry fail closed ----
+cp -p "$POL" "$T/pol.w2b"
+polset 'del(.remote)'; $OA check >"$T/o" 2>&1; rc=$?; cp -p "$T/pol.w2b" "$POL"
+ok '[ $rc = 1 ] && c STL-CFG-310' "a policy with a device-signature provider and no remote: check refuses STL-CFG-310"
+polset '.remote.alert_code = "STL-OWN-819"'; $OA check >"$T/o" 2>&1; rc=$?; cp -p "$T/pol.w2b" "$POL"
+ok '[ $rc = 1 ] && c STL-CFG-310' "remote.alert_code not in the alert catalog: check refuses STL-CFG-310"
+cp -p "$DV" "$T/dv.w2b"; jq --arg lk "$DVLK" '.[$lk] += [.[$lk][0]]' "$DV" >"$T/dv.dup" && cat "$T/dv.dup" >"$DV"
+$PY $B/devices.py check --json >"$T/o" 2>"$T/ve"; rc=$?
+ok '[ $rc = 1 ] && jq -e ".ok == false" "$T/o" >/dev/null 2>&1' "devices.py check: a device id listed twice fails (exit 1, ok false)"
+A7=$(act settings:CALL_TIMEOUT d7); sign "$T/w1" "$DEVP" zz-phone-1 phone "$(adig "$A7")" 120; vf "$T/w1" "$A7"; cat "$T/dv.w2b" >"$DV"
+ok '[ $rc = 1 ] && c STL-CFG-310' "a device proof while the registry is invalid: refused STL-CFG-310 (fails closed)"
+vf "$T/w1" "$A7"; ok '[ $rc = 0 ]' "the same proof once the registry is valid again: verified (the refusal spent no nonce)"
 
 # ---- T8c: the primary-lease contract and its test double ----
 LD="$PY $B/lease_double.py"; S=$T/lease-state.json; SD="$PY $B/stella_data.py"; SCH=$R/.stella/schemas/primary-lease.schema.json
