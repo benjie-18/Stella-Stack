@@ -182,7 +182,7 @@
   "lists": [
     {"kind": "models", "owner": ".stella/connections.json", "path": "entries[].models", "id": "id"},
     {"kind": "providers", "owner": ".stella/connections.json", "path": "entries", "id": "id"},
-    {"kind": "hosts", "owner": ".stella/connections.json", "path": "entries[].hosts", "id": "host"},
+    {"kind": "hosts", "owner": ".stella/connections.json", "path": "entries[].hosts", "id": "host", "refs": [{"record_kind": "approved-host", "why": "an approval is a record of its own kind (the index row .stella/data-files.json approved-hosts), keyed by host and port: it refers to the connection host by id"}]},
     {"kind": "roles", "owner": "docs/hermes-local/roles.json", "path": "roles", "id": "id"},
     {"kind": "boards", "owner": null},
     {"kind": "presets", "owner": null},

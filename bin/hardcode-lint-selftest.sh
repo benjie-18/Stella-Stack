@@ -259,11 +259,11 @@ dup_ids() {  # dup_ids <kind>: two ids the owner of that kind holds, as JSON
     hosts) jq -c '[.entries[].hosts[]?.host] | unique | .[:2]' "$S/.stella/connections.json";;
     roles) jq -c '.roles | keys | .[:2]' "$S/docs/hermes-local/roles.json";;
   esac; }
-dups_fail() { out=$(lint); [ $? = 1 ] && grep -q "STL-CFG-320" <<<"$out" && grep -qF -- "$V: keeps the $1 list" <<<"$out" && [ "$(grep -c "$V: " <<<"$out")" = 1 ]; }
+dups_fail() { out=$(lint); [ $? = 1 ] && grep -q "STL-CFG-324" <<<"$out" && grep -qF -- "$V: keeps the $1 list" <<<"$out" && [ "$(grep -c "$V: " <<<"$out")" = 1 ]; }
 for k in $(jq -r '.lists[] | select(.owner != null) | .kind' "$A"); do
   fresh; ids=$(dup_ids "$k"); ok '[ "$(jq length <<<"$ids")" = 2 ]' "D8: the scratch data holds two $k ids to plant"
   setkey "$(jq -c '[.[] | {id: ., host: ., name: .}]' <<<"$ids")"
-  ok 'dups_fail "$k"' "D8: a $k list kept as objects in a second data file fails (STL-CFG-320, one line for the file)"
+  ok 'dups_fail "$k"' "D8: a $k list kept as objects in a second data file fails (STL-CFG-324, one line for the file)"
   fresh; setkey "$(jq -c 'map({(.): {}}) | add' <<<"$ids")"
   ok 'dups_fail "$k"' "D8: a $k list kept as a map of objects in a second data file fails"
   fresh; setkey "$ids"
@@ -275,6 +275,18 @@ for k in $(jq -r '.lists[] | select(.owner == null) | .kind' "$A"); do
   fresh; jq --arg k "$k" '.[$k] = [{"id": "zza"}]' "$S/$V" >"$T/x" && cp "$T/x" "$S/$V"
   ok 'lint >/dev/null' "D8: a $k list in one data file passes (no owner yet, defined once)"
   jq --arg k "$k" '.[$k] = {"zzb": {}}' "$S/$C" >"$T/x" && cp "$T/x" "$S/$C"
-  ok 'out=$(lint); [ $? = 1 ] && grep -q "STL-CFG-320" <<<"$out" && grep -qF -- "$V: keeps a $k list" <<<"$out" && grep -qF -- "$C: keeps a $k list" <<<"$out"' "D8: a $k list in two data files fails, one line per file"
+  ok 'out=$(lint); [ $? = 1 ] && grep -q "STL-CFG-324" <<<"$out" && grep -qF -- "$V: keeps a $k list" <<<"$out" && grep -qF -- "$C: keeps a $k list" <<<"$out"' "D8: a $k list in two data files fails, one line per file"
 done
+# W5 round 2 (W5-T-02): approvals are records of their own kind (an index row's record_kind) keyed by the owned id: a lists row's
+# "refs" names such kinds; they refer to the hosts by id, so they are no second copy. A real copy in any other file still fails.
+fresh; hs=$(jq -c --arg i "$(jq -r .install_id "$S/.stella/install.json")" '[.entries[].hosts[]?.host] | unique | .[:2] | map({host: ., port: 443, scope: "x", approved_at: "2026-11-13T00:00:00Z", approved_by: "owner", expires_at: null, global_id: "", install_id: $i})' "$S/.stella/connections.json")
+jq --argjson h "$hs" '.hosts = $h' "$S/.stella/approved-hosts.json" >"$T/x" && cp "$T/x" "$S/.stella/approved-hosts.json"
+ok '[ "$(jq length <<<"$hs")" = 2 ] && lint >/dev/null' "W5-T-02: approvals for two hosts a connection names (records of the approved-host kind, keyed by host and port) are no duplicate list"
+setkey "$(jq -c 'map({host, port})' <<<"$hs")"
+ok 'dups_fail hosts' "W5-T-02: the same two hosts as objects in another file still fail while the approvals file holds them too"
+fresh; jq '.lists |= map(if .kind == "hosts" then .refs = [{"record_kind": "zz-no-such-kind", "why": "x"}] else . end)' "$A" >"$T/al.json"
+ok 'out=$(HARDCODE_ALLOW=$T/al.json "$S/bin/hardcode-lint.sh" --check 2>&1); [ $? = 2 ] && grep -qF zz-no-such-kind <<<"$out"' "W5-T-02: a refs row naming a record kind no index row has is refused (exit 2)"
+# W5-T-01: a duplicate list has its own catalog text, not the hard-coded-name text
+fresh; setkey "$(jq -c '[.[] | {id: .}]' <<<"$(dup_ids models)")"
+ok 'out=$(lint); [ $? = 1 ] && grep -q "STL-CFG-324" <<<"$out" && ! grep -qiE "script or a prompt|raise the baseline|STL-CFG-320" <<<"$out"' "W5-T-01: a duplicate list prints its own code (STL-CFG-324), not the hard-coded-name text"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
