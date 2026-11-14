@@ -23,7 +23,17 @@ selection leaves that selftest out; a row that is not a scan row has a glob that
 path component (see loose: such a glob matches paths under names the map does not spell); a row that, for a file it
 matches, adds no target beyond the always gates and the scan rows matching that file, matches more than prose (see
 prose); a file a row matches has a name select never narrows; or a tracked file is matched by no row (and is not on
-the full list, which the stack ships empty).
+the full list, which the stack ships empty); a selftest without a mark, a mark for no selftest, a shared mark with no why, a mark that is
+not {mark: hermetic or shared, why: text} (a coded line, even under a schema file that checks nothing); or two selftest names (marks, row
+targets, always gates, selftest files, suite list) that differ only in case.
+Marks (lock scope, the owner's rule): the map's `marks` gives every selftest hermetic or shared. Hermetic = the selftest touches no live
+state outside its own scratch root and the runner's copy (no live board, no installed Hermes, no real ~/.hermes, no live owner settings
+file, no write into the real home): it may run outside the test lock. Shared = anything else, with a `why` that is true under the runner
+(bin/selftests.sh binds each copy over /workspace, so a reason naming a path the runner already isolates is not true there). An
+unmarked selftest counts as shared. `select --json` has `shared`: the selftests that run and are not hermetic, so the ones that need the
+lock: the selected targets, or on a full answer every selftest of the suite (the runner's suite list, else the selftest files). When
+select could not trust what it read (an unreadable map or schema, a map of the wrong shape) no mark counts: every name is shared, and
+with no suite to name the answer is ["*"], never [].
 select: full is the answer for an input or a map that cannot be trusted; for a tracked file of a checked tree only when
 the stack put it on the full list (shipped empty; matched without regard to case). A file matched by no row selects
 the full suite (check refuses a tracked one, and a file with a row whose name select never narrows); so does no file
@@ -62,6 +72,7 @@ sys.path.insert(0, BIN)   # python3 -I does not add the script folder; this tool
 
 ROOT = os.path.abspath(os.environ.get("STELLA_ROOT") or os.path.dirname(BIN))   # absolute once: git is sent to the root and would resolve a relative one again
 MAP = ".stella/test-map.json"
+FALLBACK = ("bin/selftests.sh", "bin/{name}-selftest.sh")   # runner and test_file, for suite() when the map cannot say
 SCHEMA = os.path.join(os.path.dirname(BIN), ".stella", "schemas", "test-map.schema.json")   # ships with this tool, so a scratch root needs none
 
 
@@ -181,8 +192,41 @@ def shape(m):
     names = lambda v: isinstance(v, list) and all(isinstance(x, str) for x in v)
     if not (isinstance(m, dict) and names(m.get("always")) and names(m.get("full")) and isinstance(m.get("test_file"), str)
             and m["test_file"].count("{name}") == 1 and isinstance(m.get("map"), list)
-            and all(isinstance(r, dict) and names(r.get("globs")) and names(r.get("targets")) for r in m["map"])):
-        raise ValueError("always, full, and the globs and targets of every map row must be lists of names, and test_file one {name} pattern")
+            and all(isinstance(r, dict) and names(r.get("globs")) and names(r.get("targets")) for r in m["map"])
+            and isinstance(m.get("marks", {}), dict) and all(isinstance(v, dict) and v.get("mark") in ("hermetic", "shared") and isinstance(v.get("why", ""), str)
+                                                             for v in m.get("marks", {}).values())):
+        raise ValueError("always, full, and the globs and targets of every map row must be lists of names, test_file one {name} pattern, "
+                         "and marks an object of {mark: hermetic or shared, why: text}")
+
+
+def suite_list(path):
+    """The names of the line `for t in <names>; do` of the runner; raises when the file or the line is not there."""
+    with open(path, encoding="utf-8") as fh:
+        return set(re.search(r"^for t in (.+); do$", fh.read(), re.M)[1].split())
+
+
+def suite(m):
+    """The selftests the runner would run: its suite list, else the selftest files of the root. When the map cannot name the runner or
+    the test file, FALLBACK does; with nothing to go on the answer is {"*"}: every selftest, never none.
+    shortcut: FALLBACK spells where this stack keeps its runner and selftests, for a map that cannot be read; upgrade when a second stack layout needs this tool."""
+    try:
+        pick = lambda k, i: m.get(k) if isinstance(m.get(k), str) else FALLBACK[i]
+        try:
+            return suite_list(os.path.join(ROOT, pick("runner", 0)))
+        except Exception:
+            head, tail = pick("test_file", 1).split("{name}")
+            return {f[len(head):len(f) - len(tail)] for f in tree() if f.startswith(head) and f.endswith(tail)} or {"*"}
+    except Exception:
+        return {"*"}
+
+
+def hermetic(m):
+    """The selftests whose mark is exactly hermetic and whose name no other mark spells in other case; a marks of another shape marks none (shared is the default)."""
+    marks = m.get("marks")
+    if not isinstance(marks, dict):
+        return set()
+    names = [t.casefold() for t in marks]   # two names that differ only in case may be one file on this mount: neither is trusted (check refuses the pair)
+    return {t for t, v in marks.items() if isinstance(v, dict) and v.get("mark") == "hermetic" and names.count(t.casefold()) == 1}
 
 
 def wide(m):
@@ -309,6 +353,10 @@ def check():
         return [str(e)]
     if errs:
         return [f"{MAP}: ValueError: {e}" for e in errs]   # one line per problem
+    try:
+        shape(m)   # the schema file may let anything through: what check reads below must still be what it expects
+    except ValueError as e:
+        return [f"{MAP}: ValueError: {e}"]
     probs = wide(m)
     try:
         files = tree()
@@ -321,7 +369,7 @@ def check():
     if not tests:
         return probs + [f"no selftest ({path('<name>')}) found under {ROOT}"]
     targets = {t for row in m["map"] for t in row["targets"]}
-    marks = m.get("marks", {})   # lock scope: an unmarked selftest counts as shared, and the lint refuses it
+    marks = m.get("marks", {})   # lock scope: an unmarked selftest counts as shared, and the lint refuses it (shape(): an object of {mark, why})
     probs += [f"{tests[t]} has no mark: add it to marks as hermetic, or as shared with its why" for t in sorted(tests.keys() - marks.keys())]
     probs += [f"mark for {t}: no such selftest ({path(t)})" for t in sorted(marks.keys() - tests.keys())]
     probs += [f"shared mark of {t} gives no why" for t in sorted(marks) if marks[t]["mark"] == "shared" and not marks[t].get("why", "").strip()]
@@ -335,14 +383,18 @@ def check():
               if mode and not any(matches(f, r["globs"]) for r in m["map"] if not r.get("scan"))
               and not matches(f.lower(), [g.lower() for g in m["full"]])]
     try:
-        with open(os.path.join(ROOT, m["runner"]), encoding="utf-8") as fh:
-            suite = set(re.search(r"^for t in (.+); do$", fh.read(), re.M)[1].split())
+        runs = suite_list(os.path.join(ROOT, m["runner"]))
     except Exception:
         return probs + [f"the suite list of {m['runner']} cannot be read (expected one line: for t in <names>; do)"]
-    probs += [f"{tests[t]} is not in the suite list of {m['runner']}" for t in sorted(tests.keys() - suite)]
-    probs += [f"suite entry {t}: {path(t)} does not exist" for t in sorted(suite - tests.keys())]
-    probs += [f"quick entry {t} is not in the suite list of {m['runner']}" for t in m["quick"] if t not in suite]
-    for t in sorted(suite & tests.keys()):   # the suite runs each file directly
+    probs += [f"{tests[t]} is not in the suite list of {m['runner']}" for t in sorted(tests.keys() - runs)]
+    probs += [f"suite entry {t}: {path(t)} does not exist" for t in sorted(runs - tests.keys())]
+    probs += [f"quick entry {t} is not in the suite list of {m['runner']}" for t in m["quick"] if t not in runs]
+    # one name, one selftest: the stack's mount ignores case, so two names that differ only in case can be one file, marked twice (once hermetic)
+    folded = {}
+    for t in marks.keys() | targets | set(m["always"]) | tests.keys() | runs:
+        folded.setdefault(t.casefold(), set()).add(t)
+    probs += [f"selftest names {' and '.join(sorted(ns))} differ only in case: a filesystem that ignores case runs one file for both, so one name each" for ns in folded.values() if len(ns) > 1]
+    for t in sorted(runs & tests.keys()):   # the suite runs each file directly
         if not os.access(os.path.join(ROOT, tests[t]), os.X_OK):
             probs.append(f"{tests[t]} is not executable")
         elif files[tests[t]] not in (None, "100755"):
@@ -410,7 +462,7 @@ def main(argv):
         files = files[as_json:]
         ended = files[:1] == ["--"]
         files = files[ended:]   # "--" ends the options; every later argument is a name, "-" too
-        what, notes, m = "the file names on stdin cannot be read", [], {}   # what was being done, for the reason; the diagnostics
+        what, notes, m, trust = "the file names on stdin cannot be read", [], {}, True   # what was being done, for the reason; the diagnostics; whether the marks may be read
         try:   # the one rule: whatever stops select before it has an answer IS the answer full, never an empty selection
             if files == ["-"] and not ended:   # bytes: no CR translation, no strip (white space at either end selects full); a non-UTF-8 byte stays visible
                 files = [f for f in sys.stdin.buffer.read().decode("utf-8", "surrogateescape").split("\n") if f]
@@ -434,8 +486,9 @@ def main(argv):
         except Exception as e:
             sel = {"full": True, "reason": [str(e) if isinstance(e, Unusable) else f"{what}: {type(e).__name__}: {e}"], "targets": []}
             notes += sel["reason"]
-        marks = m.get("marks", {})
-        sel["shared"] = [t for t in sel["targets"] if marks.get(t, {}).get("mark") != "hermetic"]   # the targets that need the lock
+            trust = False   # whatever stopped select, nothing it read says which selftest may skip the lock
+        # the selftests that need the lock: those run (the targets, or the whole suite when the answer is full) and not marked hermetic
+        sel["shared"] = sorted((set(sel["targets"]) | (suite(m) if sel["full"] else set())) - (hermetic(m) if trust else set()))
         if os.environ.get("STELLA_ROOT"):
             sel["root"] = ROOT
         print(json.dumps(sel) if as_json else "full" if sel["full"] else "\n".join(sel["targets"]))
