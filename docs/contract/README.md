@@ -70,8 +70,11 @@ refused unread; when the index of that root cannot be read or is not valid, `val
 another root can have `validate` open a file that is an owner setting of the first root (the secret guard, not this tool, is
 the control for a command that names such a path). Env rows and owner settings keep the identity rule only (no link rule here;
 the apply tool has its own), so an env row that resolves to a JSON row's file still closes both rows. A folder row lists the
-`*.json` names of its folder (by name: `[`, `*`, `?` in
-the row path or the stack root are plain characters, never a glob). When the role table cannot be read, `check` says so, only
+`*.json` names (any case) of its folder (by name: `[`, `*`, `?` in
+the row path or the stack root are plain characters, never a glob). A folder entry's file name has one rule, `stella_data.ENTRY`,
+shared by `check`, `ids-migrate` and the apply tool: letters, digits, dot, dash and underscore, no leading dot, ends in `.json`.
+A listed name that fails it is a problem of its row in `check` (STL-CFG-310, the name JSON-escaped), and that file is opened for
+no reader, so no tool reads an entry another one skips. When the role table cannot be read, `check` says so, only
 the files of env rows stay closed, and the rules that read the table do not run: the rows they judge (role assignments,
 capabilities, extensions, connections) are refused, the others are still judged and served.
 
@@ -97,7 +100,7 @@ that turns the check off (owner decision 2026-11-13). **A migration that changes
 (the run branch carries the migrated files) **and is undone by reverting that merge, code and data together**; the apply
 contract's `rollback` covers value changes only, since it restores only bytes that pass the current checks.
 **The ids migration** (for live data that diverged before that merge): `stella_data.py ids-migrate <id> --out <file>`
-(`<id>/<file>.json` for a folder row) writes a new file (never over an existing one, never inside a stack tree: the root,
+(`<id>/<file>.json` for a folder row; a file name the entry rule refuses gets the apply tool's own STL-CFG-313 line) writes a new file (never over an existing one, never inside a stack tree: the root,
 the tree the tool runs from, or any folder that holds an index, where a file could be a live entry at once, outside the apply
 contract; refused with STL-CFG-313; the folder is opened once, checked as opened, and the file made through it) that is the row's file with `global_id` and `install_id`
 added to every record that lacks them and nothing else changed; apply it with `stella-apply.py apply <id> --from <file>`
@@ -352,8 +355,8 @@ optional; that a version 2 line or record has both is its writer's rule (the eve
 
 `stella-apply.py apply <id> --from <file> [--dry-run]`, `check [<id>] [--json]` (`--check` is accepted for `check`), `rollback <id>`,
 `history <id> [--json]`.
-A single-file row is addressed by its id only; a folder row by `<id>/<name>`, where the name is letters, digits, dot, dash and
-underscore, starts with a letter, digit or underscore, and ends in `.json`. Exit 0 ok, 1 refused or failed (or drift), 2 usage.
+A single-file row is addressed by its id only; a folder row by `<id>/<name>`, where the name passes the entry rule of the
+data tool (`stella_data.ENTRY`: letters, digits, dot, dash and underscore, no leading dot, ends in `.json`). Exit 0 ok, 1 refused or failed (or drift), 2 usage.
 Every failure is one catalog code and its plain message: 310 data unreadable, 311 unknown id, 312 owner-only, 313 a change
 refused before it wrote anything (invalid candidate, a link, a path clash, a read-only folder, a restore that no longer
 validates), 314 drift or a hand edit rollback would overwrite, a setting's own code (today 315) for an env candidate that breaks
