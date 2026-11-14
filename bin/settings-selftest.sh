@@ -222,6 +222,22 @@ for sig in marker token sandbox worktree policy-unreadable; do
   cp "$T/pol.keep" "$POL"; rm -f "$T/sbx"
   ok '[ $rc = 1 ] && grep -q STL-CFG-312 "$T/o" && [ "$(snap)" = "$B" ] && [ "$(nev)" = "$e0" ]' "W4b worker signal $sig with a valid owner proof file: set refused STL-CFG-312, nothing changed"
 done
+# qa R11 (F1c Gate B fix 1): settings.py's own refusal is the only guard of `get` of an owner file: every worker signal refuses it
+st get WORKER_GIT_NAME >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && grep -qx "Fake One" "$T/o"' "R11 control: on the host, get WORKER_GIT_NAME prints the stored value"
+for sig in user sandbox worktree policy-unreadable $(jq -r '.worker_signals.token_env[] | "token:" + .' "$T/pol.keep"); do
+  cwd=$T; envs=(ZZ_NOTHING=1)
+  case $sig in
+    token:*) envs=("${sig#token:}=t0k-planted");;
+    user) jq --arg u "$(id -un)" '.worker_signals.users += [$u]' "$T/pol.keep" >"$POL";;
+    sandbox) : >"$T/sbx"; jq --arg f "$T/sbx" '.worker_signals.sandbox_files += [$f]' "$T/pol.keep" >"$POL";;
+    worktree) cwd=$WT;;
+    policy-unreadable) printf '{not json' >"$POL";;
+  esac
+  (cd "$cwd" && env "${envs[@]}" PATH=$PB:$OWNER $ST get WORKER_GIT_NAME) >"$T/o" 2>&1; rc=$?
+  cp "$T/pol.keep" "$POL"; rm -f "$T/sbx"
+  ok '[ $rc = 1 ] && grep -q STL-CFG-312 "$T/o" && ! grep -q "Fake One" "$T/o"' "R11 worker signal $sig: get WORKER_GIT_NAME refused STL-CFG-312, no value printed"
+done
 st set CALL_TIMEOUT 777 --proof "$T/p.json" >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && grep -qE "^CALL_TIMEOUT=.?777.?$" "$LIM" && [ "$(nev)" = $((e0+1)) ] && tail -1 "$LOG" | jq -e --arg p "$OKP" ".auth == [\$p]" >/dev/null' "W4b the owner with that proof file (no worker run spent it): applied, one event line naming $OKP"
 PATH=$PB:$OWNER setsid -w $AP rollback limits </dev/null >"$T/o" 2>&1; rc=$?
@@ -261,6 +277,17 @@ PHRASE="$(phr owner-settings)" pt set UNATTENDED_MODE true >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && grep -qF "\"zz approve owner-settings now\"" "$T/o" && tail -1 "$LOG" | jq -e "(.new.UNATTENDED_MODE | tostring) == \"true\"" >/dev/null' "W4b UNATTENDED_MODE with the new template's phrase: applied, the event line shows its new value"
 PHRASE="$(phr owner-settings)" ptap rollback owner-settings >/dev/null 2>&1; cp "$T/pol.keep" "$POL"
 ok 'cmp -s "$OWN" "$T/own.w4b"' "W4b the fixture is back as it was"
+# GB-3 (F1c Gate B fix 1): recording a hand edit of an identity-critical setting is judged against what was applied before, not the
+# file it records: with the key alone and no terminal it is refused and the drift stays; with the phrase typed it is recorded
+sed "s/^WORKER_GIT_NAME=.*/WORKER_GIT_NAME='Hand Name'/" "$T/own.w4b" >"$OWN"; cp "$OWN" "$T/own.hand"; e0=$(nev)
+PATH=$PB:$OWNER setsid -w $AP apply owner-settings --from "$T/own.hand" </dev/null >"$T/o" 2>&1; rc=$?
+PATH=$PB:$OWNER $AP check owner-settings >/dev/null 2>&1; r2=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && [ $r2 = 1 ] && [ "$(nev)" = $e0 ]' "GB-3 a hand edit of WORKER_GIT_NAME recorded with the key and no terminal: STL-OWN-808, no line, still drift ($rc/$r2)"
+PHRASE=$PHR ptap apply owner-settings --from "$T/own.hand" >"$T/o" 2>&1; rc=$?
+PATH=$PB:$OWNER $AP check owner-settings >/dev/null 2>&1; r2=$?
+ok '[ $rc = 0 ] && grep -q WORKER_GIT_NAME "$T/o" && grep -qF "\"$PHR\"" "$T/o" && [ $r2 = 0 ] && [ "$(nev)" = $((e0+1)) ]' "GB-3 the same with the phrase typed: the terminal names the key and the phrase; recorded, one line, no drift ($rc/$r2)"
+cp "$T/own.w4b" "$OWN"; PHRASE=$PHR ptap apply owner-settings --from "$T/own.w4b" >/dev/null 2>&1
+ok 'cmp -s "$OWN" "$T/own.w4b" && PATH=$PB:$OWNER $AP check owner-settings >/dev/null 2>&1' "GB-3 the fixture put back and recorded"
 # an identity_critical alternative a --proof meets alone (a command provider standing in for a paired device, which signs the phrase): no terminal
 TRUE=$(type -P true)   # the binary, not the shell builtin
 jq --arg a "$TRUE" --arg g "$(python3 -I -c 'import uuid; print(uuid.uuid4())')" '.providers += [{id: "zz-remote", kind: "command", params: {argv: [$a], timeout_s: 5}, enabled: true, global_id: $g, install_id: .providers[0].install_id}] | .actions.identity_critical += [["zz-remote"]]' "$T/pol.keep" >"$POL"
