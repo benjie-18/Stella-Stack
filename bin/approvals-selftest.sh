@@ -726,7 +726,7 @@ WANT=$(jq -r '.env.path | join(":")' "$CH"); mkdir -p "$T/evil"; $OA init-key >/
 ID=$(mkreq env write "$(act settings:QUEUE_MAX env)" card-env 120)
 env ZZ_NAMED=n1 ZZ_LEAK=l1 BASH_ENV="$T/nowhere" PATH="$T/evil:$PATH" $AP deliver "$ID" --channel zz-env >"$T/o" 2>&1
 env ZZ_LEAK=l1 BASH_ENV="$T/nowhere" PATH="$T/evil:$PATH" $AP collect --channel zz-env >"$T/o" 2>&1
-env ZZ_LEAK=l1 BASH_ENV="$T/nowhere" PATH="$T/evil:$PATH" st $AP answer "$ID" --decision denied >"$T/o" 2>&1
+env ZZ_LEAK=l1 BASH_ENV="$T/nowhere" PATH="$T/evil:$PATH" setsid -w $AP answer "$ID" --decision denied </dev/null >"$T/o" 2>&1
 for k in deliver collect resume; do
   ok '[ -s "$T/env-$k" ] && grep -qx "PATH=$WANT" "$T/env-$k" && ! grep -qE "^(ZZ_LEAK|BASH_ENV)=" "$T/env-$k" && grep -qx "HOME=$HOME" "$T/env-$k"' "$k: PATH is the data's, a variable env.pass names (HOME) passes, the caller's ZZ_LEAK and BASH_ENV do not"
 done

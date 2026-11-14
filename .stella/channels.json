@@ -3,6 +3,23 @@
   "host_kind": "host-cli",
   "adapter_timeout_s": 60,
   "ask_ttl_s": 86400,
+  "env": {
+    "path": [
+      "/usr/local/bin",
+      "/usr/bin",
+      "/bin",
+      "/home/node/.local/bin"
+    ],
+    "pass": [
+      "HOME",
+      "TMPDIR",
+      "STELLA_ROOT",
+      "OWNER_CONFIG",
+      "ESCALATE_SUP_DIR",
+      "HERMES_HOME",
+      "HERMES_PY"
+    ]
+  },
   "resume": {
     "argv": [
       "bin/adapters/kanban-resume.sh"

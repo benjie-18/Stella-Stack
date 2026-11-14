@@ -70,6 +70,11 @@ A row of `.stella/channels.json`: `{id, kind, deliver: [argv], collect: [argv], 
 is relative to the stack root or absolute. A new channel, of a known kind or a new one, is a new row: no code change (a
 new kind also needs its `channel_kinds` entry and a channel-identity provider in the owner-auth policy).
 
+Every deliver, collect and resume runs with a fixed environment, never the caller's: `PATH` is the file's `env.path`
+(absolute folders, in order; folders agents can write go last so they never shadow a system tool), and of the caller's
+variables only those `env.pass` names and those the row's argv names (an owner config key such as the Discord channel id)
+pass. A program planted on the caller's `PATH`, or `BASH_ENV`, never runs in an adapter (RT2-4).
+
 1. **deliver**: the request on stdin (`id, nonce, summary, approval_class, card, target, expires_at, digest, action`; no
    secret); show it in the channel's own medium and print one message ref. Delivering the same request twice shows it once.
    The owner approves the exact action, never only the agent's words: a channel shows `action` (`{op, target, new}` or
@@ -78,6 +83,10 @@ new kind also needs its `channel_kinds` entry and a channel-identity provider in
    secret setting of the registry; a whole-row target of a row with redact keys or a secret setting: a scalar value),
    inside an object the keys those patterns name are `***`, and the whole value is `***` when a value pattern of the
    connections catalog (`redaction_patterns`) matches any part of it, it is too long to check, or it cannot be judged.
+   One rule covers all text shown to the owner (`for_owner()` in approvals.py, before anything reaches an adapter): the
+   `summary`, `target`, and the action's `op`, `target` and `new` (object keys too) are `***` when a value pattern hides
+   any part, and every control character (C0, DEL, C1), line or paragraph separator (U+2028/9) and bidi control
+   (U+202A-202E, U+2066-2069) is `?`, so no field can draw a second line or reorder a value. Adapters print it as given.
    The store keeps the action unmasked; the digest is always over it.
 2. **collect**: the pending requests delivered on this channel on stdin (`[{id, nonce, message_ref}]`); print one answer
    line per answer. Who answered is the channel's own user id; the owner check is the service's, never the adapter's.
