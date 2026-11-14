@@ -4,6 +4,11 @@
   "backup_dir": ".supervisor/state/backups",
   "applied_state": ".supervisor/state/applied.json",
   "role_table": "docs/hermes-local/roles.json",
+  "owner_key": ".supervisor/state/owner-key",
+  "approval_store": ".supervisor/state/approvals",
+  "event_writer_state": ".supervisor/state/event-writer.json",
+  "untrusted_events": ".supervisor/logs/events-untrusted.jsonl",
+  "event_writer_id": "engine",
   "files": [
     {
       "id": "data-files",
@@ -175,6 +180,18 @@
       "list_key": null,
       "id_field": "key",
       "global_id": "54f7df31-da0d-4829-ad27-551c13046a8f",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "owner-auth",
+      "path": ".stella/owner-auth.json",
+      "schema": "owner-auth",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "eff77c54-519c-4d78-b84a-b287d3bf047e",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

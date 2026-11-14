@@ -1107,7 +1107,7 @@ def judge(reads=None):
                 P(r["id"], f"redact_keys[{i}] is not a regular expression")
         if has_records(r) and not r.get("record_kind"):
             P(r["id"], "a row with records names its record_kind (a kind of the data policy's record_kinds)")
-    for rel in [idx[k] for k in ("event_log", "backup_dir", "applied_state", "role_table")]:
+    for rel in [idx[k] for k in ("event_log", "backup_dir", "applied_state", "role_table", "owner_key", "approval_store", "event_writer_state", "untrusted_events")]:
         try:
             safe(rel)
         except DataError as e:

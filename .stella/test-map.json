@@ -2235,6 +2235,21 @@
         "card-schema"
       ],
       "why": "the selftest validates fake cards and vault entries against the two schemas; the doc describes them"
+    },
+    {
+      "globs": [
+        "bin/worker_env.py",
+        ".stella/owner-auth.json",
+        ".stella/schemas/owner-auth.schema.json"
+      ],
+      "targets": [
+        "settings",
+        "stella-apply",
+        "stella-data",
+        "event-log",
+        "roles"
+      ],
+      "why": "F1c G0, conservative: the one worker-environment answer and its policy; every owner command and the event writer use it (W2a/W4b narrow this when their selftests land)"
     }
   ]
 }

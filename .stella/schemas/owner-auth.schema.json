@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Owner-auth policy",
+  "description": "The owner-auth policy (F1c): which signals mark a worker environment (bin/worker_env.py), which owner-authenticator providers exist and which proofs each action needs (bin/owner_auth.py). Owner-only and identity-critical: only the owner path writes it.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "worker_signals": {
+      "type": "object",
+      "description": "Any one signal makes this process a worker environment: every owner command refuses, and the event writer sends its line to the untrusted stream (F1c B4, B7). These add to the role table's worker_markers and roles.py prove.",
+      "properties": {
+        "token_env": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+          "uniqueItems": true,
+          "description": "Environment variables that carry an agent token: set and not empty = a worker."
+        },
+        "users": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[a-z_][a-z0-9_-]*$"},
+          "uniqueItems": true,
+          "description": "OS user names agents run as (empty until E1 adds the agent user)."
+        },
+        "sandbox_files": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^/.+$"},
+          "uniqueItems": true,
+          "description": "Absolute paths whose existence marks the agent sandbox."
+        },
+        "worktree_dirs": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"},
+          "uniqueItems": true,
+          "description": "Folders (relative to the stack root) whose sub-folders are run worktrees: a process whose working folder lies in one is a worker."
+        }
+      },
+      "required": ["token_env", "users", "sandbox_files", "worktree_dirs"],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "worker_signals"
+  ],
+  "additionalProperties": false
+}

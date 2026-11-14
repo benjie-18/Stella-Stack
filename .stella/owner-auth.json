@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "worker_signals": {
+    "token_env": [
+      "STELLA_AGENT_TOKEN",
+      "STELLA_RUN_TOKEN"
+    ],
+    "users": [],
+    "sandbox_files": [
+      "/run/stella-agent-sandbox"
+    ],
+    "worktree_dirs": [
+      ".worktrees"
+    ]
+  }
+}

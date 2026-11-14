@@ -26,6 +26,31 @@
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"
     },
+    "owner_key": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The local owner key stub file (F1c B1): a protected state path, read and written by no role; the platform keystore replaces it (features.json stub)."
+    },
+    "approval_store": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The approval service's store folder (F1c B2): requests, decisions, used nonces; a protected state path."
+    },
+    "event_writer_state": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The trusted event writer's state (F1c B7): its chain key, last sequence number and last mac; a protected state path."
+    },
+    "untrusted_events": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The untrusted event stream (F1c B7): lines written from a worker environment; never proof; not protected."
+    },
+    "event_writer_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "The trusted event writer's identity, carried on every chained line with the install id (F1c B7)."
+    },
     "files": {
       "type": "array",
       "items": {
@@ -107,6 +132,11 @@
     "backup_dir",
     "applied_state",
     "role_table",
+    "owner_key",
+    "approval_store",
+    "event_writer_state",
+    "untrusted_events",
+    "event_writer_id",
     "files"
   ],
   "additionalProperties": false
