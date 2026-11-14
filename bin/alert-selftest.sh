@@ -31,7 +31,7 @@ for c in $codes; do
   [ "$($C codes | awk -F'\t' -v c="$c" '$1 == c { print $2 }')" = reserved ] && continue
   grep -rqF --include='*.sh' --include='*.py' --include='*.ps1' --exclude='*selftest*' --exclude=alert_catalog.py \
     -- "$c" "$B" /workspace/docs/hermes-local/hooks /workspace/docs/stella-recover.ps1 \
-    || grep -qF -- "\"$c\"" /workspace/.stella/*.json || unused="$unused $c"
+    || grep -qE -- "\"alert_code\": \"$c\"" /workspace/.stella/*.json || unused="$unused $c"
 done
 ok '[ -z "$unused" ]' "every catalog code is used by a sender or marked reserved${unused:+ (unused:$unused)}"
 
