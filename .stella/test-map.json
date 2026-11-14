@@ -2570,6 +2570,16 @@
         "loopback"
       ],
       "why": "F1c W5: what the loopback selftest reaches (bin/test-map.py reach): the guard imports owner_auth and stella_data, owner_auth asks worker_env (roles, the board), every refusal renders an alert from the catalog"
+    },
+    {
+      "globs": [
+        ".stella/data-policy.json",
+        "docs/contract/README.md"
+      ],
+      "targets": [
+        "roles"
+      ],
+      "why": "F1c W7 (FV-01): the roles selftest's FV-01 cases read the data policy's record_kinds (role, profile) and the contract README's env-row identity rule"
     }
   ]
 }

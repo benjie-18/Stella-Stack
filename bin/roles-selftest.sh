@@ -5,6 +5,7 @@
 # role guard must apply its permissions, with no code change. Also: a profile with no row gets the fallback role and one
 # STL-CFG-303 line; a row for a missing profile and a malformed table fail the check; apply refuses a malformed table.
 # K8 (may_review, roles.py reviewers, {{REVIEWERS}}): ROLES_FILE=<table> and STAGE=<dir> point the K8 cases at a staged table and roles.py.
+# F1c W7 FV-01: every profile row and role entry carries global_id + install_id (schema, roles.py check, stella_data check, guards).
 set -u
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 RF=${ROLES_FILE:-/workspace/docs/hermes-local/roles.json}   # the table under test (a staged copy while it is being replaced)
@@ -20,12 +21,13 @@ echo '{}' >"$H/kanban/boards/$BOARD/board.json"
 printf '#!/usr/bin/env bash\necho "$*" >> "%s/calls"\ncase "$*" in *"config get"*) echo unset;; esac\nexit 0\n' "$A" >"$A/bin/hermes"; chmod +x "$A/bin/hermes"
 mk() { mkdir -p "$1"; printf 'model: x\n' >"$1/config.yaml"; echo '{"approvals": []}' >"$1/shell-hooks-allowlist.json"; }
 # The scratch table: the real one plus role "planner" (assignable, delegates, creates cards, one hook) and profile planner-x.
-jq '.roles.planner = {runs_unboxed: false, assignable: true, may_answer_for_owner: false, workspace: "git-worktree", may_complete: true, may_unblock: false, may_claim: true,
+uid() { python3 -I -c 'import uuid; print(uuid.uuid4())'; }   # every record of the table carries global_id + install_id (FV-01)
+jq --arg g1 "$(uid)" --arg g2 "$(uid)" --arg i "$(uid)" '.roles.planner = {global_id: $g1, install_id: $i, runs_unboxed: false, assignable: true, may_answer_for_owner: false, workspace: "git-worktree", may_complete: true, may_unblock: false, may_claim: true,
       may_delegate: true, may_create_cards: true, may_review: false, allowed_overrides: [], background_review: false,
       requirements: {tool_calling: true, min_context_tokens: 8000, vision: false, allowed_data_classes: ["public"]},
       platform_toolsets: {cli: ["file", "terminal"]},
       hooks: [{matcher: "^(write_file|patch|skill_manage)$", file: "docs/hermes-local/hooks/reviewer/deny-write.sh"}]}
-    | .profiles["planner-x"] = {role: "planner", soul: "reviewer.md"} | .sandbox.boxed_profiles += ["planner-x"]
+    | .profiles["planner-x"] = {global_id: $g2, install_id: $i, role: "planner", soul: "reviewer.md"} | .sandbox.boxed_profiles += ["planner-x"]
     | .roles.planner.git_identity = {name: "FAKE_GIT_NAME", email: "FAKE_GIT_EMAIL"}' "$RF" >"$T/roles.json"
 export ROLES_FILE="$T/roles.json"
 for d in $(python3 -c 'import sys; sys.path.insert(0, "/workspace/bin"); import roles; [print(f) for _, f, _, l in roles.profiles(roles.load(), sys.argv[1]) if l]' "$H"); do mk "$d"; done
@@ -47,7 +49,7 @@ ok 'grep -q "^- You never complete a card, claim a card, unblock a card or deleg
 ok 'ap --check >/dev/null; ! grep -q "SOUL DRIFT\|MISSING\|NOT APPROVED\|not rendered" "$T/out" && [ "$(grep -c ": SOUL in sync$" "$T/out")" -ge 2 ]' "after apply, --check reports no SOUL or hook drift (each listed SOUL said in sync)"
 # Apply's own SOUL rendering (verifier note; K12): every rendered placeholder filled, the board named from the data.
 ok '(for s in "$H/SOUL.md" "$H"/profiles/*/SOUL.md; do [ ! -e "$s" ] || { grep -q "stella-rules:begin" "$s" && ! grep -q "{{" "$s"; } || exit 1; done) && grep -qF "uses board \`$(python3 -c "import sys; sys.path.insert(0, \"/workspace/bin\"); import roles; print(roles.board())")\`" "$H/SOUL.md"' "apply renders every SOUL with no placeholder left, and the dispatcher SOUL names the board from bin/kanban-board.sh"
-jq '.profiles["planner-y"] = {role: "planner", soul: "reviewer.md"} | .sandbox.boxed_profiles += ["planner-y"]' "$T/roles.json" >"$T/r2.json"; mk "$H/profiles/planner-y"
+jq --arg g "$(uid)" '.profiles["planner-y"] = {global_id: $g, install_id: .profiles["planner-x"].install_id, role: "planner", soul: "reviewer.md"} | .sandbox.boxed_profiles += ["planner-y"]' "$T/roles.json" >"$T/r2.json"; mk "$H/profiles/planner-y"
 ok '[ "$(ROLES_FILE=$T/r2.json ap --check)" = 1 ] && grep -q "SOUL DRIFT" "$T/out"' "a new assignable profile in the table: --check reports the dispatcher SOUL's worker list as drift"
 rm -rf "$H/profiles/planner-y"
 # The role guard applies the new role's permissions from the table.
@@ -148,7 +150,7 @@ for r in tester validator verifier red-team router voice look proposer; do
 done
 ok '[ "$(python3 $S/roles.py requirements look | jq .vision)" = true ] && [ "$(python3 $S/roles.py requirements router | jq .vision)" = false ]' "W2: look needs vision, router does not"
 ok '[ "$(python3 $S/roles.py requirements no-such-role >"$T/out" 2>&1; echo $?)" = 1 ] && grep -q "^STL-CFG-311 " "$T/out"' "W2: roles.py requirements of an unknown role exits 1, STL-CFG-311 on stderr"
-jq --argjson q "$RQ" '.roles["fake-role"] = (.roles.unlisted + {requirements: $q})' "$RF" >"$T/fr.json"
+jq --argjson q "$RQ" --arg g "$(uid)" '.roles["fake-role"] = (.roles.unlisted + {requirements: $q, global_id: $g})' "$RF" >"$T/fr.json"
 H2="$T/h2"; mkdir -p "$H2"; echo x >"$H2/config.yaml"; for p in $(jq -r '.profiles | keys[] | select(. != "default")' "$RF"); do mkdir -p "$H2/profiles/$p"; echo x >"$H2/profiles/$p/config.yaml"; done
 ok '[ "$(ROLES_FILE=$RF python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?)" = 0 ] && [ "$(ROLES_FILE=$T/fr.json python3 $S/roles.py check "$H2" >"$T/out" 2>&1; echo $?)" = 0 ] && [ "$(ROLES_FILE=$T/fr.json python3 $S/roles.py requirements fake-role | jq -S -c .)" = "$(jq -Sc . <<<"$RQ")" ]' "W2: a fake role with requirements passes check and answers, no code change"
 # T1 (F1 W4 r5): `check` on a generated table goes through ONE driver process that runs roles.py's whole script (argv, the table in ROLES_FILE,
@@ -234,8 +236,8 @@ ok '[ "$(chk)" = 1 ] && grep -q min_context_tokens "$T/out"' "W2-RT-07: min_cont
 # W2-RT-04 / W2-RT-08: the fallback opens nothing in every field
 bad ".roles[\"$FB\"].requirements.allowed_data_classes += [\"zz-extra\"]" 'zz-extra' "the fallback allows a data class another role lacks"
 bad ".roles[\"$FB\"].hooks = []" 'hook' "the fallback with no hooks"
-bad ".roles[\"qa-new\"] = (.roles[\"$FB\"] | .hooks = [])" 'qa-new' "a role no profile names, with fewer hooks than the fallback"
-bad ".roles[\"qa-new\"] = (.roles[\"$FB\"] | .hooks = [.hooks[0] | .matcher = \"x\"])" 'qa-new' "a role no profile names, without the fallback's hooks (other matcher)"
+bad ".roles[\"qa-new\"] = (.roles[\"$FB\"] | .hooks = [] | .global_id = \"$(uid)\")" 'qa-new' "a role no profile names, with fewer hooks than the fallback"
+bad ".roles[\"qa-new\"] = (.roles[\"$FB\"] | .hooks = [.hooks[0] | .matcher = \"x\"] | .global_id = \"$(uid)\")" 'qa-new' "a role no profile names, without the fallback's hooks (other matcher)"
 # W2-RT-03: lists the code treats as sets
 bad ".roles[\"$R1\"].allowed_overrides = [\"model\", \"model\"]" 'allowed_overrides' "allowed_overrides with a repeated entry"
 bad '.protected.repo += [.protected.repo[0]]' 'protected' "protected.repo with a repeated entry"
@@ -521,5 +523,159 @@ while IFS='|' read -r role hk; do nsh=$((nsh+1)); pr=$(jq -r --arg r "$role" '[.
   ok '{ [ "$a" = 0 ] || [ "$a" = 2 ]; } && [ "$a303" = 0 ] && [ "$(scall "$T/mh.json" "$hk" "$pr")" = 2 ] && grep -q "STL-CFG-303" "$T/gc.out"' "r6 T4: the shell hook $hk ($role): its own verdict with the intact table (exit $a), refused with STL-CFG-303 when the table names a missing hook file"
 done < <(jq -r '[.roles | to_entries[] | .key as $r | .value.hooks[]? | select((.file // "") | endswith(".sh")) | "\($r)|\(.file)"] | unique[]' "$RF")
 ok '[ "$nsh" -ge 1 ] && [ "$allowed" -ge 1 ]' "r6 T4: the table names shell hooks ($nsh) and at least one allows the call with the intact table ($allowed), so the refusal above is the table's"
+# ---- F1c W7 FV-01 (product rule 14; the cases of qa T-FV01, assertions unchanged): every profile row and role entry of the table
+# carries global_id (lower-case UUID4, unique across the table) and install_id (this install's); the schema requires both; roles.py
+# check (STL-CFG-303) and stella_data.py check (STL-CFG-310) refuse one missing, malformed or shared; the guards fail closed on such a
+# table; data-policy record_kinds hold role and profile as local-only; the contract README states the env-row identity; every
+# consumer of the shipped table still works. Its own scratch root (bin, .stella, docs and the table under test; no owner setting).
+( TOP=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+  T=$T/fv; R=$T/root; mkdir -p "$R/.supervisor/logs" "$R/.supervisor/state" "$T/home" "$T/tmp" "$T/sup/logs" "$T/sup/state"
+  cp -r "$TOP/bin" "$TOP/.stella" "$TOP/docs" "$R/" && jq '.worker_markers = ["STUB_WORKER_MARK"]' "$RF" >"$R/docs/hermes-local/roles.json" || { echo "FAIL FV-01: its scratch root could not be made"; exit 1; }
+  printf "OWNER_TIMEZONE='UTC'\n" >"$T/owner-fake.env"
+  export HOME=$T/home TMPDIR=$T/tmp STELLA_ROOT=$R ESCALATE_SUP_DIR=$T/sup ROLES_FILE=$R/docs/hermes-local/roles.json OWNER_CONFIG=$T/owner-fake.env
+  unset STUB_WORKER_MARK HERMES_KANBAN_TASK HERMES_KANBAN_WORKSPACE HERMES_KANBAN_BRANCH HERMES_KANBAN_HOME HERMES_KANBAN_DB \
+    HERMES_KANBAN_BOARD HERMES_KANBAN_RUN_ID HERMES_KANBAN_CLAIM_LOCK HERMES_DELEGATED_CHILD_CONTEXT
+  IDX=$R/.stella/data-files.json; ix() { jq -r "$1" "$IDX"; }
+  for v in $(jq -r '.worker_signals.token_env[]?' "$R/$(ix '.files[] | select(.id == "owner-auth") | .path')" 2>/dev/null); do unset "$v"; done
+  PY="python3 -I"; B=$R/bin
+  # stub boards: ok = no running card; worker = a running card bound to this shell (as bin/devices-selftest.sh)
+  fp() { echo "$(cat /proc/sys/kernel/random/boot_id):$(sed 's/.*) //' /proc/1/stat | awk '{print $20}')|$(sed 's/.*) //' /proc/$1/stat | awk '{print $20}')"; }
+  mkdir -p "$T/pb-ok" "$T/pb-worker"; printf '#!/usr/bin/env bash\necho "[]"\n' >"$T/pb-ok/hermes"
+  cat >"$T/pb-worker/hermes" <<S
+#!/usr/bin/env bash
+case " \$* " in
+  *" list "*) echo '[{"id":"c1"}]';;
+  *" show "*) echo '{"task":{"id":"c1","assignee":"w"},"runs":[{"id":7,"ended_at":null}],"events":[{"kind":"claimed","run_id":7,"payload":{"lock":"h:1"}},{"kind":"worker_bound","run_id":7,"payload":{"pid":$$,"claim_lock":"h:1","started_at":"$(fp $$)"}}]}';;
+  *) exit 1;;
+esac
+S
+  chmod +x "$T"/pb-*/hermes; BASEPATH=$PATH; export PATH=$T/pb-ok:$BASEPATH; cd "$T" || { echo "FAIL FV-01: its scratch root could not be made"; exit 1; }
+  fails=0
+  ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); cat "$T/o" "$T/ve" 2>/dev/null | sed 's/^/     | /' | tail -n 3; fi; rm -f "$T/o" "$T/ve"; }
+  as_board_worker() { (PATH="$T/pb-worker:$BASEPATH" "$@"); }   # the one worker signal these cases use: a bound run on the board
+  # judge a table by roles.schema.json alone (no roles.py rules): exit 1 and one line per problem, 0 when none, 3 when it cannot judge
+  rschema() { $PY -c 'import json, sys
+sys.path.insert(0, sys.argv[1])
+try:
+    import stella_data as sd
+    errs = sd.validate_doc(json.load(open(sys.argv[2], encoding="utf-8")), sd.schema_of("roles"))
+except Exception as e:
+    print(f"roles_schema: cannot judge ({type(e).__name__})"); sys.exit(3)
+print("\n".join(errs) or "schema OK"); sys.exit(1 if errs else 0)' "$B" "$1"; }
+  RT="$PY $B/roles.py"; SD="$PY $B/stella_data.py"
+  IID=$(jq -r .install_id "$R/$(ix '.files[] | select(.schema == "install") | .path')")
+  U4='^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+  cp "$ROLES_FILE" "$T/ship.json"
+  H=$T/hermes   # a Hermes root that matches the table's profiles: roles.py check judges coverage against it
+  jq -r '.profiles | to_entries[] | .value.dir // ("profiles/" + .key)' "$T/ship.json" | while read -r d; do mkdir -p "$H/$d"; echo 'model: x' >"$H/$d/config.yaml"; done
+  # the shipped table's data
+  ok 'jq -e --arg re "$U4" "[.profiles[], .roles[]] | length > 0 and all(.global_id | type == \"string\" and test(\$re))" "$T/ship.json" >/dev/null' \
+    "FV-01: every profile row and role entry has a lower-case UUID4 global_id"
+  ok 'jq -e "[.profiles[], .roles[] | .global_id] | length == (unique | length)" "$T/ship.json" >/dev/null' \
+    "FV-01: the table's global_ids are unique across profiles and roles"
+  ok '[ -n "$IID" ] && jq -e --arg i "$IID" "[.profiles[], .roles[]] | all(.install_id == \$i)" "$T/ship.json" >/dev/null' \
+    "FV-01: every profile row and role entry has install_id equal to this install's (install row)"
+  PO=$R/$(ix '.files[] | select(.schema == "data-policy") | .path')
+  ok 'jq -e "(.sync_classes[] | select(.id == \"local-only\") | .cloud == false) and .record_kinds.role.sync_class == \"local-only\" and ((.record_kinds.profile // {sync_class: \"local-only\"}).sync_class == \"local-only\")" "$PO" >/dev/null' \
+    "FV-01: data-policy record_kinds: role (and profile, when listed) with sync class local-only (cloud false)"
+  CRM=$R/docs/contract/READ"ME.md"   # spelled in two parts: test-map.py ties a name to every file of that base name (the prose READMEs); its map row is by reading
+  ok 'tr "\n" " " <"$CRM" | grep -oiE "env[- ]rows?.{0,300}|global_id.{0,300}" | grep -iE "env[- ]row" | grep -F global_id | grep -qiE "\bkeys?\b"' \
+    "FV-01: the contract README (docs/contract) states the env-row identity: the index row's global_id + the key"
+  # every consumer of the shipped table still works
+  $RT check "$H" >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 0 ] && grep -q "every profile has a row" "$T/o"' "FV-01: roles.py check: the shipped table is valid and covers every profile (exit 0)"
+  $SD check >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 0 ] && [ "$(head -1 "$T/o")" = "data OK" ]' "FV-01: stella_data.py check: data OK on the shipped data (role table and data policy included)"
+  $SD validate roles "$ROLES_FILE" >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 0 ]' "FV-01: stella_data.py validate roles: the shipped table passes both judges"
+  rschema "$T/ship.json" >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 0 ]' "FV-01: roles.schema.json alone accepts the shipped table"
+  $RT spec "$H" >"$T/o" 2>"$T/ve"; rc=$?
+  ok '[ $rc = 0 ] && jq -e --slurpfile t "$T/ship.json" "keys == (\$t[0].profiles | keys)" "$T/o" >/dev/null' "FV-01: roles.py spec: one entry per profile of the table"
+  $RT owner-data "$R" >"$T/o" 2>"$T/ve"; rc=$?
+  ok '[ $rc = 0 ] && jq -e --slurpfile t "$T/ship.json" ". as \$o | (\$t[0].owner_data + \$t[0].owner_settings) | all(. as \$p | \$o | index([\$p]))" "$T/o" >/dev/null' \
+    "FV-01: roles.py owner-data: exit 0, holds every owner_data and owner_settings path of the table"
+  $RT boundary >"$T/o" 2>"$T/ve"; rc=$?
+  ok '[ $rc = 0 ] && jq -e --slurpfile t "$T/ship.json" ". as \$b | \$t[0].boundary_paths | all(. as \$p | \$b | index([\$p]))" "$T/o" >/dev/null' \
+    "FV-01: roles.py boundary: exit 0, holds every boundary_paths entry"
+  bad=""; for r in $(jq -r '.roles | keys[]' "$T/ship.json"); do
+    $RT requirements "$r" >"$T/o" 2>"$T/ve" && jq -e --slurpfile t "$T/ship.json" --arg r "$r" '. == $t[0].roles[$r].requirements' "$T/o" >/dev/null || bad="$bad $r"
+  done
+  ok '[ -z "$bad" ] || { echo "roles failing:$bad" >"$T/o"; false; }' "FV-01: roles.py requirements <role>: exit 0 and the table's requirements, for every role"
+  $RT reviewers >"$T/o" 2>"$T/ve"; rc=$?
+  ok '[ $rc = 0 ] && jq -e --slurpfile t "$T/ship.json" "sort == ([\$t[0] as \$d | \$d.profiles | to_entries[] | select(\$d.roles[.value.role].may_review) | .key] | sort)" "$T/o" >/dev/null' \
+    "FV-01: roles.py reviewers: the profiles whose role may review"
+  bad=""; for p in $(jq -r '.profiles | keys[]' "$T/ship.json"); do
+    [ "$($RT field "$p" assignable 2>/dev/null)" = "$(jq -c --arg p "$p" '.roles[.profiles[$p].role].assignable' "$T/ship.json")" ] || bad="$bad $p"
+  done
+  ok '[ -z "$bad" ] || { echo "profiles failing:$bad" >"$T/o"; false; }' "FV-01: roles.py field <profile> assignable: every profile name (alias) still resolves to its role"
+  $RT hook-allow </dev/null >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 0 ]' "FV-01: roles.py hook-allow: a guard accepts the shipped table (exit 0)"
+  $RT prove >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 1 ] && grep -q "not proven" "$T/o" && ! grep -q STL-CFG-303 "$T/o"' "FV-01: roles.py prove outside a worker run: not proven (exit 1), no table refusal"
+  as_board_worker $RT prove >"$T/o" 2>"$T/ve"; rc=$?
+  ok '[ $rc = 0 ] && jq -e ".card == \"c1\"" "$T/o" >/dev/null' "FV-01: roles.py prove in a bound worker run: the card (exit 0)"
+  # refusals: a well-formed table W (the shipped one, any missing id filled) with exactly one defect
+  UU=$(python3 -I -c 'import json, uuid; print(json.dumps([str(uuid.uuid4()) for _ in range(256)]))')
+  jq --arg i "$IID" --argjson u "$UU" '([.profiles | keys_unsorted[] | ["profiles", .]] + [.roles | keys_unsorted[] | ["roles", .]]) as $p
+    | reduce range(0; $p | length) as $k (.; setpath($p[$k] + ["global_id"]; getpath($p[$k] + ["global_id"]) // $u[$k])
+    | setpath($p[$k] + ["install_id"]; getpath($p[$k] + ["install_id"]) // $i))' "$T/ship.json" >"$T/W.json"
+  P1=$(jq -r '.profiles | keys_unsorted[0]' "$T/W.json"); P2=$(jq -r '.profiles | keys_unsorted[1]' "$T/W.json")
+  FB=$(jq -r .fallback_role "$T/W.json"); R1=$(jq -r --arg f "$FB" '[.roles | keys_unsorted[] | select(. != $f)][0]' "$T/W.json")
+  R2=$(jq -r --arg f "$FB" '[.roles | keys_unsorted[] | select(. != $f)][1]' "$T/W.json")
+  cp "$T/W.json" "$ROLES_FILE"
+  $RT check "$H" >"$T/o" 2>&1; WR=$?; rm -f "$T/o"
+  $SD check >"$T/o" 2>&1; WS=$?; rm -f "$T/o"
+  rschema "$T/W.json" >"$T/o" 2>&1; WX=$?; rm -f "$T/o"
+  ok '[ $WR = 0 ] && [ $WS = 0 ] && [ $WX = 0 ]' "FV-01 control: the table with ids on every record is accepted by roles.py check, stella_data check and the schema (WR=$WR WS=$WS WX=$WX)"
+  mut() { jq --arg p1 "$P1" --arg p2 "$P2" --arg r1 "$R1" --arg r2 "$R2" --arg fb "$FB" "$1" "$T/W.json" >"$T/M.json"; }
+  # judge <roles|data|schema> <field named in the refusal> <what>: the defective table M refused, coded, naming the field; W accepted by that judge
+  judge() {
+    F=$2
+    case $1 in
+      roles) cp "$T/M.json" "$ROLES_FILE"; $RT check "$H" >"$T/o" 2>&1; rc=$?
+        ok '[ $WR = 0 ] && [ $rc = 1 ] && grep -q "roles: INVALID" "$T/o" && grep -q STL-CFG-303 "$T/o" && grep -q "$F" "$T/o" && ! grep -q Traceback "$T/o"' "FV-01: roles.py check refuses (exit 1, STL-CFG-303, names $2): $3";;
+      data) cp "$T/M.json" "$ROLES_FILE"; $SD check >"$T/o" 2>&1; rc=$?
+        ok '[ $WS = 0 ] && [ $rc = 1 ] && grep "^STL-CFG-310" "$T/o" | grep -i "role" | grep -q "$F" && ! grep -q Traceback "$T/o"' "FV-01: stella_data.py check refuses (exit 1, STL-CFG-310 on the role table, names $2): $3";;
+      schema) rschema "$T/M.json" >"$T/o" 2>&1; rc=$?
+        ok '[ $WX = 0 ] && [ $rc = 1 ] && grep -q "$F" "$T/o"' "FV-01: roles.schema.json alone refuses (names $2): $3";;
+    esac
+    cp "$T/W.json" "$ROLES_FILE"
+  }
+  all3() { mut "$1"; for j in roles data schema; do judge $j "$2" "$3"; done; }
+  all3 'del(.profiles[$p1].global_id)' global_id "profile $P1 without global_id"
+  all3 'del(.roles[$r1].global_id)' global_id "role $R1 without global_id"
+  all3 'del(.roles[$fb].global_id)' global_id "fallback role $FB without global_id"
+  all3 'del(.profiles[$p2].install_id)' install_id "profile $P2 without install_id"
+  all3 'del(.roles[$r2].install_id)' install_id "role $R2 without install_id"
+  all3 '.profiles[$p1].global_id |= ascii_upcase' global_id "profile $P1 global_id upper-case"
+  all3 '.profiles[$p1].global_id |= (.[0:14] + "1" + .[15:])' global_id "profile $P1 global_id a version-1 UUID"
+  all3 '.profiles[$p1].global_id = "not-a-uuid"' global_id "profile $P1 global_id not a UUID"
+  all3 '.profiles[$p1].global_id = 42' global_id "profile $P1 global_id a number"
+  all3 '.roles[$r1].global_id = ""' global_id "role $R1 global_id empty"
+  all3 '.profiles[$p2].install_id = "not-a-uuid"' install_id "profile $P2 install_id not a UUID"
+  all3 '.roles[$r2].install_id |= ascii_upcase' install_id "role $R2 install_id upper-case"
+  # a duplicate global_id: the schema cannot say it, both checks must
+  for m in 'profiles[$p2] = profiles[$p1]:.profiles[$p2].global_id = .profiles[$p1].global_id' \
+           'roles[$r2] = roles[$r1]:.roles[$r2].global_id = .roles[$r1].global_id' \
+           'roles[$fb] = profiles[$p1]:.roles[$fb].global_id = .profiles[$p1].global_id'; do
+    mut "${m#*:}"; judge roles global_id "duplicate global_id, ${m%%:*}"; mut "${m#*:}"; judge data global_id "duplicate global_id, ${m%%:*}"
+  done
+  # fail closed: a guard and a reader of the table refuse a table the checks refuse
+  mut '.profiles[$p2].global_id = .profiles[$p1].global_id'; cp "$T/M.json" "$ROLES_FILE"
+  $RT hook-allow </dev/null >"$T/o" 2>&1; rc=$?
+  ok '[ $WR = 0 ] && [ $rc = 2 ] && grep -q STL-CFG-303 "$T/o"' "FV-01: a guard (roles.py hook-allow) refuses a table with a duplicate global_id (exit 2, STL-CFG-303)"
+  mut 'del(.roles[$r1].install_id)'; cp "$T/M.json" "$ROLES_FILE"
+  $RT owner-data "$R" >"$T/o" 2>"$T/ve"; rc=$?
+  ok '[ $WR = 0 ] && [ $rc = 1 ] && [ ! -s "$T/o" ] && grep -q STL-CFG-303 "$T/ve"' "FV-01: a reader (roles.py owner-data) refuses a table with a missing install_id (exit 1, nothing on stdout, STL-CFG-303)"
+  cp "$T/W.json" "$ROLES_FILE"
+  # the existing key rules stand: an unknown key in a profile row or a role entry is still refused
+  jq --arg p "$P1" '.profiles[$p].zz_unknown = 1' "$T/ship.json" >"$ROLES_FILE"; $RT check "$H" >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 1 ] && grep -q STL-CFG-303 "$T/o" && grep -q zz_unknown "$T/o"' "FV-01: roles.py check still refuses an unknown key in a profile row (unchanged rule)"
+  jq --arg r "$R1" '.roles[$r].zz_unknown = 1' "$T/ship.json" >"$ROLES_FILE"; $SD check >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 1 ] && grep "^STL-CFG-310" "$T/o" | grep -q zz_unknown' "FV-01: stella_data.py check still refuses an unknown key in a role entry (unchanged rule)"
+  cp "$T/ship.json" "$ROLES_FILE"
+  exit "$fails" ); fv=$?
+fails=$((fails+fv))   # the section's FAIL lines are printed above
 exec {CW}>&- {CR}<&-; wait "$CPID"   # the check driver ends
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
