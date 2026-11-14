@@ -880,8 +880,8 @@ ok 'jq -e "(.entries | all(.type == \"api\" or .type == \"cli-login\")) and ([.e
 ok 'python3 -I "$SD" owner-only --json | jq -e ".connections | index(\"/entries/*/terms_ok\")" >/dev/null' "246 owner-only lists terms_ok of the connections schema"
 # ---- F1b W3: typed links (D6), the routing check, x-ref-where ----
 # T2a/T2b the links F1 wrote ({provider, model, parameters}) migrated to {connection, model, parameters} through the apply contract
-LK='.assignments[].chain[] |= with_entries(if .key == "connection" then .key = "provider" else . end)'   # a link as F1 wrote it
-FW='.assignments[].chain[] |= with_entries(if .key == "provider" then .key = "connection" else . end)'   # the migration: that key renamed, nothing else
+LK='.schema_version = 1 | .assignments[].chain[] |= with_entries(if .key == "connection" then .key = "provider" else . end)'   # the file as F1 wrote it (version 1)
+FW='.schema_version = 2 | .assignments[].chain[] |= with_entries(if .key == "provider" then .key = "connection" else . end)'   # the migration: version 2, that key renamed, nothing else
 RB='[.assignments[] | {id, role, scope, effort_mode, links: [.chain[] | [(.connection // .provider), .model, .parameters]]}]'   # what each row resolves to, in order
 mk lk; ed lk data-files.json '(.files[] | select(.id == "role-assignments")).owner_only = false'   # the cases run as no owner
 ed lk role-assignments.json "$LK"; cp "$T/lk/.stella/role-assignments.json" "$T/lk-old.json"; jq "$FW" "$T/lk-old.json" >"$T/lk-cand.json"
@@ -893,6 +893,9 @@ ok '[ "$(sd lk get role-assignments --json | jq -c "$RB")" = "$(jq -c "$RB" "$T/
 APY lk rollback role-assignments >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 1 ] && grep -q "^STL-CFG-31[36] .*saved copy fails a check a candidate must pass" "$T/o" && cmp -s "$T/lk-cand.json" "$T/lk/.stella/role-assignments.json" && sd lk check >/dev/null 2>&1' "247f T2a a data-only rollback would bring back links the schema refuses: it is refused, coded, and the migrated file stays (exit $rc: $(head -c 200 "$T/o"))"
 ok 'jq -e "[.assignments[].chain[] | keys == [\"connection\",\"model\",\"parameters\"]] | all" "$ROOT/.stella/role-assignments.json" >/dev/null' "247e the shipped role assignments are migrated: every link is {connection, model, parameters}"
+ok 'jq -e ".schema_version == 2" "$ROOT/.stella/role-assignments.json" >/dev/null && jq -e ".properties.schema_version == {const: 2}" "$ROOT/.stella/schemas/role-assignments.schema.json" >/dev/null' "247g W3-CVER-02 the typed links are role-assignments schema_version 2, in the schema and the shipped file"
+mk lv; ed lv role-assignments.json '.schema_version = 1'
+ok 'refuses lv check && grep -q "^STL-CFG-310 .*role-assignments: .*schema_version" "$T/o"' "247h W3-CVER-02 a role-assignments file that says version 1 is refused"
 C0=$(jq -r '.assignments[0].chain[0] | .connection // .provider' "$ROOT/.stella/role-assignments.json"); G0=$(jq -r --arg c "$C0" '.entries[] | select(.id == $c) | .global_id' "$ROOT/.stella/connections.json")
 mk lg; ed lg role-assignments.json ".assignments[0].chain[0].connection = \"$G0\""
 ok 'sd lg check >"$T/o" 2>&1' "248a a link may name its connection by global_id (x-ref)"
@@ -917,6 +920,18 @@ ed rt data-policy.json '.privacy_grants[0].data_class = "microphone"'
 ok 'refuses rt check && grep -q "qa-cam-builder: chain\[0\]: .*camera.*grant" "$T/o"' "249e a grant for another class does not cover camera"
 ed rt data-policy.json ".privacy_grants[0].data_class = \"camera\" | .privacy_grants[0].connection = \"$NA\""
 ok 'refuses rt check && grep -q "qa-cam-builder: chain\[0\]: .*camera.*grant" "$T/o"' "249f a grant for another connection does not cover this one"
+# W3-CRT-01 a grant counts only while it runs: granted_at a real date not in the future, expires_at (if any) a real date after it and not past
+GW() { ed rt data-policy.json ".privacy_grants = [$(GR qa-cloud) | . + {$1}]"; }   # <jq object members>: one camera grant for qa-cloud with these dates
+GW 'granted_at:"2026-02-30T00:00:00Z"'
+ok 'refuses rt check && grep -q "qa-cam-builder: chain\[0\]: .*camera.*grant" "$T/o"' "249i W3-CRT-01 a grant whose granted_at is no real date grants nothing"
+GW 'granted_at:"2099-01-01T00:00:00Z"'
+ok 'refuses rt check && grep -q "qa-cam-builder: chain\[0\]: .*camera.*grant" "$T/o"' "249j W3-CRT-01 a grant that starts in the future grants nothing today"
+GW 'granted_at:"2099-01-01T00:00:00Z",expires_at:"2099-01-02T00:00:00Z"'
+ok 'refuses rt check && grep -q "qa-cam-builder: chain\[0\]: .*camera.*grant" "$T/o"' "249k W3-CRT-01 a future grant with an end date grants nothing today"
+GW 'granted_at:"2026-11-13T00:00:00Z",expires_at:"2026-11-12T00:00:00Z"'
+ok 'refuses rt check && grep -q "qa-cam-builder: chain\[0\]: .*camera.*grant" "$T/o"' "249l W3-CRT-01 a grant that ends before it starts grants nothing"
+GW 'granted_at:"2026-11-13T00:00:00Z",expires_at:"2999-01-01T00:00:00Z"'
+ok 'sd rt check >"$T/o" 2>&1' "249m control: a grant that started and has not ended passes"
 rm -rf "$T/rt1"; cp -r "$T/rt0" "$T/rt1"; ed rt1 data-policy.json '.data_classes += ["qa-g"] | .class_rules["qa-g"] = (.class_rules.public | .hosted = "grant")'
 ed rt1 role-assignments.json 'del(.assignments[] | select(.id == "qa-cam-builder"))'; ed rt1 ../docs/hermes-local/roles.json '.roles.builder.requirements.allowed_data_classes -= ["camera"]'; CLS rt1 qa-g
 ok 'sd rt1 check >"$T/o" 2>&1' "249g control: a class whose rule is hosted grant, on local links only, needs no grant"

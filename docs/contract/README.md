@@ -287,9 +287,9 @@ id check off (see "Records and ids"). `stella_data.install_id()` is the one read
 `effort_modes{}` (allowed localities and `no_silent_fallback` for standard, eco, max, local_only) and `assignments[]`:
 `scope` (`level` global, project or card, with `project` or `card`), `role`, `effort_mode`, and an ordered `chain[]` of
 links `{connection, model, parameters}` (F1b D6): `connection` is the id or `global_id` of a provider in the catalog
-(x-ref `connections`, `x-ref-where` kind provider), `model` one of that connection's models. F1 wrote `provider`; the
-migration renames that key and nothing else: write the candidate with
-`jq '.assignments[].chain[] |= with_entries(if .key == "provider" then .key = "connection" else . end)'`, then
+(x-ref `connections`, `x-ref-where` kind provider), `model` one of that connection's models; typed links are `schema_version` 2.
+F1 wrote `provider` (version 1); the migration sets version 2 and renames that key, nothing else: write the candidate with
+`jq '.schema_version = 2 | .assignments[].chain[] |= with_entries(if .key == "provider" then .key = "connection" else . end)'`, then
 `stella-apply.py apply role-assignments --from <candidate>` (dry run first). A data-only `rollback` of it is refused (the
 saved copy fails the schema a candidate must pass); undoing it means reverting the schema and the file together.
 effort-mode ids are lower case ASCII like other ids. **Precedence:** the data policy first, then the card, then the project, then the global
@@ -298,8 +298,11 @@ It also refuses an unknown connection, model, role or mode, an empty chain, and 
 **Routing** (one rule, `route_problems`, beside the project policy's): a `cli-login` link needs `terms_ok` true. On a link
 whose connection is cloud or `data_policy.hosted`, each data class the role handles (`requirements.allowed_data_classes`)
 follows its `class_rules` `hosted`: `allowed` passes, `never` (and a class with no rule row) is refused outright, `grant`
-needs a `privacy_grants` entry for that class naming the connection (id or `global_id`) that has not expired
-(`expires_at` null or absent never expires). A private project never routes to a hosted connection (`policy_allows`).
+needs a `privacy_grants` entry for that class naming the connection (id or `global_id`) that is in force: `granted_at` a
+real date not in the future, and `expires_at` (null or absent never expires) a real date after `granted_at` and not past;
+any other grant grants nothing. A private project never routes to a hosted connection (`policy_allows`). Card app rules are
+F2's: when F2 routes by card, it refuses a `cli-login` app whose `terms_ok` is not true, and a hosted integration aggregator app
+(`integration_aggregator: true`) on a card that carries secrets or belongs to a private project.
 The resolver that applies the precedence is built in a later phase; this file is the data and the validator.
 *To add one:* append an assignment with a new `id`.
 
