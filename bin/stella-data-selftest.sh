@@ -1041,4 +1041,11 @@ ok 'refuses hlc check && grep -q "^STL-CFG-310 .*role-assignments: .*qa-hloc-bui
 HLC hls secret
 ok 'refuses hls check && grep -q "^STL-CFG-310 .*role-assignments: .*qa-hloc-builder: chain\[0\]: .*qa-hloc.*secret.*never" "$T/o" && ! grep -q "global-builder\|qa-lo-builder" "$T/o"' "262d a secret-class role routed to a hosted connection marked local is refused; the plain local links take it"
 ok 'python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; p = {\"locality\": \"local\", \"data_policy\": {}}; assert s.reach(p) == \"local\" and s.reach(dict(p, aggregator=True)) == \"cloud\" and s.reach(dict(p, data_policy={\"hosted\": True})) == \"cloud\"" "$BIN"' "262e reach() is the one place: local only for a link that is local, no aggregator and not hosted"
+# FIN-CRT-05 a row whose schema marks an x-owner-only field, or the install row (found by its schema), is owner_only
+mk oo; ed oo data-files.json '(.files[] | select(.schema == "connections")).owner_only = false'
+ok 'refuses oo check && grep -q "^STL-CFG-310 .*connections: .*owner_only.*x-owner-only" "$T/o"' "263a an index row whose schema marks x-owner-only fields (terms_ok) and is not owner_only is refused"
+mk oi; ed oi data-files.json '(.files[] | select(.schema == "install")).owner_only = false'; ed oi schemas/install.schema.json 'walk(if type == "object" then del(."x-owner-only") else . end)'
+ok 'refuses oi check && grep -q "^STL-CFG-310 .*install: .*owner_only.*install" "$T/o"' "263b the install row not owner_only is refused, even with no x-owner-only mark in its schema"
+mk oc; ed oc data-files.json '(.files[] | select(.schema == "capabilities")).owner_only = false'; ed oc schemas/install.schema.json 'walk(if type == "object" then del(."x-owner-only") else . end)'
+ok 'sd oc check >"$T/o" 2>&1 && [ "$(jq "[.files[] | select(.schema == \"capabilities\")][0].owner_only" "$T/oc/.stella/data-files.json")" = false ]' "263c control: a row whose schema marks no owner-only field may be open"
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

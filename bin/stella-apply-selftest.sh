@@ -12,7 +12,7 @@ T=$(mktemp -d -t stella-apply-selftest.XXXXXX); trap 'chmod -R u+w "$T" 2>/dev/n
 mkdir -p "$T/tmp"; export TMPDIR=$T/tmp   # the tool stages its whole-set check in the temp folder: keep it inside the scratch folder
 R=$T/root; C=$T/cand; mkdir -p "$R/docs/hermes-local" "$R/config" "$R/.supervisor/logs" "$C" "$T/sup/logs"
 cp -r "$H/.stella" "$R/"
-jq '(.files[] | select(.id == "connections" or .id == "extensions" or .id == "limits") | .owner_only) = false' "$R/.stella/data-files.json" >"$T/nx" && cp "$T/nx" "$R/.stella/data-files.json"   # the cases need these rows not owner-only, whatever the shipped flags say
+jq '(.files[] | select(.id == "connections" or .id == "extensions" or .id == "limits") | .owner_only) = false' "$R/.stella/data-files.json" >"$T/nx" && cp "$T/nx" "$R/.stella/data-files.json" && jq 'walk(if type == "object" then del(."x-owner-only") else . end)' "$R/.stella/schemas/connections.schema.json" >"$T/nx" && cp "$T/nx" "$R/.stella/schemas/connections.schema.json"   # the cases need these rows not owner-only, whatever the shipped flags say (and an open row carries no x-owner-only field: FIN-CRT-05)
 jq '. + {worker_markers: ["STUB_WORKER_MARK"]}' "$H/docs/hermes-local/roles.json" >"$R/docs/hermes-local/roles.json"
 cp -r "$H/docs/hermes-local/hooks" "$R/docs/hermes-local/hooks"   # the table check looks hook files up under the root
 jq '.entries += [(.entries[2] | .key = "PLANTED_SETTING" | .sensitivity = "secret" | .type = "string" | .validation = {} | .default = null | .store.key = "PLANTED_SETTING")]' \
@@ -188,7 +188,7 @@ ok 'STELLA_ROOT=$(dirname "$H") python3 -I -c "import sys; sys.path.insert(0, \"
 ROLES=$R/docs/hermes-local/roles.json; SET0=$R/.stella/settings.json
 mkr() {  # <name>: a fresh scratch root with fake files and a git baseline; R, LOG and STELLA_ROOT point at it
   R=$T/$1; LOG=$R/.supervisor/logs/events.jsonl; mkdir -p "$R/docs/hermes-local" "$R/config" "$R/.supervisor/logs"
-  cp -r "$H/.stella" "$R/"; jq '(.files[] | select(.id == "connections" or .id == "extensions" or .id == "limits") | .owner_only) = false' "$R/.stella/data-files.json" >"$T/nx" && cp "$T/nx" "$R/.stella/data-files.json"   # the cases need these rows not owner-only, whatever the shipped flags say
+  cp -r "$H/.stella" "$R/"; jq '(.files[] | select(.id == "connections" or .id == "extensions" or .id == "limits") | .owner_only) = false' "$R/.stella/data-files.json" >"$T/nx" && cp "$T/nx" "$R/.stella/data-files.json" && jq 'walk(if type == "object" then del(."x-owner-only") else . end)' "$R/.stella/schemas/connections.schema.json" >"$T/nx" && cp "$T/nx" "$R/.stella/schemas/connections.schema.json"   # the cases need these rows not owner-only, whatever the shipped flags say (and an open row carries no x-owner-only field: FIN-CRT-05)
   cp "$ROLES" "$R/docs/hermes-local/roles.json"; cp "$SET0" "$R/.stella/settings.json"; cp -r "$H/docs/hermes-local/hooks" "$R/docs/hermes-local/hooks"
   printf "WORKER_GIT_NAME='Fake One'\nWORKER_GIT_EMAIL='fake@example.invalid'\nAPI_TOKEN='sekrit-token-111'\n" >"$R/config/owner.env"
   printf "CALL_TIMEOUT=600\nPLANTED_SETTING='sekrit-setting-333'\n" >"$R/.supervisor/limits.env"; chmod 600 "$R/config/owner.env"; chmod 640 "$R/.supervisor/limits.env"
@@ -1180,7 +1180,7 @@ done
 
 # T-TERMS (F1b D5): terms_ok is owner-only in the schema; the owner sets it through apply (dry run first) and rollback restores the
 # bytes, one event line each; the connections row keeps its shipped owner_only flag here, so a simulated worker is refused
-mkr terms; cp "$H/.stella/data-files.json" "$R/.stella/data-files.json"; git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qam shipped-flags
+mkr terms; cp "$H/.stella/data-files.json" "$R/.stella/data-files.json"; cp "$H/.stella/schemas/connections.schema.json" "$R/.stella/schemas/"; git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qam shipped-flags
 SD="python3 -I $H/bin/stella_data.py"; CF=$R/.stella/connections.json; cp "$CF" "$T/terms.orig"
 jq '(.entries[] | select(.type == "cli-login")).terms_ok = true' "$CF" >"$C/terms.json"
 ok '$SD owner-only --json | jq -e ".connections | index(\"/entries/*/terms_ok\")" >/dev/null && [ "$(jq "[.files[] | select(.schema == \"connections\")] | all(.owner_only)" "$R/.stella/data-files.json")" = true ]' "T-TERMS the schema marks terms_ok owner-only, on a row that is owner-only"

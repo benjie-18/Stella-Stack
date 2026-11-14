@@ -23,7 +23,7 @@ keywords still apply), $defs, $schema, $id, title, description, x-one-document (
 nature, so a second file of it is refused), x-ref (an index row id: a string must be the id, the alias, or the global_id of a
 record of that row's merged view; "<row id>/<key>": of an item of the list or map under key in that row's documents),
 x-ref-where (beside an x-ref, {field: value}: the record must also carry each value), x-owner-only (true: only the
-owner's path writes the field; owner-only lists them) and x-record-kind-of (in the index schema, {schema name: record kind}:
+owner's path writes the field; owner-only lists them; check refuses a row of that schema not owner_only) and x-record-kind-of (in the index schema, {schema name: record kind}:
 an index row of that schema must name that record_kind). Any other keyword, or a wrong keyword value, is an error, never ignored.
 x-ref (and so x-ref-where) stands only beside type string, property names included, and is applied wherever it stands; a
 document validated where no x-ref is resolved (validate_doc without refs) fails when its schema holds one.
@@ -1120,6 +1120,16 @@ def judge(reads=None):
     for d, m in found:
         P(d, m)
     refused = {d for d, _ in found}   # rows whose files feed no rule
+    for r in rs:
+        if r["schema"] and not r["owner_only"]:   # x-owner-only is enforced by the row's gate alone (FIN-CRT-05)
+            try:
+                sch = schema_of(r["schema"])
+                marked = owner_paths(sch, sch.get("$defs", {}))
+            except Exception:
+                marked = []   # a schema that cannot be read refuses the row where it is opened
+            if marked or r["schema"] == INSTALL:
+                P(r["id"], "this row must be owner_only: " + (f"its schema marks x-owner-only fields ({', '.join(marked)})" if marked
+                                                               else f"it holds the install id (schema {INSTALL})"))
     head = len(probs)
     want, run, members = plan(rs, reads) if reads is not None else (None, RULES, None)
     loaded, nfiles, good, onedoc, nested = [], {}, [], {}, {}
