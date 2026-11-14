@@ -272,8 +272,8 @@
         "dry-run",
         "settings"
       ],
-      "inputs": "a data file id and a candidate file",
-      "outputs": "the change summary; STL-CFG-312 for a worker on an owner-only file, STL-CFG-313 when the candidate is invalid",
+      "inputs": "a data file id and a candidate file; for an owner-only file optionally a proof file (--proof) instead of the host's owner key",
+      "outputs": "the change summary (a dry run of an owner-only file also prints the action a proof must cover); STL-CFG-312 for a worker on an owner-only file, STL-OWN-801..813 without a valid owner proof (806 no owner key, 808 an identity-critical change without its typed phrase), STL-CFG-313 when the candidate is invalid",
       "allowed_roles": [],
       "risk_class": "write",
       "hosts": [],
@@ -297,8 +297,8 @@
         "get",
         "rollback"
       ],
-      "inputs": "a setting key and, to change it, a value",
-      "outputs": "the value or the change summary; STL-CFG-311 for an unknown key, STL-CFG-312 for a worker, STL-CFG-313 for a store file that holds a key twice, STL-CFG-315 for a bad value, STL-CFG-317 when an identity-critical setting is changed without a terminal",
+      "inputs": "a setting key and, to change it, a value; optionally a proof file (--proof) instead of the host's owner key",
+      "outputs": "the value or the change summary; STL-CFG-311 for an unknown key, STL-CFG-312 for a worker, STL-CFG-313 for a store file that holds a key twice, STL-CFG-315 for a bad value, STL-OWN-806 without an owner key, STL-OWN-808 when an identity-critical setting is changed without its typed phrase",
       "allowed_roles": [],
       "risk_class": "write",
       "hosts": [],
