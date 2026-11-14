@@ -221,9 +221,12 @@ def suite(m):
 
 
 def hermetic(m):
-    """The selftests whose mark is exactly hermetic; a marks of another shape marks none (shared is the default)."""
+    """The selftests whose mark is exactly hermetic and whose name no other mark spells in other case; a marks of another shape marks none (shared is the default)."""
     marks = m.get("marks")
-    return {t for t, v in marks.items() if isinstance(v, dict) and v.get("mark") == "hermetic"} if isinstance(marks, dict) else set()
+    if not isinstance(marks, dict):
+        return set()
+    names = [t.casefold() for t in marks]   # two names that differ only in case may be one file on this mount: neither is trusted (check refuses the pair)
+    return {t for t, v in marks.items() if isinstance(v, dict) and v.get("mark") == "hermetic" and names.count(t.casefold()) == 1}
 
 
 def wide(m):

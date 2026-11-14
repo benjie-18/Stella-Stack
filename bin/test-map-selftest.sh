@@ -404,6 +404,8 @@ ok '[ "$(shared fullnb new/x.sh)" = "[\"b\"]" ] && [ "$(shared fullnomarks new/x
 ok '[ "$(shared fulltwice new/x.sh)" = "[\"a\",\"b\"]" ] && [ "$(shared fullmiss new/x.sh)" = "[\"a\",\"b\"]" ] && [ "$(shared s-notjson src/a1.py)" = "[\"a\",\"b\"]" ] && [ "$(shared s-always src/a1.py)" = "[\"a\",\"b\"]" ]' \
    "46c a map that cannot be read or breaks its schema (a repeated key, missing, not JSON, always a string): every suite selftest is shared"
 ok '[ "$(STELLA_ROOT=$T/good python3 -I "$T/t-bad/bin/test-map.py" select --json new/x.sh 2>/dev/null | jq -c .shared)" = "[\"a\",\"b\"]" ]' "46d a schema that cannot be read: nothing the map says is trusted, every suite selftest is shared"
+root twin2 '.marks.A = {"mark": "hermetic"}'; root twin4 '.marks.A = {"mark": "hermetic"} | .marks.a = {"mark": "shared", "why": "x"}'
+ok '[ "$(STELLA_ROOT=$T/twin2 python3 -I "$TM" select --json src/a1.py 2>/dev/null | jq -c .shared)" = "[\"a\"]" ] && [ "$(STELLA_ROOT=$T/twin4 python3 -I "$TM" select --json src/a1.py 2>/dev/null | jq -c .shared)" = "[\"a\"]" ]' "46f a hermetic mark whose name another mark spells in other case is not trusted: the selftest stays shared in select"
 put s-nothing; rm -f "$T"/s-nothing/bin/*
 ok '[ "$(shared s-nothing new/x.sh)" = "[\"*\"]" ]' "46e no map, no runner and no selftest file to name the suite: shared is [\"*\"], never []"
 # W0-VER-06: a schema that lets anything through (the file is {}) must not turn a marks of the wrong shape into a traceback:
