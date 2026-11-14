@@ -163,6 +163,9 @@
     },
     "owner-auth": {
       "mark": "hermetic"
+    },
+    "approvals": {
+      "mark": "hermetic"
     }
   },
   "test_like": [
@@ -976,7 +979,8 @@
         "test-map",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "approvals"
       ],
       "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field); plus the selftests that reach it since the merge of build/F1 69edb47 (bin/test-map.py reach)"
     },
@@ -1067,7 +1071,8 @@
         "stella-data",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "approvals"
       ],
       "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
     },
@@ -1217,7 +1222,8 @@
         "test-map",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "approvals"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1291,7 +1297,8 @@
         "test-map",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "approvals"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1406,7 +1413,8 @@
         "test-map",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "approvals"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1440,7 +1448,8 @@
         "stella-data",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "approvals"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1526,7 +1535,8 @@
         "test-map",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "approvals"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1610,7 +1620,8 @@
         "stella-data",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "approvals"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1645,7 +1656,8 @@
         "test-map",
         "watchdog",
         "write-guard",
-        "owner-auth"
+        "owner-auth",
+        "approvals"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach); plus the selftests that reach it since the merge of build/F1 69edb47 (bin/test-map.py reach)"
     },
@@ -1673,6 +1685,7 @@
       ],
       "targets": [
         "approval-evidence",
+        "approvals",
         "box",
         "check-guard",
         "complete-gate",
@@ -2261,7 +2274,8 @@
         "stella-data",
         "event-log",
         "roles",
-        "owner-auth"
+        "owner-auth",
+        "approvals"
       ],
       "why": "F1c G0, conservative: the one worker-environment answer and its policy; every owner command and the event writer use it (W2a/W4b narrow this when their selftests land)"
     },
@@ -2271,6 +2285,7 @@
         "bin/owner-auth-selftest.sh"
       ],
       "targets": [
+        "approvals",
         "owner-auth"
       ],
       "why": "F1c W2a: the owner-authenticator and its selftest (which also runs stella_data.py stubs over the features file)"
@@ -2299,6 +2314,7 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "card-schema",
         "complete-gate",
         "delegation",
@@ -2352,6 +2368,34 @@
         "write-guard"
       ],
       "why": "F1c W1: bin/event_log.py asks worker_env.reason() before append and verify, so every selftest that reaches the writer reaches it"
+    },
+    {
+      "globs": [
+        "bin/approvals.py",
+        "bin/approvals-selftest.sh",
+        "bin/adapters/discord.sh",
+        "bin/adapters/host-cli.sh",
+        "bin/adapters/kanban-resume.sh"
+      ],
+      "targets": [
+        "approvals"
+      ],
+      "why": "F1c W3: the approval service, its selftest (the tester's wave-2 T1a/T1b/T2a/T2b/T7b/T6b cases) and the shipped channel adapters and resume it runs"
+    },
+    {
+      "globs": [
+        ".stella/channels.json",
+        ".stella/schemas/channels.schema.json"
+      ],
+      "targets": [
+        "approvals",
+        "commit-guard",
+        "owner-settings",
+        "stella-apply",
+        "stella-data",
+        "write-guard"
+      ],
+      "why": "F1c W3: the channels row is owner-only: approvals.py reads it, stella-apply stage() copies every json row and the schemas folder, stella_data check validates it, and the protected-path selftests name their paths from the index"
     }
   ]
 }

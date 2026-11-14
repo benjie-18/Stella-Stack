@@ -21,6 +21,9 @@ T=$(mktemp -d "${TMPDIR:-/tmp}/approvals-selftest.XXXXXX"); T=$(cd "$T" && pwd -
 trap 'chmod -R u+rwX "$T" 2>/dev/null; rm -rf "$T"' EXIT
 R=$T/root; mkdir -p "$R/docs/hermes-local" "$R/.supervisor/logs" "$R/.supervisor/state" "$T/home" "$T/tmp" "$T/sup/logs" "$T/sup/state"
 cp -r "$H/bin" "$H/.stella" "$R/"
+# The scratch code folder is read-only: no tool writes there, and python3 -I would otherwise leave __pycache__ files in it,
+# which the T7b "bin/ equals the tree's" case would count as a code change.
+chmod -R a-w "$R/bin"
 (cd "$H/docs" && tar --exclude=./hermes-local/roles.json -cf - .) | (cd "$R/docs" && tar xf -)
 jq '.worker_markers = ["STUB_WORKER_MARK"]' "$H/docs/hermes-local/roles.json" >"$R/docs/hermes-local/roles.json"
 printf "OWNER_TIMEZONE='UTC'\n" >"$T/owner-fake.env"
@@ -362,7 +365,9 @@ HC=$(jq -r --arg lk "$CHLK" '[.[$lk][]? | select(.kind == "host-cli") | .id][0] 
 ok '[ -n "$DC" ] && [ -n "$HC" ] && jq -e --arg lk "$CHLK" "[.[\$lk][] | .deliver[0], .collect[0]] + [.resume.argv[0]] | all(startswith(\"/\") | not)" "$CH" >/dev/null' "the shipped rows and resume name their scripts relative to the stack root (no path literal)"
 # the Discord helper with a fake Hermes interpreter (as bin/escalation-thread-selftest.sh): threads, posts and fetched messages are files
 mkdir -p "$T/bin"; printf 'ALERT_TARGET="discord:#alerts"\n' >"$T/sup/limits.env"
-printf "ESCALATIONS_CHANNEL_ID='100'\nDISCORD_GUILD_ID='200'\nSUPERVISOR_CHANNEL_ID='300'\n" >>"$OWNER_CONFIG"
+{ grep -vE "^(OWNER_TIMEZONE|OWNER_DISCORD_USER_ID|ESCALATIONS_CHANNEL_ID|DISCORD_GUILD_ID|SUPERVISOR_CHANNEL_ID)=" "$H/config/owner.example.env"
+  cat "$OWNER_CONFIG"; printf "ESCALATIONS_CHANNEL_ID='100'\nDISCORD_GUILD_ID='200'\nSUPERVISOR_CHANNEL_ID='300'\n"; } >"$T/owner-full.env"
+export OWNER_CONFIG=$T/owner-full.env   # the Discord helper loads the whole owner config (the example's keys plus made-up ids)
 cat >"$T/bin/fakepy" <<'S'
 #!/usr/bin/env bash
 cat >/dev/null   # args: -I - <action> <channel> [<name or content>]
@@ -403,6 +408,10 @@ EU="$PY $B/event_untrusted.py"
 STUB_WORKER_MARK=1 $EU append --type approval-ask --what card-bad --detail '{"class": "write", "action": "not an action", "summary": "s", "card": "card-bad"}' >/dev/null 2>&1
 $AP intake --json >"$T/i" 2>"$T/o"; rc=$?
 ok '[ $rc = 0 ] && c STL-OWN-829 && [ "$(jq length "$T/i")" = 0 ]' "intake: an ask that is not well formed makes no request (STL-OWN-829 named), the run goes on"
+mkdir -p "$T/kb"; printf '#!/usr/bin/env bash\necho "$*" >>"%s/kb/calls"\n' "$T" >"$T/kb/hermes"; chmod +x "$T/kb/hermes"
+RS=$R/$(jq -r '.resume.argv[0]' "$H/$CHREL")
+echo '{"decision": "denied"}' | PATH=$T/kb:$BASEPATH "$RS" t_zz000001 denied >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && grep -qE "^kanban --board [^ ]+ unblock --reason .*denied.* t_zz000001$" "$T/kb/calls"' "the shipped resume unblocks the card on the stack's board, the decision in the reason"
 ;;
 esac
 finish

@@ -426,6 +426,34 @@
       },
       "global_id": "5de36c04-3b9d-454b-8d1f-61b365a9a586",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "approvals",
+      "kind": "command",
+      "summary": "The approval service (host side): make approval requests bound to an exact action, a nonce and an expiry, take agents' approval-ask lines in, deliver requests on the channel adapters, collect and decide answers (owner proof per channel kind), and tell a request's status from the trusted event log",
+      "keywords": [
+        "approval",
+        "request",
+        "answer",
+        "channel",
+        "adapter",
+        "nonce",
+        "needs_input",
+        "voice"
+      ],
+      "inputs": "an action file and class, summary, card and ttl; a request id; a channel id; a decision (approved or denied)",
+      "outputs": "the request record (JSON), a message ref, decided answers, or pending/approved/denied/expired; STL-CFG-312 in a worker environment, STL-OWN-820..831 for a refused answer, request or adapter",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/approvals.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "ffb93179-0a25-47f9-a5cf-c16abda683ad",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

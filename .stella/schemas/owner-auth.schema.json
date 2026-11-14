@@ -95,6 +95,25 @@
       },
       "required": ["token_env", "users", "sandbox_files", "worktree_dirs"],
       "additionalProperties": false
+    },
+    "channel_kinds": {
+      "type": "object",
+      "description": "Channel kind -> whether an answer on a channel of that kind may decide an approval (bin/approvals.py, F1c B2, D3). Open map: a new kind is data (a channels row of that kind plus its entry here and a channel-identity provider). A kind not listed here answers nothing (fail closed). The kind voice_host_confirmation.channel_kind (voice) answers only through that entry, whatever its value here.",
+      "propertyNames": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
+      "additionalProperties": {"type": "boolean"}
+    },
+    "voice_host_confirmation": {
+      "type": "object",
+      "description": "The one exception to 'a voice channel answers no approval' (F1c B2, decided 2026-11-13): when enabled, the voice profile `profile` may give the quick confirmation for its own ask-first host action, a request of class action_class whose ttl is at most max_ttl_s, answered with the digest of the details shown; never any other approval. Off until the post-1.0 host operator exists. The schema keeps it strict: no other key.",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "channel_kind": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$", "description": "The voice channel kind: a channel of this kind answers only through this entry, whatever channel_kinds says."},
+        "profile": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$", "description": "The requester profile whose own asks voice may confirm."},
+        "max_ttl_s": {"type": "integer", "minimum": 1, "maximum": 3600, "description": "The longest request ttl (seconds) voice may confirm."},
+        "action_class": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "The approval class of the host ask-first action (an approval_class of the approval-request schema)."}
+      },
+      "required": ["enabled", "channel_kind", "profile", "max_ttl_s", "action_class"],
+      "additionalProperties": false
     }
   },
   "$defs": {
@@ -115,7 +134,9 @@
     "actions",
     "phrase",
     "proof_ttl_s",
-    "worker_signals"
+    "worker_signals",
+    "channel_kinds",
+    "voice_host_confirmation"
   ],
   "additionalProperties": false
 }
