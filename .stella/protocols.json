@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "id": "chat-completions",
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "headers": {"Authorization": "Bearer {key}"},
+        "body": {
+          "model": "{model}",
+          "messages": [{"role": "user", "content": "{prompt}"}],
+          "tools": [{"type": "function", "function": {"name": "noop", "parameters": {"type": "object", "properties": {}}}}],
+          "max_tokens": "{max_tokens}"
+        }
+      },
+      "response": {
+        "text": "/choices/0/message/content",
+        "tool_calls": "/choices/0/message/tool_calls",
+        "usage": "/usage",
+        "model": "/model",
+        "usage_keys": ["prompt_tokens", "completion_tokens"],
+        "tool_calls_sample": [{"id": "call-1", "type": "function", "function": {"name": "noop", "arguments": "{arguments}"}}]
+      },
+      "errors": [
+        {"status": 429, "body_pattern": "daily", "trigger": "daily_cap", "sample_body": "{\"error\": {\"message\": \"daily quota exhausted\"}}"},
+        {"status": 429, "trigger": "rate_limit", "sample_body": "{\"error\": {\"message\": \"too many requests\"}}"},
+        {"status": 404, "trigger": "model_gone", "sample_body": "{\"error\": {\"message\": \"the model does not exist\"}}"},
+        {"status": 400, "body_pattern": "context", "trigger": "context_too_small", "sample_body": "{\"error\": {\"message\": \"maximum context length exceeded\"}}"},
+        {"status": 504, "trigger": "timeout", "sample_body": "{\"error\": {\"message\": \"gateway timeout\"}}"},
+        {"status": "5xx", "trigger": "server_error", "sample_body": "{\"error\": {\"message\": \"internal error\"}}"}
+      ],
+      "models_path": "/v1/models",
+      "models_list": {"items": "/data", "field": "id", "prefix": ""}
+    },
+    {
+      "id": "messages",
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "headers": {"x-api-key": "{key}", "content-type": "application/json"},
+        "body": {
+          "model": "{model}",
+          "messages": [{"role": "user", "content": "{prompt}"}],
+          "tools": [{"name": "noop", "input_schema": {"type": "object", "properties": {}}}],
+          "max_tokens": "{max_tokens}"
+        }
+      },
+      "response": {
+        "text": "/content/0/text",
+        "tool_calls": "/content/1",
+        "usage": "/usage",
+        "model": "/model",
+        "usage_keys": ["input_tokens", "output_tokens"],
+        "tool_calls_sample": {"type": "tool_use", "id": "call-1", "name": "noop", "input": "{arguments}"}
+      },
+      "errors": [
+        {"status": 429, "body_pattern": "daily", "trigger": "daily_cap", "sample_body": "{\"error\": {\"message\": \"daily limit reached\"}}"},
+        {"status": 429, "trigger": "rate_limit", "sample_body": "{\"error\": {\"message\": \"rate limited\"}}"},
+        {"status": 404, "trigger": "model_gone", "sample_body": "{\"error\": {\"message\": \"model not found\"}}"},
+        {"status": 400, "body_pattern": "prompt is too long", "trigger": "context_too_small", "sample_body": "{\"error\": {\"message\": \"prompt is too long\"}}"},
+        {"status": 504, "trigger": "timeout", "sample_body": "{\"error\": {\"message\": \"gateway timeout\"}}"},
+        {"status": "5xx", "trigger": "server_error", "sample_body": "{\"error\": {\"message\": \"overloaded\"}}"}
+      ],
+      "models_path": "/v1/models",
+      "models_list": {"items": "/data", "field": "id", "prefix": ""}
+    },
+    {
+      "id": "generate-content",
+      "request": {
+        "method": "POST",
+        "path": "/v1beta/models/{model}:generateContent",
+        "headers": {"x-goog-api-key": "{key}"},
+        "body": {
+          "contents": [{"role": "user", "parts": [{"text": "{prompt}"}]}],
+          "tools": [{"functionDeclarations": [{"name": "noop"}]}],
+          "generationConfig": {"maxOutputTokens": "{max_tokens}"}
+        }
+      },
+      "response": {
+        "text": "/candidates/0/content/parts/0/text",
+        "tool_calls": "/candidates/0/content/parts/1",
+        "usage": "/usageMetadata",
+        "model": "/modelVersion",
+        "usage_keys": ["promptTokenCount", "candidatesTokenCount"],
+        "tool_calls_sample": {"functionCall": {"name": "noop", "args": "{arguments}"}}
+      },
+      "errors": [
+        {"status": 429, "body_pattern": "daily", "trigger": "daily_cap", "sample_body": "{\"error\": {\"status\": \"RESOURCE_EXHAUSTED\", \"message\": \"daily quota exceeded\"}}"},
+        {"status": 429, "trigger": "rate_limit", "sample_body": "{\"error\": {\"status\": \"RESOURCE_EXHAUSTED\", \"message\": \"per minute quota exceeded\"}}"},
+        {"status": 404, "trigger": "model_gone", "sample_body": "{\"error\": {\"status\": \"NOT_FOUND\", \"message\": \"model is not found\"}}"},
+        {"status": 400, "body_pattern": "input token count", "trigger": "context_too_small", "sample_body": "{\"error\": {\"status\": \"INVALID_ARGUMENT\", \"message\": \"input token count exceeds the maximum\"}}"},
+        {"status": 504, "trigger": "timeout", "sample_body": "{\"error\": {\"status\": \"DEADLINE_EXCEEDED\", \"message\": \"deadline exceeded\"}}"},
+        {"status": "5xx", "trigger": "server_error", "sample_body": "{\"error\": {\"status\": \"INTERNAL\", \"message\": \"internal error\"}}"}
+      ],
+      "models_path": "/v1beta/models",
+      "models_list": {"items": "/models", "field": "name", "prefix": "models/"}
+    }
+  ]
+}
