@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """Builder model guard (F14): pre_tool_call on terminal and process_manage for every
 profile whose role installs it (docs/hermes-local/roles.json, D46).
-Claude Code runs here only as Sonnet: every `claude` that runs a model (-p/--print, or a bare interactive claude) needs
---model sonnet (or claude-sonnet-*), and no claude call may skip permissions (--dangerously-skip-permissions,
+Claude Code runs here only as a worker model: a model the connections catalog marks `worker_run` on a connection whose `cli`
+is this CLI (read through bin/stella_data.py, as the other guards read data; this file names no model). Every `claude` that
+runs a model (-p/--print, or a bare interactive claude) needs --model <a worker model> (its id, or a longer name of it:
+claude-<id>-*), and no claude call may skip permissions (--dangerously-skip-permissions,
 --allow-dangerously-skip-permissions, --permission-mode bypassPermissions, --yolo) or fall back to another model.
-A bare claude -p is refused because the builder's default model is not Sonnet (~/.claude/settings.json: opus).
-Opus and Haiku go only through bin/escalate.sh (allowed; it refuses every extra claude arg after --, so none
-reaches the model command). Nested quoted command lines are tokenized as git-guard.py does. Exit 2 = block; any error blocks."""
-import json, re, shlex, sys
+A bare claude -p is refused because the builder's default model is no worker model (~/.claude/settings.json).
+Every other model goes only through bin/escalate.sh (allowed; it refuses every extra claude arg after --, so none
+reaches the model command). A catalog that cannot be read knows no worker model: every model is refused (fail closed).
+Nested quoted command lines are tokenized as git-guard.py does. Exit 2 = block; any error blocks."""
+import functools, json, re, shlex, sys
 
 SEP = {"&&", "||", ";", "|", "&"}
 SKIP = {"--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--yolo"}
 NO_MODEL = {"--version", "-v", "-V", "--help", "-h", "mcp", "doctor", "update", "config", "plugin"}
-SONNET = re.compile(r"(claude-)?sonnet\S*")
+CLI = ("claude", "claude-code")   # this CLI's command names; a catalog connection whose `cli` is one of them holds its models
+CATALOG = "connections"           # the schema of the index rows that hold the catalog
 RUN = {"-p", "--print", "--model", "--fallback-model", "--permission-mode"} | SKIP   # flags only a run of claude takes
 PREFIX = {"sudo", "env", "nohup", "time", "exec", "nice", "stdbuf"}
 
@@ -42,18 +46,44 @@ def opt(args, name):
     return [args[i + 1] for i, a in enumerate(args[:-1]) if a == name] + [a.split("=", 1)[1] for a in args if a.startswith(name + "=")]
 
 
+@functools.lru_cache(maxsize=None)
+def catalog_models():
+    """{model id: is it a worker model} over the catalog's connections whose cli is this CLI. Each file of the catalog's index
+    rows is checked against its schema first; a catalog that cannot be read raises, and the caller refuses."""
+    sys.path.insert(0, "/workspace/bin")
+    import stella_data as sd
+    out = {}
+    for row in sd.rows():
+        if row["schema"] == CATALOG:
+            for rel, _ in sd.files_of(row):
+                for _, e in sd.file_entries(row, rel, sd.checked(sd.load(rel), rel, CATALOG)):
+                    if e.get("cli") in CLI:
+                        out.update({m["id"]: m.get("worker_run") is True for m in e["models"]})
+    return out
+
+
+def worker(name, models):
+    """A worker model's id, or a longer name of it; a name the catalog lists is judged by its own row only."""
+    return models.get(name, True) and any(re.fullmatch(rf"(claude-)?{re.escape(i)}\S*", name) for i, ok in models.items() if ok)
+
+
 def why(args, escalate=False):
     if SKIP & set(args) or "bypassPermissions" in opt(args, "--permission-mode"):
         return "claude may not skip permissions"
     if escalate:
         return None
-    if any(not SONNET.fullmatch(m) for m in opt(args, "--fallback-model")):
-        return "claude may fall back only to Sonnet"
-    models = opt(args, "--model")
-    if any(not SONNET.fullmatch(m) for m in models):
-        return f"claude --model {models[0]}: builders run Claude Code only as Sonnet"
-    if not models and not (args and args[0] in NO_MODEL):
-        return "claude without --model sonnet runs the default model, which is not Sonnet here"
+    asked, fallback = opt(args, "--model"), opt(args, "--fallback-model")
+    if asked or fallback:
+        try:
+            models = catalog_models()
+        except (Exception, SystemExit) as e:   # fail closed: with no catalog no model is known to be a worker model
+            return f"the connections catalog cannot be read ({type(e).__name__}), so no model can be allowed"
+        if any(not worker(m, models) for m in fallback):
+            return "claude may fall back only to a worker model"
+        if any(not worker(m, models) for m in asked):
+            return f"claude --model {asked[0]}: workers run Claude Code only as a worker model"
+    if not asked and not (args and args[0] in NO_MODEL):
+        return "claude without --model runs the default model, which is no worker model here"
     return None
 
 
@@ -99,7 +129,11 @@ def coded(problem):   # B.1 (r5): the one way a hook refuses (bin/roles.py hook_
         return roles.hook_refusal("STL-GRD-604", problem, PAY)
     except Exception:   # the role module itself is missing: the code and the problem still print
         return f"[STL-GRD-604] {problem}"
+try:
+    names = " or ".join(sorted(i for i, ok in catalog_models().items() if ok)) or "none is listed"
+except (Exception, SystemExit):
+    names = "unknown, the connections catalog cannot be read"
 print(json.dumps({"action": "block", "message": f"model guard: {coded('the model guard refused a command its role may not run')} {reason} (F14). Run Claude Code only as `claude -p --model "
-                  "sonnet ...`, never skipping permissions. Opus and Haiku go only through /workspace/bin/escalate.sh, "
-                  "run by the supervisor."}))
+                  f"<worker model> ...` (worker model: {names}), never skipping permissions. Every other model goes only through "
+                  "/workspace/bin/escalate.sh, run by the supervisor."}))
 sys.exit(2)

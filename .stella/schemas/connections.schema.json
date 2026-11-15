@@ -213,6 +213,10 @@
                 ],
                 "minimum": 0,
                 "description": "The advertised suitability of the model (higher is better), a stub until the role benchmark (F2c): it ranks Standard's best-suited choice."
+              },
+              "worker_run": {
+                "type": "boolean",
+                "description": "true: a worker may run this model on the connection's CLI itself. Every other model of that CLI is run only through the escalation script; the builder model guard reads this, so it names no model."
               }
             },
             "required": [

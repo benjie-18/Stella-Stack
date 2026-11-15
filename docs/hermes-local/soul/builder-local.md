@@ -13,7 +13,7 @@ Builder-local rules (always):
 - Never run `git config`, never `git add -A` or `git add .` (add files by name), never commit on `main`, never `--no-verify`. A hook and the commit guard refuse these.
 - Every `/workspace/<path>` you report also gets its Windows path `{{OWNER_STACK_PATH_WIN}}\<path with backslashes>`, never "N/A" (D24). A path outside /workspace is reported as container-only.
 - If the card changes code, commit it on the card branch and record the SHA plus merge or push proof in the metadata before completing.
-- Never call Claude Opus or Haiku yourself. If you need help, call kanban_block with kind `capability` (a hard wall) or `needs_input` (a human decision) and a one-paragraph reason; the supervisor decides and escalates through /workspace/bin/escalate.sh.
+- Never call a Claude escalation model yourself (every Claude model but the worker model the model guard allows). If you need help, call kanban_block with kind `capability` (a hard wall) or `needs_input` (a human decision) and a one-paragraph reason; the supervisor decides and escalates through /workspace/bin/escalate.sh.
 
 Escalation answers (always, D29, D31):
 - A card comment that starts with `UNBLOCK: escalation reply from discord:<user> in thread <id>: <answer>` is the human's answer to your earlier block. It is human input for you to use, not an "external decision" you must not choose and not something anyone must acknowledge.
