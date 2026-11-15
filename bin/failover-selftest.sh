@@ -111,7 +111,7 @@ rt() {  # <name> <route.py arguments>...: stdout $T/o/<name>.json, stderr $T/o/<
   printf '%s' "${PROMPT:-say ok}" | timeout 60 python3 -I "$R/bin/route.py" "${@:2}" >"$T/o/$1.json" 2>"$T/o/$1.err"; RC=$?
 }
 call() { rt "$1" call --role "$ROLE" --project st-project --task "$1" --json "${@:2}"; }   # <task, also the output name> [more arguments]
-J() { jq -e "${@:2}" "$T/o/$1.json"; }                                                        # <name> <jq args and filter>
+J() { [ -s "$T/o/$1.json" ] && jq -e "${@:2}" "$T/o/$1.json"; }                               # <name> <jq args and filter>: holds on the JSON (jq -e passes empty input)
 ev() { jq -c --arg w "task $1" "select(.what == \$w and ($2))" "$EV" 2>/dev/null | grep -c .; }   # <task> <jq condition>: its trusted event lines that match
 sends() { grep -F -- "$1" "$SENDS" 2>/dev/null | grep -cF -- "task $2"; }                       # <code> <task>: inbox alerts sent
 SW='.type == "routing.switch" and .code == "STL-MDL-721"'
@@ -228,9 +228,18 @@ jq -e --arg d "$(jq -r '[.drivers[] | select(.mid_task | not) | .id][0]' "$RT")"
 ok '[ $a = 0 ]' "attempt asks the resolver as the routing data's driver that never switches mid-task"
 
 # ---- refusals ----
-fresh; echo '{"links":{},"tasks":{}}' >"$T/elsewhere"; ln -s "$T/elsewhere" "$STATE"; chain st-a/st-a-m1; call link
+fresh; echo '{"links":{},"tasks":{}}' >"$R/elsewhere"; ln -s "$R/elsewhere" "$T/elsewhere"; ln -s "$R/elsewhere" "$STATE"; chain st-a/st-a-m1; call link   # the target is inside the scratch root ($T/elsewhere is a second name for it): route.py's own state check answers
 ok '[ $RC = 1 ] && J link ".code == \"STL-MDL-710\"" && [ "$(cnt st-a/st-a-m1)" = 0 ] && [ "$(cat "$T/elsewhere")" = "{\"links\":{},\"tasks\":{}}" ]' "a state file that is a symbolic link is refused: nothing is called, the link's target is not written"
-rm -f "$STATE"; fresh
+rm -f "$STATE"; fresh; echo '{"links":{},"tasks":{}}' >"$T/outside"; ln -s "$T/outside" "$STATE"; call linkout
+ok '[ $RC = 1 ] && J linkout ".task == \"linkout\" and .code == \"STL-CFG-310\" and (.problem | type == \"string\") and .refused == []" && grep -q "^STL-CFG-310 " "$T/o/linkout.err" && [ "$(cnt st-a/st-a-m1)" = 0 ] && [ "$(cat "$T/outside")" = "{\"links\":{},\"tasks\":{}}" ]' \
+  "a state file that is a link to a file outside the root is refused by the data check (STL-CFG-310, in the JSON output too): nothing is called, the target is not written"
+rm -f "$STATE"; fresh; cp "$LIM" "$T/lim.keep"; echo "CALL_TIMEOUT=3" >>"$LIM"; call setref; cp "$T/lim.keep" "$LIM"
+ok '[ $RC = 1 ] && J setref ".task == \"setref\" and (.code | startswith(\"STL-CFG-\")) and .refused == []" && grep -q "^$(jq -r .code "$T/o/setref.json") " "$T/o/setref.err" && [ "$(cnt st-a/st-a-m1)" = 0 ]' \
+  "a settings store the settings tool refuses (the call timeout set twice): the code is in the JSON output and on stderr, nothing is called"
+mv "$EV" "$T/ev.keep"; mkdir "$EV"; call evref; rmdir "$EV"; mv "$T/ev.keep" "$EV"
+ok '[ $RC = 1 ] && J evref ".task == \"evref\" and (.code | startswith(\"STL-CFG-\")) and .refused == []" && grep -q "^$(jq -r .code "$T/o/evref.json") " "$T/o/evref.err" && [ "$(cnt st-a/st-a-m1)" = 0 ]' \
+  "an event log that cannot be written: no call without its event line, and the code is in the JSON output and on stderr"
+fresh
 export STUB_WORKER_MARK=1
 call w1; a=$RC; rt w2 attempt --role "$ROLE" --project st-project --task w2 --json; b=$RC; rt w3 result --task w3 --link st-a/st-a-m1 --outcome ok
 unset STUB_WORKER_MARK
