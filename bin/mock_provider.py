@@ -55,11 +55,14 @@ def setptr(doc, ptr, val):
                 cur = cur.setdefault(p, nxt)
 
 
-def model_of(tmpl, actual):
+PATH_ID, BODY_ID = "([^/:?]+)", "(.+)"   # a model id in a path stops at / : ?, in a body it is any text (ids hold : and /)
+
+
+def model_of(tmpl, actual, pat=BODY_ID):
     """The text a {model} placeholder stands for, found by walking the template beside the real value; None when there is none."""
     if isinstance(tmpl, str):
         if "{model}" in tmpl and isinstance(actual, str):
-            m = re.fullmatch(re.escape(tmpl).replace(re.escape("{model}"), "([^/:?]+)"), actual)
+            m = re.fullmatch(re.escape(tmpl).replace(re.escape("{model}"), pat), actual)
             return m.group(1) if m else None
     elif isinstance(tmpl, list) and isinstance(actual, list):
         for t, a in zip(tmpl, actual):
@@ -117,6 +120,10 @@ class H(http.server.BaseHTTPRequestHandler):
             try:
                 d = json.loads(raw)
                 faults = [dict(f, left=f.get("calls", -1)) for f in d.get("faults", [])]
+                for f in faults:
+                    if not all(isinstance(f.get(k), str) and f[k] for k in ("shape", "model", "fault")) or \
+                       not all(isinstance(f.get(k, 0), (int, float)) and not isinstance(f.get(k, 0), bool) for k in ("calls", "seconds", "tokens")):
+                        return self.send(400, {"error": "each fault needs a shape, a model and a fault (text), and calls, seconds, tokens only as numbers"})
                 models = {k: list(v) for k, v in d.get("models", {}).items()}
             except (ValueError, AttributeError, TypeError):
                 return self.send(400, {"error": "bad control document"})
@@ -131,16 +138,16 @@ class H(http.server.BaseHTTPRequestHandler):
         except ValueError:
             body = raw
         rq = e["request"]
-        m = re.fullmatch(re.escape(rq["path"]).replace(re.escape("{model}"), "([^/:?]+)"), rest)
+        m = re.fullmatch(re.escape(rq["path"]).replace(re.escape("{model}"), PATH_ID), rest)
         model = (m.group(1) if m and "{model}" in rq["path"] else None) or model_of(rq["body"], body) or ""
-        if not m:
-            return self.send(404, {"error": "no such path"})
         key = f"{shape}/{model}"
         with LOCK:
             STATE["counts"][key] = STATE["counts"].get(key, 0) + 1
             STATE["requests"].append({"shape": shape, "model": model, "headers": dict(self.headers), "body": body})
-            f = self.pick(shape, model, len(raw) // 4)
+            f = self.pick(shape, model, len(raw) // 4) if m else None
             served = model in STATE["models"].get(shape, [])
+        if not m:   # counted and recorded above, like every call
+            return self.send(404, {"error": "no such path"})
         if f is None and not served:
             f = {"fault": "model_gone"}   # a model nobody serves is gone
         fault = f and f["fault"]
@@ -188,6 +195,11 @@ class H(http.server.BaseHTTPRequestHandler):
 
 
 def main():
+    try:
+        shapes()
+    except sd.DataError as x:   # a broken protocols file: say so with the data tool's code and message, do not serve
+        sd.say("STL-CFG-310", str(x))
+        sys.exit(1)
     host = socket.inet_ntoa(b"\x7f\x00\x00\x01")   # the loopback address, built so no host name is written in the code
     srv = http.server.ThreadingHTTPServer((host, 0), H)
     srv.daemon_threads = True
