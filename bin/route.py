@@ -1,0 +1,495 @@
+#!/usr/bin/env python3
+"""Model calls and failover (F2 B5, design D3 with design-check DC-06, DC-07, DC-10, DC-11), stdlib only. It only walks the chain
+bin/resolve.py gives it (resolve(ctx) -> the chain document, link_key(link)): no routing rule lives here, and a provider's answer can
+only move a task along that chain. Nothing here names a model, a provider, a host, a role, a preset or a link class: all are data.
+CLI (host only: every command refuses in a worker environment, STL-CFG-312; the output is always JSON):
+  route.py call --role R --project P [--card C] [--tier T] [--driver D] [--pending-tool-call] --task ID [--json]   (prompt on stdin)
+      the engine loop's driver: calls the first link the task may use through its connection's wire shape (.stella/protocols.json),
+      and on a failure moves on until a link answers. Output: {task, link {connection, model}, link_class, text, tool_calls, usage,
+      model, switches, failure_history, refused, stubs}.
+  route.py attempt --role R --project P [--card C] [--tier T] [--driver D] --task ID [--json]
+      for a worker CLI's launcher: ONE link (the next the task may use) and the task's failure_history; it calls no model and
+      never switches inside an attempt.
+  route.py result --task ID --link <connection>/<model> --outcome ok|<trigger id>
+      the launcher reports how the attempt ended: a trigger puts the link in cooldown, so the next attempt starts on the next link.
+A card app the resolver refuses (`apps[]` with a code) stops the task with that code before any link is judged.
+A step (one pick of a link, the same for call and attempt), in this order:
+  1. the next link: the first of the chain that is usable or needs a grant, is not in cooldown, did not already fail in this task
+     (the loop guard) and was not refused in this run; with failover.same_connection_first, a link of the connection the task just
+     left goes first. None left: STL-MDL-710 (nothing failed yet) or STL-MDL-723.
+  2. a switch (the task left a link after a failure) past failover.max_switches_per_task stops the task: STL-MDL-723.
+  3. call only: a link with no wire shape cannot be called here; a switch is mid-task, so the link must allow it (`mid_task` of the
+     chain), its advertised context window must hold the conversation (stub routing-advertised-context, named in `stubs`) and a
+     pending tool call must stay on the same wire shape; else the switch is refused (STL-MDL-722, one event line) and the next
+     link is judged.
+  4. a link that needs a grant is never skipped: with a card and a module `consent`, consent.gate(ctx, link) -> {status: granted |
+     waiting | queued, code?, request_id?} decides; with no card or no such module the task stops with STL-MDL-719 and one inbox
+     alert, and no approval request is raised. A task that waits exits 3.
+  5. a link of a less private class (higher privacy_rank) than the class of the chain's first link: one inbox alert and one event
+     line with the routing data's consent.alert_code_notice, whatever the grant.
+  6. one trusted event line: `routing.pick` with the resolver's reason, or `routing.switch` (STL-MDL-721) from the link left.
+A failure becomes a trigger by the wire shape's `errors` rows (status, body pattern; first match wins); the transport says timeout
+and server_error (no answer, no connection, an answer that is not JSON) and the answer check says malformed_tool_call (tool-call
+arguments that do not parse). An error no row maps is no failover trigger: the task stops (STL-MDL-710). A redirect is never followed.
+State (index key routing_state; not proof of anything): {links {"<connection>/<model>" or, for a trigger of scope connection,
+"<connection>": {trigger, since, until, failures, observed_limit}}, tasks {task: {switches, visited[], history[{link, trigger, at}],
+left}}}, read and written whole under a lock (temp file, rename), refused when it is, or passes through, a link. Cooldown: until =
+now + cooldown_s, doubled per repeated failure up to max_cooldown_s; one success clears it.
+shortcut: a task's entry stays in the state after the task ends, upgrade (prune) when the board reports task ends to this tool.
+Keys: bin/credentials.py get, into the request header only; never in a message, an event, the state or the output.
+Exit: 0 ok; 1 refused or failed (the catalog code and its plain message on stderr, {code, problem, ...} on stdout); 2 usage; 3 the
+task waits for the owner (a grant is needed)."""
+import argparse, contextlib, datetime, http.client, ipaddress, json, os, re, subprocess, sys, urllib.error, urllib.parse, urllib.request
+
+BIN = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, BIN)   # python3 -I does not add the script folder
+import credentials
+import event_log as el
+import settings
+import stella_data as sd
+import worker_env
+try:
+    import resolve
+except ImportError:   # main() refuses: nothing is routed without the resolver
+    resolve = None
+try:
+    import consent
+except ImportError:   # step 4: without it a link that needs a grant stops the task
+    consent = None
+
+NO_LINK, UNKNOWN, WAITING, SWITCH, MID_REFUSED, STOPPED = "STL-MDL-710", "STL-MDL-711", "STL-MDL-719", "STL-MDL-721", "STL-MDL-722", "STL-MDL-723"
+TIMEOUT_KEY = "CALL_TIMEOUT"   # the settings registry key: the seconds one model call may take
+TIMED_OUT, DOWN, MALFORMED = "timeout", "server_error", "malformed_tool_call"   # triggers no errors row of a wire shape can say
+CONTEXT_STUB = "routing-advertised-context"   # the features entry the context check rests on until F2b's probe
+USABLE, NEEDS_GRANT, GRANTED = "usable", "needs_grant", "granted"   # the resolver's and the consent gate's words
+TIME = "%Y-%m-%dT%H:%M:%SZ"
+HOST = re.compile(r"[A-Za-z0-9]([A-Za-z0-9.-]{0,253}[A-Za-z0-9])?")   # a host name or IPv4 address: nothing that could add a path or a user
+WAIT = 3
+
+
+class Stop(Exception):
+    """The task ends here: a catalog code, the problem, the exit code, and whether the alert line is still to be written."""
+    def __init__(self, code, problem, rc=1, alert=True):
+        super().__init__(problem)
+        self.code, self.problem, self.rc, self.alert = code, problem, rc, alert
+
+
+def now():
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None, microsecond=0)   # naive UTC, as stella_data.when reads dates
+
+
+# ---- the data ----
+def data():
+    """(routing document, {connection id: entry}, {wire shape id: entry}, local host names), as a read serves them."""
+    rt = sd.routing()
+    rs = [r for r in sd.rows() if r["format"] == "json" and r["schema"] in (sd.CATALOG, "protocols", "data-policy")]
+    by = sd.served([r["id"] for r in rs])
+    docs = lambda sch: [d for r in rs if r["schema"] == sch for _, d in by["_rows"][r["id"]][0]]
+    return (rt, by.get(sd.CATALOG, {}), {e["id"]: e for d in docs("protocols") for e in d["entries"]},
+            {h for d in docs("data-policy") for h in d["local_hosts"]})
+
+
+def model_of(cat, link):
+    """(connection entry, model entry) of a chain link; Stop when the catalog has no such link (fail closed)."""
+    prov = sd.entry(cat, link["connection"])
+    mod = next((m for m in prov["models"] if m["id"] == link["model"]), None) if prov and prov["kind"] == "provider" else None
+    if mod is None:
+        raise Stop(UNKNOWN, f"link {sd.idn(link['connection'])}/{sd.idn(link['model'])} (the catalog has no such connection and model)")
+    return prov, mod
+
+
+# ---- the state file ----
+def write_whole(p, st):
+    d, name = os.path.split(p)
+    el.mkdirs(d)
+    dfd = el.open_dir(d)
+    try:
+        tmp = name + ".tmp"   # under the lock: no other writer
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp, dir_fd=dfd)
+        try:
+            with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dfd), "wb") as f:
+                f.write(json.dumps(st, indent=1).encode() + b"\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.rename(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp, dir_fd=dfd)
+            raise
+    finally:
+        os.close(dfd)
+
+
+@contextlib.contextmanager
+def state():
+    """The state document under its lock; written whole when the block changed it and ended without an error. The block only
+    reads and changes the document (no model call, no alert, no event line under the lock)."""
+    try:
+        p = el.path(sd.load(sd.INDEX)["routing_state"])   # refused when it is, or passes through, a symbolic link
+        with el.locked(p + ".lock"):
+            try:
+                with os.fdopen(el.open_file(p, os.O_RDONLY), "rb") as f:
+                    if os.fstat(f.fileno()).st_nlink != 1:
+                        raise ValueError("has more than one hard link (it may be another file)")
+                    st = json.loads(f.read(el.MAX_FILE + 1))
+            except FileNotFoundError:
+                st = {}
+            if not (isinstance(st, dict) and all(isinstance(st.setdefault(k, {}), dict) and all(isinstance(v, dict) for v in st[k].values())
+                                                 for k in ("links", "tasks"))):
+                raise ValueError("does not hold links and tasks")
+            st.setdefault("schema_version", 1)
+            before = json.dumps(st, sort_keys=True)
+            yield st
+            if json.dumps(st, sort_keys=True) != before:
+                write_whole(p, st)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:   # the last three: a state of another shape met inside the block
+        raise Stop(NO_LINK, f"the failover state file cannot be used ({el.why(e)[:120] if isinstance(e, (OSError, ValueError)) else 'it has another shape'})") from None
+
+
+def task_of(st, task):
+    return st["tasks"].setdefault(task, {"switches": 0, "visited": [], "history": [], "left": None})
+
+
+def cooling(st, link, t):
+    """Whether the link, or its whole connection, is in cooldown at t; an `until` that is no date counts as ahead (fail closed)."""
+    for k in (resolve.link_key(link), link["connection"]):
+        c = st["links"].get(k, {})
+        w = sd.when(c, "until") if c.get("until") is not None else None
+        if w is False or (w is not None and w > t):
+            return True
+    return False
+
+
+def failed(st, rt, task, link, trigger, t):
+    """The link (or its connection, by the trigger's scope) goes into cooldown, and the task notes the failure and leaves the link."""
+    tr, key = rt["failover"]["triggers"][trigger], resolve.link_key(link)
+    at = link["connection"] if tr["scope"] == "connection" else key
+    old = st["links"].get(at, {})
+    n = old.get("failures", 0) + 1
+    secs = min(tr["cooldown_s"] * 2 ** min(n - 1, 32), tr["max_cooldown_s"])
+    st["links"][at] = {"trigger": trigger, "since": old.get("since") or t.strftime(TIME), "until": (t + datetime.timedelta(seconds=secs)).strftime(TIME),
+                       "failures": n, "observed_limit": None}   # observed_limit: stub routing-observed-quota (F2c's usage ledger)
+    ts = task_of(st, task)
+    ts["history"].append({"link": key, "trigger": trigger, "at": t.strftime(TIME)})
+    ts["visited"] += [key] if key not in ts["visited"] else []
+    ts["left"] = key
+
+
+def succeeded(st, link):
+    """One success clears the link's cooldown, and its connection's (re-promotion)."""
+    for k in (resolve.link_key(link), link["connection"]):
+        st["links"].pop(k, None)
+
+
+# ---- alerts and events ----
+def alert(code, problem):
+    """One inbox alert through bin/alert.sh (one alert log line, one send). A send that fails never stops the task: the line is logged first."""
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
+        subprocess.run(["bash", os.path.join(BIN, "alert.sh"), code, f"problem={el.scrub(problem)}"], stdin=subprocess.DEVNULL, capture_output=True, timeout=60)
+
+
+def event(kind, a, code=None, old=None, new=None, detail=None):
+    el.append(el.build(kind, f"task {a.task}", old=old, new=new, code=code, detail=detail, who={"role": a.role}))
+
+
+def ctx_of(a):
+    """What the resolver and the consent gate are asked with."""
+    return {k: getattr(a, k) for k in ("role", "project", "card", "tier", "driver", "task")}
+
+
+# ---- one step: the next link the task uses ----
+def next_link(chain, st, ts, rt, t, skip):
+    key = resolve.link_key
+    c = [e for e in chain if e["status"] in (USABLE, NEEDS_GRANT) and key(e) not in ts["visited"] and key(e) not in skip and not cooling(st, e, t)]
+    if ts["left"] and rt["failover"]["same_connection_first"]:
+        c.sort(key=lambda e: e["connection"] != ts["left"].split("/", 1)[0])   # stable: the chain order holds inside each group
+    return c[0] if c else None
+
+
+def unfit(a, link, left, cat, tokens):
+    """Why the engine loop cannot use this link now (None: it can). Without `left` this is the task's first link, not a switch."""
+    prov, mod = model_of(cat, link)
+    if not prov.get("protocol"):
+        return "its connection has no wire shape (a worker CLI drives it, between attempts)"
+    if not left:
+        return None
+    if link.get("mid_task") is not True:
+        return "the link may not be switched to in the middle of a task (between attempts only)"
+    if (mod["capabilities"].get("context_tokens") or 0) < tokens:
+        return f"its advertised context window does not hold the conversation (about {tokens} tokens)"
+    if a.pending_tool_call and prov["protocol"] != (sd.entry(cat, left.split("/", 1)[0]) or {}).get("protocol"):
+        return "a tool call is pending and the link speaks another wire shape, so the call's state does not carry over"
+    return None
+
+
+def advance(a, doc, rt, cat, refused, tokens=None):
+    """The next link of the task after every gate of a step (module text), or Stop. tokens: the conversation's size for the engine
+    loop's mid-task checks; None for an attempt (a worker CLI switches between attempts only)."""
+    chain, rank = doc["chain"], {c["id"]: c["privacy_rank"] for c in rt["link_classes"]}
+    while True:
+        with state() as st:
+            ts = task_of(st, a.task)
+            link, left, hist = next_link(chain, st, ts, rt, now(), {r["link"] for r in refused}), ts["left"], list(ts["history"])
+            if link and left and ts["switches"] >= rt["failover"]["max_switches_per_task"]:
+                raise Stop(STOPPED, f"task {a.task} already switched {ts['switches']} times, the most the routing data allows")
+        if link is None:
+            why = "; ".join(dict.fromkeys(str(e.get("reason")) for e in chain if e.get("reason"))) or "the chain is empty"
+            raise Stop(*((STOPPED, f"task {a.task} has no link left after {len(hist)} failed") if hist else (NO_LINK, f"role {a.role}: {why}")))
+        key = resolve.link_key(link)
+        why = unfit(a, link, left, cat, tokens) if tokens is not None else None
+        if why:
+            refused.append({"link": key, "code": MID_REFUSED if left else NO_LINK, "reason": why})
+            if left:
+                event("routing.switch-refused", a, MID_REFUSED, old={"link": left}, new={"link": key}, detail=why)
+            continue
+        if link["status"] == NEEDS_GRANT:
+            if a.card is None or consent is None:   # DC-10: nothing to hang a request on; never proceeds, raises no approval request
+                problem = f"task {a.task}: link {key} needs a grant ({link.get('reason') or link.get('code')})"
+                alert(WAITING, problem)
+                raise Stop(WAITING, problem, WAIT, alert=False)
+            g = consent.gate(ctx_of(a), link)
+            if g.get("status") != GRANTED:
+                raise Stop(g.get("code") or WAITING, f"task {a.task}: link {key} needs a grant (request {g.get('request_id')})", WAIT, alert=False)
+        inf = float("inf")   # a class the routing data does not rank: the link's counts as least private, the head's as most (the owner is told)
+        if rank.get(link.get("link_class"), inf) > rank.get(chain[0].get("link_class"), -inf):
+            code, problem = rt["consent"]["alert_code_notice"], f"task {a.task} uses link {key} (class {link.get('link_class')}; the chain starts with class {chain[0].get('link_class')})"
+            alert(code, problem)
+            event("routing.notice", a, code, new={"link": key, "link_class": link.get("link_class")}, detail=problem)
+        if left:
+            event("routing.switch", a, SWITCH, old={"link": left}, new={"link": key}, detail=f"after {hist[-1]['trigger']}" if hist else None)
+        else:
+            dec = doc.get("decision") or {}
+            event("routing.pick", a, new={"link": key, "link_class": link.get("link_class"), "preset": (doc.get("preset") or {}).get("id")},
+                  detail=str(dec.get("reason") or dec.get("rule") or "the first link of the chain")[:500])
+        with state() as st:
+            ts = task_of(st, a.task)
+            ts["switches"], ts["left"] = ts["switches"] + (1 if left else 0), None
+        return link
+
+
+# ---- the wire ----
+DROP = object()   # render(): this part of the template leaves the request
+
+
+def render(v, vals, max_tokens=None):
+    """A template filled in one pass (text a value holds is never filled again). A string that is exactly {max_tokens} becomes the
+    link's max_tokens parameter, and its key leaves the body when the link sets none (the server's own default holds).
+    shortcut: a wire shape whose server demands the field needs max_tokens in the link's parameters, upgrade when F2b's probe records the model's output limit."""
+    if isinstance(v, str):
+        if v == "{max_tokens}":
+            return max_tokens if max_tokens is not None else DROP
+        return re.sub("|".join(re.escape("{%s}" % k) for k in vals), lambda m: vals[m[0][1:-1]], v)
+    if isinstance(v, list):
+        return [x for x in (render(y, vals, max_tokens) for y in v) if x is not DROP]
+    if isinstance(v, dict):
+        return {k: x for k, y in v.items() if (x := render(y, vals, max_tokens)) is not DROP}
+    return v
+
+
+def ptr(doc, p):
+    """The value at an RFC 6901 pointer; None when the document has nothing there."""
+    for x in p.split("/")[1:]:
+        try:
+            doc = doc[int(x)] if isinstance(doc, list) else doc[x.replace("~1", "/").replace("~0", "~")]
+        except (KeyError, IndexError, ValueError, TypeError):
+            return None
+    return doc
+
+
+def hit(spec, status):
+    """A status against an errors row's spec: an integer, [lo, hi], "5xx", "500-599"."""
+    if isinstance(spec, list):
+        return len(spec) == 2 and spec[0] <= status <= spec[1]
+    m = re.fullmatch(r"(\d)xx|(\d+)(?:-(\d+))?", str(spec).strip().lower())
+    return bool(m) and (status // 100 == int(m[1]) if m[1] else int(m[2]) <= status <= int(m[3] or m[2]))
+
+
+def classify(proto, status, body):
+    """The failover trigger of an error answer: the first errors row whose status and body pattern match; None when none does."""
+    for e in proto["errors"]:
+        with contextlib.suppress(re.error):
+            if hit(e["status"], status) and ("body_pattern" not in e or re.search(e["body_pattern"], body)):
+                return e["trigger"]
+    return None
+
+
+def malformed(sample, got):
+    """Whether tool-call arguments, found where the wire shape's sample holds {arguments}, are text that does not parse as JSON."""
+    if sample == "{arguments}":
+        if isinstance(got, str):
+            try:
+                json.loads(got)
+            except ValueError:
+                return True
+        return False
+    if isinstance(sample, list) and isinstance(got, list):
+        return any(malformed(sample[0], g) for g in got) if sample else False
+    if isinstance(sample, dict) and isinstance(got, dict):
+        return any(malformed(s, got[k]) for k, s in sample.items() if k in got)
+    return False
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None   # the key goes to the catalog's host and nowhere else
+
+
+OPENER = urllib.request.build_opener(NoRedirect)
+
+
+def send(prov, proto, link, prompt, key, timeout, local):
+    """One request to the link: (answer, None, status) or (None, trigger, status); trigger None with no answer: no row maps the error.
+    No text of an exception or of an error answer leaves here (either could repeat the key)."""
+    h, rq, rs = next(iter(prov["hosts"]), None), proto["request"], proto["response"]   # shortcut: the entry's first host is its API endpoint, upgrade when hosts carry a purpose id
+    vals = {"model": link["model"], "prompt": prompt}
+    path = render(rq["path"], dict(vals, model=urllib.parse.quote(link["model"], safe="")))
+    if h is None or not HOST.fullmatch(h["host"]) or not path.startswith("/"):
+        raise Stop(NO_LINK, f"link {resolve.link_key(link)}: its connection has no host that is a plain host name, or its request path does not start with /")
+    try:
+        plain = h["host"] in local or ipaddress.ip_address(h["host"]).is_loopback
+    except ValueError:
+        plain = False   # TLS to every host but a model server on this machine (a local host of the data policy, a loopback address)
+    mt = (link.get("parameters") or {}).get("max_tokens")
+    body = json.dumps(render(rq["body"], vals, mt if type(mt) is int else None)).encode()
+    headers = {"Content-Type": "application/json", **{k: render(v, dict(vals, key=key or "")) for k, v in rq["headers"].items() if key or "{key}" not in v}}
+    req = urllib.request.Request(f"{'http' if plain else 'https'}://{h['host']}:{h['port']}{path}", data=body, headers=headers, method=rq.get("method", "POST"))
+    try:
+        try:
+            with OPENER.open(req, timeout=timeout) as r:   # shortcut: the timeout bounds each wait on the socket, not the whole call; upgrade with a deadline when streaming lands
+                status, raw = r.status, r.read(el.MAX_FILE + 1)
+        except urllib.error.HTTPError as e:
+            status, raw = e.code, e.read(el.MAX_FILE + 1)
+    except (OSError, http.client.HTTPException, ValueError) as e:
+        slow = isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError)
+        return None, TIMED_OUT if slow else DOWN, None
+    text = raw.decode("utf-8", "replace")
+    if not 200 <= status < 300:
+        return None, classify(proto, status, text), status
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return None, DOWN, status
+    calls = ptr(doc, rs["tool_calls"])
+    if malformed(rs.get("tool_calls_sample"), calls):
+        return None, MALFORMED, status
+    return {"text": ptr(doc, rs["text"]), "tool_calls": calls, "usage": ptr(doc, rs["usage"]), "model": ptr(doc, rs["model"])}, None, status
+
+
+# ---- the commands ----
+def resolved(a, rt, mid):
+    """The resolver's chain document for the task; the driver defaults to the routing data's first one that does (call) or does
+    not (attempt) switch mid-task."""
+    a.driver = a.driver or next((d["id"] for d in rt["drivers"] if d["mid_task"] is mid), None)
+    doc = resolve.resolve(ctx_of(a))
+    if not (isinstance(doc, dict) and isinstance(doc.get("chain"), list) and all(isinstance(e, dict) for e in doc["chain"])):
+        raise Stop((doc.get("code") if isinstance(doc, dict) else None) or NO_LINK, f"role {a.role}: the resolver gave no chain")
+    bad = next((x for x in doc.get("apps") or [] if isinstance(x, dict) and x.get("code")), None)
+    if bad:   # a card app the resolver refuses stops the task, whatever the chain holds
+        raise Stop(bad["code"], f"task {a.task}: card app {bad.get('app')} is refused ({bad.get('reason')})")
+    return doc
+
+
+def out(a, link, hist, refused, stubs, **more):
+    print(json.dumps({"task": a.task, "link": {"connection": link["connection"], "model": link["model"]}, "link_class": link.get("link_class"),
+                      "parameters": link.get("parameters") or {}, **more, "failure_history": hist, "refused": refused, "stubs": stubs}))
+
+
+def cmd_call(a):
+    prompt = sys.stdin.read()
+    rt, cat, protos, local = data()
+    doc = resolved(a, rt, True)
+    e = settings.entry(TIMEOUT_KEY)
+    timeout = settings.current(e)[0]
+    if type(timeout) is not int or settings.problems(e, timeout):
+        raise Stop(e["code"], f"{TIMEOUT_KEY}: the stored value is rejected by the setting's own rules")
+    tokens = len(prompt.encode()) // 4 + 1   # shortcut: about four bytes a token, upgrade with F2b's probe (CONTEXT_STUB)
+    a.refused = refused = []
+    stubs = list(dict.fromkeys([*(doc.get("stubs") or []), CONTEXT_STUB]))
+    while True:
+        link = advance(a, doc, rt, cat, refused, tokens)
+        prov, _ = model_of(cat, link)
+        key = None
+        if prov["secrets"]:   # shortcut: the entry's first secret is its API key, upgrade when secrets carry a purpose
+            try:
+                key = credentials.get(prov["secrets"][0])
+            except credentials.Refused as x:
+                raise Stop(x.code, f"link {resolve.link_key(link)}: {x.problem}") from None
+            el.SECRETS.add(key)   # scrubbed from every event detail and alert text of this run
+        for _ in range(rt["failover"]["retry_count"] + 1):
+            ans, trigger, status = send(prov, protos[prov["protocol"]], link, prompt, key, timeout, local)
+            if ans is not None:
+                break
+        with state() as st:
+            if ans is not None:
+                succeeded(st, link)
+            elif trigger in rt["failover"]["triggers"]:
+                failed(st, rt, a.task, link, trigger, now())
+            ts = task_of(st, a.task)
+            hist, n = list(ts["history"]), ts["switches"]
+        if ans is not None:
+            out(a, link, hist, refused, stubs, **ans, switches=n)
+            return 0
+        if trigger not in rt["failover"]["triggers"]:
+            raise Stop(NO_LINK, f"link {resolve.link_key(link)} failed (status {status or 'none'}) in a way that is no failover trigger of its wire shape and the routing data")
+
+
+def cmd_attempt(a):
+    rt, cat, _, _ = data()
+    doc = resolved(a, rt, False)
+    a.refused = refused = []
+    link = advance(a, doc, rt, cat, refused)
+    with state() as st:
+        hist = list(task_of(st, a.task)["history"])
+    out(a, link, hist, refused, list(doc.get("stubs") or []))
+    return 0
+
+
+def cmd_result(a):
+    rt, cat, _, _ = data()
+    conn, _, model = a.link.partition("/")
+    link = {"connection": conn, "model": model}
+    link["connection"] = model_of(cat, link)[0]["id"]   # the state is keyed by the connection's id, also when its global_id was given
+    if a.outcome != "ok" and a.outcome not in rt["failover"]["triggers"]:
+        raise Stop(UNKNOWN, "the outcome is neither ok nor a failover trigger of the routing data")
+    with state() as st:
+        succeeded(st, link) if a.outcome == "ok" else failed(st, rt, a.task, link, a.outcome, now())
+    print(json.dumps({"task": a.task, "link": link, "outcome": a.outcome}))
+    return 0
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="route.py", description="Model calls and failover along the resolver's chain (host only).")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    for name in ("call", "attempt"):
+        p = sub.add_parser(name)
+        for k, req in (("role", True), ("project", True), ("card", False), ("tier", False), ("driver", False), ("task", True)):
+            p.add_argument("--" + k, required=req)
+        p.add_argument("--json", action="store_true")
+    sub.choices["call"].add_argument("--pending-tool-call", action="store_true")
+    p = sub.add_parser("result")
+    for k in ("task", "link", "outcome"):
+        p.add_argument("--" + k, required=True)
+    p.add_argument("--json", action="store_true")
+    a = ap.parse_args(argv)
+    try:
+        w = worker_env.reason()
+        if w:
+            raise Stop(sd.Refused.code, f"route.py {a.cmd} runs on the host only ({w}); nothing was called")
+        if resolve is None:
+            raise Stop(NO_LINK, "the resolver is not installed, so no chain can be read")
+        return {"call": cmd_call, "attempt": cmd_attempt, "result": cmd_result}[a.cmd](a)
+    except Stop as s:
+        print(json.dumps({"task": a.task, "code": s.code, "problem": el.scrub(s.problem), "refused": getattr(a, "refused", [])}))
+        el.say(s.code, s.problem, alert=s.alert)
+        return s.rc
+    except el.EventError as e:   # no pick, switch or notice without its trusted line
+        return el.fail(e.code, e.problem, e.extra)
+    except settings.Refuse as e:
+        return el.fail(e.code, e.problem)
+    except sd.DataError as e:
+        return el.fail(getattr(e, "code", "STL-CFG-310"), str(e)[:180])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

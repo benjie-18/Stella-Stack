@@ -46,7 +46,9 @@
     "bin/owner_auth.py",
     "bin/stella-apply.py",
     "bin/settings.py",
-    "bin/event_log.py"
+    "bin/event_log.py",
+    "bin/route.py",
+    "bin/credentials.py"
   ],
   "owner_commands_by_name": [
     "bin/merge-card.sh"
