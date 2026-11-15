@@ -12,7 +12,7 @@ CLI: stella-apply.py apply <id> --from <file> [--dry-run] [--proof <file>]
      stella-apply.py history <id> [--json]                  the event lines of <id> and its backups
 Exit: 0 ok (a no-change apply too); 1 refused or failed, or drift (check); 2 usage. Every failure prints its catalog code and a
 plain message (310 unreadable data, 311 unknown id, 312 owner-only, 313 a change refused before it started, 314 drift, 315 a
-setting's own code, STL-MDL-727 a candidate that changes or removes a built-in preset (stella_data.frozen; a dry run too), 316 no, damaged or unrecorded backup, 318 event log, 321 a change that stopped after it started (what is
+setting's own code, STL-MDL-727 a candidate that changes, removes or adds a built-in preset (stella_data.frozen; a dry run too), 316 no, damaged or unrecorded backup, 318 event log, 321 a change that stopped after it started (what is
 left and the one command that finishes or undoes it), 322 a read command refused, 323 an unfinished step seen by check); an
 unexpected exception or an interrupt (Ctrl-C, SIGTERM) is exit 1 and one coded line, never a traceback.
 Every write of a command is entered in STEPS, with how to undo it, BEFORE it starts (did); a failure or an interrupt undoes

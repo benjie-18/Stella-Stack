@@ -377,8 +377,9 @@ connection or does not meet the role's requirements by the catalog's advertised 
 cap; a consent approval class or alert code that does not exist; a credentials backend that is not defined, and a `dir`
 backend whose path is not inside a protected state path of the index; a grant whose scope level and project disagree.
 **Built-in presets.** `bin/stella-apply.py apply` (a dry run too) refuses a candidate that changes any key of a preset marked
-`builtin: true`, or drops it (STL-MDL-727, `stella_data.frozen()`); a custom preset (a new id, `builtin` false or absent)
-applies and can be changed. A candidate that drops a built-in preset something still names is refused by the validity check
+`builtin: true`, drops it, or marks another preset `builtin: true` (a new id, or a custom preset turned into one: the owner
+could not edit or remove it afterwards) (STL-MDL-727, `stella_data.frozen()`); a custom preset (a new id, `builtin` false or
+absent) applies and can be changed. A candidate that drops a built-in preset something still names is refused by the validity check
 first (STL-CFG-313). `routing_state` and `card_facts` are protected state paths (`bin/roles.py` STATE_KEYS): no role reads or
 writes them.
 

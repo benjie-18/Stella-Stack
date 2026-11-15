@@ -32,7 +32,7 @@
           },
           "builtin": {
             "type": "boolean",
-            "description": "True: a built-in preset. The apply tool refuses every candidate that changes or removes it; only the weekly model check (F2c) and a signed release (E1) update it."
+            "description": "True: a built-in preset. The apply tool refuses every candidate that changes or removes it, or that marks another preset this way; only the weekly model check (F2c) and a signed release (E1) update it."
           },
           "based_on": {
             "type": [

@@ -230,6 +230,17 @@ for b in edit drop flag; do
     ok '[ $rc = 1 ] && coded "$C_BUILTIN" && [ "$(sha)" = "$s0" ]' "13.$n a candidate that changes a built-in preset ($b${mode:+, dry run}) is refused with $C_BUILTIN and the file is unchanged (exit $rc)"
   done
 done
+# W1-F-1: an apply never makes a built-in preset either (a new id marked built in, or the custom one turned into one): the owner could not edit or remove it afterwards
+jq --arg b "$B1" '.effort_modes["qa-made"] = (.effort_modes[$b] + {label: "QA made", based_on: $b} | del(.changelog))' "$RAF" >"$T/c/b-new.json"
+jq '.effort_modes["qa-custom"].builtin = true' "$RAF" >"$T/c/b-turn.json"
+n=0
+for b in new turn; do
+  for mode in --dry-run ""; do
+    n=$((n+1)); s0=$(sha); ax "$AP" apply role-assignments --from "$T/c/b-$b.json" $mode >"$T/o" 2>&1; rc=$?
+    ok '[ $rc = 1 ] && coded "$C_BUILTIN" && [ "$(sha)" = "$s0" ]' "14.$n a candidate that makes a built-in preset ($b${mode:+, dry run}) is refused with $C_BUILTIN and the file is unchanged (exit $rc)"
+  done
+done
+ok '[ "$(python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; f = lambda o, n: [c for c, _ in s.frozen(\"role-assignments\", {\"effort_modes\": o}, {\"effort_modes\": n})]; B, C = {\"builtin\": True}, {\"builtin\": False}; print(f({\"a\": B}, {\"a\": B, \"b\": B}) == [s.BUILTIN_EDIT], f({\"a\": B, \"c\": C}, {\"a\": B, \"c\": B}) == [s.BUILTIN_EDIT], f({\"a\": B, \"c\": C}, {\"a\": B, \"c\": {}, \"d\": C}), f({\"a\": B}, {\"a\": B, \"b\": 1}))" "$BIN")" = "True True [] []" ]' "14a frozen(): a new id marked built in and a custom preset turned into one are each one refusal; an unchanged built-in beside changed and new custom presets is none"
 ok '[ "$(python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; print(len(s.frozen(\"role-assignments\", None, {\"effort_modes\": {}})), len(s.frozen(\"routing\", {\"effort_modes\": {\"a\": {\"builtin\": True}}}, {\"effort_modes\": {}})))" "$BIN")" = "0 0" ]' "13a frozen() keeps nothing of a file that does not parse, and nothing of another schema"
 
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
