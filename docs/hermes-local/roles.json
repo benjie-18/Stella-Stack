@@ -96,7 +96,9 @@
     "bin/settings.py",
     "bin/stella-apply.py",
     "bin/stella_data.py",
-    "bin/worker_env.py"
+    "bin/worker_env.py",
+    "bin/route.py",
+    "bin/credentials.py"
   ],
   "write_tools": [
     "write_file",
