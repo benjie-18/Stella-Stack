@@ -10,6 +10,11 @@
 # a pending tool call on another wire shape); a retry on the same link; an error no row maps; the less-private notice; a link that
 # needs a grant (no card, the consent gate's answers, no consent module); attempt and result; the state file as a link; a worker
 # environment; no resolver; the pick line; a prompt that holds placeholder text; the key in no output, log, event or state.
+# Gate B cases (a second small server that answers what a file holds): a proxy in the environment; an answer that repeats the key;
+# answers, tool-call arguments and a state file nested too deeply; an unexpected error; a consent module outside the tool's folder
+# and a run without -I; one event line per cooldown set or cleared; a switch from the link a task last used when another task
+# cooled it, and the switch limit; the notice's bar; an answer that drips in; a prompt that is not UTF-8; history entries of
+# another shape; an empty answer; a task id that is too long; the bound on task entries.
 set -u
 H=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 T=$(mktemp -d "${TMPDIR:-/tmp}/failover-selftest.XXXXXX"); T=$(cd "$T" && pwd -P)
