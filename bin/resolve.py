@@ -6,8 +6,9 @@ preset, link class, tier, driver, provider or model is named in this file: every
 one function of bin/stella_data.py (reach, policy_allows, route_problems, grant_in_force, link_class, unmet).
 CLI: resolve.py resolve --role R --project P [--card C] [--tier T] [--driver D] [--task ID] [--json]   (JSON is the only output)
 Import: resolve(ctx) -> the same dict (ctx: {role, project, card, tier, driver, task}); link_key(link) -> "<connection>/<model>",
-the state file's key. resolve() writes nothing and alerts nothing: a fail-closed answer is a stella_data.DataError (Refusal
-carries its code; any other one is data that `check` refuses, STL-CFG-310).
+the state file's key; role_view(role, project, card=None) -> what routing gives the role before any link is judged (its
+docstring has the keys), the one copy of that rule: resolve() reads it there. Both write nothing and alert nothing: a
+fail-closed answer is a stella_data.DataError (Refusal carries its code; any other one is data that `check` refuses, STL-CFG-310).
 Output: {role, project, card, preset {id, source: card|project|global}, policy: project|default (a project the data policy
 does not list follows the default), local_only, tier, driver, chain[], decision {rule, reason}, failure_history[] (the task's,
 from the state file), stubs[] (features ids the answer rests on), apps[] {app, status, code, reason} (the card's apps),
@@ -16,24 +17,28 @@ source: pin:card|pin:project|pin:global|preset|fallback|last_resort, status: usa
 reason, grant: null or {kind: privacy, data_class} or {kind: crossing, to_class}, mid_task, cooldown_until}.
 Exit: 0 one usable link or more and no app refused; 1 no usable link (NO_LINK, the same JSON) or a refused card app (its
 code, the same JSON), or fail closed with one catalog line, one alert line and no JSON: an unknown role, tier, driver, card
-id, preset or link class, a role that works a card called with no card (UNKNOWN), a card whose facts record names another
-project (NO_LINK), data that `check` refuses (STL-CFG-310); 2 usage.
+id, preset or link class, a role that works a card called with no card, a project id that is a listed one but for case or
+outer spaces (UNKNOWN), a card whose facts record names another project (NO_LINK), data that `check` refuses (STL-CFG-310);
+2 usage.
 Every link is judged by all the rules, in this order; the first that fails names its status:
- 1 hard exclusions: a card fact that holds (or is not recorded: routing data card_facts.when_missing) or a private project
-   excludes every link that leaves the machine (reach()); no grant, setting or preset changes it;
- 2 the data policy of the project, and of the default when that is Local only (policy_allows);
+ 1 hard exclusions: a card fact the record does not state as false (the facts: the keys of routing data
+   card_facts.when_missing and every other key of the record) or a private project excludes every link that leaves the
+   machine (reach()); no grant, setting, preset or routing data changes it;
+ 2 the data policy of the project, and of the default when that is Local only (policy_allows); Local only overrides any
+   preset: the class order is the classes that are not hosted, with no last resort and no crossing (an exempt role keeps its own);
  3 the connection: switched off, a CLI login without terms_ok, an aggregator whose broker entries do not resolve
    (credentials.check, when that module exists), allowed_roles, data_classes_allowed;
  4 the role's requirements against the advertised capabilities (unmet; a stub);
  5 the preset: its allowed localities (the last-resort class is the one exception) and the role's class order; the
    last-resort class needs a crossing grant; any other class is excluded. An exempt role (routing data exempt_roles) follows
    its own class order instead, and is never a crossing;
- 6 the data classes the role handles: hosted never excludes, hosted grant needs a privacy grant (route_problems);
+ 6 the data classes the role handles: hosted never excludes, and does so before the crossing grant of rule 5 is asked;
+   hosted grant needs a privacy grant (route_problems);
  7 health: a link, or its connection, in cooldown in the state file.
 Chain order: the owner's pins (card, project, global assignment rows), the preset's pins for the role, the catalog's links
 of each class of the order (a list item of the order is a group: best(), the one ranking), the preset's fallbacks, the
 last-resort class. A link listed twice keeps its first place."""
-import argparse, datetime, json, os, sys
+import argparse, datetime, json, os, sys, types
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -96,12 +101,20 @@ def best(entries, scores, ranks):
         f"status {e['status']}, advertised score {json.dumps(scores.get(link_key(e)))}, privacy rank {ranks[e['link_class']]}")
 
 
-def resolve(ctx):
-    role, project, card, tier, driver, task = (ctx.get(k) for k in ("role", "project", "card", "tier", "driver", "task"))
-    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+def known(kind, v, ids):
+    if v not in ids:
+        raise Refusal(UNKNOWN, f"{kind} {sd.idn(str(v)[:64], True)}")
+
+
+def _data(project):
+    """What every answer reads, loaded once: the served documents (a DataError while `check` refuses anything a resolve rests
+    on) and the project's policies (a project the policy does not list follows the default; DC-04: a Local only default always
+    holds). alias(p) is the one place a project id is compared: the listed id of p (its own id or its global_id, exactly), p
+    itself when it matches no listed project, and a Refusal when it only matches one with case and outer spaces ignored, so a
+    misspelling never drops a project's private or Local only marking."""
     idx = sd.load(sd.INDEX)
     mine = [r for r in sd.rows() if r["format"] == "json" and r["schema"] in READS]
-    by = sd.served([r["id"] for r in mine])   # a DataError while `check` refuses anything a resolve rests on
+    by = sd.served([r["id"] for r in mine])
     docs = lambda s: [d for r in mine if r["schema"] == s for _, d in by["_rows"][r["id"]][0]]
 
     def one(s):
@@ -109,11 +122,75 @@ def resolve(ctx):
         if len(ds) != 1:
             raise sd.DataError(f"the {s} data cannot be read (no file of its schema)")
         return ds[0]
-
-    def known(kind, v, ids):
-        if v not in ids:
-            raise Refusal(UNKNOWN, f"{kind} {sd.idn(str(v)[:64], True)}")
     ra, rt, table, conn = one("role-assignments"), one("routing"), sd.load(idx["role_table"]), by.get("connections", {})
+    pols = [(None, d) for d in docs("data-policy")]
+    if not pols:
+        raise sd.DataError("the data policy cannot be read (no file of its schema)")
+    projects = {k: v for _, d in pols for k, v in d["projects"].items()}
+    gids = {v["global_id"]: k for k, v in reversed(projects.items()) if isinstance(v.get("global_id"), str)}   # the first row of a global_id wins
+
+    def alias(p):
+        if not isinstance(p, str) or p in projects:
+            return p
+        if p in gids:
+            return gids[p]
+        if p.strip().casefold() in {x.strip().casefold() for x in (*projects, *gids)}:
+            raise Refusal(UNKNOWN, f"project {sd.idn(p[:64], True)}: it is not a listed project, but it is one when case and outer spaces are ignored")
+        return p
+    pid, defaults = alias(project), [d["default"] for _, d in pols]
+    policies = [dict(p, allowed_providers=[(sd.entry(conn, x) or {}).get("id", x) for x in p["allowed_providers"]])
+                for p in ([projects[pid]] if pid in projects else defaults) + [d for d in defaults if d["mode"] == "local_only"]]
+    return types.SimpleNamespace(idx=idx, by=by, docs=docs, ra=ra, rt=rt, table=table, conn=conn, pols=pols, alias=alias, pid=pid, listed=pid in projects,
+                                 policies=policies, local_only=any(p["mode"] == "local_only" for p in policies))
+
+
+def role_view(role, project, card=None, d=None):
+    """What routing gives a role in a project (on a card when one is named), before any link is judged. It answers for a role
+    the preset turns off and for a role that works a card asked with no card. d: the data resolve() has loaded already.
+    {role, project, card, preset {id, source: card|project|global}, local_only, exempt, active,
+     class_order (a list item is a best-of group): the effective order, before resolve() puts any class first,
+     order_source: exempt (routing data exempt_roles) | local_only (the data policy: the classes that are not hosted) |
+       assignment:card|project|global (the owner's override at that scope) | preset,
+     needs_class: the class resolve() puts first for a listed task tier or when no link of the order meets the role's
+       requirements (null: none, always so for an exempt role and under Local only),
+     last_resort (null for an exempt role and under Local only),
+     pins[] {scope: card|project|global, chain[]}: the owner's, in chain order, preset_pins[], fallbacks[]: the preset's for the role}"""
+    d = d or _data(project)
+    ra, rt = d.ra, d.rt
+    known("role", role, set(d.table["roles"]) - {d.table["fallback_role"]})
+    # the active preset: the card's beats the project's beats the global one
+    sel = ra.get("selection", {})
+    preset, source = next(((v, s) for v, s in ((sel.get("cards", {}).get(card), "card"), (sel.get("projects", {}).get(d.pid, sel.get("projects", {}).get(project)), "project"),
+                                              (sel.get("global"), "global")) if v), (None, None))
+    if preset is None:
+        raise Refusal(UNKNOWN, "no preset is selected (role assignments, selection.global)")
+    known("preset", preset, ra["effort_modes"])
+    mode = ra["effort_modes"][preset]
+    rp = mode.get("roles", {}).get(role, {"active": True})   # a role the preset does not list follows the preset and is active
+    exempt = next((x for x in rt["exempt_roles"] if x["role"] == role), None)
+    scoped = [(lvl, a) for lvl in ("card", "project", "global") for a in ra["assignments"]
+              if a["role"] == role and a["effort_mode"] == preset and a["scope"]["level"] == lvl
+              and (lvl == "global" or d.alias(a["scope"].get("project")) == d.pid and (lvl == "project" or a["scope"].get("card") == card))]
+    # the class order: an exempt role's own (ruling 1); Local only overrides any preset (B4); else the owner's override, the preset's for the role, the preset's
+    if exempt:
+        src, order, last, needs = "exempt", exempt["class_order"], None, None
+    elif d.local_only:
+        src, order, last, needs = "local_only", [c["id"] for c in rt["link_classes"] if not c["hosted"]], None, None
+    else:
+        src, order = next(((f"assignment:{lvl}", a["class_order"]) for lvl, a in scoped if "class_order" in a), ("preset", rp.get("class_order", mode.get("class_order", []))))
+        last, needs = rp["last_resort"] if "last_resort" in rp else mode.get("last_resort"), mode.get("needs_class")
+    return {"role": role, "project": project, "card": card, "preset": {"id": preset, "source": source}, "local_only": d.local_only, "exempt": bool(exempt),
+            "active": rp["active"], "class_order": order, "order_source": src, "needs_class": needs, "last_resort": last,
+            "pins": [{"scope": lvl, "chain": a["chain"]} for lvl, a in scoped], "preset_pins": rp.get("pins", []),
+            "fallbacks": rp.get("fallbacks", []) if not exempt or exempt["in_fallback_chain"] else []}
+
+
+def resolve(ctx):
+    role, project, card, tier, driver, task = (ctx.get(k) for k in ("role", "project", "card", "tier", "driver", "task"))
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    d = _data(project)
+    idx, by, docs, ra, rt, table, conn, pols, alias, pid, policies, local_only = (
+        d.idx, d.by, d.docs, d.ra, d.rt, d.table, d.conn, d.pols, d.alias, d.pid, d.policies, d.local_only)
     known("role", role, set(table["roles"]) - {table["fallback_role"]})
     drivers = {x["id"]: x for x in rt["drivers"]}
     if tier is not None:
@@ -122,17 +199,6 @@ def resolve(ctx):
         known("driver", driver, drivers)
     if card is None and role in rt["card_roles"]:
         raise Refusal(UNKNOWN, f"role {sd.idn(role, True)} works a card, and the request names no card")
-
-    # ---- the project's policy (a project the policy does not list follows the default; DC-04: a Local only default always holds)
-    pols = [(None, d) for d in docs("data-policy")]
-    if not pols:
-        raise sd.DataError("the data policy cannot be read (no file of its schema)")
-    projects = {k: v for _, d in pols for k, v in d["projects"].items()}
-    alias = lambda p: p if p in projects else next((k for k, v in projects.items() if p and v.get("global_id") == p), p)
-    pid, defaults = alias(project), [d["default"] for _, d in pols]
-    policies = [dict(p, allowed_providers=[(sd.entry(conn, x) or {}).get("id", x) for x in p["allowed_providers"]])
-                for p in ([projects[pid]] if pid in projects else defaults) + [d for d in defaults if d["mode"] == "local_only"]]
-    local_only = any(p["mode"] == "local_only" for p in policies)
     hard = ["the project is marked private"] if any(p.get("private") for p in policies) else []   # why no link may leave the machine
 
     # ---- the card: its facts from the host-side store (DC-01), its apps (DC-12)
@@ -147,8 +213,9 @@ def resolve(ctx):
             raise Refusal(NO_LINK, "the card's facts record names another project than the request")
         if "project" not in rec:
             hard.append("the card has no facts record, or one that names no project")
-        hard += [f"the card's fact {sd.kname(k)} holds, or is not recorded and counts as holding" for k, missing in rt["card_facts"]["when_missing"].items()
-                 if (rec[k] if isinstance(rec.get(k), bool) else missing)]
+        # a fact holds unless the record says false: no routing data switches one off, and a record key the data does not name is a fact too
+        hard += [f"the card's fact {sd.kname(k)} holds, or is not recorded as true or false and counts as holding"
+                 for k in dict.fromkeys((*rt["card_facts"]["when_missing"], *rec)) if k not in ("project", "apps") and rec.get(k) is not False]
         for a in rec["apps"] if isinstance(rec.get("apps"), list) else []:
             e = sd.entry(conn, a) if isinstance(a, str) else None
             terms = [m for m in sd.route_problems(pols, [], e, now, pid) if m["kind"] == "terms"] if e else []
@@ -162,15 +229,11 @@ def resolve(ctx):
                 code = why = None
             apps.append({"app": a if isinstance(a, str) else None, "status": "excluded" if code else "usable", "code": code, "reason": why})
 
-    # ---- the active preset: the card's beats the project's beats the global one
-    sel = ra.get("selection", {})
-    preset, source = next(((v, s) for v, s in ((sel.get("cards", {}).get(card), "card"), (sel.get("projects", {}).get(pid, sel.get("projects", {}).get(project)), "project"),
-                                              (sel.get("global"), "global")) if v), (None, None))
-    if preset is None:
-        raise Refusal(UNKNOWN, "no preset is selected (role assignments, selection.global)")
-    known("preset", preset, ra["effort_modes"])
+    # ---- the preset, the class order, the last resort and the pins of the role: role_view(), the one copy of that rule
+    view = role_view(role, project, card, d)
+    preset, source, exempt, order, last, needs = (view["preset"]["id"], view["preset"]["source"], view["exempt"], view["class_order"],
+                                                  view["last_resort"], view["needs_class"])
     mode = ra["effort_modes"][preset]
-    rp = mode.get("roles", {}).get(role, {"active": True})   # a role the preset does not list follows the preset and is active
 
     # ---- the failover state (not proof, not validated data: read defensively)
     srel = idx["routing_state"]
@@ -183,26 +246,16 @@ def resolve(ctx):
         return c["until"] if u and u > now else None
 
     feats = by.get("features", {})
-    out = {"role": role, "project": project, "card": card, "preset": {"id": preset, "source": source}, "policy": "project" if pid in projects else "default",
+    out = {"role": role, "project": project, "card": card, "preset": {"id": preset, "source": source}, "policy": "project" if d.listed else "default",
            "local_only": local_only, "tier": tier, "driver": driver, "chain": [], "decision": {"rule": None, "reason": None},
            "failure_history": history if isinstance(history, list) else [], "stubs": [s for s in STUBS if sd.phases(feats.get(s, {}))],
            "apps": apps, "code": None, "reason": None}
-    if not rp["active"]:   # ruling 10: an inactive role does not resolve
+    if not view["active"]:   # ruling 10: an inactive role does not resolve
         out["code"], out["reason"] = NO_LINK, f"role {sd.idn(role, True)} is not active under preset {sd.idn(preset, True)}"
         out["decision"] = {"rule": "inactive", "reason": out["reason"]}
         return out
 
-    # ---- the class order: an exempt role's own (ruling 1); else the owner's override, the preset's for the role, the preset's
     classes = {x["id"]: x for x in rt["link_classes"]}
-    exempt = next((x for x in rt["exempt_roles"] if x["role"] == role), None)
-    scoped = [(lvl, a) for lvl in ("card", "project", "global") for a in ra["assignments"]
-              if a["role"] == role and a["effort_mode"] == preset and a["scope"]["level"] == lvl
-              and (lvl == "global" or alias(a["scope"].get("project")) == pid and (lvl == "project" or a["scope"].get("card") == card))]
-    if exempt:
-        order, last, needs = exempt["class_order"], None, None
-    else:
-        order = next((a["class_order"] for _, a in scoped if "class_order" in a), rp.get("class_order", mode.get("class_order", [])))
-        last, needs = rp["last_resort"] if "last_resort" in rp else mode.get("last_resort"), mode.get("needs_class")
     flat = lambda o: [k for it in o for k in (it if isinstance(it, list) else [it])]
     for k in flat(order) + [k for k in (last, needs) if k is not None]:
         known("link class", k, classes)
@@ -241,7 +294,8 @@ def resolve(ctx):
         return X(UNMET, f"the advertised capabilities do not meet the role's requirements ({', '.join(miss)})") if miss else None
 
     # the preset's needs class goes first for a listed task tier, or when no link of the order can serve the role (rules 1 to 4)
-    notes = [f"class order {json.dumps(order)} of " + ("the exempt role" if exempt else f"preset {sd.idn(preset, True)}")]
+    notes = [f"class order {json.dumps(order)} of " + ("the exempt role" if exempt else "the Local only policy, which overrides the preset" if local_only
+                                                       else f"preset {sd.idn(preset, True)}")]
     if needs is not None and needs not in flat(order):
         listed = tier in mode.get("frontier_when", {}).get("tiers", [])
         if listed or not any(early(p, m) is None for p, m in catalog(flat(order))):
@@ -257,20 +311,19 @@ def resolve(ctx):
             return no
         if cls is None:
             return X(POLICY, "the link has no link class (its connection names none), so it is not routable")
-        if not exempt and reach not in mode["allowed_localities"] and cls != last:
+        if not (exempt or local_only) and reach not in mode["allowed_localities"] and cls != last:   # Local only overrides the preset's localities
             return X(POLICY, f"preset {sd.idn(preset, True)} allows no link that is {reach} for routing")
-        if cls not in inorder:
-            if exempt or cls != last:
-                return X(POLICY, f"link class {sd.idn(cls, True)} is not in the class order of " + ("this exempt role" if exempt else f"preset {sd.idn(preset, True)} for this role"))
-            if not any(g["preset"] == preset and g["to_class"] == cls and sd.grant_in_force(g, pid, now) for g in crossing):
-                return ("needs_grant", CROSSING, f"link class {sd.idn(cls, True)} is the last resort of preset {sd.idn(preset, True)}, and no crossing grant is in force here",
-                        {"kind": "crossing", "to_class": cls}, None)
-        probs = sd.route_problems(pols, need, prov, now, pid)
-        for kind in ("never", "grant"):   # a class that never reaches a hosted link refuses before a grant is offered (DC-08)
-            m = next((m for m in probs if m["kind"] == kind), None)
-            if m:
-                return X(POLICY, f"the connection {m['text']}") if kind == "never" else \
-                    ("needs_grant", PRIVACY, f"the connection {m['text']}", {"kind": "privacy", "data_class": m["data_class"]}, None)
+        if cls not in inorder and (exempt or cls != last):
+            return X(POLICY, f"link class {sd.idn(cls, True)} is not in the class order of " + (
+                "this exempt role" if exempt else "the Local only policy" if local_only else f"preset {sd.idn(preset, True)} for this role"))
+        probs = {m["kind"]: m for m in reversed(sd.route_problems(pols, need, prov, now, pid))}   # the first problem of each kind
+        if "never" in probs:   # a class that never reaches a hosted link refuses before any grant is offered, a crossing grant too (DC-08)
+            return X(POLICY, f"the connection {probs['never']['text']}")
+        if cls not in inorder and not any(g["preset"] == preset and g["to_class"] == cls and sd.grant_in_force(g, pid, now) for g in crossing):
+            return ("needs_grant", CROSSING, f"link class {sd.idn(cls, True)} is the last resort of preset {sd.idn(preset, True)}, and no crossing grant is in force here",
+                    {"kind": "crossing", "to_class": cls}, None)
+        if "grant" in probs:
+            return ("needs_grant", PRIVACY, f"the connection {probs['grant']['text']}", {"kind": "privacy", "data_class": probs["grant"]["data_class"]}, None)
         until = cooling(f"{prov['id']}/{model}") or cooling(prov["id"])
         return ("cooldown", COOLDOWN, f"the link failed recently and cools down until {until}", None, until) if until else ("usable", None, None, None, None)
 
@@ -288,7 +341,7 @@ def resolve(ctx):
                         "status": status, "code": code, "reason": why, "grant": grant, "mid_task": False, "cooldown_until": until})
         return got
     pinned = lambda ls: [(sd.entry(conn, l["connection"]), l["model"], l["parameters"]) for l in ls]
-    pins = [(pinned(a["chain"]), f"pin:{lvl}") for lvl, a in scoped] + [(pinned(rp.get("pins", [])), "preset")]
+    pins = [(pinned(p["chain"]), f"pin:{p['scope']}") for p in view["pins"]] + [(pinned(view["preset_pins"]), "preset")]
     chain = [e for ls, src in pins for e in links(ls, src)]
     ranked = False
     for it in order:
@@ -298,8 +351,7 @@ def resolve(ctx):
             notes.append(f"best suited of {json.dumps(it)}: {why}")
             ranked = True
         chain += got
-    if not exempt or exempt["in_fallback_chain"]:
-        chain += links(pinned(rp.get("fallbacks", [])), "fallback")
+    chain += links(pinned(view["fallbacks"]), "fallback")
     if last is not None and last not in inorder:
         chain += links([(p, m, {}) for p, m in catalog([last])], "last_resort")
     drv, named = drivers.get(driver), {(p["id"], m) for ls, _ in pins for p, m, _ in ls if p}
