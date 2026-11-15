@@ -2717,6 +2717,36 @@
       "why": "F2 W5: the consent selftest (bin/consent.py through the real route.py attempt, resolver, approval service, owner authenticator and apply tool, in a scratch root) and every file it can reach: the consent gate and its commands, the tools it calls, the data they read and what those name (bin/test-map.py reach)"
     },
     {
+      "globs": ["bin/resolve.py", "bin/route.py", "bin/credentials.py", "bin/consent.py", "bin/approvals.py"],
+      "targets": ["alert-page", "approval-evidence", "box", "broker-put", "check-guard", "complete-gate", "delegation", "escalate", "escalation-thread", "kanban-board", "merge-card", "omniroute-run", "reviewer-claude", "roles", "routing", "write-guard"],
+      "why": "F2 W7b: bin/escalate.sh and bin/box.py ask the resolver, so every selftest that can reach those two reaches the resolver and what it imports (from reach)."
+    },
+    {
+      "globs": ["bin/settings.py", ".stella/settings.json", ".claude/settings.json"],
+      "targets": ["alert-page", "approval-evidence", "broker-put", "check-guard", "complete-gate", "delegation", "escalation-thread", "routing"],
+      "why": "F2 W7b: reached through the resolver that bin/escalate.sh now names (from reach)."
+    },
+    {
+      "globs": ["bin/settings.py", ".stella/connections.json"],
+      "targets": ["box"],
+      "why": "F2 W7b: bin/box.py takes the review model from the resolver, which reads these (from reach)."
+    },
+    {
+      "globs": [".stella/protocols.json"],
+      "targets": ["alert", "alert-page", "approval-evidence", "box", "broker-put", "check-guard", "complete-gate", "delegation", "escalate", "escalation-thread", "kanban-board", "merge-card", "omniroute-run", "profile-hooks", "reviewer-claude", "roles", "routing", "write-guard"],
+      "why": "F2 W7b: named by bin/route.py, which the resolver's callers reach (from reach)."
+    },
+    {
+      "globs": ["bin/stella_data.py", "bin/stella-apply.py", "bin/worker_env.py", "bin/devices.py", "bin/event_log.py", "bin/event_untrusted.py", "bin/owner_auth.py", ".stella/schemas/event.schema.json", ".stella/data-files.json"],
+      "targets": ["box", "broker-put", "check-guard", "container-start", "escalation-thread", "firewall-probe", "init-firewall"],
+      "why": "F2 W7b: bin/container-start.sh builds the OpenCode config from the catalog through bin/stella_data.py, and bin/box.py asks the resolver (from reach; box is a superset for .stella/data-files.json)."
+    },
+    {
+      "globs": [".stella/connections.json", ".stella/data-policy.json", ".stella/role-assignments.json", ".stella/routing.json"],
+      "targets": ["box", "escalate", "profile-hooks", "reviewer-claude"],
+      "why": "F2 W7b: the escalate, profile-hooks, box and reviewer-claude selftests build resolver fixture roots from these (from reach; reviewer-claude is a superset for the three routing data files)."
+    },
+    {
       "globs": [
         "bin/resolver-selftest.sh",
         "bin/resolve.py",

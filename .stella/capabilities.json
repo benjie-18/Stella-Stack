@@ -594,6 +594,23 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
+      "id": "consent",
+      "kind": "command",
+      "summary": "Routing consent: the accept popup for a link that needs a grant, project-scoped grants applied through the apply tool, unattended queue; pending, complete, revoke",
+      "keywords": ["consent", "grant", "popup", "privacy", "crossing", "unattended", "revoke"],
+      "inputs": "pending --json | complete <request id> | revoke <grant id> --out <file>",
+      "outputs": "JSON; exit 1 with a catalog code",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/consent.py",
+      "triage": {"result": "shipped"},
+      "global_id": "871e600f-685d-490a-a561-952c4f07be89",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
       "id": "credentials",
       "kind": "command",
       "summary": "The one interface for keys until the secrets broker: reports the state of the key backend the routing data names; a value is returned in-process to the model call only and never printed",
