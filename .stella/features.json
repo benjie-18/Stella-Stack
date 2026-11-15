@@ -5,6 +5,9 @@
     "F1",
     "F1b",
     "F1c",
+    "F2",
+    "F2b",
+    "F2c",
     "E1",
     "E2",
     "E3"
@@ -369,6 +372,72 @@
       "due_phase": "E1",
       "replaced_by": "E1 installs the bundled app's tools (hermes and its python) where the agent user cannot write, and points .stella/channels.json env.path and the Discord helper's interpreter at them; until then F1c-CVER-01 is an owner-accepted limit (2026-11-14): a same-user agent could replace hermes, which the owner's approvals.py runs",
       "global_id": "6a9da681-ac0a-4380-88cc-5b62a5f06399",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "routing-advertised-capabilities",
+      "owner_phase": "F2",
+      "status": "on",
+      "depends_on": [],
+      "flag": null,
+      "due_phase": "F2b",
+      "replaced_by": "the capability probe (F2b): probed tool calling, vision and JSON mode per model; until then routing judges a role's requirements by the catalog's advertised capabilities (a null value meets no requirement)",
+      "global_id": "0cb60837-7e61-4e4b-af77-3ea73ed0878e",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "routing-advertised-context",
+      "owner_phase": "F2",
+      "status": "on",
+      "depends_on": [],
+      "flag": null,
+      "due_phase": "F2b",
+      "replaced_by": "the capability probe's effective context size (F2b); until then the context check of a role's requirements and of a mid-task switch reads the catalog's advertised context_tokens",
+      "global_id": "42057f9b-da35-4662-a792-f5e3d720dd3a",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "routing-escalation-walk",
+      "owner_phase": "F2",
+      "status": "on",
+      "depends_on": [],
+      "flag": null,
+      "due_phase": "F2b",
+      "replaced_by": "the builder escalation walk (F2b: resolve --rung N); until then a preset's escalation_chain is stored and checked for shape only, and nothing climbs it",
+      "global_id": "a4518e0e-8d1f-4af8-8689-d95b5db754cf",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "routing-observed-quota",
+      "owner_phase": "F2",
+      "status": "on",
+      "depends_on": [],
+      "flag": null,
+      "due_phase": "F2c",
+      "replaced_by": "the usage ledger (F2c): quota and cost per connection; until then the only quota routing knows is the limit failover observes (rate-limit and daily-cap errors, kept as cooldowns)",
+      "global_id": "95b91355-8745-4ec0-8bcf-ed04147dea95",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "routing-advertised-scores",
+      "owner_phase": "F2",
+      "status": "on",
+      "depends_on": [],
+      "flag": null,
+      "due_phase": "F2c",
+      "replaced_by": "the role benchmark (F2c) and first-pass rates from closed cards; until then Standard's best-suited choice ranks by the catalog's advertised models[].score",
+      "global_id": "b3571175-897e-420a-b189-c6871e4d3968",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "builtin-preset-updater",
+      "owner_phase": "F2",
+      "status": "on",
+      "depends_on": [],
+      "flag": null,
+      "due_phase": "F2c",
+      "replaced_by": "the weekly model check (F2c): the one engine path that updates a built-in preset, with a changelog line and rollback; until then no path changes a built-in preset (the apply tool refuses every candidate that does)",
+      "global_id": "35e660aa-0e06-419d-96a4-02a119cf7514",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
