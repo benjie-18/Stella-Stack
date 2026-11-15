@@ -39,8 +39,9 @@ BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
 import stella_data as sd
 
-NO_LINK, UNKNOWN, TERMS, AGGREGATOR, HARD, UNMET, POLICY, PRIVACY, CROSSING, COOLDOWN = (
-    f"STL-MDL-{n}" for n in (710, 711, 712, 713, 714, 715, 716, 717, 718, 724))
+# spelled out: the alert selftest counts a code as used only when a script holds it as a literal
+NO_LINK, UNKNOWN, TERMS, AGGREGATOR, HARD = "STL-MDL-710", "STL-MDL-711", "STL-MDL-712", "STL-MDL-713", "STL-MDL-714"
+UNMET, POLICY, PRIVACY, CROSSING, COOLDOWN = "STL-MDL-715", "STL-MDL-716", "STL-MDL-717", "STL-MDL-718", "STL-MDL-724"
 READS = ("role-assignments", "routing", "connections", "data-policy", "grants", "features")   # the schemas a resolve reads
 STUBS = ("routing-advertised-capabilities", "routing-advertised-context", "routing-observed-quota")   # features ids every answer rests on
 STUB_SCORES = "routing-advertised-scores"   # and this one when a group was ranked
