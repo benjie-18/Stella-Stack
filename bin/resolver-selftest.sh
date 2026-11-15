@@ -63,6 +63,10 @@ ok '[ -n "$LOCAL" ] && [ -n "$FREE" ] && [ -n "$FRONT" ] && [ -n "$NR" ] && [ -n
   "0a the shipped data gives the ids this test needs (three link classes, roles of each kind, both kinds of driver, a card fact, a grant class, a never class)"
 ok 'for c in "$C_NOLINK" "$C_UNKNOWN" "$C_TERMS" "$C_AGG" "$C_HARD" "$C_UNMET" "$C_POLICY" "$C_PRIV" "$C_CROSS" "$C_COOL"; do jq -e --arg c "$c" ".alerts[] | select(.code == \$c and (.message | contains(\"{problem}\")))" "$ROOT/docs/hermes-local/alert-catalog.json" >/dev/null || exit 1; done' \
   "0b every code of the resolver is a row of the alert catalog"
+RA=$ROOT/$(p role-assignments)   # the shipped presets whose last resort is the local class, and a class that leaves the machine (read from the data, not named)
+P_LASTLOCAL=$(jq -r --arg l "$LOCAL" '[.effort_modes | to_entries[] | select(.value.last_resort == $l) | .key][0] // empty' "$RA")
+P_LASTAWAY=$(jq -r --arg l "$LOCAL" '[.effort_modes | to_entries[] | select(.value.last_resort != null and .value.last_resort != $l) | .key][0] // empty' "$RA")
+ok '[ -n "$P_LASTLOCAL" ] && [ -n "$P_LASTAWAY" ]' "0c the shipped presets include one whose last resort is the local class and one whose last resort leaves the machine"
 
 # ---- the fake catalog ----
 model() { echo "{\"id\":\"$1\",\"capabilities\":{\"tool_calling\":true,\"json_mode\":true,\"context_tokens\":1048576,\"vision\":true,\"streaming\":true},\"probed_at\":null,\"probe_source\":\"advertised\"}"; }
@@ -159,27 +163,60 @@ ok 'passes rq && J rq "$(ent qa-free) | length == 2 and all(.status == \"exclude
 # ---- 5: hard exclusions and Local only ----
 mk h base
 facts h qa-held "$(jq -c --arg k "$FACT" '.[$k] = true' <<<"$CLEAN")"; facts h qa-nofield "$(jq -c --arg k "$FACT" 'del(.[$k])' <<<"$CLEAN")"
-facts h qa-other "$(jq -c '.project = "qa-other"' <<<"$CLEAN")"
+facts h qa-other "$(jq -c '.project = "qa-other"' <<<"$CLEAN")"; facts h qa-string "$(jq -c --arg k "$FACT" '.[$k] = "false"' <<<"$CLEAN")"
 ed h data-policy --arg g "$(uuid)" --arg i "$IID" '.projects["qa-private"] = {mode: "open", allowed_providers: [], private: true, global_id: $g, install_id: $i}'
-for c in qa-card qa-held qa-nofield qa-norecord qa-other; do rs h "h-$c" --role "$CR" --project qa-proj --card "$c"; done
+for c in qa-card qa-held qa-nofield qa-string qa-norecord qa-other; do rs h "h-$c" --role "$CR" --project qa-proj --card "$c"; done
 rs h h-private --role "$NR" --project qa-private
 HARD="$AWAY | length > 0 and all(.status == \"excluded\" and .code == \"$C_HARD\" and .grant == null)"
 ok 'passes h && [ "$(rc h-qa-card)" = 0 ] && J h-qa-card "$AWAY | any(.status == \"usable\")" && J h-qa-card ".card == \"qa-card\""' "5 control: a card whose facts are all recorded as not holding reaches a hosted link"
-for c in "qa-held:whose fact $FACT holds" "qa-nofield:whose record lacks the fact $FACT" "qa-norecord:with no facts record"; do
+for c in "qa-held:whose fact $FACT holds" "qa-nofield:whose record lacks the fact $FACT" "qa-string:whose record states the fact $FACT as a string, not a boolean" "qa-norecord:with no facts record"; do
   ok "[ \"\$(rc h-${c%%:*})\" = 0 ] && J h-${c%%:*} \"\$HARD\" && J h-${c%%:*} \"\$(ent qa-local) | any(.status == \\\"usable\\\")\"" \
     "5-${c%%:*} a card ${c#*:}: every link that leaves the machine is excluded with $C_HARD, no grant offered, the local link usable"
 done
 ok 'closed h-qa-other "$C_NOLINK"' "5a a card whose facts record names another project fails closed with $C_NOLINK and no chain"
 ok '[ "$(rc h-private)" = 0 ] && J h-private "$HARD" && J h-private "$(ent qa-local) | any(.status == \"usable\")" && J h-private ".policy == \"project\""' \
   "5b a project marked private: every link that leaves the machine is excluded with $C_HARD"
+# W3-CVER-01: routing data that says a missing fact does not hold, or names no fact, switches no hard exclusion off: the answer is
+# the same exclusion, or no answer at all once `check` refuses that data (never a link that leaves the machine)
+mk hf h; ed hf routing '.card_facts.when_missing |= map_values(false)'; mk he h; ed he routing '.card_facts.when_missing = {}'
+rs hf hf-held --role "$CR" --project qa-proj --card qa-held; rs hf hf-nofield --role "$CR" --project qa-proj --card qa-nofield; rs he he-held --role "$CR" --project qa-proj --card qa-held
+shut() { closed "$1" STL-CFG-310 || { [ "$(rc "$1")" = 0 ] && J "$1" "$HARD"; }; }   # <name>: every link that leaves the machine excluded, or failed closed
+ok 'shut hf-held && shut hf-nofield' "5d routing data that says a missing fact counts as not holding: a card whose fact holds, and one whose record lacks it, still reach no link that leaves the machine"
+ok 'shut he-held' "5e routing data that names no card fact: a card whose record says the fact holds still reaches no link that leaves the machine"
+# W3-CRT-01: a project id that is a listed one but for case or outer spaces is refused, so a misspelling never drops a marking
+PGID=$(jq -r '.projects["qa-private"].global_id' "$T/h/$(p data-policy)"); n0=$(alerts "$C_UNKNOWN")
+rs h pj1 --role "$NR" --project QA-Private; rs h pj2 --role "$NR" --project "qa-private "; rs h pj3 --role "$NR" --project " ${PGID^^}"
+rs h pj4 --role "$NR" --project "$PGID"; rs h pj5 --role "$NR" --project qa-privat
+ok 'closed pj1 "$C_UNKNOWN" && closed pj2 "$C_UNKNOWN" && closed pj3 "$C_UNKNOWN" && [ $(( $(alerts "$C_UNKNOWN") - n0 )) = 3 ]' \
+  "5f a private project asked for in another case, with a trailing space, or by its global id so misspelled fails closed with $C_UNKNOWN (one alert line each)"
+ok '[ "$(rc pj4)" = 0 ] && J pj4 "$HARD" && J pj4 ".policy == \"project\"" && [ "$(rc pj5)" = 0 ] && J pj5 ".policy == \"default\"" && J pj5 "$AWAY | any(.status == \"usable\")"' \
+  "5g its exact global id is the project (the same exclusion); an id that matches no listed project follows the default policy"
 cgrant() {  # <root> <id> <preset> <to class> <scope JSON>: a crossing grant
   ed "$1" grants --arg id "$2" --arg p "$3" --arg k "$4" --arg g "$(uuid)" --arg i "$IID" --arg a "$PAST" --argjson s "$5" \
     '.crossing_grants = ((.crossing_grants // []) + [{id: $id, global_id: $g, install_id: $i, preset: $p, to_class: $k, scope: $s, granted_at: $a}])'
 }
 mk lo base; ed lo data-policy --arg g "$(uuid)" --arg i "$IID" '.default.mode = "local_only" | .projects["qa-proj"] = {mode: "open", allowed_providers: [], global_id: $g, install_id: $i}'
+# under Local only the class order is the local class, so the one link that leaves the machine in this chain is the preset's fallback for the role
+ed lo role-assignments --arg r "$NR" '.effort_modes["qa-all"].roles = {($r): {active: true, fallbacks: [{connection: "qa-front", model: "qa-front-m1", parameters: {}}]}}'
 cgrant lo qa-cg qa-all "$FRONT" '{"level":"global"}'; rs lo lo --role "$NR" --project qa-proj
-ok 'passes lo && [ "$(rc lo)" = 0 ] && J lo ".local_only == true" && J lo "$AWAY | length > 0 and all(.status == \"excluded\" and .code == \"$C_POLICY\" and .grant == null)" && J lo "$(ent qa-local) | any(.status == \"usable\")"' \
-  "5c Local only as the default beats a project row that says open (DC-04): local links only, no grant offered, a Stella-wide grant present"
+ok 'passes lo && [ "$(rc lo)" = 0 ] && J lo ".local_only == true" && J lo "$AWAY | length > 0 and all(.status == \"excluded\" and .code == \"$C_POLICY\" and .grant == null)" && J lo "$(ent qa-local) | any(.status == \"usable\")" &&
+  J lo "[.chain[] | select(.source != \"fallback\")] | length > 0 and all(.link_class == \"$LOCAL\")"' \
+  "5c Local only as the default beats a project row that says open (DC-04): local links only (the preset's fallback that leaves the machine is excluded with $C_POLICY), no grant offered, a Stella-wide grant present"
+# W3-CVER-02 / W3-VAL-01: Local only overrides any preset, for every role, with no grant of any kind in the data
+mk lp lo; ed lp grants '.crossing_grants = []'
+mk lp-a lp; ed lp-a role-assignments --arg p "$P_LASTLOCAL" '.selection = {global: $p}'; mk lp-b lp; ed lp-b role-assignments --arg p "$P_LASTAWAY" '.selection = {global: $p}'
+mk lp-c lp; preset lp-c qa-nolocal '{allowed_localities: ["cloud"], class_order: [$x, $f], last_resort: null}'
+LO="(.local_only == true) and any(.chain[]; .status == \"usable\") and all(.chain[]; .link_class == \"$LOCAL\" and .grant == null and .source != \"last_resort\")"
+for r in "lp-a:the shipped preset whose last resort is the local class" "lp-b:the shipped preset whose last resort leaves the machine" "lp-c:a custom preset with no local class and no last resort"; do
+  bad=""
+  for role in $(jq -r '.[]' <<<"$AR"); do
+    # shellcheck disable=SC2046
+    rs "${r%%:*}" "${r%%:*}-$role" --role "$role" --project qa-proj $(jq -e --arg k "$role" 'index($k) != null' <<<"$CARDR" >/dev/null && echo "--card qa-card")
+    { [ "$(rc "${r%%:*}-$role")" = 0 ] && J "${r%%:*}-$role" "$LO"; } || bad="$bad $role"
+  done
+  ok "passes ${r%%:*} && [ -z \"$bad\" ]" "5c-${r%%:*} Local only under ${r#*:}, no grants: every role has a usable local link, local links only, no grant asked, no last resort${bad:+ (not:$bad)}"
+done
+ok 'J "lp-a-$ER" --argjson o "$EXO" "all(.chain[]; .link_class as \$c | \$o | index(\$c) != null)"' "5c-exempt an exempt role keeps its own class order under Local only"
 
 # ---- 6: privacy grants and classes that never reach a hosted link ----
 pgrant() {  # <root> <id> <data class> <connection> <extra JSON>
@@ -198,6 +235,10 @@ ok 'passes gr && J g3 "$NG"' "6b a revoked grant grants nothing"
 mk nv base; edt nv --arg r "$NR" --arg k "$NCLASS" '.roles[$r].requirements.allowed_data_classes += [$k]'; rs nv nv --role "$NR" --project qa-proj
 ok 'passes nv && J nv "$AWAY | length > 0 and all(.status == \"excluded\" and .grant == null)" && J nv "$(ent qa-front) | all(.code == \"$C_POLICY\")" && J nv "$(ent qa-local) | all(.status == \"usable\")"' \
   "6c a role that handles a never class: every hosted link is excluded with no grant offered (DC-08)"
+
+mk nx nv; preset nx qa-nx '{class_order: [$l], last_resort: $x}'; rs nx nx --role "$NR" --project qa-proj
+ok 'passes nx && J nx "$AWAY | length > 0 and all(.status == \"excluded\" and .grant == null)" && J nx "$(ent qa-front) | length == 2 and all(.source == \"last_resort\" and .code == \"$C_POLICY\")"' \
+  "6d a never class refuses before a crossing grant is offered (W3-CVER-04): the links of a last-resort class that leaves the machine are excluded, no grant asked"
 
 # ---- 7: the last-resort class and exempt roles ----
 mk x base; preset x qa-x '{allowed_localities: ["cloud"], class_order: [$x], last_resort: $l}'
@@ -293,5 +334,54 @@ rs ro ro4 --role qa-zz --project qa-proj; listing ro >"$T/ro.after"
 ok '[ "$(rc ro1)" = 0 ] && [ -s "$T/ro.before" ] && cmp -s "$T/ro.before" "$T/ro.after"' "12 four resolves (a task, a card, a card with no record, an unknown role) change no file or folder of the root"
 mk ro0 base; rm -rf "$T/ro0/$FACTS"; rs ro0 ro5 --role "$CR" --project qa-proj --card qa-card --task qa-t
 ok '[ "$(rc ro5)" = 0 ] && J ro5 "$HARD" && [ ! -e "$T/ro0/$FACTS" ] && [ ! -e "$T/ro0/$STATE" ]' "12a with no state file and no card facts store the resolver answers (the card's facts count as missing) and creates neither"
+
+# ---- 13: role_view(role, project, card): the one copy of the rule resolve() reads ----
+rv() {  # <root> <name> <role> <project> [<card>]: o/<name>.json = {view, differs: what resolve() says otherwise ([] = they agree; null: resolve() refuses)}
+  STELLA_ROOT=$T/$1 python3 -I -B - "$BIN" "${@:3}" >"$T/o/$2.json" 2>"$T/o/$2.err" <<'P'
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import resolve as r
+role, project, card = (sys.argv[2:] + [None])[:3]
+v = r.role_view(role, project, card)
+try:
+    o = r.resolve({"role": role, "project": project, "card": card})
+except r.sd.DataError:
+    o = None
+bad = None
+if o is not None:
+    ch, key = o["chain"], lambda l: (l["connection"], l["model"])
+    flat = [k for it in v["class_order"] for k in (it if isinstance(it, list) else [it])]
+    own = [e for e in ch if e["source"] == "preset" and key(e) not in {key(l) for l in v["preset_pins"]}]
+    tests = {
+        "preset": o["preset"] == v["preset"], "local_only": o["local_only"] == v["local_only"],
+        "active": (o["decision"]["rule"] == "inactive") == (not v["active"]) and (v["active"] or ch == []),
+        "pins": not v["active"] or [key(e) for e in ch if e["source"].startswith("pin:")] == list(dict.fromkeys(key(l) for p in v["pins"] for l in p["chain"])),
+        "pin scopes": not v["active"] or [e["source"] for e in ch if e["source"].startswith("pin:")] == ["pin:" + p["scope"] for p in v["pins"] for _ in p["chain"]],
+        "class order": {e["link_class"] for e in own} <= set(flat) | {v["needs_class"]},
+        "last resort": {e["link_class"] for e in ch if e["source"] == "last_resort"} <= {v["last_resort"]},
+        "fallbacks": {key(e) for e in ch if e["source"] == "fallback"} <= {key(l) for l in v["fallbacks"]}}
+    bad = [k for k, held in tests.items() if not held]
+print(json.dumps({"view": v, "differs": bad}))
+P
+}
+mk ov base; ed ov role-assignments --arg r "$NR" --arg l "$LOCAL" --arg g "$(uuid)" --arg i "$IID" '.assignments += [{id: "qa-ov", scope: {level: "project", project: "qa-proj"}, role: $r,
+  effort_mode: "qa-all", chain: [{connection: "qa-local", model: "qa-local-m2", parameters: {}}], class_order: [$l], global_id: $g, install_id: $i}]'
+rv pn v-pn "$NR" qa-proj qa-card; rv x v-x "$NR" qa-proj; rv x v-ex "$ER" qa-proj; rv off v-off "$NR2" qa-proj; rv lp-a v-lo "$NR" qa-proj
+rv bs1 v-bs "$NR" qa-proj; rv ov v-ov "$NR" qa-proj; rv base v-b "$NR" qa-proj; rv base v-nocard "$CR" qa-proj
+agree() { local n; for n; do J "$n" ".differs == []" || { echo "role_view ($n): $(jq -c .differs "$T/o/$n.json" 2>&1; tail -n 1 "$T/o/$n.err")" >&2; return 1; }; done; }
+ok 'agree v-pn v-x v-ex v-off v-lo v-bs v-ov v-b' \
+  "13 resolve() and role_view() agree on the preset, Local only, the role's activity, the owner's pins and their scopes, the class order, the last resort and the fallbacks (eight requests)"
+ok 'J v-pn ".view | .active == true and .preset == {id: \"qa-pin\", source: \"global\"} and .class_order == [\"$LOCAL\"] and .order_source == \"preset\" and .last_resort == \"$FRONT\" and .needs_class == null
+  and ([.pins[] | [.scope, .chain[0].connection]] == [[\"card\", \"qa-local\"], [\"project\", \"qa-agg\"], [\"global\", \"qa-free\"]])"' \
+  "13a the role's own class order and last resort under the preset, and the owner's pins with their scope (card, project, global)"
+ok 'passes ov && J v-ov ".view | .order_source == \"assignment:project\" and .class_order == [\"$LOCAL\"]" && J v-b ".view | .order_source == \"preset\" and .class_order == [\"$FRONT\", \"$FREE\", \"$LOCAL\"] and .pins == []"' \
+  "13b an assignment's class order overrides the preset's, and the view names its scope"
+ok 'J v-ex --argjson o "$EXO" ".view | .exempt == true and .order_source == \"exempt\" and .class_order == \$o and .last_resort == null and .needs_class == null" &&
+  J v-lo ".view | .local_only == true and .order_source == \"local_only\" and .class_order == [\"$LOCAL\"] and .last_resort == null and .needs_class == null"' \
+  "13c an exempt role keeps its own order, and Local only makes the local class the order: no last resort either way"
+ok 'J v-bs ".view | .class_order == [[\"$FREE\", \"$LOCAL\"]] and .needs_class == \"$FRONT\"" && J v-x ".view | .class_order == [\"$FRONT\"] and .last_resort == \"$LOCAL\""' \
+  "13d the class order is the one before any class is put first; the class that may be put first is told apart (needs_class)"
+ok 'J v-off ".view | .active == false and (.class_order | length > 0)" && J v-nocard ".differs == null and (.view | .active == true and .card == null and (.class_order | length > 0))"' \
+  "13e it answers for a role the preset turns off, and for a role that works a card asked with no card"
 
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
