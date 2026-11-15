@@ -905,9 +905,20 @@ def validate(row, rel, data):
         raise bad(why)
     return doc
 
-def kept(row, old_doc, new_doc):
-    """What a candidate may not change in the file it replaces (the data tool's rule, frozen(): a built-in preset), refused with
-    that rule's own code before anything is written; apply and its dry run alike."""
+def kept(row, key, rel, cur, old_doc, new_doc, good, rec):
+    """What a candidate may not change in the document it replaces (the data tool's rule, frozen(): a built-in preset), refused
+    with that rule's own code before anything is written; apply and its dry run alike. The file is that document only while
+    it holds its baseline's bytes (drift_of: the applied ones; never applied: the committed ones). A file edited by hand,
+    damaged or missing says nothing of what was built in (W1-CVER-01, W1-RT-04): the candidate is then compared with the
+    document last applied (prior_doc, as the owner proof judges a hand edit), or, that one not known, the committed one."""
+    blob = None if rec else git_blob(rel)
+    want = rec["sha256"] if rec else sha(blob) if blob is not None else None
+    if want is not None and (cur is None or sha(cur) != want):
+        base = prior_doc(row, key, good, rec)
+        if base is None and (blob := blob if blob is not None else git_blob(rel)) is not None:
+            base = parse_or_none(row, blob)[0]
+        # shortcut: with no applied copy and no committed file the file itself is the only document known, upgrade when a release signs its built-in presets (E1)
+        old_doc = base if base is not None else old_doc
     for code, why in sd.frozen(row["schema"], old_doc, new_doc):
         raise bad(why, code)
 
@@ -1241,9 +1252,10 @@ def dry_run(row, key, tgt, rel, cand):
     cur = read(tgt)
     old_doc, parses = parse_or_none(row, cur)
     note_secrets(old_doc, red)
-    kept(row, old_doc, new_doc)
     good, junk, strange, _ = scan(key, sha(cur) if cur is not None else None)
-    act, err = pending_action(key, cur, cand, good, junk, strange, applied().get(key))
+    rec = applied().get(key)
+    kept(row, key, rel, cur, old_doc, new_doc, good, rec)
+    act, err = pending_action(key, cur, cand, good, junk, strange, rec)
     if act == "refuse":
         raise err
     if act in ("finish", "finish_adopt", "adopt"):
@@ -1361,9 +1373,9 @@ def apply_locked(row, key, tgt, rel, cand):
     cur = begin(key, tgt, sha(cand))   # the one read of the file, and the snapshot, after the validation
     old_doc, parses = parse_or_none(row, cur)
     note_secrets(old_doc, red)
-    kept(row, old_doc, new_doc)
     rec = applied().get(key)
     good, junk, strange, _ = scan(key, sha(cur) if cur is not None else None)
+    kept(row, key, rel, cur, old_doc, new_doc, good, rec)
     act, err = pending_action(key, cur, cand, good, junk, strange, rec)
     if act == "refuse":
         raise err

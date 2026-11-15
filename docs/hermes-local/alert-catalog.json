@@ -893,8 +893,8 @@
       "severity": "warning",
       "title": "a preset turns off a role the workflow requires",
       "message": "A routing preset turns off a role that the workflow requires: {problem}. The data is treated as not valid until it is fixed.",
-      "action": "set the role active again in that preset (role-assignments.json effort_modes, roles), then run the check again. See STL-MDL-725 in docs/alert-codes.md.",
-      "cause": "The preset sets active false for a role that routing.json workflow.required_roles lists as always, or under a trigger that can fire.",
+      "action": "set the role active again in that preset (role-assignments.json effort_modes, roles), or give it a class order, then run the check again. See STL-MDL-725 in docs/alert-codes.md.",
+      "cause": "The preset sets active false for a role that routing.json workflow.required_roles lists as always, or under a trigger that can fire; or it leaves such a role active with nothing to resolve from (no pin, class order, needs class, fallback or last resort).",
       "check": "`python3 bin/stella_data.py check`; `python3 bin/stella_data.py get routing` (workflow).",
       "related": "F2 B3, A9, A10, design D1.9; .stella/routing.json workflow",
       "resolvable": false
@@ -906,7 +906,7 @@
       "title": "a preset link fails the role's requirements",
       "message": "A pin or a fallback that a routing preset gives an active role does not meet the role's requirements: {problem}. The data is treated as not valid until it is fixed.",
       "action": "name a model that meets the role's requirements, or record the model's advertised capabilities in the catalog (a null capability meets no requirement), then run the check again. See STL-MDL-726 in docs/alert-codes.md.",
-      "cause": "The model is not listed for its connection, or its advertised tool calling, vision or context size is below what the role needs.",
+      "cause": "The model is not listed for its connection, or its advertised tool calling, vision or context size is below what the role needs; or the link's connection is switched off, does not list the role, does not allow every data class the role handles, or lies outside the localities the preset allows; or the preset leaves an active role with nothing to resolve from.",
       "check": "`python3 bin/stella_data.py check`; `python3 bin/roles.py requirements <role>`; `python3 bin/stella_data.py get connections <id>` (models[].capabilities).",
       "related": "F2 B3, A9, design D1.9; bin/stella_data.py unmet",
       "resolvable": false

@@ -26,7 +26,8 @@
         "minItems": 1,
         "uniqueItems": true
       },
-      "description": "Link classes in the order they are tried. An item is a class id, or a list of class ids: the best suited of these. `check` refuses an id link_classes does not define."
+      "minItems": 1,
+      "description": "Link classes in the order they are tried, at least one (an empty order would leave the role no link). An item is a class id, or a list of class ids: the best suited of these. `check` refuses an id link_classes does not define."
     },
     "code": {
       "type": "string",
@@ -187,8 +188,9 @@
         "triggers": {
           "type": "object",
           "propertyNames": {
-            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+            "enum": ["rate_limit", "daily_cap", "timeout", "server_error", "malformed_tool_call", "model_gone", "context_too_small"]
           },
+          "required": ["rate_limit", "daily_cap", "timeout", "server_error", "malformed_tool_call", "model_gone", "context_too_small"],
           "additionalProperties": {
             "type": "object",
             "properties": {
@@ -208,7 +210,7 @@
             "required": ["cooldown_s", "max_cooldown_s", "scope"],
             "additionalProperties": false
           },
-          "description": "The failures that move a task to the next link, by id (a protocol's errors[] name them), each with its cooldown: until = now + cooldown_s, doubled per repeated failure up to max_cooldown_s."
+          "description": "The failures that move a task to the next link, by id: exactly the trigger ids a protocol's errors[] may name (the enum of the protocols schema), every one present, so no failure a protocol reports is left without a way on. Each with its cooldown: until = now + cooldown_s, doubled per repeated failure up to max_cooldown_s."
         },
         "same_connection_first": {
           "type": "boolean",
@@ -260,9 +262,10 @@
             "pattern": "^[a-z][a-z0-9_]*$"
           },
           "additionalProperties": {
-            "type": "boolean"
+            "const": true
           },
-          "description": "Per card fact (carries_secrets, vault_content): the value a missing record or a missing field counts as. Ships true: fail closed, every hosted link is excluded."
+          "required": ["carries_secrets", "vault_content"],
+          "description": "The card facts the resolver judges (the fields of a facts record that exclude every hosted link while they hold): carries_secrets and vault_content always, and any fact added here. The value is what a missing record or a missing field counts as, and it is always true: a fact that is not recorded holds (fail closed), and no setting turns a hard exclusion off."
         }
       },
       "required": ["when_missing"],

@@ -756,6 +756,19 @@ def policy_allows(pol, prov):
         or (pol["mode"] == "allowed_providers" and prov["id"] in pol["allowed_providers"])
 
 
+def project_policies(pols, conn, project):
+    """(alias, listed, policies): the one answer to "the policies of a project" (W3-CVER-03), named by its alias or its
+    global_id (FIN-CRT-02; None: no project). policies: its row of the data policy (a project the policy does not list follows
+    every default), and every default whose mode is local_only (DC-04: a Local only default binds every project), each with
+    allowed_providers resolved to aliases (policy_allows compares aliases). pols: [(row id, data policy)]; conn: the merged
+    connections. A project that is not listed keeps its own string as alias."""
+    projects = {k: v for _, d in pols for k, v in d["projects"].items()}
+    pid = project if project in projects else next((k for k, v in projects.items() if project and v.get("global_id") == project), project)
+    defaults = [d["default"] for _, d in pols]
+    mine = ([projects[pid]] if pid in projects else defaults) + [d for d in defaults if d["mode"] == "local_only"]
+    return pid, pid in projects, [dict(p, allowed_providers=[(entry(conn, x) or {}).get("id", x) for x in p["allowed_providers"]]) for p in mine]
+
+
 def grant_in_force(g, project, now):
     """Whether a grant row (a privacy grant of the data policy, a crossing grant of the grants data) holds for a task of `project`
     (its id as the scope spells it; None: a task with no project) at `now` (naive UTC). The one judge of both lists: scope
@@ -806,6 +819,34 @@ def unmet(req, caps):
     import roles
     return [k for k in roles.REQ_BOOLS if req.get(k) and caps.get(k) is not True] + \
         (["min_context_tokens"] if req.get("min_context_tokens", 0) > (caps.get("context_tokens") or 0) else [])
+
+
+def link_problems(table, role, prov, model, localities=None, mode=None, policies=(), where=None, pols=(), now=None, project=None):
+    """Why the link (provider prov, model) may not be listed for `role`, as texts that follow the link's place: the one judge of
+    an assignment's chain and of a preset's pins and fallbacks (W1-RT-01; the resolver excludes the same links at run time).
+    The link itself: its connection switched on, the model listed and its advertised capabilities meeting the role's
+    requirements (unmet), the connection allowing the role and every data class it handles, a cli-login's terms recorded.
+    localities (those of effort mode `mode`; None: not judged): where the link may run, by reach(). The scope, for a caller
+    that has one (an assignment; a preset has none, the resolver judges it per project): its policies (project_policies,
+    named `where`) and, with the data policies `pols`, the hosted rule of each data class for its project (route_problems)."""
+    req, pn = table["roles"].get(role, {}).get("requirements", {}), idn(prov["id"])
+    need, mod = req.get("allowed_data_classes", []), next((m for m in prov["models"] if m["id"] == model), None)
+    out = [] if prov["enabled"] else [f"{pn} is switched off"]
+    miss = unmet(req, mod["capabilities"]) if mod else []
+    if mod is None:
+        out.append(f"its model ({desc(model)}) is not listed for {pn}")
+    elif miss:
+        out.append(f"its model does not meet the role's requirements by its advertised capabilities ({', '.join(miss)})")
+    if localities is not None and reach(prov) not in localities:
+        out.append(f"{pn} is {reach(prov)} for routing, which effort mode {idn(mode)} forbids")
+    if not all(policy_allows(p, prov) for p in policies):
+        out.append(f"{pn} is not allowed by the data policy for {where} (an override never widens the policy)")
+    out += [f"{pn} {m['text']}" for m in route_problems(pols, need, prov, now, project)]
+    if any(k not in prov["data_policy"]["data_classes_allowed"] for k in need):   # an empty list allows no class
+        out.append(f"{pn} does not allow every data class that role {idn(role)} handles")
+    if role not in prov.get("allowed_roles", []):   # an empty list allows no role
+        out.append(f"{pn} does not list role {nm(role, table['roles'], 'role')} in its allowed_roles")
+    return out
 
 
 def class_problems(table, classes):
@@ -957,15 +998,12 @@ def rule_assignments(c):
     P, table, conn, pols = c["P"], c["table"], c["by"].get("connections", {}), c["whole"].get("data-policy", [])
     allroles = table["roles"]
     roles = set(allroles) - {table["fallback_role"]}   # the fail-closed row is no role to assign or allow
-    projects = {k: v for _, d in pols for k, v in d["projects"].items()}
     seen, cards, now = {}, {}, datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     for rid, ra in c["whole"].get("role-assignments", []):
         for a in ra["assignments"]:
             sc, lvl, aid = a["scope"], a["scope"]["level"], idn(a["id"])
             # FIN-CRT-02: a project named by its alias or its global_id is one project; one the policy does not list keeps its own string
-            pid = sc.get("project")
-            proj = pid if pid in projects else next((k for k, v in projects.items() if pid and v.get("global_id") == pid), None)
-            pid = proj or pid
+            pid, listed, policies = project_policies(pols, conn, sc.get("project"))
             want = {"global": (), "project": ("project",), "card": ("project", "card")}[lvl]
             for k in ("project", "card"):
                 if (k in want) != (k in sc):
@@ -984,36 +1022,21 @@ def rule_assignments(c):
                 P(rid, f"{aid}: effort_mode ({desc(a['effort_mode'])}) is not defined")
             if not pols:
                 P(rid, f"{aid}: cannot be judged, the data policy has no file")
-            # allowed_providers may name a connection by its global_id: policy_allows compares aliases, so it gets them resolved
-            policies = [dict(p, allowed_providers=[(entry(conn, x) or {}).get("id", x) for x in p["allowed_providers"]])
-                        for p in ([projects[proj]] if proj else [d["default"] for _, d in pols])]
-            need = allroles.get(a["role"], {}).get("requirements", {}).get("allowed_data_classes", [])
             for i, ch in enumerate(a["chain"]):
-                prov, w = entry(conn, ch["connection"]), f"{aid}: chain[{i}]"
+                prov = entry(conn, ch["connection"])
                 if prov is None or prov["kind"] != "provider":
                     continue   # its x-ref (connections, kind provider) refuses it, naming the field
-                pn = idn(prov["id"])
-                if not prov["enabled"]:
-                    P(rid, f"{w}: {pn} is switched off")
-                if ch["model"] not in [m["id"] for m in prov["models"]]:
-                    P(rid, f"{w}.model ({desc(ch['model'])}) is not listed for {pn}")
-                if mode and reach(prov) not in mode["allowed_localities"]:
-                    P(rid, f"{w}: {pn} is {reach(prov)} for routing, which effort mode {idn(a['effort_mode'])} forbids")
-                if not all(policy_allows(p, prov) for p in policies):
-                    P(rid, f"{w}: {pn} is not allowed by the data policy for {idn(proj) if proj else 'the default'} (an override never widens the policy)")
-                for m in route_problems(pols, need, prov, now, pid):
-                    P(rid, f"{w}: {pn} {m['text']}")
-                if any(k not in prov["data_policy"]["data_classes_allowed"] for k in need):   # an empty list allows no class
-                    P(rid, f"{w}: {pn} does not allow every data class that role {idn(a['role'])} handles")
-                if a["role"] not in prov.get("allowed_roles", []):   # an empty list allows no role
-                    P(rid, f"{w}: {pn} does not list role {nm(a['role'], allroles, 'role')} in its allowed_roles")
+                for m in link_problems(table, a["role"], prov, ch["model"], mode and mode["allowed_localities"], a["effort_mode"], policies,
+                                       idn(pid) if listed else "the default", pols, now, pid):
+                    P(rid, f"{aid}: chain[{i}]: {m}")
 
 
 def scope_problems(g):
-    """A grant's scope against itself: level project names its project, level global names none (no scope at all: Stella-wide)."""
-    sc = g.get("scope")
-    return [] if sc is None or (sc["level"] == "project") == ("project" in sc) else \
-        [f"scope.level {sc['level']} {'needs' if sc['level'] == 'project' else 'has no'} project"]
+    """A grant's scope against itself: level project names its project, level global names none (no scope at all: Stella-wide);
+    the project is named by its alias, as grant_in_force compares it (W1-RT-08: under a global_id the grant would hold nowhere)."""
+    sc = g.get("scope") or {"level": "global"}
+    return ([] if (sc["level"] == "project") == ("project" in sc) else [f"scope.level {sc['level']} {'needs' if sc['level'] == 'project' else 'has no'} project"]) \
+        + (["scope.project is a global_id: a grant names its project by its alias"] if re.fullmatch(UUID, str(sc.get("project"))) else [])
 
 
 def order_problems(order, classes, at):
@@ -1033,20 +1056,29 @@ def inside_state(rel, idx):
         return False
 
 
+def has_links(mode, x):
+    """Whether a preset `mode` gives a role (x: its row of the preset's roles) anything to resolve from, as the resolver builds
+    a chain: off, or a pin, a fallback, a class order (its own, else the preset's), a last resort (likewise) or a needs class."""
+    return bool(not x["active"] or x.get("pins") or x.get("fallbacks") or x.get("class_order", mode.get("class_order"))
+                or (x["last_resort"] if "last_resort" in x else mode.get("last_resort")) is not None or mode.get("needs_class") is not None)
+
+
 def rule_presets(c):
     """The presets (effort modes) against the routing data, the catalog and the role table (F2 D1.9): every class, preset and
     role a preset names exists; no preset turns off a role the workflow requires (always, or under a trigger that can fire:
-    OFF_REQUIRED); no active role keeps a pin or a fallback whose model is not listed for its connection or does not meet the
-    role's requirements by the catalog's advertised capabilities (CHAIN_FAILS). An inactive role's links are not judged."""
+    OFF_REQUIRED) or an exempt role (it stays on under every preset); no active role keeps a pin or a fallback that
+    link_problems() refuses (CHAIN_FAILS; an inactive role's links are not judged); no active role is left with no link at
+    all (W1-RT-02: nothing to resolve from is off in effect; OFF_REQUIRED for a role the workflow requires, else CHAIN_FAILS)."""
     P, table, conn = c["P"], c["table"], c["by"].get("connections", {})
     roles = set(table["roles"]) - {table["fallback_role"]}   # the fail-closed row is no role to route
     for _, rt in c["whole"].get("routing", []):
-        classes, wf = {x["id"] for x in rt["link_classes"]}, rt["workflow"]
+        classes, wf, exempt = {x["id"] for x in rt["link_classes"]}, rt["workflow"], {x["role"] for x in rt["exempt_roles"]}
         need = {x["role"] for x in wf["required_roles"] if x["when"] == "always" or wf["triggers"].get(x["when"], {}).get("can_fire")}
         for rid, ra in c["whole"].get("role-assignments", []):
             for a in ra["assignments"]:
                 for m in order_problems(a.get("class_order", []), classes, f"{idn(a['id'])}: class_order"):
                     P(rid, m)
+            owned = {(a["role"], a["effort_mode"]) for a in ra["assignments"] if a["scope"]["level"] == "global"}   # the owner's pins, in every project
             for pid, mode in ra["effort_modes"].items():
                 w = f"preset {kname(pid)}"
                 if mode.get("based_on") is not None and mode["based_on"] not in ra["effort_modes"]:
@@ -1064,29 +1096,44 @@ def rule_presets(c):
                     if not x["active"]:
                         if r in need:
                             P(rid, Coded(OFF_REQUIRED, f"{w} turns off role {idn(r, True)}, which the workflow requires (routing data, workflow.required_roles)"))
+                        elif r in exempt:
+                            P(rid, f"{w} turns off role {idn(r, True)}, which is exempt from the presets and stays on under every one (routing data, exempt_roles)")
                         continue
+                    last = x["last_resort"] if "last_resort" in x else mode.get("last_resort")
                     for f in ("pins", "fallbacks"):
                         for i, l in enumerate(x.get(f, [])):
                             prov = entry(conn, l["connection"])
                             if prov is None or prov["kind"] != "provider":
                                 continue   # its x-ref (connections, kind provider) refuses it, naming the field
-                            mod = next((m for m in prov["models"] if m["id"] == l["model"]), None)
-                            miss = ["its model is not listed for its connection"] if mod is None else unmet(table["roles"][r]["requirements"], mod["capabilities"])
+                            # as the resolver: the preset's localities bind neither an exempt role nor a link of the last-resort class
+                            free = r in exempt or last is not None and link_class(prov, l["model"], rt) == last
+                            miss = link_problems(table, r, prov, l["model"], None if free else mode["allowed_localities"], pid)
                             if miss:
-                                P(rid, Coded(CHAIN_FAILS, f"{w}: role {idn(r, True)}: {f}[{i}] fails the role's requirements ({', '.join(miss)})"))
+                                P(rid, Coded(CHAIN_FAILS, f"{w}: role {idn(r, True)}: {f}[{i}] fails the role's requirements ({'; '.join(miss)})"))
+                # an active role with nothing to resolve from: a role the preset does not list follows the preset and is active
+                bare = {r for r in roles - exempt if (r, pid) not in owned and not has_links(mode, mode.get("roles", {}).get(r, {"active": True}))}
+                for code, rs, why in ((OFF_REQUIRED, bare & need, ", which the workflow requires (routing data, workflow.required_roles)"), (CHAIN_FAILS, bare - need, "")):
+                    if rs:
+                        P(rid, Coded(code, f"{w} gives no link to {', '.join(idn(r, True) for r in sorted(rs))}{why}: "
+                                           "active with no pin, class order, needs class, fallback or last resort"))
 
 
 def rule_routing(c):
-    """The routing data against itself, the role table, the alert catalog and the index: ids listed once; every role it names is
-    assignable; an exempt role's class order names known classes; a required role's `when` is always or a trigger; a cooldown
-    is not above its cap; consent names an approval class and alert codes that exist; the credentials backend in use is
-    defined, and a dir backend lies inside a protected state path (DC-05: no role may read the keys)."""
+    """The routing data against itself, the role table, the alert catalog and the index: ids listed once, an exempt role too; a
+    hosted class less private than every class that is not hosted (W1-RT-06); every role it names is assignable; an exempt
+    role's class order names known classes; a required role's `when` is always or a trigger; a cooldown is not above its cap;
+    consent names an approval class and alert codes that exist; the credentials backend in use is defined, and a dir backend lies inside a protected state path (DC-05: no role may read the keys)."""
     P, table = c["P"], c["table"]
     roles = set(table["roles"]) - {table["fallback_role"]}
     for rid, rt in c["whole"].get("routing", []):
         for k in ("link_classes", "task_tiers", "drivers"):
             if len({x["id"] for x in rt[k]}) != len(rt[k]):
                 P(rid, f"{k}: an id is listed twice")
+        if len({x["role"] for x in rt["exempt_roles"]}) != len(rt["exempt_roles"]):   # the resolver takes one row per role
+            P(rid, "exempt_roles: a role is listed twice")
+        if any(h["privacy_rank"] <= n["privacy_rank"] for h in rt["link_classes"] if h["hosted"] for n in rt["link_classes"] if not n["hosted"]):
+            P(rid, "link_classes: a hosted class has a privacy_rank that is not above that of every class that is not hosted "
+                   "(a move to a hosted class is always a move to a less private one)")
         wf, co, cr = rt["workflow"], rt["consent"], rt["credentials"]
         for at, r in [(f"exempt_roles[{i}].role", x["role"]) for i, x in enumerate(rt["exempt_roles"])] \
                 + [(f"card_roles[{i}]", x) for i, x in enumerate(rt["card_roles"])] \

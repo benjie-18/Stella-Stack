@@ -359,7 +359,8 @@ F2b). A role not listed follows the preset's own values and is active. Shipped, 
 group of free cloud and local; frontier is its `needs_class` for the medium and complex tiers), eco (local, free cloud; last
 resort frontier), max (frontier, free cloud; last resort local), local_only (local). `selection` {`global`, `projects{}`,
 `cards{}`} names the active preset (card beats project beats global; ships standard). An assignment may add `class_order`
-(the owner's per-role override). Every key is optional, so a file written before F2 stays valid. The ids that cannot be null
+(the owner's per-role override). Every key is optional, but a preset must leave each active role something to resolve from
+(see "What `check` refuses"); a class order, where given, holds at least one class. The ids that cannot be null
 (`frontier_when.tiers`, the three `selection` levels) are x-refs: an unknown one is refused and never printed.
 *To add a preset:* add a key under `effort_modes` (blank, or a copy of any preset with `based_on`), then select it.
 
@@ -370,25 +371,40 @@ One owner-only document beside the presets: `link_classes[]` {`id`, `privacy_ran
 switches mid-task); `exempt_roles[]` {`role`, `class_order`, `in_fallback_chain`} (the preset class rules do not apply to
 them, and that is never a crossing); `card_roles[]` (the roles that work a card: the resolver needs the card);
 `workflow` {`required_roles[]` {`role`, `when`: `always` or a trigger id}, `triggers{}` {`can_fire`}}; `failover` {`triggers{}`
-by id {`cooldown_s`, `max_cooldown_s`, `scope` link or connection}, `same_connection_first`, `max_switches_per_task`,
+by id {`cooldown_s`, `max_cooldown_s`, `scope` link or connection} (exactly the trigger ids of the protocols schema, every
+one present: the schema pins the set), `same_connection_first`, `max_switches_per_task`,
 `retry_count`}; `consent` {`approval_class`, `ttl_s`, `alert_code_queue`, `alert_code_notice`}; `card_facts` {`when_missing`:
-per fact, what a missing record or field counts as; ships true, so hosted links are excluded}; `credentials` {`backend`,
+the card facts the resolver judges, each `true`: a fact that is not recorded counts as holding, so hosted links are excluded;
+`carries_secrets` and `vault_content` are required, `false` is refused, a new fact is added as a key}; `credentials` {`backend`,
 `backends{}` by id {`kind` none or dir, `path`}} (ships kind none: every read is refused until the secrets broker).
-*To add a link class, tier, driver or trigger:* add the entry; no code names one.
+*To add a link class, tier or driver:* add the entry; no code names one. A hosted class takes a `privacy_rank` above every
+class that is not hosted. *A failover trigger* is added to the protocols schema and to this file's schema together.
 **What `check` refuses** (rules `presets`, `routing`, `link classes`, `grant scopes` of `bin/stella_data.py`; an unknown id
 fails closed and is never printed): a class a `class_order`, `needs_class` or `last_resort` names that `link_classes` does not
 define; a `based_on` that is no preset; a role in a preset or in this file that is not an assignable role of the role table; a
 `when` that is neither `always` nor a trigger; a preset that sets `active: false` for a role `workflow.required_roles` lists as
-`always` or under a trigger that can fire (STL-MDL-725); an active role's pin or fallback whose model is not listed for its
-connection or does not meet the role's requirements by the catalog's advertised capabilities, a null one meeting none
-(STL-MDL-726; an inactive role's links are not judged); a link class with `hosted: false` on a link that leaves the machine
-(by `reach()`; the locality rules themselves read `reach()` only, never the label); an id listed twice; a cooldown above its
+`always` or under a trigger that can fire (STL-MDL-725), or for an exempt role; an active role's pin or fallback that the one
+link judge refuses (`stella_data.link_problems()`, which also judges every assignment chain: the connection switched off, not
+listing the role or not allowing every data class it handles, a CLI login without `terms_ok`, the model not listed or not
+meeting the role's requirements by the catalog's advertised capabilities, a null one meeting none, the link outside the
+preset's `allowed_localities` unless its class is the role's last resort) (STL-MDL-726; an inactive role's links are not
+judged; a preset has no project, so the project's policy and grants are judged for an assignment and by the resolver); a
+preset that leaves an active role no link at all: no pin (its own, or the owner's global assignment), class order, needs
+class, fallback or last resort (STL-MDL-725 for a required role, else STL-MDL-726); an empty class order; a link class with
+`hosted: false` on a link that leaves the machine
+(by `reach()`; the locality rules themselves read `reach()` only, never the label); a hosted class whose `privacy_rank` is
+not above that of every class that is not hosted; an id listed twice, an exempt role too; a cooldown above its
 cap; a consent approval class or alert code that does not exist; a credentials backend that is not defined, and a `dir`
-backend whose path is not inside a protected state path of the index; a grant whose scope level and project disagree.
+backend whose path is not inside a protected state path of the index; a grant whose scope level and project disagree, or
+whose scope names its project by a global_id (a grant names the alias). The policies of a project come from one helper,
+`stella_data.project_policies()` (the project's row, or every default, plus every Local only default: DC-04).
 **Built-in presets.** `bin/stella-apply.py apply` (a dry run too) refuses a candidate that changes any key of a preset marked
 `builtin: true`, drops it, or marks another preset `builtin: true` (a new id, or a custom preset turned into one: the owner
 could not edit or remove it afterwards) (STL-MDL-727, `stella_data.frozen()`); a custom preset (a new id, `builtin` false or
-absent) applies and can be changed. A candidate that drops a built-in preset something still names is refused by the validity check
+absent) applies and can be changed. The comparison is with the file only while the file holds its baseline's bytes (the
+applied ones; never applied: the committed ones). A file edited by hand, damaged or missing is compared instead with the
+document last applied, or, that not known, the committed one: a hand edit of a built-in preset is never recorded by an apply
+of the edited file, and putting the baseline's presets back is allowed. A candidate that drops a built-in preset something still names is refused by the validity check
 first (STL-CFG-313). `routing_state` and `card_facts` are protected state paths (`bin/roles.py` STATE_KEYS): no role reads or
 writes them.
 
