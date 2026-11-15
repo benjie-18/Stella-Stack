@@ -359,6 +359,17 @@
       "replaced_by": "the macOS platform keystore through the platform adapter (E3); until then the owner key is a 0600 file (index owner_key)",
       "global_id": "98327e31-a3ed-4f02-bffa-f5878fec1d22",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "bundled-tools-agent-readonly",
+      "owner_phase": "F1c",
+      "status": "on",
+      "depends_on": [],
+      "flag": null,
+      "due_phase": "E1",
+      "replaced_by": "E1 installs the bundled app's tools (hermes and its python) where the agent user cannot write, and points .stella/channels.json env.path and the Discord helper's interpreter at them; until then F1c-CVER-01 is an owner-accepted limit (2026-11-14): a same-user agent could replace hermes, which the owner's approvals.py runs",
+      "global_id": "6a9da681-ac0a-4380-88cc-5b62a5f06399",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }
