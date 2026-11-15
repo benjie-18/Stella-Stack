@@ -12,6 +12,7 @@ CLI (host only: every command refuses in a worker environment, STL-CFG-312; the 
       never switches inside an attempt.
   route.py result --task ID --link <connection>/<model> --outcome ok|<trigger id>
       the launcher reports how the attempt ended: a trigger puts the link in cooldown, so the next attempt starts on the next link.
+      One trusted event line per change: `routing.cooldown` (set), `routing.cooldown-cleared` (ok cleared one; none when it cleared none).
 A card app the resolver refuses (`apps[]` with a code) stops the task with that code before any link is judged.
 A step (one pick of a link, the same for call and attempt), in this order:
   1. the next link: the first of the chain that is usable or needs a grant, is not in cooldown, did not already fail in this task
@@ -29,17 +30,30 @@ A step (one pick of a link, the same for call and attempt), in this order:
      line with the routing data's consent.alert_code_notice, whatever the grant.
   6. one trusted event line: `routing.pick` with the resolver's reason, or `routing.switch` (STL-MDL-721) from the link left.
 A failure becomes a trigger by the wire shape's `errors` rows (status, body pattern; first match wins); the transport says timeout
-and server_error (no answer, no connection, an answer that is not JSON) and the answer check says malformed_tool_call (tool-call
-arguments that do not parse). An error no row maps is no failover trigger: the task stops (STL-MDL-710). A redirect is never followed.
+and server_error (no answer, no connection, an answer that cannot be parsed as JSON, whatever the reason) and the answer check says
+malformed_tool_call (tool-call arguments that do not parse). An error no row maps is no failover trigger: the task stops
+(STL-MDL-710). A redirect is never followed, and no proxy named in the environment is ever used.
 State (index key routing_state; not proof of anything): {links {"<connection>/<model>" or, for a trigger of scope connection,
 "<connection>": {trigger, since, until, failures, observed_limit}}, tasks {task: {switches, visited[], history[{link, trigger, at}],
 left}}}, read and written whole under a lock (temp file, rename), refused when it is, or passes through, a link. Cooldown: until =
-now + cooldown_s, doubled per repeated failure up to max_cooldown_s; one success clears it.
+now + cooldown_s, doubled per repeated failure up to max_cooldown_s; one success clears it (re-promotion: one
+`routing.cooldown-cleared` event line, in call too).
 shortcut: a task's entry stays in the state after the task ends, upgrade (prune) when the board reports task ends to this tool.
-Keys: bin/credentials.py get, into the request header only; never in a message, an event, the state or the output.
-Exit: 0 ok; 1 refused or failed (the catalog code and its plain message on stderr, {code, problem, ...} on stdout); 2 usage; 3 the
-task waits for the owner (a grant is needed)."""
-import argparse, contextlib, datetime, http.client, ipaddress, json, os, re, subprocess, sys, urllib.error, urllib.parse, urllib.request
+Keys: bin/credentials.py get, into the request header only; never in a message, an event, the state or the output (an answer that
+repeats the key is printed with the key masked).
+Imports: run without -I the tool restarts itself under `python3 -I`; the consent module is imported from this tool's own folder only.
+Exit: 0 ok; 1 refused or failed (the catalog code and its plain message on stderr, {code, problem, ...} on stdout; an error the
+tool did not foresee is STL-CFG-310 with the error's type, never a traceback); 2 usage; 3 the task waits for the owner (a grant is
+needed)."""
+import os, sys
+
+if __name__ == "__main__" and not sys.flags.isolated:   # run directly: PYTHONPATH and the current folder must not decide what is imported
+    try:
+        os.execv(sys.executable, [sys.executable, "-I", *sys.argv])
+    except OSError:   # fail closed: a tool that holds keys does not go on with modules it cannot vouch for
+        sys.exit("STL-CFG-310 route.py could not restart itself isolated (python3 -I); nothing was called")
+
+import argparse, contextlib, datetime, http.client, ipaddress, json, re, subprocess, urllib.error, urllib.parse, urllib.request
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -52,12 +66,14 @@ try:
     import resolve
 except ImportError:   # main() refuses: nothing is routed without the resolver
     resolve = None
-try:
-    import consent
-except ImportError:   # step 4: without it a link that needs a grant stops the task
-    consent = None
+consent = None   # step 4: without it a link that needs a grant stops the task
+if os.path.isfile(os.path.join(BIN, "consent.py")):   # this tool's own folder only: a module of that name elsewhere on the path never answers the gate
+    with contextlib.suppress(ImportError):
+        import consent
 
+# the alert selftest counts a code as used only when a script holds it as a literal: the notice's code is data (consent.alert_code_notice), shipped as STL-MDL-729
 NO_LINK, UNKNOWN, WAITING, SWITCH, MID_REFUSED, STOPPED = "STL-MDL-710", "STL-MDL-711", "STL-MDL-719", "STL-MDL-721", "STL-MDL-722", "STL-MDL-723"
+UNEXPECTED = "STL-CFG-310"   # an error this tool did not foresee: one coded line with the error's type, never its text
 TIMEOUT_KEY = "CALL_TIMEOUT"   # the settings registry key: the seconds one model call may take
 TIMED_OUT, DOWN, MALFORMED = "timeout", "server_error", "malformed_tool_call"   # triggers no errors row of a wire shape can say
 CONTEXT_STUB = "routing-advertised-context"   # the features entry the context check rests on until F2b's probe
@@ -135,6 +151,8 @@ def state():
                     st = json.loads(f.read(el.MAX_FILE + 1))
             except FileNotFoundError:
                 st = {}
+            except RecursionError:
+                raise ValueError("is nested too deeply") from None
             if not (isinstance(st, dict) and all(isinstance(st.setdefault(k, {}), dict) and all(isinstance(v, dict) for v in st[k].values())
                                                  for k in ("links", "tasks"))):
                 raise ValueError("does not hold links and tasks")
@@ -162,7 +180,8 @@ def cooling(st, link, t):
 
 
 def failed(st, rt, task, link, trigger, t):
-    """The link (or its connection, by the trigger's scope) goes into cooldown, and the task notes the failure and leaves the link."""
+    """The link (or its connection, by the trigger's scope) goes into cooldown, and the task notes the failure and leaves the link.
+    Returns the state key that cools."""
     tr, key = rt["failover"]["triggers"][trigger], resolve.link_key(link)
     at = link["connection"] if tr["scope"] == "connection" else key
     old = st["links"].get(at, {})
@@ -174,12 +193,12 @@ def failed(st, rt, task, link, trigger, t):
     ts["history"].append({"link": key, "trigger": trigger, "at": t.strftime(TIME)})
     ts["visited"] += [key] if key not in ts["visited"] else []
     ts["left"] = key
+    return at
 
 
 def succeeded(st, link):
-    """One success clears the link's cooldown, and its connection's (re-promotion)."""
-    for k in (resolve.link_key(link), link["connection"]):
-        st["links"].pop(k, None)
+    """One success clears the link's cooldown, and its connection's (re-promotion): the state keys it cleared."""
+    return [k for k in (resolve.link_key(link), link["connection"]) if st["links"].pop(k, None) is not None]
 
 
 # ---- alerts and events ----
@@ -190,7 +209,13 @@ def alert(code, problem):
 
 
 def event(kind, a, code=None, old=None, new=None, detail=None):
-    el.append(el.build(kind, f"task {a.task}", old=old, new=new, code=code, detail=detail, who={"role": a.role}))
+    el.append(el.build(kind, f"task {a.task}", old=old, new=new, code=code, detail=detail, who={"role": getattr(a, "role", None)}))   # result names no role
+
+
+def cleared_event(a, keys, detail):
+    """One trusted line for the cooldowns a success cleared (re-promotion); none when it cleared nothing."""
+    if keys:
+        event("routing.cooldown-cleared", a, old={"links": keys}, detail=detail)
 
 
 def ctx_of(a):
@@ -320,7 +345,7 @@ def malformed(sample, got):
         if isinstance(got, str):
             try:
                 json.loads(got)
-            except ValueError:
+            except (ValueError, RecursionError):   # nested too deeply is no ValueError
                 return True
         return False
     if isinstance(sample, list) and isinstance(got, list):
@@ -335,7 +360,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None   # the key goes to the catalog's host and nowhere else
 
 
-OPENER = urllib.request.build_opener(NoRedirect)
+OPENER = urllib.request.build_opener(NoRedirect, urllib.request.ProxyHandler({}))   # no proxy from the environment, ever: the prompt and the key go to the catalog's host
 
 
 def send(prov, proto, link, prompt, key, timeout, local):
@@ -368,7 +393,7 @@ def send(prov, proto, link, prompt, key, timeout, local):
         return None, classify(proto, status, text), status
     try:
         doc = json.loads(text)
-    except ValueError:
+    except Exception:   # an answer that cannot be parsed, whatever the reason (a body nested too deeply raises RecursionError, no ValueError)
         return None, DOWN, status
     calls = ptr(doc, rs["tool_calls"])
     if malformed(rs.get("tool_calls_sample"), calls):
@@ -391,8 +416,9 @@ def resolved(a, rt, mid):
 
 
 def out(a, link, hist, refused, stubs, **more):
-    print(json.dumps({"task": a.task, "link": {"connection": link["connection"], "model": link["model"]}, "link_class": link.get("link_class"),
-                      "parameters": link.get("parameters") or {}, **more, "failure_history": hist, "refused": refused, "stubs": stubs}))
+    """The one output line, scrubbed: an answer may repeat the key it was sent."""
+    print(el.scrub(json.dumps({"task": a.task, "link": {"connection": link["connection"], "model": link["model"]}, "link_class": link.get("link_class"),
+                               "parameters": link.get("parameters") or {}, **more, "failure_history": hist, "refused": refused, "stubs": stubs})))
 
 
 def cmd_call(a):
@@ -415,19 +441,20 @@ def cmd_call(a):
                 key = credentials.get(prov["secrets"][0])
             except credentials.Refused as x:
                 raise Stop(x.code, f"link {resolve.link_key(link)}: {x.problem}") from None
-            el.SECRETS.add(key)   # scrubbed from every event detail and alert text of this run
+            el.SECRETS.update((key, json.dumps(key)[1:-1]))   # scrubbed from every event detail, alert text and output of this run (the output is JSON: its escaped form too)
         for _ in range(rt["failover"]["retry_count"] + 1):
             ans, trigger, status = send(prov, protos[prov["protocol"]], link, prompt, key, timeout, local)
             if ans is not None:
                 break
         with state() as st:
             if ans is not None:
-                succeeded(st, link)
+                cleared = succeeded(st, link)
             elif trigger in rt["failover"]["triggers"]:
                 failed(st, rt, a.task, link, trigger, now())
             ts = task_of(st, a.task)
             hist, n = list(ts["history"]), ts["switches"]
         if ans is not None:
+            cleared_event(a, cleared, "the link answered")
             out(a, link, hist, refused, stubs, **ans, switches=n)
             return 0
         if trigger not in rt["failover"]["triggers"]:
@@ -453,7 +480,15 @@ def cmd_result(a):
     if a.outcome != "ok" and a.outcome not in rt["failover"]["triggers"]:
         raise Stop(UNKNOWN, "the outcome is neither ok nor a failover trigger of the routing data")
     with state() as st:
-        succeeded(st, link) if a.outcome == "ok" else failed(st, rt, a.task, link, a.outcome, now())
+        if a.outcome == "ok":
+            cleared = succeeded(st, link)
+        else:
+            at = failed(st, rt, a.task, link, a.outcome, now())
+            cooled = {"link": at, **st["links"][at]}
+    if a.outcome == "ok":   # one trusted line per change of a cooldown, written after the state (never under its lock)
+        cleared_event(a, cleared, "the launcher reported a success")
+    else:
+        event("routing.cooldown", a, new=cooled, detail=f"the launcher reported {a.outcome}")
     print(json.dumps({"task": a.task, "link": link, "outcome": a.outcome}))
     return 0
 
@@ -479,16 +514,19 @@ def main(argv):
         if resolve is None:
             raise Stop(NO_LINK, "the resolver is not installed, so no chain can be read")
         return {"call": cmd_call, "attempt": cmd_attempt, "result": cmd_result}[a.cmd](a)
-    except Stop as s:
-        print(json.dumps({"task": a.task, "code": s.code, "problem": el.scrub(s.problem), "refused": getattr(a, "refused", [])}))
-        el.say(s.code, s.problem, alert=s.alert)
-        return s.rc
+    except Stop as x:
+        s = x
     except el.EventError as e:   # no pick, switch or notice without its trusted line
         return el.fail(e.code, e.problem, e.extra)
     except settings.Refuse as e:
         return el.fail(e.code, e.problem)
     except sd.DataError as e:
         return el.fail(getattr(e, "code", "STL-CFG-310"), str(e)[:180])
+    except Exception as e:   # never a traceback, never the error's text (it could repeat a value): the type only
+        s = Stop(UNEXPECTED, f"{type(e).__name__}, an unexpected failure of route.py {a.cmd}")
+    print(json.dumps({"task": a.task, "code": s.code, "problem": el.scrub(s.problem), "refused": getattr(a, "refused", [])}))
+    el.say(s.code, s.problem, alert=s.alert)
+    return s.rc
 
 
 if __name__ == "__main__":
