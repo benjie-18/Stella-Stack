@@ -543,6 +543,7 @@ def main(argv):
         p.add_argument("--" + k, required=True)
     p.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
+    extra = None   # an event-log refusal's own values for its catalog message
     try:
         w = worker_env.reason()
         if w:
@@ -556,15 +557,16 @@ def main(argv):
     except Stop as x:
         s = x
     except el.EventError as e:   # no pick, switch or notice without its trusted line
-        return el.fail(e.code, e.problem, e.extra)
+        s, extra = Stop(e.code, e.problem), e.extra
     except settings.Refuse as e:
-        return el.fail(e.code, e.problem)
+        s = Stop(e.code, e.problem)
     except sd.DataError as e:
-        return el.fail(getattr(e, "code", "STL-CFG-310"), str(e)[:180])
+        s = Stop(getattr(e, "code", "STL-CFG-310"), str(e)[:180])
     except Exception as e:   # never a traceback, never the error's text (it could repeat a value): the type only
         s = Stop(UNEXPECTED, f"{type(e).__name__}, an unexpected failure of route.py {a.cmd}")
+    # every refusal, whichever module raised it: the JSON line on stdout and the catalog line on stderr
     print(json.dumps({"task": a.task, "code": s.code, "problem": el.scrub(s.problem), "refused": getattr(a, "refused", [])}))
-    el.say(s.code, s.problem, alert=s.alert)
+    el.say(s.code, s.problem, alert=s.alert, extra=extra)
     return s.rc
 
 
