@@ -1074,4 +1074,19 @@ for k in sys.argv[2:]:
 ok 'r=$(STUB_WORKER_MARK=1 KR); [ "$(echo $r)" = "owner_key:STL-CFG-312 event_writer_state:STL-CFG-312" ] && ! echo "$r" | grep -q "$FK"' "265a in a worker, stella_data.load() of the owner key and of the writer state refuses with STL-CFG-312, the key never returned"
 ok 'STUB_WORKER_MARK=1 STELLA_ROOT=$T/wk python3 -I "$SD" validate event "$T/wk/$(jq -r .event_writer_state "$ROOT/.stella/data-files.json")" >"$T/o" 2>&1; [ $? = 1 ] && grep -q "^STL-CFG-312 " "$T/o" && ! grep -q "$FK" "$T/o"' "265b in a worker, the CLI reading the writer state as a file refuses with one STL-CFG-312 line, no key"
 ok 'STUB_WORKER_MARK=1 sd wk get connections --json >/dev/null 2>"$T/o" && STUB_WORKER_MARK=1 sd wk check >"$T/o" 2>&1' "265c control: in a worker, reads of non-secret data (get, check) still work"
+# F1c CRT-F-5: untrusted_events, the one state path a worker writes, never is, holds or lies inside another state path of the index
+WI=$T/wk/.stella/data-files.json; cp "$WI" "$T/wk.idx"
+for k in owner_key event_writer_state event_log approval_store applied_state backup_dir role_table; do
+  v=$(jq -r ".$k" "$T/wk.idx"); [ "$k" = approval_store ] && v="$v/requests/apr-zz.json"
+  jq --arg v "$v" '.untrusted_events = $v' "$T/wk.idx" >"$WI"
+  ok 'refuses wk check && grep -q "^STL-CFG-310 .*untrusted_events" "$T/o"' "266a check refuses untrusted_events = (or inside) the $k path, STL-CFG-310"
+done
+jq --arg v "$(dirname "$(jq -r .owner_key "$T/wk.idx")")" '.untrusted_events = $v' "$T/wk.idx" >"$WI"
+ok 'refuses wk check && grep -q "^STL-CFG-310 .*untrusted_events" "$T/o"' "266b check refuses an untrusted_events that holds a state path (the owner key's folder)"
+KP=$T/wk/$(jq -r .owner_key "$T/wk.idx"); s0=$(sha256sum <"$KP")
+jq --arg v "$(jq -r .owner_key "$T/wk.idx")" '.untrusted_events = $v' "$T/wk.idx" >"$WI"
+STUB_WORKER_MARK=1 STELLA_ROOT=$T/wk python3 -I "$BIN/event_untrusted.py" append --type zz --what zz >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q "^STL-CFG-318 " "$T/o" && [ "$(sha256sum <"$KP")" = "$s0" ]' "266c a worker's untrusted line never lands in the owner key file: event_untrusted.py append refuses STL-CFG-318 ($rc)"
+cp "$T/wk.idx" "$WI"
+ok 'sd wk check >"$T/o" 2>&1 && STUB_WORKER_MARK=1 STELLA_ROOT=$T/wk python3 -I "$BIN/event_untrusted.py" append --type zz --what zz >"$T/o" 2>&1' "266d control: the shipped index checks and a worker's untrusted line is appended"
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

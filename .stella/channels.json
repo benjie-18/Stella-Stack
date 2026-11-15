@@ -7,8 +7,7 @@
     "path": [
       "/usr/local/bin",
       "/usr/bin",
-      "/bin",
-      "/home/node/.local/bin"
+      "/bin"
     ],
     "pass": [
       "HOME",
@@ -16,9 +15,9 @@
       "STELLA_ROOT",
       "OWNER_CONFIG",
       "ESCALATE_SUP_DIR",
-      "HERMES_HOME",
-      "HERMES_PY"
-    ]
+      "HERMES_HOME"
+    ],
+    "worker_token": "approval-service-child"
   },
   "resume": {
     "argv": [

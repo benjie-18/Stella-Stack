@@ -24,7 +24,7 @@ CLI: owner_auth.py check                    the policy is valid (schema, ids, pa
                                             provider ids used, and the nonces are spent
 Refused (exit 1, the code and its plain message, one alert line): init-key, prove and verify in a worker environment
 (bin/worker_env.py), STL-CFG-312, and so is every read of the owner key (read_key(), whatever the entry point); an invalid policy,
-STL-CFG-310; STL-OWN-801..809, 811..813 (docs/alert-codes.md). Exit 2: usage, or an action file that is not an action. The key
+STL-CFG-310; STL-OWN-801..809, 811..813, 816 (docs/alert-codes.md). Exit 2: usage, or an action file that is not an action. The key
 never appears in any output."""
 import datetime, fcntl, hashlib, hmac, json, os, re, secrets, signal, stat, subprocess, sys, time
 BIN = os.path.dirname(os.path.abspath(__file__))
@@ -343,7 +343,10 @@ def spend(used, nonces):
 def remote_change(pol, ctx, nonces):
     """An accepted device-signed request: one more remote owner change in <store>/remote (one file per change, named
     <epoch>-<nonce>; a name that is not that counts as recent), refused STL-OWN-813 at remote.rate_limit within its window; else
-    the nonces are spent and one alert with remote.alert_code is written."""
+    one alert with remote.alert_code is written FIRST (B6: no remote change without its alert; a line that cannot be written is
+    STL-OWN-816, nothing spent), then the nonces are spent and the change recorded."""
+    code = pol["remote"]["alert_code"]
+    what = f"{ctx['action']['op']} {ctx['action']['target']} ({ctx['cls']}), signed by device {', '.join(ctx['devices'])}"
     lim, fd = pol["remote"]["rate_limit"], store_fd("remote")
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)   # two racing requests never both take the last place
@@ -356,11 +359,13 @@ def remote_change(pol, ctx, nonces):
                 recent.append(n)
         if len(recent) >= lim["count"]:
             raise Refusal("STL-OWN-813", f"{len(recent)} remote owner changes in the last {lim['window_s']} s, the limit is {lim['count']}")
+        if not alert_catalog.log(*alert_catalog.render(code, {"problem": what})[1:]):
+            raise Refusal("STL-OWN-816", f"the {code} alert of a remote owner change ({what}) could not be written to the alert log")
         spend(ctx["used"], nonces)
         os.close(os.open(f"{now}-{ctx['used'][0][1]['nonce']}", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=fd))
     finally:
         os.close(fd)
-    sd.say(pol["remote"]["alert_code"], f"{ctx['action']['op']} {ctx['action']['target']} ({ctx['cls']}), signed by device {', '.join(ctx['devices'])}", alert=True)
+    sd.say(code, what)   # its alert line is already written
 
 
 def store_dir():

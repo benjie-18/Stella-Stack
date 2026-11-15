@@ -137,7 +137,8 @@ def render(code, kv, sample=False):
 
 
 def log(tag, kv):
-    """One line per alert, code first, raw values (repr: newlines escaped). A log failure never stops the alert."""
+    """One line per alert, code first, raw values (repr: newlines escaped). A log failure never stops the alert; True when the
+    line was written (a caller that must not go on without its alert line checks it)."""
     sup = os.environ.get("ESCALATE_SUP_DIR") or f"{ROOT}/.supervisor"
     try:
         os.makedirs(f"{sup}/logs", exist_ok=True)
@@ -145,7 +146,8 @@ def log(tag, kv):
         with open(f"{sup}/logs/alerts.log", "a", encoding="utf-8") as f:
             f.write(f"{tag} {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {fields}\n")
     except OSError:
-        pass
+        return False
+    return True
 
 
 def pairs(args):
