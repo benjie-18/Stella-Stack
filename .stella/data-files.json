@@ -256,6 +256,18 @@
       "record_kind": "endpoint",
       "global_id": "7eb8dcdd-3861-4208-8e88-1c5a9301e51d",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "protocols",
+      "path": ".stella/protocols.json",
+      "schema": "protocols",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "790623bf-5381-42cc-9eae-e8c9bbc37391",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

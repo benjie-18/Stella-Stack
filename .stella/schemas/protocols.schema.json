@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Wire protocols",
+  "description": "The wire shapes a model server speaks (F2 B5), as data: how to build a request, where to read the answer, how an error answer maps to a failover trigger. A shape is a row; adding one needs no code change. Templates: {model}, {key} and {prompt} are replaced inside any string, a string that is exactly {max_tokens} becomes the integer. The host is never in this file; a connection supplies it. Pointers are RFC 6901. The mock provider (bin/mock_provider.py) serves any shape from this file.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$", "description": "A neutral name of the API style."},
+          "request": {
+            "type": "object",
+            "properties": {
+              "method": {"enum": ["POST", "PUT"]},
+              "path": {"type": "string", "pattern": "^/", "description": "Path template; holds {model} or the body does."},
+              "headers": {"type": "object", "description": "Header templates; the key placeholder {key} goes here and nowhere else."},
+              "body": {"type": "object", "description": "Body template: messages, tools, max tokens."}
+            },
+            "required": ["path", "headers", "body"],
+            "additionalProperties": false
+          },
+          "response": {
+            "type": "object",
+            "properties": {
+              "text": {"type": "string", "pattern": "^/"},
+              "tool_calls": {"type": "string", "pattern": "^/"},
+              "usage": {"type": "string", "pattern": "^/"},
+              "model": {"type": "string", "pattern": "^/"},
+              "usage_keys": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string"}, "description": "Names of the input and output token counts inside usage (used by the mock to build an answer)."},
+              "tool_calls_sample": {"description": "The value found at the tool_calls pointer in an answer with a tool call; the string {arguments} is the tool arguments (used by the mock)."}
+            },
+            "required": ["text", "tool_calls", "usage", "model"],
+            "additionalProperties": false
+          },
+          "errors": {
+            "type": "array",
+            "description": "First match wins: put the more specific rows (a body pattern) first.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "status": {"type": ["integer", "string", "array"], "description": "A status, [lo, hi], \"5xx\" or \"500-599\"."},
+                "body_pattern": {"type": "string", "description": "A regex searched in the raw body."},
+                "trigger": {"enum": ["rate_limit", "daily_cap", "timeout", "server_error", "malformed_tool_call", "model_gone", "context_too_small"]},
+                "sample_body": {"type": "string", "description": "A body the server sends for this error (used by the mock); it matches body_pattern."}
+              },
+              "required": ["status", "trigger"],
+              "additionalProperties": false
+            }
+          },
+          "models_path": {"type": "string", "pattern": "^/"},
+          "models_list": {
+            "type": "object",
+            "description": "How the model list answer is laid out (used by the mock): the list at pointer items, each model as an object whose field holds prefix + the model id.",
+            "properties": {
+              "items": {"type": "string", "pattern": "^/"},
+              "field": {"type": "string"},
+              "prefix": {"type": "string"}
+            },
+            "required": ["items", "field", "prefix"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["id", "request", "response", "errors", "models_path", "models_list"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["schema_version", "entries"],
+  "additionalProperties": false
+}
