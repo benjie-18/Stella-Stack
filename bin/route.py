@@ -16,9 +16,12 @@ CLI (host only: every command refuses in a worker environment, STL-CFG-312; the 
 A card app the resolver refuses (`apps[]` with a code) stops the task with that code before any link is judged.
 A step (one pick of a link, the same for call and attempt), in this order:
   1. the next link: the first of the chain that is usable or needs a grant, is not in cooldown, did not already fail in this task
-     (the loop guard) and was not refused in this run; with failover.same_connection_first, a link of the connection the task just
-     left goes first. None left: STL-MDL-710 (nothing failed yet) or STL-MDL-723.
-  2. a switch (the task left a link after a failure) past failover.max_switches_per_task stops the task: STL-MDL-723.
+     (the loop guard) and was not refused in this run; when the link the task last used is none of these, a link of that link's
+     connection goes first (failover.same_connection_first). None left: STL-MDL-710 (nothing failed yet) or STL-MDL-723.
+  2. a switch: the task's entry keeps the link it last used, and any other link is a switch from it, whoever made that link cool
+     down (this task's failure, another task's, a launcher's report) and also back to an earlier link that is usable again. A
+     switch past failover.max_switches_per_task stops the task (STL-MDL-723); a task with no switch left stays on its last link
+     while that one can be used.
   3. call only: a link with no wire shape cannot be called here; a switch is mid-task, so the link must allow it (`mid_task` of the
      chain), its advertised context window must hold the conversation (stub routing-advertised-context, named in `stubs`) and a
      pending tool call must stay on the same wire shape; else the switch is refused (STL-MDL-722, one event line) and the next
@@ -26,19 +29,24 @@ A step (one pick of a link, the same for call and attempt), in this order:
   4. a link that needs a grant is never skipped: with a card and a module `consent`, consent.gate(ctx, link) -> {status: granted |
      waiting | queued, code?, request_id?} decides; with no card or no such module the task stops with STL-MDL-719 and one inbox
      alert, and no approval request is raised. A task that waits exits 3.
-  5. a link of a less private class (higher privacy_rank) than the class of the chain's first link: one inbox alert and one event
-     line with the routing data's consent.alert_code_notice, whatever the grant.
-  6. one trusted event line: `routing.pick` with the resolver's reason, or `routing.switch` (STL-MDL-721) from the link left.
+  5. a link of a less private class (higher privacy_rank) than the link the task used before (design D4), or, on the task's first
+     pick, than the chain's first link that is usable or needs a grant (never an excluded or cooling head): one inbox alert and one
+     event line with the routing data's consent.alert_code_notice, whatever the grant.
+  6. one trusted event line: `routing.switch` (STL-MDL-721) from the link left, else `routing.pick` with the resolver's reason.
 A failure becomes a trigger by the wire shape's `errors` rows (status, body pattern; first match wins); the transport says timeout
-and server_error (no answer, no connection, an answer that cannot be parsed as JSON, whatever the reason) and the answer check says
+(the whole answer has one deadline of CALL_TIMEOUT seconds, however the bytes arrive) and server_error (no answer, no connection, an
+answer that cannot be parsed as JSON, whatever the reason, or that holds no text and no tool call) and the answer check says
 malformed_tool_call (tool-call arguments that do not parse). An error no row maps is no failover trigger: the task stops
-(STL-MDL-710). A redirect is never followed, and no proxy named in the environment is ever used.
+(STL-MDL-710). A redirect is never followed, and no proxy named in the environment is ever used. The prompt is read as bytes: what
+is not UTF-8 is replaced.
 State (index key routing_state; not proof of anything): {links {"<connection>/<model>" or, for a trigger of scope connection,
 "<connection>": {trigger, since, until, failures, observed_limit}}, tasks {task: {switches, visited[], history[{link, trigger, at}],
-left}}}, read and written whole under a lock (temp file, rename), refused when it is, or passes through, a link. Cooldown: until =
+last}}}, read and written whole under a lock (temp file, rename), refused when it is, or passes through, a link. Cooldown: until =
 now + cooldown_s, doubled per repeated failure up to max_cooldown_s; one success clears it (re-promotion: one
 `routing.cooldown-cleared` event line, in call too).
-shortcut: a task's entry stays in the state after the task ends, upgrade (prune) when the board reports task ends to this tool.
+A task id longer than MAX_TASK characters is refused (STL-MDL-711), and a write keeps the MAX_TASKS task entries used last.
+shortcut: a task's entry leaves the state only when MAX_TASKS other tasks were used after it (its loop guard and history go with
+it), upgrade (prune at the task's end) when the board reports task ends to this tool.
 Keys: bin/credentials.py get, into the request header only; never in a message, an event, the state or the output (an answer that
 repeats the key is printed with the key masked).
 Imports: run without -I the tool restarts itself under `python3 -I`; the consent module is imported from this tool's own folder only.
@@ -53,7 +61,7 @@ if __name__ == "__main__" and not sys.flags.isolated:   # run directly: PYTHONPA
     except OSError:   # fail closed: a tool that holds keys does not go on with modules it cannot vouch for
         sys.exit("STL-CFG-310 route.py could not restart itself isolated (python3 -I); nothing was called")
 
-import argparse, contextlib, datetime, http.client, ipaddress, json, re, subprocess, urllib.error, urllib.parse, urllib.request
+import argparse, contextlib, datetime, http.client, ipaddress, json, re, subprocess, time, urllib.error, urllib.parse, urllib.request
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -81,6 +89,7 @@ USABLE, NEEDS_GRANT, GRANTED = "usable", "needs_grant", "granted"   # the resolv
 TIME = "%Y-%m-%dT%H:%M:%SZ"
 HOST = re.compile(r"[A-Za-z0-9]([A-Za-z0-9.-]{0,253}[A-Za-z0-9])?")   # a host name or IPv4 address: nothing that could add a path or a user
 WAIT = 3
+MAX_TASK, MAX_TASKS = 200, 1000   # shortcut: the longest task id and the task entries the state keeps are limits in code, upgrade when the routing data carries them
 
 
 class Stop(Exception):
@@ -160,13 +169,17 @@ def state():
             before = json.dumps(st, sort_keys=True)
             yield st
             if json.dumps(st, sort_keys=True) != before:
+                for k in list(st["tasks"])[:-MAX_TASKS]:   # the oldest entries go (task_of moves a used one to the end): the file stays bounded
+                    del st["tasks"][k]
                 write_whole(p, st)
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:   # the last three: a state of another shape met inside the block
         raise Stop(NO_LINK, f"the failover state file cannot be used ({el.why(e)[:120] if isinstance(e, (OSError, ValueError)) else 'it has another shape'})") from None
 
 
 def task_of(st, task):
-    return st["tasks"].setdefault(task, {"switches": 0, "visited": [], "history": [], "left": None})
+    """The task's entry, made when new, moved to the end of the tasks (the order a write prunes by). last: the link the task last used."""
+    ts = st["tasks"][task] = st["tasks"].pop(task, None) or {"switches": 0, "visited": [], "history": [], "last": None}
+    return ts
 
 
 def cooling(st, link, t):
@@ -192,7 +205,7 @@ def failed(st, rt, task, link, trigger, t):
     ts = task_of(st, task)
     ts["history"].append({"link": key, "trigger": trigger, "at": t.strftime(TIME)})
     ts["visited"] += [key] if key not in ts["visited"] else []
-    ts["left"] = key
+    ts["last"] = key   # also when a launcher reports a link no attempt of this tool named
     return at
 
 
@@ -225,15 +238,20 @@ def ctx_of(a):
 
 # ---- one step: the next link the task uses ----
 def next_link(chain, st, ts, rt, t, skip):
-    key = resolve.link_key
+    """The first link the task may use now (step 1). A task with no switch left stays on the link it last used while it can."""
+    key, last, fo = resolve.link_key, ts.get("last"), rt["failover"]
     c = [e for e in chain if e["status"] in (USABLE, NEEDS_GRANT) and key(e) not in ts["visited"] and key(e) not in skip and not cooling(st, e, t)]
-    if ts["left"] and rt["failover"]["same_connection_first"]:
-        c.sort(key=lambda e: e["connection"] != ts["left"].split("/", 1)[0])   # stable: the chain order holds inside each group
+    stay = next((e for e in c if key(e) == last), None)
+    if stay is not None and ts["switches"] >= fo["max_switches_per_task"]:
+        return stay
+    if last and stay is None and fo["same_connection_first"]:   # the task leaves its link: that connection's other links first
+        c.sort(key=lambda e: e["connection"] != last.split("/", 1)[0])   # stable: the chain order holds inside each group
     return c[0] if c else None
 
 
 def unfit(a, link, left, cat, tokens):
-    """Why the engine loop cannot use this link now (None: it can). Without `left` this is the task's first link, not a switch."""
+    """Why the engine loop cannot use this link now (None: it can). Without `left` (the link the task leaves) this is no switch:
+    the task's first link, or the link it last used."""
     prov, mod = model_of(cat, link)
     if not prov.get("protocol"):
         return "its connection has no wire shape (a worker CLI drives it, between attempts)"
@@ -255,13 +273,14 @@ def advance(a, doc, rt, cat, refused, tokens=None):
     while True:
         with state() as st:
             ts = task_of(st, a.task)
-            link, left, hist = next_link(chain, st, ts, rt, now(), {r["link"] for r in refused}), ts["left"], list(ts["history"])
+            link, prev, hist = next_link(chain, st, ts, rt, now(), {r["link"] for r in refused}), ts.get("last"), list(ts["history"])
+            key = resolve.link_key(link) if link else None
+            left = prev if prev and key != prev else None   # any other link than the one last used is a switch from it, whoever made that one cool down
             if link and left and ts["switches"] >= rt["failover"]["max_switches_per_task"]:
                 raise Stop(STOPPED, f"task {a.task} already switched {ts['switches']} times, the most the routing data allows")
         if link is None:
             why = "; ".join(dict.fromkeys(str(e.get("reason")) for e in chain if e.get("reason"))) or "the chain is empty"
             raise Stop(*((STOPPED, f"task {a.task} has no link left after {len(hist)} failed") if hist else (NO_LINK, f"role {a.role}: {why}")))
-        key = resolve.link_key(link)
         why = unfit(a, link, left, cat, tokens) if tokens is not None else None
         if why:
             refused.append({"link": key, "code": MID_REFUSED if left else NO_LINK, "reason": why})
@@ -276,20 +295,28 @@ def advance(a, doc, rt, cat, refused, tokens=None):
             g = consent.gate(ctx_of(a), link)
             if g.get("status") != GRANTED:
                 raise Stop(g.get("code") or WAITING, f"task {a.task}: link {key} needs a grant (request {g.get('request_id')})", WAIT, alert=False)
-        inf = float("inf")   # a class the routing data does not rank: the link's counts as least private, the head's as most (the owner is told)
-        if rank.get(link.get("link_class"), inf) > rank.get(chain[0].get("link_class"), -inf):
-            code, problem = rt["consent"]["alert_code_notice"], f"task {a.task} uses link {key} (class {link.get('link_class')}; the chain starts with class {chain[0].get('link_class')})"
+        # the notice's bar: the link the task used before (design D4); on a first pick the chain's first link that is usable or needs
+        # a grant, never an excluded or cooling head. A class the routing data does not rank, or a bar the chain no longer holds:
+        # the link's class counts as least private, the bar's as most (the owner is told).
+        base = next((e for e in chain if (resolve.link_key(e) == prev if prev else e["status"] in (USABLE, NEEDS_GRANT))), None) or {}
+        inf = float("inf")
+        if rank.get(link.get("link_class"), inf) > rank.get(base.get("link_class"), -inf):
+            was = f"the link it used before ({prev}, class {base.get('link_class')})" if prev else f"the first link its chain offers (class {base.get('link_class')})"
+            code, problem = rt["consent"]["alert_code_notice"], f"task {a.task} uses link {key} (class {link.get('link_class')}), less private than {was}"
             alert(code, problem)
             event("routing.notice", a, code, new={"link": key, "link_class": link.get("link_class")}, detail=problem)
         if left:
-            event("routing.switch", a, SWITCH, old={"link": left}, new={"link": key}, detail=f"after {hist[-1]['trigger']}" if hist else None)
+            h = hist[-1] if hist and isinstance(hist[-1], dict) else {}   # a history entry is read as data: any shape
+            own = h.get("link") == left and isinstance(h.get("trigger"), str)
+            event("routing.switch", a, SWITCH, old={"link": left}, new={"link": key},
+                  detail=f"after {h['trigger']}" if own else "no failure of this task: its last link is not the next link it may use now")
         else:
             dec = doc.get("decision") or {}
             event("routing.pick", a, new={"link": key, "link_class": link.get("link_class"), "preset": (doc.get("preset") or {}).get("id")},
                   detail=str(dec.get("reason") or dec.get("rule") or "the first link of the chain")[:500])
         with state() as st:
             ts = task_of(st, a.task)
-            ts["switches"], ts["left"] = ts["switches"] + (1 if left else 0), None
+            ts["switches"], ts["last"] = ts["switches"] + (1 if left else 0), key
         return link
 
 
@@ -379,12 +406,19 @@ def send(prov, proto, link, prompt, key, timeout, local):
     body = json.dumps(render(rq["body"], vals, mt if type(mt) is int else None)).encode()
     headers = {"Content-Type": "application/json", **{k: render(v, dict(vals, key=key or "")) for k, v in rq["headers"].items() if key or "{key}" not in v}}
     req = urllib.request.Request(f"{'http' if plain else 'https'}://{h['host']}:{h['port']}{path}", data=body, headers=headers, method=rq.get("method", "POST"))
+    end = time.monotonic() + timeout   # one deadline for the whole answer: a server that drips bytes holds no task
     try:
         try:
-            with OPENER.open(req, timeout=timeout) as r:   # shortcut: the timeout bounds each wait on the socket, not the whole call; upgrade with a deadline when streaming lands
-                status, raw = r.status, r.read(el.MAX_FILE + 1)
+            r = OPENER.open(req, timeout=timeout)
+            status = r.status
         except urllib.error.HTTPError as e:
-            status, raw = e.code, e.read(el.MAX_FILE + 1)
+            r, status = e, e.code
+        with r:   # shortcut: the deadline is checked between reads, so a status line or headers that drip in are bounded per socket wait only; upgrade with a timer around the whole call when streaming lands
+            raw = b""
+            while len(raw) <= el.MAX_FILE and (chunk := r.read1(1 << 16)):
+                raw += chunk
+                if time.monotonic() > end:
+                    raise TimeoutError
     except (OSError, http.client.HTTPException, ValueError) as e:
         slow = isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError)
         return None, TIMED_OUT if slow else DOWN, None
@@ -395,10 +429,12 @@ def send(prov, proto, link, prompt, key, timeout, local):
         doc = json.loads(text)
     except Exception:   # an answer that cannot be parsed, whatever the reason (a body nested too deeply raises RecursionError, no ValueError)
         return None, DOWN, status
-    calls = ptr(doc, rs["tool_calls"])
+    text, calls = ptr(doc, rs["text"]), ptr(doc, rs["tool_calls"])
     if malformed(rs.get("tool_calls_sample"), calls):
         return None, MALFORMED, status
-    return {"text": ptr(doc, rs["text"]), "tool_calls": calls, "usage": ptr(doc, rs["usage"]), "model": ptr(doc, rs["model"])}, None, status
+    if not text and not calls:   # nothing for the task: no success, so it clears no cooldown
+        return None, DOWN, status
+    return {"text": text, "tool_calls": calls, "usage": ptr(doc, rs["usage"]), "model": ptr(doc, rs["model"])}, None, status
 
 
 # ---- the commands ----
@@ -422,7 +458,7 @@ def out(a, link, hist, refused, stubs, **more):
 
 
 def cmd_call(a):
-    prompt = sys.stdin.read()
+    prompt = sys.stdin.buffer.read().decode("utf-8", "replace")   # bytes that are not UTF-8 (a tool's binary output) are replaced, whatever the locale
     rt, cat, protos, local = data()
     doc = resolved(a, rt, True)
     e = settings.entry(TIMEOUT_KEY)
@@ -511,6 +547,9 @@ def main(argv):
         w = worker_env.reason()
         if w:
             raise Stop(sd.Refused.code, f"route.py {a.cmd} runs on the host only ({w}); nothing was called")
+        if len(a.task) > MAX_TASK:
+            a.task = a.task[:MAX_TASK]   # the refusal does not repeat the whole of it
+            raise Stop(UNKNOWN, f"the task id is longer than {MAX_TASK} characters")
         if resolve is None:
             raise Stop(NO_LINK, "the resolver is not installed, so no chain can be read")
         return {"call": cmd_call, "attempt": cmd_attempt, "result": cmd_result}[a.cmd](a)
