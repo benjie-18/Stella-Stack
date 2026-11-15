@@ -98,7 +98,8 @@
     "bin/stella_data.py",
     "bin/worker_env.py",
     "bin/route.py",
-    "bin/credentials.py"
+    "bin/credentials.py",
+    "bin/resolve.py"
   ],
   "write_tools": [
     "write_file",
