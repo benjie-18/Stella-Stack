@@ -31,8 +31,8 @@ while True:
     r = json.loads(line); g = r["hook"]
     if g not in codes:
         codes[g] = compile(open(g, encoding="utf-8").read(), g, "exec")
-    for m in [m for m in sys.modules if m in ("roles", "alert_catalog")]:
-        del sys.modules[m]   # as a fresh process: the stack modules read their environment when imported
+    for m in [m for m, v in sys.modules.items() if (getattr(v, "__file__", None) or "").startswith("/workspace/bin/")]:
+        del sys.modules[m]   # as a fresh process: the stack modules read their environment when imported (the data root too: F2 W7b)
     os.environ.clear(); os.environ.update(r["env"] if "env" in r else {**keep[4], **r["add"]}); os.chdir(r["cwd"])   # the full environment, or the one at start plus the row's own
     out = io.StringIO(); sys.stdout, sys.stderr = out, io.StringIO(); sys.stdin = io.StringIO(r["payload"]); sys.argv = [g]
     try:
@@ -57,6 +57,9 @@ pjudge() {   # pjudge <hook> <payload>: exit code echoed, stdout in $T/out (its 
   else env -0 | jq -Rsc --arg p "$2" --arg h "$1" --arg w "$PWD" '{hook: $h, payload: $p, cwd: $w, env: (split("\u0000") | map(select(length > 0) | capture("^(?<key>[^=]*)=(?<value>.*)$"; "s")) | from_entries)}' >"$T/pj/in"; fi
   IFS=$'\t' read -r rc b <"$T/pj/oq"; printf '%s' "$b" | base64 -d >"$T/out"; echo "$rc"; }
 run() { local pay rc rrc; pay=$(jq -nc --arg t "$2" --argjson i "$3" '{hook_event_name: "pre_tool_call", tool_name: $t, tool_input: $i}')
+  # F2 W7b: the model guard asks the resolver for the role of the payload's profile; its rows (and those of its pre-RT22-01 copy)
+  # carry the guard's profile and run against the fixture root made where M is set (MGP, MGFX)
+  case ${1##*/} in model-guard.py|pre-mg.py) pay=$(jq -c --arg p "$MGP" '. + {profile: $p}' <<<"$pay"); local -x STELLA_ROOT=$MGFX;; esac
   case $1 in *.py) ;; *) printf '%s' "$pay" | "$1" >"$T/out" 2>/dev/null; echo $?; return ;; esac
   rc=$(pjudge "$1" "$pay"); printf '%s\t%s\n' "$1" "$(printf '%s' "$pay" | base64 -w0)" >>"$T/pjrows"
   if ! grep -qxF -- "$1|$2|$rc" "$T/pjseen"; then
@@ -185,6 +188,22 @@ ok '[ "$(GIT_TEST_ASSUME_DIFFERENT_OWNER=1 hterm $T/plant-g $G "git diff --outpu
 # F14 model guard: builders run Claude Code only as Sonnet; Opus and Haiku go through bin/escalate.sh. A bare claude -p
 # is refused too: the builder's default model is not Sonnet (~/.claude/settings.json "model": "opus").
 M=$D/builder/model-guard.py
+# F2 W7b: the worker model is the resolver's answer, not a mark in the catalog. The fixture root is the shipped data with what the
+# owner records on the host: the CLI-login connection usable for the guard's role (terms, the role, advertised capabilities), a
+# selected preset of every link class, and an owner pin of the worker model the rows below spell (MGW). The role is asked with no
+# card here (the card proof is the role tool's, tested there).
+MGW=sonnet; MGFX=$T/mgfx; mkdir -p "$MGFX/docs"; cp -r /workspace/.stella "$MGFX/"; cp -r /workspace/docs/hermes-local "$MGFX/docs/"
+RJ0=/workspace/$(jq -r .role_table /workspace/.stella/data-files.json)
+MGP=$(jq -r '.roles as $R | [.profiles | to_entries[] | select(($R[.value.role].hooks // []) | any(.file? // "" | tostring | test("model-guard")))][0].key' "$RJ0"); MGR=$(jq -r --arg p "$MGP" '.profiles[$p].role' "$RJ0")
+fxed() { jq "${@:2}" "$MGFX/.stella/$1" >"$MGFX/.stella/$1.n" && mv "$MGFX/.stella/$1.n" "$MGFX/.stella/$1"; }   # fxed <data file> <jq args and filter>
+fxed connections.json --arg r "$MGR" --argjson dc "$(jq -c .data_classes "$MGFX/.stella/data-policy.json")" '(.entries[] | select(.type == "cli-login")) |= (.terms_ok = true | .allowed_roles += [$r]
+  | .data_policy.data_classes_allowed = $dc | .models[] |= (.capabilities = {tool_calling: true, json_mode: true, context_tokens: 1048576, vision: true, streaming: true} | .probe_source = "advertised"))'
+fxed routing.json --arg r "$MGR" '.card_roles -= [$r]'
+fxed role-assignments.json --arg r "$MGR" --arg m "$MGW" --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$(jq -r .install_id "$MGFX/.stella/install.json")" \
+  --argjson k "$(jq -c '[.link_classes[].id]' "$MGFX/.stella/routing.json")" --arg c "$(jq -r '[.entries[] | select(.type == "cli-login") | .id][0]' "$MGFX/.stella/connections.json")" \
+  '.effort_modes["qa-all"] = {allowed_localities: ["local", "cloud"], no_silent_fallback: false, class_order: $k} | .selection.global = "qa-all"
+   | .assignments += [{id: "qa-pin", scope: {level: "global"}, role: $r, effort_mode: "qa-all", chain: [{connection: $c, model: $m, parameters: {}}], global_id: $g, install_id: $i}]'
+ok 'STELLA_ROOT=$MGFX python3 -I /workspace/bin/stella_data.py check >"$T/out" 2>&1 && [ -n "$MGP" ] && [ -n "$MGR" ]' "model guard fixture: profile ${MGP:-none} (role ${MGR:-none}) installs the guard and the fixture root passes the data check"
 for c in "claude -p --model opus x" "claude -p --model=haiku x" "claude -p --model opusplan x" "claude -p --model claude-opus-5-5 x" \
          "claude -p x" "claude" "timeout 300 claude -p 'x'" "claude -p --model sonnet --dangerously-skip-permissions x" \
          "claude -p --model sonnet --permission-mode bypassPermissions x" "claude -p --model sonnet --permission-mode=bypassPermissions x" \

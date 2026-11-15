@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Manual drain of the bin/escalate.sh queue (F15, F28, F29); never run by cron. Entries: .supervisor/state/queue.jsonl.
 # usage: escalate-drain.sh --list               every entry: id, state, reason, card, model (purpose), created
-#        escalate-drain.sh --replay <id>|--all  run queued entries again through bin/escalate.sh, which checks limits.env
-#                                               and the pool again. An entry is claimed under the queue lock before the run,
+#        escalate-drain.sh --replay <id>|--all  run queued entries again through bin/escalate.sh, which asks the resolver and checks
+#                                               the model's limits and the pool again. An entry is claimed under the queue lock before the run,
 #                                               so a second replay of the same id does nothing. Still blocked, refused or
 #                                               not started (exit 2, 3, 75, 126, 127): left queued, no alert. Older than QUEUE_MAX_AGE_HOURS, or its card
 #                                               done or archived: marked stale and skipped.

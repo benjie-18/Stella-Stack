@@ -282,6 +282,15 @@ a link's class: the model's, else the connection's, else the class `routing.json
 shape) is an x-ref to an entry of `.stella/protocols.json`; `models[].score` (advertised suitability, a stub until the F2c
 benchmark) is shape-checked only. Capabilities are advertised values until the F2b probe (`probe_source: "advertised"`); a null capability
 meets no requirement of a role (`stella_data.unmet(requirements, capabilities)`).
+A model's `limits` object (F2 W7b; free-form, null = none) holds what the callers read: `bin/escalate.sh` reads `purposes` (a
+list: the only purposes the model runs for), `max_concurrent` (slots) and `per_day` (calls per UTC day), each a value or a
+string naming the key of the limits store (`.supervisor/limits.env`) that holds it (a key that store does not define refuses
+the call), and `purpose_models` {purpose: the model name the CLI gets for that purpose instead of the id};
+`bin/container-start.sh` reads `output_tokens` for the coding tool's user config, whose model is the first model of the
+enabled local provider. No script names a model, a model's limit or a per-model settings key. The callers of a coding CLI
+(`bin/escalate.sh`, the builder model guard) take the model from the resolver: the escalation script runs the model its caller
+names only when the resolver lists that link `usable` (stub `escalate-caller-names-model`, due F2b), and the guard allows the
+model of the first usable link on a connection whose `cli` is its CLI; the F1b mark `worker_run` is gone.
 
 ### `.stella/data-policy.json`
 `data_classes[]`, `local_hosts[]` (the host names that count as local; a provider declared local may list only these), a `default` and `projects{}`; each has `mode` (`open`, `local_only`, `allowed_providers`) and

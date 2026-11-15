@@ -14,12 +14,21 @@ ws=$(cd "$(dirname "$0")/.." && pwd)
 git config --global --get-all safe.directory | grep -qxF "$ws" || git config --global --add safe.directory "$ws" \
   || fail "git safe.directory not set for $ws"
 # OpenCode user config: local model only (never a cloud fallback) + the Claude-account skill denies.
+# The model is data (F2 W7b): the first model of the connections catalog's enabled local provider, with its advertised
+# capabilities and its `limits.output_tokens`; the tracked opencode.json holds the provider frame and names no model.
+# shortcut: that file has one provider frame, taken as the local one; name the catalog entry in it when a second comes.
 # brainstorming is dropped: superpowers is a project-scope OpenCode plugin, so its deny stays in the repo config.
 # Through a temp file, so a jq failure keeps the previous config instead of truncating it (S23).
 cfg=~/.config/opencode/opencode.json
-jq '{"$schema", model, providers, permission: {skill: (.permission.skill | del(.brainstorming))}}' \
+lm=$(python3 -I /workspace/bin/stella_data.py get --json connections 2>/dev/null \
+  | jq -c '[.entries[] | select(.kind == "provider" and .locality == "local" and .enabled) | .models[]][0] // empty')
+[ -n "$lm" ] && jq --argjson m "$lm" '(.providers | keys[0]) as $p | {"$schema", model: "\($p)/\($m.id)",
+    providers: (.providers | .[$p].models = {($m.id): {name: $m.id, capabilities: {tools: ($m.capabilities.tool_calling == true),
+      input: (["text"] + (if $m.capabilities.vision == true then ["image"] else [] end)), output: ["text"]},
+      limit: ({context: $m.capabilities.context_tokens, output: $m.limits.output_tokens} | with_entries(select(.value != null)))}}),
+    permission: {skill: (.permission.skill | del(.brainstorming))}}' \
   /workspace/opencode.json > "$cfg.tmp" && mv "$cfg.tmp" "$cfg" \
-  || { rm -f "$cfg.tmp"; fail "opencode.json not written (jq or mv failed); the previous config is kept"; }
+  || { rm -f "$cfg.tmp"; fail "opencode.json not written (the catalog's local model, jq or mv failed); the previous config is kept"; }
 # Vetted anti-ai-slop-writing (jalaalrd/anti-ai-slop-writing@63255f9), kept in the ~/.hermes volume.
 skill=~/.hermes/skills/writing/anti-ai-slop-writing
 [ -d "$skill" ] && cp -r "$skill" ~/.config/opencode/skills/ || fail "skill copy failed: $skill missing or not copied"

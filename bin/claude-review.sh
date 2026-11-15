@@ -8,7 +8,9 @@ set -eu
 [ $# = 0 ] || { echo "claude-review.sh takes no arguments: the question is built from the card" >&2; exit 2; }
 f=${REVIEW_PROMPT_FILE:-}
 [ -n "$f" ] && [ -s "$f" ] || { echo "no review prompt for this card: the box did not render one" >&2; exit 2; }
-[ -n "${REVIEW_MODEL:-}" ] || { echo "no model for this review: the box got none from the role table" >&2; exit 2; }
+# The model is the resolver's answer for the reviewing profile's role, asked by the box launcher (bin/box.py _review_model: in the box the card
+# cannot be proven and its facts are not mounted). No answer = no review: REVIEW_REFUSED holds the resolver's code and reason; never a default model.
+[ -z "${REVIEW_REFUSED:-}" ] && [ -n "${REVIEW_MODEL:-}" ] || { echo "no model for this review: ${REVIEW_REFUSED:-the box got none from the resolver}" >&2; exit 2; }
 d=${REVIEW_EXPORT_DIR:-}
 [ -n "$d" ] && [ -d "$d" ] || { echo "no committed tree to review for this card: the box did not export one" >&2; exit 2; }
 cd -- "$d"   # Claude reads the exported committed tree only, whatever workdir the terminal was given

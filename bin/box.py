@@ -133,6 +133,31 @@ def _clip(text, n):
     return text if len(text) <= n else text[:n] + "\n[clipped]"
 
 
+def _review_model(d, profile, proof):
+    """(model, None) the review is asked with (F2 B1), or (None, why: one line starting with the resolver's code). The model is that of the
+    first usable link, on a catalog connection whose `cli` is the profile's worker kind, of the chain the resolver (bin/resolve.py, read-only)
+    answers for the profile's role, the proven card and its project (the folder part of the card's branch). Fail closed: no default model."""
+    row = d["profiles"][profile]
+    try:
+        import resolve, stella_data as sd
+    except Exception as e:
+        return None, f"STL-CFG-310 the resolver cannot be asked ({type(e).__name__})"
+    try:
+        ans = resolve.resolve({"role": row["role"], "project": (proof.get("branch") or "").partition("/")[0], "card": proof.get("card")})
+        mine = {e["id"] for r in sd.rows() if r["schema"] == "connections" for rel, _ in sd.files_of(r)
+                for _, e in sd.file_entries(r, rel, sd.checked(sd.load(rel), rel, "connections")) if row.get("worker") and e.get("cli") == row["worker"]}
+    except sd.DataError as e:   # the resolver fails closed with its own code (unknown role, a card of another project, data the check refuses)
+        return None, " ".join(f"{getattr(e, 'code', 'STL-CFG-310')} {e}".split())[:300]
+    except (Exception, SystemExit) as e:   # never the value: the type only
+        return None, f"STL-CFG-310 the resolver failed ({type(e).__name__})"
+    links = [l for l in ans["chain"] if l["connection"] in mine]
+    ok = next((l for l in links if l["status"] == "usable"), None)
+    if ok and not ans["code"]:
+        return ok["model"], None
+    no = ans if ok or not links else links[0]   # a refused answer (a card app), a chain with no link of this CLI, or its first link's own refusal
+    return None, " ".join(f"{no.get('code') or 'STL-MDL-710'} the resolver lists no usable link of this profile's CLI for its role: {no.get('reason') or 'its chain holds none'}".split())[:300]
+
+
 def _git_ro(common, *a):
     """git over the shared object store only (--git-dir=<common>): never the builder's worktree, index or worktree git dir, so no config,
     attribute, submodule or filter a builder wrote can make this host-side call run code. The common config is read-only to builders."""
@@ -345,8 +370,8 @@ def plan(d, profile, proof, *, hermes_root, home, roots, stack_root=None, spec=N
                 os.replace(pf + ".new", pf)
                 env["REVIEW_PROMPT_FILE"] = pf
                 env["REVIEW_SENT_FILE"] = os.path.join(tmp_for_prompt, f"review-sent-{card}.txt")
-                if ov_r.get("review_model"):
-                    env["REVIEW_MODEL"] = ov_r["review_model"]
+                model, refused = _review_model(d, profile, proof)   # F2 B1: the resolver's answer; the role table's review_model is not read
+                env["REVIEW_MODEL"], env["REVIEW_REFUSED"] = model or "", refused or ""   # both always set: a refusal never leaves an earlier call's model behind
                 env["REVIEW_EXPORT_DIR"] = _export_tip(common, proof.get("branch") or "", os.path.join(rdir, "export"), card,
                                                        ov_r["review_max_files"], ov_r["review_max_mb"] * 1024 * 1024,
                                                        ov_r.get("review_link_allow", []), ov_r["review_export_keep_hours"])
