@@ -80,6 +80,10 @@ n=$(runs); check 3 "W7b: a model the catalog does not list for this CLI: refused
 ok 'grep -q "STL-MDL-711" "$T/err" && [ "$(runs)" = "$n" ] && [ -z "$(q t_aaaa0901)" ]' "W7b: ... with STL-MDL-711, no model call, nothing queued (a name is not replayable)"
 check 3 "W7b: on the shipped data (no terms recorded, no card facts) the resolver does not list the link usable: refused" env STELLA_ROOT=/workspace sh -c "echo hi | $E t_aaaa0902 sonnet review why"
 ok 'grep -q "STL-MDL-7[0-9][0-9] the resolver does not list" "$T/err" && [ "$(runs)" = "$n" ] && [ "$(q t_aaaa0902)" = "queued," ] && grep -q "t_aaaa0902 escalate.sh LIMIT.*no other link is tried" "$T/sup/comments"' "W7b: ... with the resolver's code, no model call, queued as a limit is, and the card note promises no other link"
+# W3P-F-3: under a Local only project the resolver lists no hosted link at all; the refusal still says why (the data-policy code and Local only)
+LO=$T/fx-lo; cp -r "$FX" "$LO"; jq --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$(jq -r .install_id "$FX/.stella/install.json")" '.projects["qa-proj"] = {mode: "local_only", allowed_providers: [], global_id: $g, install_id: $i}' "$FX/.stella/data-policy.json" >"$LO/.stella/data-policy.json"
+n=$(runs); check 3 "W3P-F-3: a Local only project: a hosted model is refused" env STELLA_ROOT=$LO sh -c "echo hi | $E t_aaaa0903 sonnet review why"
+ok 'STELLA_ROOT=$LO python3 -I /workspace/bin/stella_data.py check >/dev/null 2>&1 && grep -q "STL-MDL-716 the resolver does not list" "$T/err" && grep -q "Local only" "$T/err" && [ "$(runs)" = "$n" ] && [ "$(q t_aaaa0903)" = "queued," ]' "W3P-F-3: ... with STL-MDL-716 and a reason naming Local only, no model call, queued (the fixture passes the data check)"
 setlimit HAIKU_MAX_PER_DAY 0
 check 3 "T13: zeroed HAIKU_MAX_PER_DAY refused" sh -c "echo hi | $E t_aaaa0001 haiku judge zeroed"
 pf=$(jq -r 'select(.card == "t_aaaa0001") | .prompt_file' "$Q" 2>/dev/null)

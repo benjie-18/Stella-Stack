@@ -181,10 +181,12 @@ driver=$(python3 -I /workspace/bin/stella_data.py get --json routing 2>/dev/null
 if [ -z "$project" ]; then rcode=STL-MDL-711 rwhy="card $card names no project on the board"
 else
   res=$(python3 -I /workspace/bin/resolve.py resolve --role "$role" --project "$project" --card "$card" ${driver:+--driver "$driver"} --json 2>"$prompt.err")
-  # the link's own status; a chain without it, an answer the resolver refuses for another reason (a card app), or no chain at all
-  # (fail closed: the coded line is on stderr) is a refusal too
+  # the link's own status; a chain without it (under a Local only project the resolver lists no hosted link: the data-policy code
+  # says so, W3P-F-3), an answer the resolver refuses for another reason (a card app), or no chain at all (fail closed: the coded
+  # line is on stderr) is a refusal too
   IFS=$'\t' read -r rcode rwhy < <(jq -r --arg c "$conn" --arg m "$model" '([.chain[] | select(.connection == $c and .model == $m)][0]) as $e
-    | if $e == null then [.code // "STL-MDL-710", "the chain the resolver answers does not hold this link" + (if .reason then ": " + .reason else "" end)]
+    | if $e == null and .local_only == true then ["STL-MDL-716", "the project is Local only (data policy): the resolver lists local links only, and this link leaves the machine"]
+      elif $e == null then [.code // "STL-MDL-710", "the chain the resolver answers does not hold this link" + (if .reason then ": " + .reason else "" end)]
       elif $e.status != "usable" then [$e.code // "STL-MDL-710", $e.reason // $e.status]
       elif .code != null then [.code, .reason // "the resolver refused the request"] else ["usable", "-"] end | @tsv' <<<"$res" 2>/dev/null) \
     || { rcode=$(grep -om1 'STL-[A-Z]*-[0-9]*' "$prompt.err"); rcode=${rcode:-STL-MDL-710}; rwhy="the resolver gave no chain: $(grep -m1 "$rcode" "$prompt.err" | head -c 300)"; }
