@@ -172,6 +172,9 @@
     },
     "loopback": {
       "mark": "hermetic"
+    },
+    "mock-provider": {
+      "mark": "hermetic"
     }
   },
   "test_like": [
@@ -962,11 +965,13 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "box",
         "card-schema",
         "commit-guard",
         "complete-gate",
         "delegation",
+        "devices",
         "escalate",
         "escalation-reply-poll",
         "event-log",
@@ -974,8 +979,10 @@
         "kanban-board",
         "kanban-guard",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "owner-settings",
         "profile-hooks",
         "reviewer-claude",
@@ -987,10 +994,7 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field); plus the selftests that reach it since the merge of build/F1 69edb47 (bin/test-map.py reach)"
     },
@@ -1059,9 +1063,11 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "card-schema",
         "complete-gate",
         "delegation",
+        "devices",
         "escalate",
         "escalation-reply-poll",
         "event-log",
@@ -1069,8 +1075,10 @@
         "kanban-board",
         "kanban-guard",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "profile-hooks",
         "reviewer-claude",
         "role-guard",
@@ -1080,10 +1088,7 @@
         "stella-apply",
         "stella-data",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
     },
@@ -1195,6 +1200,7 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "box",
         "broker-put",
         "card-schema",
@@ -1203,6 +1209,7 @@
         "complete-gate",
         "container-start",
         "delegation",
+        "devices",
         "escalate",
         "escalation-complete",
         "escalation-reply-hook",
@@ -1217,8 +1224,10 @@
         "kanban-guard",
         "matcher-audit",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "owner-config",
         "owner-leak",
         "owner-settings",
@@ -1234,10 +1243,7 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1275,6 +1281,7 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "box",
         "broker-put",
         "card-schema",
@@ -1283,6 +1290,7 @@
         "complete-gate",
         "container-start",
         "delegation",
+        "devices",
         "escalate",
         "escalation-reply-poll",
         "escalation-thread",
@@ -1294,8 +1302,10 @@
         "kanban-guard",
         "matcher-audit",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "owner-config",
         "owner-settings",
         "profile-hooks",
@@ -1310,10 +1320,7 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1391,6 +1398,7 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "box",
         "broker-put",
         "card-schema",
@@ -1399,6 +1407,7 @@
         "complete-gate",
         "container-start",
         "delegation",
+        "devices",
         "escalate",
         "escalation-complete",
         "escalation-reply-poll",
@@ -1411,8 +1420,10 @@
         "kanban-guard",
         "matcher-audit",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "owner-config",
         "owner-settings",
         "profile-hooks",
@@ -1427,10 +1438,7 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1442,9 +1450,11 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "card-schema",
         "complete-gate",
         "delegation",
+        "devices",
         "escalate",
         "escalation-reply-poll",
         "event-log",
@@ -1452,8 +1462,10 @@
         "kanban-board",
         "kanban-guard",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "profile-hooks",
         "reviewer-claude",
         "role-guard",
@@ -1463,10 +1475,7 @@
         "stella-apply",
         "stella-data",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1511,6 +1520,7 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "bench",
         "box",
         "broker-put",
@@ -1520,6 +1530,7 @@
         "complete-gate",
         "container-start",
         "delegation",
+        "devices",
         "escalate",
         "escalation-complete",
         "escalation-reply-hook",
@@ -1534,8 +1545,10 @@
         "kanban-guard",
         "matcher-audit",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "owner-config",
         "owner-leak",
         "owner-settings",
@@ -1551,10 +1564,7 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1618,9 +1628,11 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "card-schema",
         "complete-gate",
         "delegation",
+        "devices",
         "escalate",
         "escalation-reply-poll",
         "event-log",
@@ -1628,8 +1640,10 @@
         "kanban-board",
         "kanban-guard",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "profile-hooks",
         "reviewer-claude",
         "role-guard",
@@ -1639,10 +1653,7 @@
         "stella-apply",
         "stella-data",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1654,9 +1665,11 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "card-schema",
         "complete-gate",
         "delegation",
+        "devices",
         "escalate",
         "escalation-reply-poll",
         "event-log",
@@ -1664,8 +1677,10 @@
         "kanban-board",
         "kanban-guard",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "profile-hooks",
         "reviewer-claude",
         "role-guard",
@@ -1676,10 +1691,7 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach); plus the selftests that reach it since the merge of build/F1 69edb47 (bin/test-map.py reach)"
     },
@@ -2284,14 +2296,15 @@
         ".stella/schemas/owner-auth.schema.json"
       ],
       "targets": [
+        "approvals",
+        "devices",
+        "event-log",
+        "mock-provider",
+        "owner-auth",
+        "roles",
         "settings",
         "stella-apply",
-        "stella-data",
-        "event-log",
-        "roles",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "stella-data"
       ],
       "why": "F1c G0, conservative: the one worker-environment answer and its policy; every owner command and the event writer use it (W2a/W4b narrow this when their selftests land)"
     },
@@ -2302,8 +2315,9 @@
       ],
       "targets": [
         "approvals",
-        "owner-auth",
-        "devices"
+        "devices",
+        "mock-provider",
+        "owner-auth"
       ],
       "why": "F1c W2a: the owner-authenticator and its selftest (which also runs stella_data.py stubs over the features file)"
     },
@@ -2337,6 +2351,7 @@
         "card-schema",
         "complete-gate",
         "delegation",
+        "devices",
         "escalate",
         "escalation-reply-poll",
         "event-log",
@@ -2344,6 +2359,7 @@
         "kanban-board",
         "kanban-guard",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
         "owner-auth",
@@ -2356,8 +2372,7 @@
         "stella-apply",
         "stella-data",
         "watchdog",
-        "write-guard",
-        "devices"
+        "write-guard"
       ],
       "why": "F1c W1: the agents' untrusted stream (event-log-selftest runs it); bin/event_log.py imports its line limits, so every selftest that reaches the writer reaches it"
     },
@@ -2474,6 +2489,7 @@
         "kanban-guard",
         "loopback",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
         "owner-auth",
@@ -2586,6 +2602,19 @@
         "roles"
       ],
       "why": "F1c W7 (FV-01): the roles selftest's FV-01 cases read the data policy's record_kinds (role, profile) and the contract README's env-row identity rule"
+    },
+    {
+      "globs": [
+        "bin/mock_provider.py",
+        "bin/mock_cli.py",
+        "bin/mock-provider-selftest.sh",
+        ".stella/protocols.json",
+        ".stella/schemas/protocols.schema.json"
+      ],
+      "targets": [
+        "mock-provider"
+      ],
+      "why": "F2 W2: the test rig (mock provider server, fake CLI) and the wire-shape data it serves; the selftest starts them in a scratch root"
     }
   ]
 }
