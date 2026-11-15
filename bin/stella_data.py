@@ -1136,11 +1136,16 @@ def rule_grants(c):
 def frozen(schema, old, new):
     """[(code, problem)]: what a candidate `new` of a row of that schema may not change in the document `old` it replaces. The
     apply tool refuses each, a dry run too (a rollback restores bytes and is not judged here). Today: a preset marked builtin
-    true, changed in any key or dropped (BUILTIN_EDIT); a file that does not parse has no preset to keep."""
+    true on either side that is not the same entry on both (BUILTIN_EDIT): changed in any key, dropped, or made by the
+    candidate (a new id, or a custom preset turned into one: the owner could not edit or remove it afterwards). A file that
+    does not parse has no preset to keep."""
     if schema != "role-assignments" or not all(isinstance(d, dict) and isinstance(d.get("effort_modes"), dict) for d in (old, new)):
         return []
-    return [(BUILTIN_EDIT, f"preset {kname(k)} is built in, and the candidate changes or removes it; copy it under a new id (based_on) to make your own")
-            for k, m in old["effort_modes"].items() if isinstance(m, dict) and m.get("builtin") is True and not same(m, new["effort_modes"].get(k))]
+    o, n = old["effort_modes"], new["effort_modes"]
+    built = lambda m: isinstance(m, dict) and m.get("builtin") is True
+    return [(BUILTIN_EDIT, f"preset {kname(k)} is built in, and the candidate changes or removes it; copy it under a new id (based_on) to make your own" if built(o.get(k))
+             else f"preset {kname(k)} is marked built in by the candidate, and an apply never makes a built-in preset; leave builtin out to make your own")
+            for k in dict.fromkeys([*o, *n]) if (built(o.get(k)) or built(n.get(k))) and not same(o.get(k), n.get(k))]
 
 
 @functools.lru_cache(maxsize=None)
