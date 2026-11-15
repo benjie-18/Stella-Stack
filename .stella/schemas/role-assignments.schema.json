@@ -112,7 +112,7 @@
               "properties": {
                 "active": {
                   "type": "boolean",
-                  "description": "False turns the role off under this preset; `check` refuses that for a role the workflow requires (routing.json workflow.required_roles)."
+                  "description": "False turns the role off under this preset; `check` refuses that for a role the workflow requires (routing.json workflow.required_roles) and for an exempt role (routing.json exempt_roles)."
                 },
                 "class_order": {
                   "$ref": "#/$defs/class_order"
@@ -122,7 +122,7 @@
                 },
                 "pins": {
                   "$ref": "#/$defs/links",
-                  "description": "Links tried first. `check` refuses a pin of an active role whose model does not meet the role's requirements."
+                  "description": "Links tried first. `check` judges a pin of an active role as it judges an assignment's chain link (stella_data.link_problems): the connection switched on and allowing the role and its data classes, the model listed and meeting the role's requirements, the link inside the preset's allowed_localities unless its class is the last resort."
                 },
                 "fallbacks": {
                   "$ref": "#/$defs/links",
@@ -146,7 +146,7 @@
           "no_silent_fallback"
         ],
         "additionalProperties": false,
-        "description": "A routing preset (F2 D1.1): an effort mode is a preset. Every key but the first two is optional, so a file written before F2 stays valid; a role the preset does not list follows the preset's own values and is active."
+        "description": "A routing preset (F2 D1.1): an effort mode is a preset. Every key but the first two is optional; a role the preset does not list follows the preset's own values and is active. `check` refuses a preset that leaves an active role no link at all: no pin (the preset's, or the owner's global assignment for the role), class order, needs class, fallback or last resort."
       },
       "propertyNames": {
         "pattern": "^[a-z0-9][a-z0-9._:-]*$"
@@ -319,7 +319,8 @@
         "minItems": 1,
         "uniqueItems": true
       },
-      "description": "Link classes in the order they are tried. An item is a class id, or a list of class ids: the best suited of these. `check` refuses an id routing.json link_classes does not define."
+      "minItems": 1,
+      "description": "Link classes in the order they are tried, at least one (an empty order would leave the role no link). An item is a class id, or a list of class ids: the best suited of these. `check` refuses an id routing.json link_classes does not define."
     },
     "preset": {
       "type": "string",

@@ -87,6 +87,67 @@ ok 'refuses fb-bad && coded "$C_CHAIN"' "4a a fallback that fails the role's req
 mk off-pin five; ed off-pin role-assignments.json --arg o "$OPT" --argjson l "$(link qa-notools)" "$F.roles[\$o] = {active: false, pins: [\$l]}"
 ok 'passes off-pin' "4b control: the links of an inactive role are not judged"
 
+# ---- W1-RT-01: one judge for every listed link (a preset's pins and fallbacks, an assignment's chain) ----
+PINDC=$(jq -r --arg p "$PINROLE" '.roles[$p].requirements.allowed_data_classes // [] | length' "$RJ")
+for c in "off|.enabled = false|is switched off" "nodc|.data_policy.data_classes_allowed = []|does not allow every data class" "norole|.allowed_roles = []|in its allowed_roles"; do
+  IFS='|' read -r n f w <<<"$c"
+  mk "lk-$n" five; ed "lk-$n" connections.json "(.entries[] | select(.id == \"qa-pin\")) |= ($f)"
+  ok "[ \"\$PINDC\" -gt 0 ] && refuses lk-$n && grep -q \"^\$C_CHAIN .*pins\\[0\\].*$w\" \"\$T/o\" && grep -q \"^\$C_CHAIN .*fallbacks\\[0\\].*$w\" \"\$T/o\"" \
+    "4c-$n a pin and a fallback of an active role whose connection $w are each refused with $C_CHAIN"
+done
+CTPL='[.entries[] | select(.kind == "provider" and .type == "api" and .locality == "cloud" and (.aggregator | not))][0]'
+mk lk-cloud five
+ed lk-cloud connections.json --argjson m "$MODELS" --argjson ar "$AR" --argjson dc "$(jq -c .data_classes "$ROOT/.stella/data-policy.json")" --arg g "$(uuid)" --arg h "$HOSTED" \
+  ".entries += [$CTPL + {id: \"qa-cloud\", label: \"QA cloud\", enabled: true, models: \$m, allowed_roles: \$ar, global_id: \$g, link_class: \$h} | .data_policy.data_classes_allowed = \$dc]"
+ed lk-cloud role-assignments.json --arg p "$PINROLE" "$F.roles[\$p].fallbacks += [{connection: \"qa-cloud\", model: \"qa-good\", parameters: {}}]"
+ok 'passes lk-cloud' "4d control: a cloud fallback is valid under a preset that allows cloud links"
+ed lk-cloud role-assignments.json "$F.allowed_localities = [\"local\"]"
+ok 'refuses lk-cloud && grep -q "^$C_CHAIN .*fallbacks\[1\].*is cloud for routing" "$T/o"' "4e the same link under a preset whose allowed_localities is local only is refused with $C_CHAIN"
+ed lk-cloud role-assignments.json --arg p "$PINROLE" --arg h "$HOSTED" "$F.roles[\$p].last_resort = \$h"
+ok 'passes lk-cloud' "4f control: a link of the role's last-resort class is not bound by the preset's localities (the resolver asks a crossing grant for it)"
+ASG='.assignments += [{id: "qa-asg", scope: {level: "global"}, role: $p, effort_mode: "qa-fifth", chain: [$l], global_id: $g, install_id: $i}]'
+mk as-ok five; ed as-ok role-assignments.json --arg p "$PINROLE" --arg g "$(uuid)" --arg i "$IID" --argjson l "$(link qa-good)" "$ASG"
+ok 'passes as-ok' "4g control: an owner's chain to a model that meets the role's requirements is valid"
+mk as-bad five; ed as-bad role-assignments.json --arg p "$PINROLE" --arg g "$(uuid)" --arg i "$IID" --argjson l "$(link qa-notools)" "$ASG"
+ok 'refuses as-bad && grep -q "qa-asg: chain\[0\]: .*tool_calling" "$T/o"' "4h an owner's chain to a model that fails the role's requirements is refused (the judge of the preset links)"
+
+# ---- W1-RT-02: an active role never ends with an empty chain ----
+mk e1 five; ed e1 role-assignments.json --arg p "$PINROLE" "$F.roles[\$p].class_order = []"
+ok 'refuses e1' "4i an empty class order of a role in a preset is refused"
+mk e2 five; ed e2 role-assignments.json '.assignments[0].class_order = []'
+ok 'refuses e2' "4j an empty class order in an assignment is refused"
+mk e3 five; ed e3 routing.json '.exempt_roles[0].class_order = []'
+ok 'refuses e3' "4k an empty class order of an exempt role is refused"
+mk e4 five; ed e4 role-assignments.json '.effort_modes["qa-bare"] = {allowed_localities: ["local"], no_silent_fallback: false}'
+ok 'refuses e4 && grep -q "^$C_OFF .*qa-bare.*no link" "$T/o" && grep -q "^$C_CHAIN .*qa-bare.*no link" "$T/o"' \
+  "4l a preset that gives its active roles no pin, class order, needs class, fallback or last resort is refused: $C_OFF for the required roles, $C_CHAIN for the others"
+ed e4 role-assignments.json --arg l "$LOCAL" '.effort_modes["qa-bare"].last_resort = $l'
+ok 'passes e4' "4m control: the same preset with a last-resort class gives every role a chain"
+
+# ---- W1-RT-03 / W3-CVER-01: a missing card fact never counts as false ----
+mk wm1 five; ed wm1 routing.json '.card_facts.when_missing = {}'
+ok 'refuses wm1' "4n card_facts.when_missing with no fact key is refused"
+mk wm2 five; ed wm2 routing.json '.card_facts.when_missing |= del(.[keys[0]])'
+ok 'refuses wm2' "4o card_facts.when_missing without one of its fact keys is refused"
+mk wm3 five; ed wm3 routing.json '.card_facts.when_missing |= (to_entries | .[0].value = false | from_entries)'
+ok 'refuses wm3' "4p a card fact that counts as false when missing is refused"
+mk wm4 five; ed wm4 routing.json '.card_facts.when_missing["qa_fact"] = true'
+ok 'passes wm4' "4q control: a new card fact added as data, counting as true when missing, is valid"
+ed wm4 routing.json '.card_facts.when_missing["qa_fact"] = false'
+ok 'refuses wm4' "4r and refused when it counts as false"
+
+# ---- the lows of Gate B: W1-RT-05 to W1-RT-08 ----
+mk x5 five; ed x5 role-assignments.json --argjson e "$EXEMPT" "$F.roles[\$e[0]] = {active: false}"
+ok 'refuses x5 && grep -q "exempt" "$T/o"' "4s a preset that turns off an exempt role is refused"
+mk x6 five; ed x6 routing.json '.exempt_roles += [.exempt_roles[0]]'
+ok 'refuses x6 && grep -q "exempt_roles: a role is listed twice" "$T/o"' "4t an exempt role listed twice is refused"
+mk x6b five; ed x6b routing.json '.link_classes |= map(if .hosted then .privacy_rank = 0 else . end)'
+ok 'refuses x6b && grep -q "link_classes: a hosted class" "$T/o"' "4u a hosted class that is not less private than every class that is not hosted is refused"
+mk x7 five; ed x7 routing.json 'del(.failover.triggers[.failover.triggers | keys[0]])'
+ok 'refuses x7' "4v a failover trigger set that lacks one of its triggers is refused"
+mk x7b five; ed x7b routing.json '.failover.triggers["qa-zz-unknown"] = .failover.triggers[.failover.triggers | keys[0]]'
+ok 'refuses x7b && unseen' "4w an unknown failover trigger is refused"
+
 # ---- unknown ids fail closed, the value never printed ----
 u() {  # <root> <file> <jq filter> <text>
   mk "$1" five; ed "$1" "$2" --arg x qa-zz-unknown --arg l "$LOCAL" --arg p "$PINROLE" "$3"
@@ -121,7 +182,7 @@ ok 'refuses cool && grep -q "cooldown_s is above max_cooldown_s" "$T/o"' "5w a c
 
 # ---- a fake link class and a fake tier, as data only ----
 mk cls five
-ed cls routing.json '.link_classes += [{id: "qa-class", privacy_rank: 9, hosted: false}] | .task_tiers += [{id: "qa-tier"}]'
+ed cls routing.json '.link_classes += [{id: "qa-class", privacy_rank: 0, hosted: false}] | .task_tiers += [{id: "qa-tier"}]'
 ed cls connections.json '(.entries[] | select(.id == "qa-pin")).models[1].link_class = "qa-class"'
 ed cls role-assignments.json --arg l "$LOCAL" "$F.class_order = [[\"qa-class\", \$l]] | $F.needs_class = \"qa-class\" | $F.frontier_when = {tiers: [\"qa-tier\"]}"
 ok 'passes cls' "6 a fake link class and a fake task tier added as data are valid, and a preset uses both"
@@ -168,7 +229,7 @@ ok '[ $urc = 0 ] && [ "$(grep -c "^ok" "$T/unit.out")" = 15 ]' "7 the link class
 # ---- DC-03: a class that is not hosted never labels a link that leaves the machine ----
 mk reach cls; ed reach connections.json --arg c "$CLOUD" '(.entries[] | select(.id == $c)).link_class = "qa-class"'
 ok 'refuses reach && grep -q "which is not hosted, but the link leaves the machine" "$T/o"' "8 a class with hosted false on a cloud link is refused"
-ed reach routing.json '(.link_classes[] | select(.id == "qa-class")).hosted = true'
+ed reach routing.json '(.link_classes[] | select(.id == "qa-class")) |= (.hosted = true | .privacy_rank = 9)'
 ok 'passes reach' "8a control: the same class marked hosted is valid there"
 mk nonprov five; ed nonprov connections.json --arg l "$LOCAL" '(.entries[] | select(.kind != "provider")).link_class = $l'
 ok 'refuses nonprov && grep -q "link_class is for a provider" "$T/o"' "8b a link class on an entry that is no provider is refused"
@@ -200,17 +261,22 @@ ed cg grants.json '.crossing_grants[0].scope = {level: "project"}'
 ok 'refuses cg && grep -q "crossing_grants\[0\]: scope.level project needs project" "$T/o"' "11a a crossing grant of level project with no project is refused"
 ed cg grants.json '.crossing_grants[0].scope = {level: "global"} | .crossing_grants[0].preset = "qa-zz-unknown"'
 ok 'refuses cg && coded STL-CFG-310 && unseen' "11b a crossing grant for an unknown preset is refused"
+ed cg grants.json --arg p "$LAST" --arg u "$(uuid)" '.crossing_grants[0].preset = $p | .crossing_grants[0].scope = {level: "project", project: $u}'
+ok 'refuses cg && grep -q "crossing_grants\[0\]: scope.project is a global_id" "$T/o"' "11c W1-RT-08 a grant scoped to a project by a global_id (it would hold nowhere) is refused"
 
 # ---- the apply tool and built-in presets (the owner in a scratch root: its own key, a stub board, no worker marker) ----
-A=$T/ap; mkdir -p "$A/docs/hermes-local" "$A/.supervisor/logs"
-cp -r "$ROOT/.stella" "$A/"; cp -r "$ROOT/docs/hermes-local/hooks" "$A/docs/hermes-local/hooks"
-jq '. + {worker_markers: ["QA_STUB_WORKER_MARK"]}' "$RJ" >"$A/docs/hermes-local/roles.json"
 printf '#!/usr/bin/env bash\necho "[]"\n' >"$T/pb/hermes"; chmod +x "$T/pb/hermes"
-printf '.supervisor/\n' >"$A/.gitignore"; git -C "$A" init -q 2>/dev/null; git -C "$A" add -A >/dev/null 2>&1
-git -C "$A" -c user.name=t -c user.email=t@example.invalid commit -qm base >/dev/null 2>&1
-ax() { (cd "$T" && STELLA_ROOT=$A PATH=$T/pb:$PATH timeout 120 python3 -I "$@"); }
-ax "$BIN/owner_auth.py" init-key >/dev/null 2>&1
-RAF=$A/.stella/role-assignments.json; sha() { sha256sum "$RAF" | cut -d' ' -f1; }
+ax() { (cd "$T" && STELLA_ROOT=$A PATH=$T/pb:$PATH timeout 120 python3 -I "$@"); }   # in the root $A
+aproot() {  # <dir>: a scratch git root with the shipped data committed and its own owner key; $A from here on
+  A=$1; mkdir -p "$A/docs/hermes-local" "$A/.supervisor/logs"
+  cp -r "$ROOT/.stella" "$A/"; cp -r "$ROOT/docs/hermes-local/hooks" "$A/docs/hermes-local/hooks"
+  jq '. + {worker_markers: ["QA_STUB_WORKER_MARK"]}' "$RJ" >"$A/docs/hermes-local/roles.json"
+  printf '.supervisor/\n' >"$A/.gitignore"; git -C "$A" init -q 2>/dev/null; git -C "$A" add -A >/dev/null 2>&1
+  git -C "$A" -c user.name=t -c user.email=t@example.invalid commit -qm base >/dev/null 2>&1
+  ax "$BIN/owner_auth.py" init-key >/dev/null 2>&1
+  RAF=$A/.stella/role-assignments.json
+}
+aproot "$T/ap"; sha() { sha256sum "$RAF" | cut -d' ' -f1; }
 B1=$(j '[.effort_modes | to_entries[] | select(.value.builtin == true) | .key][0]' "$RAF")
 jq --arg b "$B1" '.effort_modes["qa-custom"] = (.effort_modes[$b] + {label: "QA custom", builtin: false, based_on: $b} | del(.changelog))' "$RAF" >"$T/c/custom.json"
 ax "$AP" apply role-assignments --from "$T/c/custom.json" >"$T/o" 2>&1; rc=$?
@@ -242,5 +308,28 @@ for b in new turn; do
 done
 ok '[ "$(python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; f = lambda o, n: [c for c, _ in s.frozen(\"role-assignments\", {\"effort_modes\": o}, {\"effort_modes\": n})]; B, C = {\"builtin\": True}, {\"builtin\": False}; print(f({\"a\": B}, {\"a\": B, \"b\": B}) == [s.BUILTIN_EDIT], f({\"a\": B, \"c\": C}, {\"a\": B, \"c\": B}) == [s.BUILTIN_EDIT], f({\"a\": B, \"c\": C}, {\"a\": B, \"c\": {}, \"d\": C}), f({\"a\": B}, {\"a\": B, \"b\": 1}))" "$BIN")" = "True True [] []" ]' "14a frozen(): a new id marked built in and a custom preset turned into one are each one refusal; an unchanged built-in beside changed and new custom presets is none"
 ok '[ "$(python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; print(len(s.frozen(\"role-assignments\", None, {\"effort_modes\": {}})), len(s.frozen(\"routing\", {\"effort_modes\": {\"a\": {\"builtin\": True}}}, {\"effort_modes\": {}})))" "$BIN")" = "0 0" ]' "13a frozen() keeps nothing of a file that does not parse, and nothing of another schema"
+
+# W1-CVER-01 / W1-RT-04: the built-in rule has a baseline the file cannot move. A file that is not its baseline (edited by
+# hand, damaged, missing) is not what the candidate is compared with: the document last applied is, or the committed one.
+cp "$RAF" "$T/c/applied.json"
+jq --arg b "$B1" '.effort_modes[$b].changelog += [{at: "2026-11-14T12:00:00Z", by: "qa", what: "a hand edit"}]' "$T/c/applied.json" >"$RAF"; cp "$RAF" "$T/c/hand.json"
+n=0
+for mode in --dry-run ""; do
+  n=$((n+1)); s0=$(sha); ax "$AP" apply role-assignments --from "$T/c/hand.json" $mode >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 1 ] && coded "$C_BUILTIN" && [ "$(sha)" = "$s0" ]' "15.$n a built-in preset edited by hand in the file is not recorded by an apply of that file${mode:+ (dry run)}: refused with $C_BUILTIN (exit $rc)"
+done
+printf '{"schema_version": 2, "effort_modes": ' >"$RAF"   # the file cut short: it does not parse
+for mode in --dry-run ""; do
+  n=$((n+1)); s0=$(sha); ax "$AP" apply role-assignments --from "$T/c/b-edit.json" $mode >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 1 ] && coded "$C_BUILTIN" && [ "$(sha)" = "$s0" ]' "15.$n over a file that does not parse, a candidate that changes a built-in preset${mode:+ (dry run)} is refused with $C_BUILTIN (exit $rc)"
+done
+ax "$AP" apply role-assignments --from "$T/c/applied.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$RAF" "$T/c/applied.json"' "15a control: the document last applied goes back over the damaged file (exit $rc: $(head -c 160 "$T/o" | tr '\n' ' '))"
+aproot "$T/ap2"; rm -f "$RAF"   # never applied, the file gone: the committed document is the baseline
+jq --arg b "$B1" '.effort_modes["qa-made"] = (.effort_modes[$b] + {label: "QA made", based_on: $b} | del(.changelog))' "$RA" >"$T/c/b-new2.json"
+ax "$AP" apply role-assignments --from "$T/c/b-new2.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && coded "$C_BUILTIN" && [ ! -e "$RAF" ]' "15b never applied and the file missing: a candidate that makes a built-in preset is refused with $C_BUILTIN (exit $rc)"
+ax "$AP" apply role-assignments --from "$RA" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$RAF" "$RA"' "15c control: the committed document goes back in place of the missing file (exit $rc: $(head -c 160 "$T/o" | tr '\n' ' '))"
 
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

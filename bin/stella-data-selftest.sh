@@ -18,8 +18,8 @@ INS=$(jq -r '.files[] | select(.schema == "install") | .path' "$ROOT/.stella/dat
 ids() { echo "global_id:\"$(cat /proc/sys/kernel/random/uuid)\",install_id:\"$IID\""; }   # F1b D1: the two ids of a new fake record, as jq text
 rid() { echo "record_kind:(.files[] | select(.id == \"$1\") | .record_kind),$(ids)"; }   # F1b D1/D2: a fake index row of the kind of row <id>, with its two ids
 AR=$(jq -c '.fallback_role as $fb | [.roles | keys[] | select(. != $fb)]' "$ROOT/docs/hermes-local/roles.json")   # every assignable role
-conn() {  # <id> <kind> <subkind> <locality>: a complete connections entry (type api) as jq text; it allows every assignable role, so a case fails for its own cause
-  echo "{id:\"$1\",kind:\"$2\",subkind:\"$3\",type:\"api\",label:\"Fake $1\",enabled:true,locality:\"$4\",hosts:[{host:\"$1.example.invalid\",port:443,purpose:\"api\"}],auth_types:[\"api_key\"],secrets:[\"FAKE_KEY\"],actions:[{id:\"go\",approval_class:\"write\"}],models:[{id:\"$1-model\",capabilities:{tool_calling:null,json_mode:null,context_tokens:null,vision:null,streaming:null},probed_at:null,probe_source:null}],data_policy:{retention:null,training_use:null,region:null,zero_retention_available:null,data_classes_allowed:[\"public\",\"internal\",\"client\"]},tos:{status:\"unverified\",subscription_login_by_agent:\"unverified\"},allowed_roles:$AR,risk_class:\"read\",$(ids)}"
+conn() {  # <id> <kind> <subkind> <locality>: a complete connections entry (type api) as jq text; it allows every assignable role and its model advertises what a role may require (W1-RT-01: a chain is judged by them), so a case fails for its own cause
+  echo "{id:\"$1\",kind:\"$2\",subkind:\"$3\",type:\"api\",label:\"Fake $1\",enabled:true,locality:\"$4\",hosts:[{host:\"$1.example.invalid\",port:443,purpose:\"api\"}],auth_types:[\"api_key\"],secrets:[\"FAKE_KEY\"],actions:[{id:\"go\",approval_class:\"write\"}],models:[{id:\"$1-model\",capabilities:{tool_calling:true,json_mode:null,context_tokens:1048576,vision:true,streaming:null},probed_at:null,probe_source:null}],data_policy:{retention:null,training_use:null,region:null,zero_retention_available:null,data_classes_allowed:[\"public\",\"internal\",\"client\"]},tos:{status:\"unverified\",subscription_login_by_agent:\"unverified\"},allowed_roles:$AR,risk_class:\"read\",$(ids)}"
 }
 refuses() { local r=$1; shift; ! sd "$r" "$@" >"$T/o" 2>&1; }                 # <root name> <args...>: exits non-zero, output in $T/o
 alerts() { cat "$T/sup/logs/alerts.log" 2>/dev/null | wc -l; }
@@ -157,7 +157,8 @@ ok '[ "$(jq -r ".files[] | select(.id == \"data-files\") | .owner_only" "$ROOT/.
 # G3 cross-file rules
 mk g3a; ed g3a role-assignments.json '.assignments[0].role = "ghost"'
 ok 'refuses g3a check connections && grep -q "role-assignments" "$T/o" && grep -q "assignable role" "$T/o" && ! grep -q ghost "$T/o"' "51 check <id> also prints the cross-file problems"
-OPEN="(.entries[] | select(.id == \"claude-subscription\")) |= (.allowed_roles = $AR | .data_policy.data_classes_allowed = [\"public\",\"internal\",\"client\"] | .terms_ok = true)"   # the subscription provider allowing every role and class, its terms recorded as allowing this use (F1b D6)
+CAPS='.models |= map(.capabilities += {tool_calling: true, vision: true, context_tokens: 1048576})'   # W1-RT-01: a chain is judged by its model's advertised capabilities, and the shipped subscription models advertise none
+OPEN="(.entries[] | select(.id == \"claude-subscription\")) |= (.allowed_roles = $AR | .data_policy.data_classes_allowed = [\"public\",\"internal\",\"client\"] | .terms_ok = true | $CAPS)"   # the subscription provider allowing every role and class, its terms recorded as allowing this use (F1b D6), its models advertising what a role may require
 mk g3b; ed g3b connections.json "$OPEN"; ed g3b data-policy.json '.projects["cx"] = {mode:"local_only",allowed_providers:[]}'; ed g3b data-policy.json ".projects.cx += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ed g3b role-assignments.json '.assignments += [{id:"zz",scope:{level:"card",card:"c1"},role:"builder",effort_mode:"standard",chain:[{connection:"claude-subscription",model:"haiku",parameters:{}}]}]'; ed g3b role-assignments.json ".assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses g3b check' "52 a card assignment with no project is refused, not judged by the open default"
@@ -249,7 +250,7 @@ V=sk-ant-api03-qafake0123456789abcdef   # lower case on purpose: it fits the id 
 CM=$(jq -r '.entries[] | select(.id == "claude-subscription") | .models[0].id' "$ROOT/.stella/connections.json")
 CHAIN="[{connection:\"claude-subscription\",model:\"$CM\",parameters:{}}]"
 # P1 a chain entry's provider must allow every data class the role handles
-mk p1a; ed p1a connections.json "(.entries[] | select(.id == \"claude-subscription\")) |= (.allowed_roles = $AR | .terms_ok = true)"; ed p1a role-assignments.json ".assignments[0].chain = $CHAIN"   # F1b D6: terms recorded, so the cases judge only the data classes
+mk p1a; ed p1a connections.json "(.entries[] | select(.id == \"claude-subscription\")) |= (.allowed_roles = $AR | .terms_ok = true | $CAPS)"; ed p1a role-assignments.json ".assignments[0].chain = $CHAIN"   # F1b D6: terms recorded, so the cases judge only the data classes
 ok 'refuses p1a check && grep -q "data class" "$T/o"' "84 a chain to a provider that allows none of the role's data classes is refused"
 ed p1a connections.json '(.entries[] | select(.id == "claude-subscription")).data_policy.data_classes_allowed = ["public"]'
 ok 'refuses p1a check' "85 a provider that allows only some of the role's data classes is refused"
