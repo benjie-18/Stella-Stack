@@ -338,7 +338,7 @@ passes none) and returns `[{kind: terms|never|grant, data_class, text}]`: only k
 A private project never routes to a hosted connection (`policy_allows`). Card app rules are
 F2's: when F2 routes by card, it refuses a `cli-login` app whose `terms_ok` is not true, and a hosted integration aggregator app
 (`integration_aggregator: true`) on a card that carries secrets or belongs to a private project.
-The resolver that applies the precedence is built in a later phase; this file is the data and the validator.
+The resolver that applies the precedence is `bin/resolve.py` (F2; see "Model calls, failover and keys"); this file is the data and the validator.
 *To add one:* append an assignment with a new `id`.
 **Presets (F2).** An effort mode is a routing preset. Beside its two required keys an entry may carry `label`, `builtin`,
 `based_on` (the preset it was copied from, or null), `class_order` (link classes in the order they are tried; an item is a
