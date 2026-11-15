@@ -13,6 +13,7 @@ CLI: credentials.py check [--json] [<name>...]   the state; exit 0 when the back
 There is no command that prints a value.
 Refusals (class Refused: code, problem): STL-MDL-728 the key was not read (why, never the value); STL-CFG-312 a worker environment;
 STL-CFG-310 the routing data is refused by check."""
+# a stand-in: the features entry "broker" (.stella/features.json) is what replaces it; that entry carries no due_phase today
 import functools, json, os, re, stat, sys
 
 BIN = os.path.dirname(os.path.abspath(__file__))
