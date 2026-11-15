@@ -111,7 +111,7 @@ rt() {  # <name> <route.py arguments>...: stdout $T/o/<name>.json, stderr $T/o/<
   printf '%s' "${PROMPT:-say ok}" | timeout 60 python3 -I "$R/bin/route.py" "${@:2}" >"$T/o/$1.json" 2>"$T/o/$1.err"; RC=$?
 }
 call() { rt "$1" call --role "$ROLE" --project st-project --task "$1" --json "${@:2}"; }   # <task, also the output name> [more arguments]
-J() { jq -e "${@:2}" "$T/o/$1.json"; }                                                        # <name> <jq args and filter>
+J() { [ -s "$T/o/$1.json" ] && jq -e "${@:2}" "$T/o/$1.json"; }                               # <name> <jq args and filter>: holds on the JSON (jq -e passes empty input)
 ev() { jq -c --arg w "task $1" "select(.what == \$w and ($2))" "$EV" 2>/dev/null | grep -c .; }   # <task> <jq condition>: its trusted event lines that match
 sends() { grep -F -- "$1" "$SENDS" 2>/dev/null | grep -cF -- "task $2"; }                       # <code> <task>: inbox alerts sent
 SW='.type == "routing.switch" and .code == "STL-MDL-721"'
