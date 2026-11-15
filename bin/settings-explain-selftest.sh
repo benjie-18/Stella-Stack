@@ -41,6 +41,8 @@ ok 'ex qa-p && Q ".preset == {id: \"qa-new\", source: \"project\"} and .local_on
 ok 'ex qa-p && Q ".roles[\"'$ROLE'\"].class_order_source != null"' "an inactive role is still explained"
 S=$(sha256sum "$R/.stella/"*.json "$R/.supervisor/limits.env" "$R/config/owner.env" | sha256sum)
 ex qa-p; ok '[ "$(sha256sum "$R/.stella/"*.json "$R/.supervisor/limits.env" "$R/config/owner.env" | sha256sum)" = "$S" ]' "explain changes nothing"
+mkdir "$R/bin"; cp "$H"/bin/*.py "$R/bin/"; rm "$R/bin/resolve.py"   # a copy of bin/ without the resolver, inside the scratch root (event_log wants the tool under the root)
+ok '! ALERT_CATALOG="$H/docs/hermes-local/alert-catalog.json" python3 -I "$R/bin/settings.py" explain --project qa-p --json >"$T/o" 2>"$T/e" && [ ! -s "$T/o" ] && grep -q "STL-CFG-311" "$T/e" && ! grep -q Traceback "$T/e"' "no resolver installed: a coded refusal, not a traceback"
 ed role-assignments.json '.selection.projects["qa-p"] = "qa-gone"'
 ok '! ex qa-p && [ ! -s "$T/o" ] && [ "$(wc -l <"$T/e")" = 1 ] && grep -q "STL-CFG-31" "$T/e"' "an unknown preset in selection fails closed with one coded line"
 [ "$fails" = 0 ] && { echo "selftest PASS"; exit 0; }
