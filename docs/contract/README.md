@@ -794,14 +794,23 @@ the read-only resolver at most. `route.py` holds no routing rule: it walks the c
   candidate in which that grant carries `revoked_at` (never over a file) for the owner to apply, and applies nothing.
   The state file keeps `consents` {grant key: `request_id`, `kind`, `row`, `task`, `card`, `told`} and `queue` {task:
   `request_id`, `link`, `card`, `at`}; like the rest of it, they prove nothing.
-- **Notice.** A pick or switch to a class of higher `privacy_rank` than the class of the chain's first link sends one inbox
-  alert and writes one event line with `consent.alert_code_notice`, whatever the grant.
+- **Notice.** A pick or switch to a class of higher `privacy_rank` than the class of the link the task used last (on a
+  task's first pick: of the chain's first link that is `usable` or `needs_grant`, never an excluded or cooling head) sends
+  one inbox alert and writes one event line with `consent.alert_code_notice`, whatever the grant.
+- **A switch is judged from the task's last link** (state field `last`), whoever caused the cooldown: picking any other
+  link on a later call is a counted switch with the mid-task checks, also when the task goes back to an earlier link.
 - **Event lines** (trusted log): `routing.pick` (a call's or attempt's first link, with the resolver's `decision` reason),
-  `routing.switch` (STL-MDL-721, `old.link` and `new.link`), `routing.switch-refused` (722), `routing.notice`. No pick or switch
-  happens without its line.
+  `routing.switch` (STL-MDL-721, `old.link` and `new.link`), `routing.switch-refused` (722), `routing.notice`,
+  `routing.cooldown` (`result` cooled a link) and `routing.cooldown-cleared` (a success cleared it). No pick, switch or
+  cooldown change by `result` happens without its line.
+- **Bounds.** One deadline (`CALL_TIMEOUT`) covers a whole answer body; a body that cannot be parsed, or holds no text and
+  no tool call, is `server_error`; no proxy variable of the environment is followed; a task id longer than the limit in
+  `route.py` is refused (STL-MDL-711) and the state keeps the task entries used last.
+- **The resolver's per-role view** is `resolve.role_view(role, project, card=None)` (the preset, class order and its
+  source, last resort, pins and fallbacks `resolve()` itself uses); `settings.py explain` prints it.
 - **State** (index key `routing_state`, a protected state path; proof of nothing): `links` {`<connection>/<model>`, or
   `<connection>` for a trigger of scope `connection`: `trigger`, `since`, `until`, `failures`, `observed_limit`} and `tasks`
-  {task: `switches`, `visited[]`, `history[]` {`link`, `trigger`, `at`}, `left`}; written whole under a lock, refused when it
+  {task: `switches`, `visited[]`, `history[]` {`link`, `trigger`, `at`}, `last`}; written whole under a lock, refused when it
   is, or passes through, a link. `until` = now + `cooldown_s`, doubled per repeated failure up to `max_cooldown_s`; one
   success clears the link.
 - **Keys.** `credentials.get(name)` (in-process only; no command prints a value), `credentials.check(names)` -> True only

@@ -762,7 +762,7 @@
       "title": "a hosted link is excluded: secrets or private",
       "message": "A hosted model link was excluded because the card carries secrets or vault content, or its project is marked private: {problem}. No grant, setting or preset changes this.",
       "action": "nothing if that is intended: such work stays on local links. If the card's facts are missing or wrong, record them on the host (the card facts store). See STL-MDL-714 in docs/alert-codes.md.",
-      "cause": "The card facts say carries_secrets or vault_content (a missing record or field counts as routing.json card_facts.when_missing says, shipped true), or the data policy marks the project private.",
+      "cause": "The card facts say carries_secrets or vault_content (a missing record or field always counts as holding), or the data policy marks the project private.",
       "check": "the card's record in the card facts store (index key card_facts); `python3 bin/stella_data.py get data-policy` (projects, private).",
       "related": "F2 B6, A8, design-check DC-01, DC-03; .stella/routing.json card_facts",
       "resolvable": false
@@ -951,6 +951,7 @@
       "code": "STL-MDL-730",
       "area": "MDL",
       "severity": "warning",
+      "status": "reserved",
       "title": "the escalation walk is not built yet",
       "message": "A request for the next rung of a role's escalation chain was refused: {problem}. The chain is stored, and nothing climbs it until phase F2b.",
       "action": "nothing until F2b builds the walk. See STL-MDL-730 in docs/alert-codes.md.",
