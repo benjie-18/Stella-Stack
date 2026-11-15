@@ -39,7 +39,9 @@
           "probed_at": null,
           "probe_source": "advertised",
           "cost": null,
-          "limits": null
+          "limits": {
+            "output_tokens": 8192
+          }
         }
       ],
       "cost": null,
@@ -114,7 +116,9 @@
           "probed_at": null,
           "probe_source": null,
           "cost": null,
-          "limits": null
+          "limits": {
+            "per_day": "HAIKU_MAX_PER_DAY"
+          }
         },
         {
           "id": "sonnet",
@@ -128,8 +132,7 @@
           "probed_at": null,
           "probe_source": null,
           "cost": null,
-          "limits": null,
-          "worker_run": true
+          "limits": null
         },
         {
           "id": "opus",
@@ -143,7 +146,13 @@
           "probed_at": null,
           "probe_source": null,
           "cost": null,
-          "limits": null
+          "limits": {
+            "max_concurrent": "OPUS_MAX_CONCURRENT",
+            "purposes": "OPUS_PURPOSES",
+            "purpose_models": {
+              "plan": "opusplan"
+            }
+          }
         }
       ],
       "cost": null,

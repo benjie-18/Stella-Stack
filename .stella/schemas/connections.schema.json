@@ -198,7 +198,8 @@
                 "type": [
                   "object",
                   "null"
-                ]
+                ],
+                "description": "This model's own limits. The escalation script reads purposes (the only purposes it runs for: a list), max_concurrent (slots), per_day (calls per UTC day), each a value or the name of the limits-store key that holds it, and purpose_models {purpose: the model name the CLI gets for that purpose instead of the id}. The container start reads output_tokens (the coding tool's output cap)."
               },
               "link_class": {
                 "type": "string",
@@ -213,10 +214,6 @@
                 ],
                 "minimum": 0,
                 "description": "The advertised suitability of the model (higher is better), a stub until the role benchmark (F2c): it ranks Standard's best-suited choice."
-              },
-              "worker_run": {
-                "type": "boolean",
-                "description": "true: a worker may run this model on the connection's CLI itself. Every other model of that CLI is run only through the escalation script; the builder model guard reads this, so it names no model."
               }
             },
             "required": [

@@ -383,7 +383,23 @@ cp "$T/roles.base.json" "$T/roles.json"
 # follow-up 4, item 5: the review prompt is a fixed template (owner data) filled from the card by the stack, host side; the box only sees the result.
 # The host reads git over the shared object store only and exports the card branch's committed tree for Claude to read (red-team S6L-RT-01..03).
 printf 'TEMPLATE-MARK-77\nCARD {{CARD}}:\n{{BODY}}\nANSWERS:\n{{ANSWERS}}\nEVIDENCE:\n{{EVIDENCE}}\nEND\n' >"$F/ws/review-prompt.txt"
-jq --arg r "$R" "$BOV | .sandbox.profile_overrides[\$r].review_prompt = \"review-prompt.txt\" | .sandbox.profile_overrides[\$r].review_model = \"model-from-data\" | $RVK" "$T/roles.base.json" >"$T/roles.json"
+jq --arg r "$R" "$BOV | .sandbox.profile_overrides[\$r].review_prompt = \"review-prompt.txt\" | .sandbox.profile_overrides[\$r].review_model = \"model-from-table\" | $RVK" "$T/roles.base.json" >"$T/roles.json"
+# F2 W7b: the review model is the resolver's answer (box.py _review_model), no longer the role table's review_model (set above to a
+# value the box must not use). Fixture root for 3.80 (STELLA_ROOT): the shipped data with the CLI-login connection as the CLI of the
+# reviewing profile's worker kind, usable for its role (what the owner records on the host), holding the model the case names and an
+# owner pin of it; card t_1 has a clean facts record for the project its branch names.
+RX=$T/rx; mkdir -p "$RX/docs"; cp -r "$W/.stella" "$RX/"; cp -r "$W/docs/hermes-local" "$RX/docs/"
+RR=$(jq -r --arg r "$R" '.profiles[$r].role' "$RF"); RW=$(jq -r --arg r "$R" '.profiles[$r].worker' "$RF")
+rxed() { jq "${@:2}" "$RX/.stella/$1" >"$RX/.stella/$1.n" && mv "$RX/.stella/$1.n" "$RX/.stella/$1"; }   # rxed <data file> <jq args and filter>
+rxed connections.json --arg r "$RR" --arg w "$RW" --argjson dc "$(jq -c .data_classes "$RX/.stella/data-policy.json")" '(.entries[] | select(.type == "cli-login")) |= (.cli = $w | .terms_ok = true | .allowed_roles += [$r]
+  | .data_policy.data_classes_allowed = $dc | .models += [.models[0] + {id: "model-from-data", limits: null}]
+  | .models[] |= (.capabilities = {tool_calling: true, json_mode: true, context_tokens: 1048576, vision: true, streaming: true} | .probe_source = "advertised"))'
+rxed role-assignments.json --arg r "$RR" --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$IID" --argjson k "$(jq -c '[.link_classes[].id]' "$RX/.stella/routing.json")" \
+  --arg c "$(jq -r '[.entries[] | select(.type == "cli-login") | .id][0]' "$RX/.stella/connections.json")" \
+  '.effort_modes["qa-all"] = {allowed_localities: ["local", "cloud"], no_silent_fallback: false, class_order: $k} | .selection.global = "qa-all"
+   | .assignments += [{id: "qa-pin", scope: {level: "global"}, role: $r, effort_mode: "qa-all", chain: [{connection: $c, model: "model-from-data", parameters: {}}], global_id: $g, install_id: $i}]'
+RXF=$RX/$(jq -r .card_facts "$RX/.stella/data-files.json"); mkdir -p "$RXF"; echo '{"project":"card","carries_secrets":false,"vault_content":false,"apps":[]}' >"$RXF/t_1.json"
+ok 'STELLA_ROOT=$RX python3 -I "$S/stella_data.py" check >"$T/out" 2>&1 && [ -n "$RR" ] && [ "$RW" != null ]' "3.80a the resolver fixture root passes the data check (reviewing role ${RR:-none}, worker kind ${RW:-none})"
 echo untracked-evidence >"$WT/untracked-card-file"; cp "$WT/README" "$T/README.committed" 2>/dev/null || true; echo "edited after the commit" >>"$WT/README"
 ok 'inr "cat \$REVIEW_PROMPT_FILE" && grep -q TEMPLATE-MARK-77 "$T/out" && grep -q "CARD t_1:" "$T/out" && grep -q BODY-CANARY-9931 "$T/out" && inr "printenv REVIEW_PROMPT_FILE" && grep -q "review-prompt-t_1.txt" "$T/out"' "3.70 the reviewing box gets the prompt file (named by the card): the owner's template, the card id and the card body"
 ok 'LINES_MAX=40 inr "cat \$REVIEW_PROMPT_FILE" && grep -qE "^commit [0-9a-f]{7,} " "$T/out" && ! grep -q "??" "$T/out"' "3.71 the evidence is the card branch's commits with the files each changed, read from git objects (no worktree status)"
@@ -391,7 +407,8 @@ ok 'LINES_MAX=40 inr "cat \$REVIEW_PROMPT_FILE" && ! grep -q "{{CARD}}\|{{BODY}}
 ok 'LINES_MAX=40 inr "cat \$REVIEW_PROMPT_FILE" && grep -q ANSWER-CANARY-5 "$T/out" && ! grep -q "{{ANSWERS}}" "$T/out"' "3.72b the owner's recorded answers are in the prompt"
 ok '! inb "printenv REVIEW_PROMPT_FILE" && ! inb "printenv REVIEW_EXPORT_DIR"' "3.73 the builder's box has no prompt file and no export"
 ok 'inr "wc -c < \$REVIEW_PROMPT_FILE" && [ "$(tr -d " \n" < "$T/out")" -lt 9000 ]' "3.74 the prompt is bounded"
-ok 'inr "printenv REVIEW_MODEL" && grep -q "^model-from-data$" "$T/out"' "3.80 the model Claude is asked with comes from the data (review_model), not from a script"
+ok 'STELLA_ROOT=$RX inr "printenv REVIEW_MODEL" && grep -q "^model-from-data$" "$T/out"' "3.80 the model Claude is asked with comes from the data (the resolver's answer for the reviewing profile's role and card: F2 W7b), not from a script"
+ok 'inr "echo \"M=[\$REVIEW_MODEL] R=[\$REVIEW_REFUSED]\"" && grep -q "^M=\[\] R=\[STL-[A-Z]*-[0-9]* " "$T/out" && ! grep -q "model-from-table" "$T/out"' "3.80b when the resolver names no usable link (the shipped data: no terms recorded, no card facts) the box gets no model and the resolver's code; the role table's review_model is not used"
 ok 'inr "printenv REVIEW_EXPORT_DIR" && E=$(cat "$T/out") && inr "ls \$REVIEW_EXPORT_DIR" && grep -q README "$T/out" && ! grep -q untracked-card-file "$T/out" && inr "cat \$REVIEW_EXPORT_DIR/README" && ! grep -q "edited after the commit" "$T/out"' "3.76 Claude's folder holds exactly what is committed: a worktree edit and an untracked file are not in it"
 git -C "$WT" checkout -q -- README 2>/dev/null || true
 jq --arg r "$R" "$BOV | .sandbox.profile_overrides[\$r].review_prompt = \"nope.txt\"" "$T/roles.base.json" >"$T/roles.json"
