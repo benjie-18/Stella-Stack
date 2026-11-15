@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "port_source": "bound",
+  "hosts": ["127.0.0.1", "localhost", "[::1]"],
+  "origins": ["http://127.0.0.1:{port}", "http://localhost:{port}", "http://[::1]:{port}"],
+  "token_header": "X-Stella-Token",
+  "csrf_header": "X-Stella-CSRF",
+  "proof_header": "X-Stella-Owner-Proof",
+  "owner_class": "owner_write",
+  "endpoints": [
+    {
+      "id": "status",
+      "method": "GET",
+      "path": "/api/status",
+      "scope": "read",
+      "global_id": "1d6a5959-bf48-4fbf-b423-3716a1dd5648",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "settings-change",
+      "method": "POST",
+      "path": "/api/settings",
+      "scope": "owner-write",
+      "global_id": "ab987f44-c015-4251-838c-6efac01fcbbc",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    }
+  ]
+}

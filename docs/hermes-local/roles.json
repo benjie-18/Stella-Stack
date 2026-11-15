@@ -41,7 +41,9 @@
     ".stella/schemas"
   ],
   "owner_commands": [
+    "bin/approvals.py",
     "bin/merge-card.sh",
+    "bin/owner_auth.py",
     "bin/stella-apply.py",
     "bin/settings.py",
     "bin/event_log.py"
@@ -52,6 +54,10 @@
   "boundary_paths": [
     "docs/hermes-local/alert-catalog.json",
     "package.json",
+    "bin/approvals.py",
+    "bin/devices.py",
+    "bin/event_untrusted.py",
+    "bin/owner_auth.py",
     "bin/selftests.sh",
     "bin/test-map.py",
     ".stella/test-map.json",
@@ -87,7 +93,8 @@
     "bin/roles.py",
     "bin/settings.py",
     "bin/stella-apply.py",
-    "bin/stella_data.py"
+    "bin/stella_data.py",
+    "bin/worker_env.py"
   ],
   "write_tools": [
     "write_file",
@@ -193,28 +200,38 @@
   ],
   "profiles": {
     "default": {
+      "global_id": "2087292d-55eb-4a0d-98d5-9fd37a572aaa",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "role": "dispatcher",
       "dir": "",
       "soul": "default.md",
       "display_name": "Stella"
     },
     "builder-local": {
+      "global_id": "5e91d64b-d68f-4b26-ad6f-12b836054044",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "role": "builder",
       "worker": "opencode",
       "soul": "builder-local.md",
       "capability_fallback": "builder-claude"
     },
     "builder-claude": {
+      "global_id": "dd2d3689-f302-4578-a6b5-71e8c7a30a3a",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "role": "builder",
       "worker": "claude-code",
       "soul": "builder-claude.md"
     },
     "reviewer": {
+      "global_id": "5d9f91ec-5d10-4ef8-b342-647da3199272",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "role": "reviewer",
       "worker": "opencode",
       "soul": "reviewer.md"
     },
     "reviewer-claude": {
+      "global_id": "ffe1e7fa-6701-4470-80cb-4dc297049404",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "role": "reviewer",
       "worker": "claude-code",
       "soul": "reviewer-claude.md",
@@ -234,6 +251,8 @@
   },
   "roles": {
     "dispatcher": {
+      "global_id": "2f793906-29f9-439a-8f5d-52b058e53696",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "runs_unboxed": true,
       "requirements": {
         "tool_calling": true,
@@ -368,6 +387,8 @@
       ]
     },
     "builder": {
+      "global_id": "1d62f286-a3a7-4592-878b-19d0c0d2826a",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "runs_unboxed": false,
       "requirements": {
         "tool_calling": true,
@@ -458,6 +479,8 @@
       ]
     },
     "reviewer": {
+      "global_id": "b82f2cbb-0720-43b1-856f-2e356177db77",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "runs_unboxed": false,
       "requirements": {
         "tool_calling": true,
@@ -534,6 +557,8 @@
       ]
     },
     "tester": {
+      "global_id": "1326b5a7-25bd-4379-840f-c8981758af37",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "runs_unboxed": false,
       "requirements": {
         "tool_calling": true,
@@ -585,6 +610,8 @@
       ]
     },
     "validator": {
+      "global_id": "12d05623-be48-4074-88fe-0543006c775f",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "runs_unboxed": false,
       "requirements": {
         "tool_calling": true,
@@ -636,6 +663,8 @@
       ]
     },
     "verifier": {
+      "global_id": "878a1fb2-0d37-46bc-a50a-68707d2c1ea1",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "runs_unboxed": false,
       "requirements": {
         "tool_calling": true,
@@ -687,6 +716,8 @@
       ]
     },
     "red-team": {
+      "global_id": "d8d23e67-9f35-43da-af58-dcbf75ea7606",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "runs_unboxed": false,
       "requirements": {
         "tool_calling": true,
@@ -738,6 +769,8 @@
       ]
     },
     "router": {
+      "global_id": "8b8ecce3-71e1-4dce-a87a-2a5292c51bd6",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "runs_unboxed": false,
       "requirements": {
         "tool_calling": false,
@@ -788,6 +821,8 @@
       ]
     },
     "voice": {
+      "global_id": "c2b9a158-5787-469b-aa15-93a9c9df93a2",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "runs_unboxed": false,
       "requirements": {
         "tool_calling": false,
@@ -838,6 +873,8 @@
       ]
     },
     "look": {
+      "global_id": "1eac93e0-3237-4edd-91ff-58e77ac068eb",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "runs_unboxed": false,
       "requirements": {
         "tool_calling": false,
@@ -888,6 +925,8 @@
       ]
     },
     "proposer": {
+      "global_id": "d2b9c898-847e-4bd8-9a05-fe409a62192c",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "runs_unboxed": false,
       "requirements": {
         "tool_calling": true,
@@ -938,6 +977,8 @@
       ]
     },
     "unlisted": {
+      "global_id": "b84f4eb4-4335-40a5-8021-59e8b36c0341",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "runs_unboxed": true,
       "requirements": {
         "tool_calling": false,

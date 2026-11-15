@@ -6,6 +6,9 @@
 # line per apply and per rollback, no planted secret anywhere (the data files and their byte-copy backups excepted). Also: invalid
 # candidate, unknown id, owner-only rows refused for a simulated worker (stub board, marker variable, no markers), failure paths
 # (unwritable event log, an interrupted apply), two applies at once, a folder row, paths that leave the root.
+# F1c W4b: owner-only rows need an owner proof (every scratch root gets an owner key; owner_fix lets identity_critical take the key
+# alone for the contract cases); the W4b section checks the identity-critical targets, 808 with no terminal, 806 with no key, the
+# dry run's action line, --proof (and its replay, 804), rollback's proof and the provider ids on the event line.
 set -u
 H=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 T=$(mktemp -d -t stella-apply-selftest.XXXXXX); trap 'chmod -R u+w "$T" 2>/dev/null; rm -rf "$T"' EXIT
@@ -22,6 +25,10 @@ printf "WORKER_GIT_NAME='Fake One'\nWORKER_GIT_EMAIL='fake@example.invalid'\nAPI
 printf "CALL_TIMEOUT=600\nPLANTED_SETTING='sekrit-setting-333'\n" >"$R/.supervisor/limits.env"
 chmod 600 "$R/config/owner.env"; chmod 640 "$R/.supervisor/limits.env"
 cp "$R/.stella/connections.json" "$T/conn.orig"
+owner_fix() {   # F1c W4b: the apply contract's cases run with no terminal, so identity_critical takes what owner_write takes (the host key);
+  # the typed phrase is tested in the W4b section below and in bin/settings-selftest.sh
+  jq '.actions.identity_critical = .actions.owner_write' "$R/.stella/owner-auth.json" >"$T/oa" && cp "$T/oa" "$R/.stella/owner-auth.json"; }
+owner_fix
 git -C "$R" init -q 2>/dev/null; printf '.supervisor/\n' >"$R/.gitignore"
 git -C "$R" add -A >/dev/null 2>&1; git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qm base
 printf "OWNER_TIMEZONE='UTC'\n" >"$T/owner-fake.env"   # a fake owner file: no failure message makes the alert code read the real one
@@ -53,6 +60,8 @@ S
 chmod +x "$T"/pb-*/hermes
 OWNER=$PATH; PB=$T/pb-ok   # as the owner: the stub board says no worker run
 ap() { PATH=$PB:$OWNER $AP "$@"; }
+OKEY=$(jq -r .owner_key "$R/.stella/data-files.json"); PATH=$PB:$OWNER python3 -I $H/bin/owner_auth.py init-key >/dev/null 2>&1
+cp -p "$R/$OKEY" "$T/owner-key"   # F1c W4b: an owner-only change needs an owner proof; every scratch root gets this owner key (0600)
 jq '.entries[0].label = "Changed label"' "$T/conn.orig" >"$C/conn.json"
 jq '.entries[0].label = "Second label"' "$T/conn.orig" >"$C/conn2.json"
 printf "WORKER_GIT_NAME='Fake Two'\nWORKER_GIT_EMAIL='fake@example.invalid'\nAPI_TOKEN='sekrit-token-222'\n" >"$C/owner.env"
@@ -192,6 +201,7 @@ mkr() {  # <name>: a fresh scratch root with fake files and a git baseline; R, L
   cp "$ROLES" "$R/docs/hermes-local/roles.json"; cp "$SET0" "$R/.stella/settings.json"; cp -r "$H/docs/hermes-local/hooks" "$R/docs/hermes-local/hooks"
   printf "WORKER_GIT_NAME='Fake One'\nWORKER_GIT_EMAIL='fake@example.invalid'\nAPI_TOKEN='sekrit-token-111'\n" >"$R/config/owner.env"
   printf "CALL_TIMEOUT=600\nPLANTED_SETTING='sekrit-setting-333'\n" >"$R/.supervisor/limits.env"; chmod 600 "$R/config/owner.env"; chmod 640 "$R/.supervisor/limits.env"
+  owner_fix; mkdir -p "$R/$(dirname "$OKEY")"; cp -p "$T/owner-key" "$R/$OKEY"
   printf '.supervisor/\n' >"$R/.gitignore"; git -C "$R" init -q 2>/dev/null; git -C "$R" add -A >/dev/null 2>&1; git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qm base
   export STELLA_ROOT=$R
 }
@@ -312,7 +322,9 @@ mkr g7g; mv "$R/.stella/settings.json" "$R/.stella/settings2.json"; jq '(.files[
 printf 'CALL_TIMEOUT=zq7v\nPLANTED_SETTING=1\n' >"$C/g7.env"; ap apply limits --from "$C/g7.env" >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-CFG-315 "$T/o"' "G7 the settings registry is found through the index, not a literal path"
 if bwrap --dev-bind / / --unshare-user --uid 4242 --gid 4242 -- true 2>/dev/null; then
   mkr g7h; bwrap --dev-bind / / --unshare-user --uid 4242 --gid 4242 -- env PATH="$PB:$OWNER" $AP apply connections --from "$C/conn.json" >"$T/o" 2>&1
-  ok '[ $? = 0 ] && jq -e ".who.user == \"4242\"" "$LOG" >/dev/null' "G7 a uid without a passwd entry is recorded as its number"
+  # F1c Gate B fix 1 (GB-1): such a process cannot be told apart from a worker (bin/worker_env.py fails closed), so its line is
+  # an untrusted one, which records the number (who.user); no trusted line is written for it any more
+  ok '[ $? = 0 ] && [ ! -s "$LOG" ] && jq -e ".trusted == false and .what == \"connections\" and .who.user == \"4242\"" "$R/$(jq -r .untrusted_events "$R/.stella/data-files.json")" >/dev/null' "G7 a uid without a passwd entry (cannot be told from a worker): applied, its line in the untrusted stream with the number as its user, none in the trusted log"
 fi
 
 # G8 the whole set stays valid
@@ -372,11 +384,11 @@ LAST() { tail -n 1 "$LOG"; }
 
 # H1 the tool acts only on records it can tie to its own run
 mkr h1a; ap apply connections --from "$C/conn.json" >/dev/null 2>&1; name=$(basename "$(ls -d "$(BK)"/connections/*)")
-$EL append --type rollback --what connections --detail "restored backup $name" --user forger >/dev/null 2>&1
+PATH=$PB:$OWNER $EL append --type rollback --what connections --detail "restored backup $name" --user forger >/dev/null 2>&1
 ap rollback connections >"$T/o" 2>&1
 ok '[ $? = 0 ] && [ "$(jq -s "map(select(.type == \"rollback\")) | length" "$LOG")" = 2 ] && [ "$(LAST | jq -r .who.user)" != forger ]' "H1 a forged rollback line that names the backup does not suppress the tool's own line"
 mkr h1b; kill_at event apply connections --from "$C/conn.json" >/dev/null 2>&1; name=$(basename "$(ls -d "$(BK)"/connections/*)")
-$EL append --type apply --what connections --detail "backup $name" --user forger >/dev/null 2>&1
+PATH=$PB:$OWNER $EL append --type apply --what connections --detail "backup $name" --user forger >/dev/null 2>&1
 ap apply connections --from "$C/conn.json" >"$T/o" 2>&1
 ok '[ $? = 0 ] && [ "$(jq -s "map(select(.type == \"apply\")) | length" "$LOG")" = 2 ] && [ "$(LAST | jq -r .who.user)" != forger ]' "H1 a forged apply line does not suppress the line of an apply finished after a kill"
 mkr h1c; B=$(tree)
@@ -770,7 +782,7 @@ done
 
 # P6: the Low ones
 mkr p6a; ap apply connections --from "$C/conn.json" >/dev/null 2>&1; tok=$(ap history connections --json | jq -r '.events[-1].detail' | grep -o 'token [0-9a-f]*')
-$EL append --type rollback --what connections --detail "restored backup x $tok" --user forger >/dev/null 2>&1
+PATH=$PB:$OWNER $EL append --type rollback --what connections --detail "restored backup x $tok" --user forger >/dev/null 2>&1
 kill_at applied rollback connections >/dev/null 2>&1; ap rollback connections >/dev/null 2>&1
 ok '[ "$(LAST | jq -r .type)" = rollback ] && [ "$(LAST | jq -r .who.user)" != forger ]' "P6 a forged rollback line carrying the apply's token does not suppress a resumed rollback's own line (W3-CV3-01)"
 for t in '.mode = 2541' '.existed = false | .sha256 = null'; do
@@ -1222,5 +1234,225 @@ N2=$(cat /proc/sys/kernel/random/uuid); jq --arg i "$N2" '.install_id = $i' "$C/
 ap apply "$IK" --from "$C/install-new.json" >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && [ "$(nev)" = $((e0+3)) ] && [ "$(last .install_id)" = "$N2" ]' "W6-CRT-01 an apply of the install row takes its line's install id from the candidate also when the current file is readable"
 
+# F1c W4b: the owner proof of an owner-only change at the apply tool (the shipped policy: identity_critical needs the typed phrase)
+mkr w4b; cp "$H/.stella/owner-auth.json" "$R/.stella/owner-auth.json"; OA="python3 -I $H/bin/owner_auth.py"
+sap() { PATH=$PB:$OWNER setsid -w $AP "$@" </dev/null; }   # the owner with no terminal at all
+OKP=$(jq -r '[.providers[] | select(.kind == "local-key") | .id][0]' "$R/.stella/owner-auth.json")
+# which changes are identity-critical: the policy's rows and pointers (* = one segment, at or below), registry settings, a side that does not parse
+python3 -I - "$H/bin/stella-apply.py" >"$T/o" 2>&1 <<'PY'
+import importlib.util, sys
+sys.dont_write_bytecode = True; spec = importlib.util.spec_from_file_location("sa", sys.argv[1]); sa = importlib.util.module_from_spec(spec); spec.loader.exec_module(sa)
+pol = sa.owner_auth.policy(); j = lambda i: {"id": i, "format": "json"}; e = lambda i: {"id": i, "format": "env"}
+cases = [
+    (j("host-access"), {"enabled": False, "routes": []}, {"enabled": True, "routes": []}, False, True, "host-access /enabled"),
+    (j("host-access"), {"routes": []}, {"routes": [{"id": "r", "enabled": False}]}, False, True, "a route added (/routes/*/enabled)"),
+    (j("host-access"), {"routes": [{"id": "a", "enabled": True}]}, {"routes": [{"id": "b", "enabled": True}]}, False, False, "a route's id only"),
+    (j("host-access"), {"actions": [{"id": "a", "state": "ask"}]}, {"actions": [{"id": "a", "state": "run"}]}, False, True, "an action's state"),
+    (j("data-policy"), {"privacy_grants": []}, {"privacy_grants": [{"x": 1}]}, False, True, "below /privacy_grants"),
+    (j("data-policy"), {"default": "a", "privacy_grants": []}, {"default": "b", "privacy_grants": []}, False, False, "data-policy outside /privacy_grants"),
+    (j("connections"), {"entries": [{"terms_ok": None}]}, {"entries": [{"terms_ok": True}]}, False, True, "a terms_ok"),
+    (j("grants"), {"grants": []}, {"grants": []}, False, True, "grants, formatting only (a row target: any write)"),
+    (e("owner-settings"), {"WORKER_GIT_NAME": "a"}, {"WORKER_GIT_NAME": "b"}, False, True, "a registry setting marked identity_critical"),
+    (e("owner-settings"), {"OWNER_DISCORD_USER_ID": "1"}, {"OWNER_DISCORD_USER_ID": "2"}, False, True, "the owner id key listed in the policy"),
+    (e("owner-settings"), {"ZZ_OTHER": "a"}, {"ZZ_OTHER": "b"}, False, False, "another owner-settings key"),
+    (e("limits"), {"CALL_TIMEOUT": "1"}, {"CALL_TIMEOUT": "2"}, False, False, "a plain limit"),
+    (j("host-access"), None, {"enabled": False}, True, True, "a side that does not parse, row with targets"),
+    (e("limits"), None, {"CALL_TIMEOUT": "2"}, True, False, "a side that does not parse, row without targets"),
+]
+bad = [c[5] for c in cases if sa.critical(c[0], c[1], c[2], c[3], pol) != c[4]]
+print("wrong: " + "; ".join(bad) if bad else "all right")
+sys.exit(1 if bad else 0)
+PY
+ok '[ $? = 0 ]' "W4b identity-critical targets: rows, pointers with * at or below, registry settings, unparsed sides (14 cases)"
+HA=$R/.stella/host-access.json; cp -p "$HA" "$T/ha.keep"; e0=$(nev)
+jq '.enabled = true' "$T/ha.keep" >"$C/ha1.json"
+sap apply host-access --from "$C/ha1.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$HA" "$T/ha.keep" && [ "$(nev)" = $e0 ]' "W4b host access turned on with the key and no terminal: STL-OWN-808, nothing changed"
+GR=$R/.stella/grants.json; cp -p "$GR" "$T/gr.keep"; jq -c . "$T/gr.keep" >"$C/gr1.json"
+sap apply grants --from "$C/gr1.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$GR" "$T/gr.keep"' "W4b grants (a row target), even other bytes of the same content: STL-OWN-808 with no terminal"
+DP=$R/.stella/data-policy.json; cp -p "$DP" "$T/dp.keep"; jq -c . "$T/dp.keep" >"$C/dp1.json"
+sap apply data-policy --from "$C/dp1.json" --dry-run >"$T/o" 2>&1; rc=$?; sed -n 's/^action: //p' "$T/o" >"$T/dpa.json"
+ok '[ $rc = 0 ] && jq -e --arg o "$(sha256sum <"$DP" | cut -c1-64)" --arg n "$(sha256sum <"$C/dp1.json" | cut -c1-64)" ".op == \"apply\" and .target == \"data-policy\" and .old_digest == \$o and .new_digest == \$n" "$T/dpa.json" >/dev/null && cmp -s "$DP" "$T/dp.keep"' "W4b a dry run of an owner-only row prints the action: the row and the sha256 of the bytes before and after"
+mv "$R/$OKEY" "$T/key.away"
+sap apply data-policy --from "$C/dp1.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-806 "$T/o" && cmp -s "$DP" "$T/dp.keep" && [ "$(nev)" = $e0 ]' "W4b no owner key and no proof file: STL-OWN-806, nothing changed"
+jq '.entries[0].label = "W4b label"' "$T/conn.orig" >"$C/w4b-conn.json"
+sap apply connections --from "$C/w4b-conn.json" --dry-run >"$T/o" 2>&1; r1=$?; ! grep -q '^action: ' "$T/o"; r2=$?
+sap apply connections --from "$C/w4b-conn.json" >"$T/o" 2>&1; r3=$?
+ok '[ $r1 = 0 ] && [ $r2 = 0 ] && [ $r3 = 0 ] && [ "$(nev)" = $((e0+1)) ] && [ "$(LAST | jq -r ".auth // \"none\"")" = none ]' "W4b a row that is not owner-only needs no proof and its dry run prints no action (no key on the host)"
+sap rollback connections >/dev/null 2>&1; e0=$(nev); mv "$T/key.away" "$R/$OKEY"
+PATH=$PB:$OWNER $OA prove --class owner_write --action "$T/dpa.json" >"$T/dpp.json" 2>/dev/null
+sap apply data-policy --from "$C/dp1.json" --proof "$T/dpp.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$DP" "$C/dp1.json" && [ "$(nev)" = $((e0+1)) ] && LAST | jq -e --arg p "$OKP" ".type == \"apply\" and .auth == [\$p]" >/dev/null' "W4b a proof made for the dry run's action applies that change (not identity-critical: no phrase); the line names $OKP"
+mv "$R/$OKEY" "$T/key.away"
+sap rollback data-policy >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-806 "$T/o" && cmp -s "$DP" "$C/dp1.json"' "W4b a rollback needs the owner proof too: no key, STL-OWN-806, unchanged"
+mv "$T/key.away" "$R/$OKEY"
+sap rollback data-policy >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$DP" "$T/dp.keep" && LAST | jq -e --arg p "$OKP" ".type == \"rollback\" and .auth == [\$p]" >/dev/null' "W4b rollback with the host key: the old bytes are back, the line names $OKP"
+sap apply data-policy --from "$C/dp1.json" --proof "$T/dpp.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-804 "$T/o" && cmp -s "$DP" "$T/dp.keep"' "W4b the proof file again after the rollback (the host key is not used instead): STL-OWN-804"
+
+# F1c Gate B fix 1 (GB-2, GB-3, GB-1 apply side; folds qa R8, RT-3, CRT-2, CRT-6). GB-2: the rows whose content decides who may
+# approve or what is identity-critical (settings registry, channels, loopback-api) are identity-critical, and a registry change is
+# judged on the registry before AND after it (a setting marked identity_critical on either side is a target: no two-step lowering)
+python3 -I - "$H/bin/stella-apply.py" >"$T/o" 2>&1 <<'PY'
+import importlib.util, sys
+sys.dont_write_bytecode = True; spec = importlib.util.spec_from_file_location("sa", sys.argv[1]); sa = importlib.util.module_from_spec(spec); spec.loader.exec_module(sa)
+pol = sa.owner_auth.policy(); j = lambda i: {"id": i, "format": "json"}
+narrow = {**pol, "identity_critical": [p for p in pol["identity_critical"] if p.split(":")[0] != "settings"]}   # the registry row not listed
+reg = lambda *es: {"entries": [{"key": k, "sensitivity": s, "label": l} for k, s, l in es]}
+cases = [
+    (pol, j("settings"), reg(("A", "plain", "a")), reg(("A", "plain", "b")), False, True, "the settings registry (a row target)"),
+    (pol, j("channels"), {"entries": []}, {"entries": [{"id": "zz-rogue"}]}, False, True, "channels: who may answer approvals (a row target)"),
+    (pol, j("loopback-api"), {"endpoints": []}, {"endpoints": [{"path": "/x"}]}, False, True, "loopback-api: which endpoint needs an owner proof (a row target)"),
+    (pol, j("data-policy"), {"privacy_grants": [{"id": "g", "x": 1}]}, {"privacy_grants": [{"id": "g", "x": 2}]}, False, True, "R8a a field inside an existing privacy grant"),
+    (pol, j("host-access"), None, {"routes": []}, True, True, "R8b an unparsed current side, the candidate holds no target key"),
+    (narrow, j("settings"), reg(("U", "identity_critical", "u")), reg(("U", "plain", "u")), False, True, "registry not listed: lowering a setting (the old registry marks it)"),
+    (narrow, j("settings"), reg(("U", "plain", "u")), reg(("U", "identity_critical", "u")), False, True, "registry not listed: raising a setting (the new registry marks it)"),
+    (narrow, j("settings"), reg(("U", "identity_critical", "u")), reg(("U", "identity_critical", "u"), ("N", "plain", "n")), False, False, "registry not listed: a plain entry added after a marked one"),
+    (narrow, j("settings"), reg(("P", "plain", "a"), ("U", "identity_critical", "u")), reg(("P", "plain", "b"), ("U", "identity_critical", "u")), False, False, "registry not listed: a plain entry's label"),
+    (narrow, j("settings"), reg(("P", "plain", "a"), ("U", "identity_critical", "u")), reg(("U", "identity_critical", "u"), ("P", "plain", "a")), False, True, "registry not listed: a marked entry moved"),
+]
+bad = [c[6] for c in cases if sa.critical(c[1], c[2], c[3], c[4], c[0]) != c[5]]
+print("wrong: " + "; ".join(bad) if bad else "all right")
+sys.exit(1 if bad else 0)
+PY
+rc=$?; ok '[ $rc = 0 ]' "GB-2 identity-critical targets: settings, channels, loopback-api rows; R8 cases; the registry judged before and after ($(head -c 300 "$T/o"))"
+mkr gb1; cp "$H/.stella/data-files.json" "$R/.stella/data-files.json"; cp "$H/.stella/schemas/connections.schema.json" "$R/.stella/schemas/"; cp "$H/.stella/owner-auth.json" "$R/.stella/owner-auth.json"
+git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qam shipped-flags-and-policy
+ST="python3 -I $H/bin/settings.py"; e0=$(nev)
+SETF=$R/.stella/settings.json; cp -p "$SETF" "$T/set.keep"; jq '(.entries[] | select(.key == "UNATTENDED_MODE") | .sensitivity) = "plain"' "$SETF" >"$C/set-low.json"
+sap apply settings --from "$C/set-low.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$SETF" "$T/set.keep" && [ "$(nev)" = $e0 ]' "GB-2 RT-3 step 1: a registry change that takes UNATTENDED_MODE out of identity_critical, key and no terminal: STL-OWN-808, unchanged ($rc)"
+PATH=$PB:$OWNER setsid -w $ST set UNATTENDED_MODE true </dev/null >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && ! grep -q "^UNATTENDED_MODE=" "$R/config/owner.env"' "GB-2 RT-3 step 2: UNATTENDED_MODE still needs the phrase: STL-OWN-808, not set ($rc)"
+CHF=$R/.stella/channels.json; cp -p "$CHF" "$T/ch.keep"
+jq --arg a "$(type -P true)" --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$IID" '.entries += [{id: "zz-rogue", kind: "discord", deliver: [$a, "deliver"], collect: [$a, "collect"], enabled: true, global_id: $g, install_id: $i}]' "$CHF" >"$C/ch-rogue.json"
+sap apply channels --from "$C/ch-rogue.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$CHF" "$T/ch.keep" && [ "$(nev)" = $e0 ]' "GB-2 CRT-2/RT-3: a new answering channel row (who may approve), key and no terminal: STL-OWN-808, unchanged ($rc: $(head -c 120 "$T/o"))"
+LAF=$R/.stella/loopback-api.json; cp -p "$LAF" "$T/la.keep"; jq -c . "$LAF" >"$C/la1.json"
+sap apply loopback-api --from "$C/la1.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$LAF" "$T/la.keep"' "GB-2 loopback-api (endpoint scopes), even other bytes of the same content: STL-OWN-808 with no terminal ($rc)"
+# GB-3 (CRT-6): recording a hand edit is judged against the document applied before it, never the file it records
+CN=$R/.stella/connections.json; jq -c . "$CN" >"$C/gb3-c0.json"
+sap apply connections --from "$C/gb3-c0.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ]' "GB-3 control: a formatting-only apply with the key, no terminal ($rc: $(head -c 120 "$T/o"))"
+jq -c '(.entries[] | select(has("terms_ok")) | .terms_ok) = true' "$CN" >"$C/gb3-c1.json"
+sap apply connections --from "$C/gb3-c1.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o"' "GB-3 control: terms_ok -> true through apply with no terminal: STL-OWN-808"
+cat "$C/gb3-c1.json" >"$CN"; ap check connections >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-CFG-314 "$T/o"' "GB-3 control: check reports the hand edit as drift (314)"
+cp "$CN" "$C/gb3-c2.json"; e0=$(nev)
+sap apply connections --from "$C/gb3-c2.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && [ "$(nev)" = $e0 ]' "GB-3 recording an identity-critical hand edit (terms_ok -> true) with no terminal: STL-OWN-808, no line ($rc: $(head -c 120 "$T/o"))"
+ap check connections >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-CFG-314 "$T/o"' "GB-3 the drift alarm of that hand edit is not silenced without the phrase"
+# GB-3 (RT2-1, Gate B fix 2): a plain apply over the hand edit (the candidate differs from the file elsewhere, here its formatting,
+# as `settings.py set` does with one key) is judged against the document applied before AND the file: refused, no line, still drift
+jq . "$CN" >"$C/gb3-c3.json"
+sap apply connections --from "$C/gb3-c3.json" >"$T/o" 2>&1; rc=$?; ap check connections >/dev/null 2>&1; r2=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && [ "$(nev)" = $e0 ] && [ $r2 = 1 ]' "GB-3 RT2-1 an apply over the identity-critical hand edit that changes only the formatting, key and no terminal: STL-OWN-808, no line, still drift ($rc/$r2: $(head -c 120 "$T/o"))"
+jq . "$C/gb3-c0.json" >"$C/gb3-c4.json"
+sap apply connections --from "$C/gb3-c4.json" >"$T/o" 2>&1; rc=$?; ap check connections >/dev/null 2>&1; r2=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && [ "$(nev)" = $e0 ] && [ $r2 = 1 ]' "GB-3 RT2-1 the file side too: an apply that takes the hand edit back out (terms_ok in the file -> the candidate) needs the phrase ($rc/$r2)"
+cp "$C/gb3-c0.json" "$CN"; ap check connections >/dev/null 2>&1; ok '[ $? = 0 ]' "GB-3 the file put back by hand: no drift"
+jq . "$C/gb3-c0.json" >"$CN"; jq --indent 4 . "$C/gb3-c0.json" >"$C/gb3-c5.json"
+sap apply connections --from "$C/gb3-c5.json" >"$T/o" 2>&1; rc=$?; ap check connections >/dev/null 2>&1; r2=$?
+ok '[ $rc = 0 ] && [ "$(nev)" = $((e0+1)) ] && [ $r2 = 0 ]' "GB-3 RT2-1 control: a hand edit and an apply that touch no identity-critical target on either side (formatting only; the document applied before known) take the key alone ($rc/$r2: $(head -c 120 "$T/o"))"
+sap apply connections --from "$C/gb3-c0.json" >/dev/null 2>&1; e0=$(nev); ok 'cmp -s "$CN" "$C/gb3-c0.json"' "GB-3 RT2-1 the fixture applied back"
+# GB-3, same rule, the finish of an apply killed after its replace: judged against the saved copy, not the file it finishes
+owner_fix; PATH=$PB:$OWNER kill_at event apply connections --from "$C/gb3-c1.json" >/dev/null 2>&1; cp "$H/.stella/owner-auth.json" "$R/.stella/owner-auth.json"
+ok 'cmp -s "$CN" "$C/gb3-c1.json"' "GB-3 setup: an identity-critical apply killed after its replace (the file holds terms_ok true)"
+sap apply connections --from "$C/gb3-c1.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && [ "$(nev)" = $e0 ]' "GB-3 finishing it with the key and no terminal: STL-OWN-808, no line ($rc: $(head -c 120 "$T/o"))"
+# GB-1 apply side, written against fix group A's contract (simulated here: event_log append() and load_state() raise STL-CFG-312
+# in a worker environment): a worker's line for a row that is not owner-only goes to the untrusted stream, and is no proof
+UNTR=$R/$(jq -r .untrusted_events "$R/.stella/data-files.json"); CAPF=$R/.stella/capabilities.json; cp -p "$CAPF" "$T/cap.keep"; jq -c . "$CAPF" >"$C/cap1.json"
+asw() { STUB_WORKER_MARK=1 PATH=$PB:$OWNER python3 -I - "$H/bin/stella-apply.py" "$@" <<'PY'
+import importlib.util, sys
+sys.dont_write_bytecode = True; spec = importlib.util.spec_from_file_location("sa", sys.argv[1]); sa = importlib.util.module_from_spec(spec); spec.loader.exec_module(sa)
+def refuse(f):   # fix group A's contract: the trusted writer refuses a worker environment
+    def g(*a, **k):
+        if sa.worker_env.reason():
+            raise sa.EventError("STL-CFG-312", "the trusted event writer is refused in a worker environment")
+        return f(*a, **k)
+    return g
+sa.el.append, sa.el.load_state = refuse(sa.el.append), refuse(sa.el.load_state)
+sys.exit(sa.main(sys.argv[2:]))
+PY
+}
+nu() { [ -f "$UNTR" ] && wc -l <"$UNTR" || echo 0; }
+e0=$(nev); u0=$(nu); asw apply capabilities --from "$C/cap1.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$CAPF" "$C/cap1.json" && [ "$(nev)" = $e0 ] && [ "$(nu)" = $((u0+1)) ] && tail -n 1 "$UNTR" | jq -e ".trusted == false and .type == \"apply\" and .what == \"capabilities\"" >/dev/null' "GB-1 a worker's apply of a row that is not owner-only: applied, its line in the untrusted stream (trusted false), none in the trusted log ($rc: $(head -c 160 "$T/o"))"
+TOK=$(tail -n 1 "$UNTR" | jq -r .detail | grep -oE "token [0-9a-f]+" | cut -d" " -f2); BNM=$(tail -n 1 "$UNTR" | jq -r .detail | grep -oE "backup [^ ]+" | cut -d" " -f2)
+python3 -I - "$H/bin/stella-apply.py" "$TOK" "$BNM" >"$T/o" 2>&1 <<'PY'
+import importlib.util, sys
+sys.dont_write_bytecode = True; spec = importlib.util.spec_from_file_location("sa", sys.argv[1]); sa = importlib.util.module_from_spec(spec); spec.loader.exec_module(sa)
+print(sa.logged("capabilities", "apply", sys.argv[2], sys.argv[3]))
+PY
+ok '[ -n "$TOK" ] && [ -n "$BNM" ] && grep -qx False "$T/o"' "GB-1 the host's logged() does not take the worker's line for the tool's own ($(head -c 80 "$T/o"))"
+asw rollback capabilities >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$CAPF" "$T/cap.keep" && [ "$(nev)" = $e0 ] && [ "$(nu)" = $((u0+2)) ] && tail -n 1 "$UNTR" | jq -e ".trusted == false and .type == \"rollback\"" >/dev/null' "GB-1 the worker's rollback: restored, its line untrusted too, none in the trusted log ($rc: $(head -c 160 "$T/o"))"
+ap apply capabilities --from "$C/cap1.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && [ "$(nev)" = $((e0+1)) ] && [ "$(nu)" = $((u0+2)) ] && LAST | jq -e ".type == \"apply\" and .what == \"capabilities\" and (has(\"trusted\") | not)" >/dev/null' "GB-1 the host's apply of the same row: its line in the trusted log ($rc)"
+
+# R14 (fix pass, GB-1 apply side; qa/fix1-pass/R14, assertions as there): with the real event writer, a worker's apply of a row that
+# is not owner-only lands and its line goes to the untrusted stream, never the trusted log: a plain apply; the finish of its own apply
+# killed before its applied state; a trusted log the worker cannot append to does not stop it
+ixp() { jq -r --arg i "$1" '.files[] | select(.id == $i) | .path' "$R/.stella/data-files.json"; }
+VR=$R/$(ixp versions); nut() { cat "$UNTR" 2>/dev/null | grep -c '"versions"'; }; sig() { [ -f "$LOG" ] && sha256sum <"$LOG" || echo none; }
+W() { STUB_WORKER_MARK=1 PATH=$PB:$OWNER "$@"; }; ver() { jq --arg v "$1" '.pins[0].version = $v' "$VR" >"$C/v.$1"; echo "$C/v.$1"; }
+F=$(ver 9.9.1); u0=$(nut); l0=$(sig)
+W $AP apply versions --from "$F" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$VR" "$F" && [ "$(nut)" -gt "$u0" ] && [ "$(sig)" = "$l0" ]' "R14 a worker's apply of versions lands; its line is in the untrusted stream ($u0 -> $(nut)), the trusted log unchanged ($rc: $(head -c 120 "$T/o"))"
+F=$(ver 9.9.2); W kill_at applied apply versions --from "$F" >/dev/null 2>&1; krc=$?; u0=$(nut); l0=$(sig)
+W $AP apply versions --from "$F" >"$T/o" 2>&1; rc=$?
+ok '[ $krc = 137 ] && [ $rc = 0 ] && grep -q "interrupted apply was finished" "$T/o" && [ "$(nut)" -gt "$u0" ] && [ "$(sig)" = "$l0" ]' "R14 a worker finishes its own killed apply: the bookkeeping is done, the line goes to the untrusted stream (kill $krc, $rc)"
+[ -e "$LOG" ] || { mkdir -p "$(dirname "$LOG")"; : >"$LOG"; }; chmod 0400 "$LOG"
+F=$(ver 9.9.3); u0=$(nut)
+W $AP apply versions --from "$F" >"$T/o" 2>&1; rc=$?; chmod 0600 "$LOG"
+ok '[ $rc = 0 ] && cmp -s "$VR" "$F" && [ "$(nut)" -gt "$u0" ]' "R14 a trusted log the worker cannot append to does not stop its apply: the line goes to the untrusted stream ($rc)"
+# R15 (fix pass, GB-2 and GB-3; qa/fix1-pass/R15, assertions as there): the shipped flags and policy, the owner key and no terminal
+mkr r15; cp "$H/.stella/data-files.json" "$R/.stella/data-files.json"; cp "$H/.stella/schemas/connections.schema.json" "$R/.stella/schemas/"; cp "$H/.stella/owner-auth.json" "$R/.stella/owner-auth.json"
+git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qam shipped-flags-and-policy
+SETF=$R/$(ixp settings); LAF=$R/$(ixp loopback-api); CN=$R/$(ixp connections); POLF=$R/$(ixp owner-auth)
+try() { local f=$1 c=$2; shift 2; cp -p "$f" "$T/keep"; sap apply "$c" --from "$@" >"$T/o" 2>&1; rc=$?; }
+jq -c . "$SETF" >"$C/r15-s0.json"; try "$SETF" settings "$C/r15-s0.json"
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$SETF" "$T/keep"' "R15 (1) a formatting-only change of the settings registry needs the typed phrase: 808, file unchanged ($rc)"
+jq -c . "$LAF" >"$C/r15-l0.json"; try "$LAF" loopback-api "$C/r15-l0.json"
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$LAF" "$T/keep"' "R15 (1) a formatting-only change of loopback-api needs the typed phrase: 808, file unchanged ($rc)"
+jq '.identity_critical -= ["settings"]' "$POLF" >"$T/pol.new" && cat "$T/pol.new" >"$POLF"
+ok 'jq -e "(.identity_critical | index(\"settings\")) == null" "$POLF" >/dev/null' "R15 setup: the scratch policy no longer lists the whole settings row"
+jq '(.entries | map(.sensitivity == "identity_critical") | index(true)) as $i | .entries[$i].sensitivity = "plain"' "$SETF" >"$C/r15-s1.json"; try "$SETF" settings "$C/r15-s1.json"
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$SETF" "$T/keep"' "R15 (2) lowering an identity_critical registry entry (marked so in the old registry) needs the typed phrase: 808 ($rc)"
+jq '(.entries | map(.sensitivity == "plain") | index(true)) as $i | .entries[$i].sensitivity = "identity_critical"' "$SETF" >"$C/r15-s2.json"; try "$SETF" settings "$C/r15-s2.json"
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o" && cmp -s "$SETF" "$T/keep"' "R15 (2) raising a registry entry to identity_critical (marked so in the new registry) needs the typed phrase: 808 ($rc)"
+jq -c . "$CN" >"$C/r15-c4.json"; PATH=$PB:$OWNER kill_at applied apply connections --from "$C/r15-c4.json" </dev/null >/dev/null 2>&1; krc=$?
+try "$CN" connections "$C/r15-c4.json"
+ok '[ $krc = 137 ] && [ $rc = 0 ] && grep -q "interrupted apply was finished" "$T/o"' "R15 (4) the finish of a killed formatting-only apply is judged against the saved copy: done with the key only (kill $krc, $rc)"
+jq '.entries |= map(select(has("terms_ok") | not))' "$CN" >"$C/r15-c3.json"; cat "$C/r15-c3.json" >"$CN"
+rm -f "$(BK)"/connections/*/file.applied
+try "$CN" connections "$C/r15-c3.json"
+ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o"' "R15 (3) recording a hand edit whose applied-before content is not known is judged whole (fail closed): 808 ($rc)"
+# CRT-F-4 (GB-1 rule): a file that holds a key (index owner_key, event_writer_state) given as --from is refused STL-CFG-312 in a
+# worker environment before a byte is read, the same identity check as the data reader; no part of either key in the output
+WS=$R/$(jq -r .event_writer_state "$R/.stella/data-files.json"); KF=$R/$OKEY
+PATH=$PB:$OWNER $EL append --type zz-crtf4 --what owner-line >/dev/null 2>&1
+ok '[ -s "$WS" ] && [ -s "$KF" ]' "CRT-F-4 precondition: the writer state and the owner key exist"
+WK=$(jq -r .key "$WS" 2>/dev/null); OK_=$(tr -d '\n' <"$KF")
+leak() { local f=$1 k; for k in "$WK" "$OK_"; do [ -n "$k" ] || continue; for i in 0 16 32 48; do grep -qF "${k:$i:16}" "$f" && return 0; done; done; return 1; }
+ln "$WS" "$T/ws-link"   # a hard link elsewhere is the same file
+for row in versions capabilities; do
+  for kf in "$WS" "$KF" "$T/ws-link"; do
+    for mode in --dry-run ""; do
+      STUB_WORKER_MARK=1 PATH=$PB:$OWNER setsid -w $AP apply "$row" --from "$kf" $mode </dev/null >"$T/o" 2>&1; rc=$?
+      ok 'grep -q STL-CFG-312 "$T/o"' "CRT-F-4 worker (marker): stella-apply apply $row --from $(basename "$kf") ${mode:-(apply)} refuses STL-CFG-312 before reading a key file (rc=$rc)"
+      ok '! leak "$T/o"' "CRT-F-4 worker (marker): no part of a key in the output of apply $row --from $(basename "$kf") ${mode:-(apply)}"
+    done
+  done
+done
+rm -f "$T/ws-link"
 $AP bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "usage error exits 2"
 [ $fails = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

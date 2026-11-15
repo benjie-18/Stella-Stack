@@ -4,6 +4,11 @@
   "backup_dir": ".supervisor/state/backups",
   "applied_state": ".supervisor/state/applied.json",
   "role_table": "docs/hermes-local/roles.json",
+  "owner_key": ".supervisor/state/owner-key",
+  "approval_store": ".supervisor/state/approvals",
+  "event_writer_state": ".supervisor/state/event-writer.json",
+  "untrusted_events": ".supervisor/logs/events-untrusted.jsonl",
+  "event_writer_id": "engine",
   "files": [
     {
       "id": "data-files",
@@ -175,6 +180,81 @@
       "list_key": null,
       "id_field": "key",
       "global_id": "54f7df31-da0d-4829-ad27-551c13046a8f",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "owner-auth",
+      "path": ".stella/owner-auth.json",
+      "schema": "owner-auth",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "eff77c54-519c-4d78-b84a-b287d3bf047e",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "grants",
+      "path": ".stella/grants.json",
+      "schema": "grants",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "024110db-139c-4655-8048-e7f5288a5411",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "host-access",
+      "path": ".stella/host-access.json",
+      "schema": "host-access",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "28285f8d-59bb-4d53-b416-20dd7ad617e9",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "channels",
+      "path": ".stella/channels.json",
+      "schema": "channels",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": "entries",
+      "id_field": "id",
+      "record_kind": "channel",
+      "global_id": "39d8ca98-ad4d-455b-b9d5-353b7b98b940",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "devices",
+      "path": ".stella/devices.json",
+      "schema": "devices",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": "entries",
+      "id_field": "id",
+      "record_kind": "device",
+      "global_id": "a37e787a-80eb-4059-ad4e-46fa82184870",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "loopback-api",
+      "path": ".stella/loopback-api.json",
+      "schema": "loopback-api",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": "endpoints",
+      "id_field": "id",
+      "record_kind": "endpoint",
+      "global_id": "7eb8dcdd-3861-4208-8e88-1c5a9301e51d",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

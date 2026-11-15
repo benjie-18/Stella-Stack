@@ -1,0 +1,308 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Owner-auth policy",
+  "description": "The owner-auth policy (F1c): which signals mark a worker environment (bin/worker_env.py), which owner-authenticator providers exist and which proofs each action needs (bin/owner_auth.py). Owner-only and identity-critical: only the owner path writes it.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "providers": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The owner-authenticator providers (F1c D2). The kind is code (bin/owner_auth.py); which ones exist and what each action class needs is this data. A new provider of a known kind (a command, say) is a new row: no code change. owner_auth.py check also requires each id once and the params of its kind: local-key, typed-phrase, device-phrase none; device-signature timeout_s and openssl (the absolute path of its signature check); channel-identity channel_kind and owner_config_key; command argv and timeout_s.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "kind": {
+            "enum": [
+              "local-key",
+              "channel-identity",
+              "command",
+              "typed-phrase",
+              "device-phrase",
+              "device-signature"
+            ],
+            "description": "local-key: an HMAC with the owner key file (index owner_key) on the host. channel-identity: the answer's user id equals the owner config value named by owner_config_key, on the message the caller delivered. command: argv runs with the request as JSON on stdin; exit 0 = valid, within timeout_s. typed-phrase: the rendered phrase typed on the host terminal. device-phrase: the device-signed payload's phrase equals the rendered phrase (stands only beside a device-signature provider). device-signature: a paired device of the devices row (not revoked) signed {digest, nonce, expires_at, device_id[, phrase]} with its Ed25519 key; each accepted one is a remote owner change (remote: one alert, rate limited)."
+          },
+          "params": {
+            "type": "object",
+            "properties": {
+              "channel_kind": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9_-]*$"
+              },
+              "owner_config_key": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$",
+                "description": "The name (never the value) of the owner config key that holds the owner's user id on that channel."
+              },
+              "argv": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": "The command; its first item is an absolute path."
+              },
+              "timeout_s": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 600
+              },
+              "openssl": {
+                "type": "string",
+                "minLength": 1,
+                "description": "device-signature: the absolute path of the openssl that checks the signature (never looked up on PATH)."
+              }
+            },
+            "additionalProperties": false
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "global_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "install_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "params",
+          "enabled",
+          "global_id",
+          "install_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "actions": {
+      "type": "object",
+      "description": "Action class -> alternatives; an alternative is a list of provider ids that must all pass, and one passing alternative is enough. owner_write: an owner data change; channel_answer: an approval answered on a channel; identity_critical: used instead of owner_write when the change touches an identity-critical target. owner_auth.py check requires every id to be a provider.",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "properties": {
+        "owner_write": {
+          "$ref": "#/$defs/alternatives"
+        },
+        "channel_answer": {
+          "$ref": "#/$defs/alternatives"
+        },
+        "identity_critical": {
+          "$ref": "#/$defs/alternatives"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/alternatives"
+      },
+      "required": [
+        "owner_write",
+        "channel_answer",
+        "identity_critical"
+      ]
+    },
+    "phrase": {
+      "type": "object",
+      "properties": {
+        "template": {
+          "type": "string",
+          "pattern": "\\{what\\}",
+          "description": "The confirmation phrase; {what} becomes the action's target."
+        }
+      },
+      "required": [
+        "template"
+      ],
+      "additionalProperties": false
+    },
+    "proof_ttl_s": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3600,
+      "description": "How long a proof made on the host stays valid (prove's default and maximum); a proof that expires later than this from now is refused."
+    },
+    "worker_signals": {
+      "type": "object",
+      "description": "Any one signal makes this process a worker environment: every owner command refuses, the trusted event writer included (STL-CFG-312); agents write only to the untrusted stream through bin/event_untrusted.py (F1c B4, B7). These add to the role table's worker_markers and roles.py prove.",
+      "properties": {
+        "token_env": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          },
+          "uniqueItems": true,
+          "description": "Environment variables that carry an agent token: set and not empty = a worker."
+        },
+        "users": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z_][a-z0-9_-]*$"
+          },
+          "uniqueItems": true,
+          "description": "OS user names agents run as (empty until E1 adds the agent user)."
+        },
+        "sandbox_files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^/.+$"
+          },
+          "uniqueItems": true,
+          "description": "Absolute paths whose existence marks the agent sandbox."
+        },
+        "worktree_dirs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"
+          },
+          "uniqueItems": true,
+          "description": "Folders (relative to the stack root) whose sub-folders are run worktrees: a process whose working folder lies in one is a worker."
+        }
+      },
+      "required": [
+        "token_env",
+        "users",
+        "sandbox_files",
+        "worktree_dirs"
+      ],
+      "additionalProperties": false
+    },
+    "identity_critical": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._:-]*(:(/[^/]*)+)?$"
+      },
+      "description": "Identity-critical targets (F1c B3, D2): a change that touches one needs the identity_critical action class (the typed phrase) instead of owner_write. `<row id>`: any change of that index row; `<row id>:<JSON pointer>`: a change at or below that pointer, where a * segment stands for any one segment (an env row's keys are top-level members, /KEY). Settings whose registry sensitivity is identity_critical count too, without being listed here."
+    },
+    "channel_kinds": {
+      "type": "object",
+      "description": "Channel kind -> whether an answer on a channel of that kind may decide an approval (bin/approvals.py, F1c B2, D3). Open map: a new kind is data (a channels row of that kind plus its entry here and a channel-identity provider). A kind not listed here answers nothing (fail closed). The kind voice_host_confirmation.channel_kind (voice) answers only through that entry, whatever its value here.",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9_-]*$"
+      },
+      "additionalProperties": {
+        "type": "boolean"
+      }
+    },
+    "voice_host_confirmation": {
+      "type": "object",
+      "description": "The one exception to 'a voice channel answers no approval' (F1c B2, decided 2026-11-13): when enabled, the voice profile `profile` may give the quick confirmation for its own ask-first host action, a request of class action_class whose ttl is at most max_ttl_s, answered with the digest of the details shown; never any other approval. Off until the post-1.0 host operator exists. The schema keeps it strict: no other key.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "channel_kind": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "description": "The voice channel kind: a channel of this kind answers only through this entry, whatever channel_kinds says."
+        },
+        "profile": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "description": "The requester profile whose own asks voice may confirm."
+        },
+        "max_ttl_s": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600,
+          "description": "The longest request ttl (seconds) voice may confirm."
+        },
+        "action_class": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "The approval class of the host ask-first action (an approval_class of the approval-request schema)."
+        }
+      },
+      "required": [
+        "enabled",
+        "channel_kind",
+        "profile",
+        "max_ttl_s",
+        "action_class"
+      ],
+      "additionalProperties": false
+    },
+    "remote": {
+      "type": "object",
+      "description": "Owner changes from a remote device (F1c B6, D5): every accepted device-signature proof writes one alert with alert_code (a catalog code) and counts toward rate_limit; the next one past count within window_s seconds is refused STL-OWN-813. Required when a device-signature provider is listed (owner_auth.py check).",
+      "properties": {
+        "rate_limit": {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            },
+            "window_s": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 604800
+            }
+          },
+          "required": [
+            "count",
+            "window_s"
+          ],
+          "additionalProperties": false
+        },
+        "alert_code": {
+          "type": "string",
+          "pattern": "^STL-[A-Z]+-[0-9]{3}$",
+          "description": "The alert-catalog code of the alert each remote owner change raises."
+        }
+      },
+      "required": [
+        "rate_limit",
+        "alert_code"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "alternatives": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "array",
+        "minItems": 1,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+        }
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "providers",
+    "actions",
+    "phrase",
+    "proof_ttl_s",
+    "worker_signals",
+    "identity_critical",
+    "channel_kinds",
+    "voice_host_confirmation"
+  ],
+  "additionalProperties": false
+}

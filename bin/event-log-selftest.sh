@@ -8,20 +8,23 @@ set -u
 H=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 T=$(mktemp -d -t event-log-selftest.XXXXXX); trap 'rm -rf "$T"' EXIT
 R=$T/root; mkdir -p "$R/docs/hermes-local" "$R/config" "$R/.supervisor/logs"
-cp -r "$H/.stella" "$R/"; cp "$H/docs/hermes-local/roles.json" "$R/docs/hermes-local/"
+cp -r "$H/.stella" "$R/"; jq '.worker_markers = ["STUB_WORKER_MARK"]' "$H/docs/hermes-local/roles.json" >"$R/docs/hermes-local/roles.json"
 cp -r "$H/docs/hermes-local/hooks" "$R/docs/hermes-local/hooks"   # the table check looks hook files up under the root
 # a registry setting marked secret, in a data file that has no redact_keys of its own
 jq --arg g "$(python3 -I -c "import uuid; print(uuid.uuid4())")" '.entries += [(.entries[2] | .global_id = $g | .key = "PLANTED_SETTING" | .sensitivity = "secret" | .type = "string" | .validation = {} | .default = null | .store.key = "PLANTED_SETTING")]' \
   "$R/.stella/settings.json" > "$T/s" && mv "$T/s" "$R/.stella/settings.json"
 printf "OWNER_TIMEZONE='UTC'\n" >"$T/owner-fake.env"   # a fake owner file: no failure message makes the alert code read the real one
 export STELLA_ROOT=$R ESCALATE_SUP_DIR=$T/sup OWNER_CONFIG=$T/owner-fake.env
+# F1c W1: the CLI asks bin/worker_env.py, which asks `roles.py prove` the board: a stub board (no running card), never the real one
+mkdir -p "$T/pb"; printf '#!/usr/bin/env bash\necho "[]"\n' >"$T/pb/hermes"; chmod +x "$T/pb/hermes"; BASEPATH=$PATH; export PATH=$T/pb:$PATH
+unset STUB_WORKER_MARK; for v in $(jq -r ".worker_signals.token_env[]" "$R/.stella/owner-auth.json"); do unset "$v"; done
 EL="python3 -I $H/bin/event_log.py"
 LOG=$R/.supervisor/logs/events.jsonl
 fails=0
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 
 ok 'o=$(python3 -I $H/bin/stella_data.py check) && [ "$(echo "$o" | head -1)" = "data OK" ]' "the scratch root validates"
-ok '$EL append --type note --what first >/dev/null && [ "$(wc -l <"$LOG")" = 1 ] && jq -e ".schema_version == 2 and .type == \"note\" and (.time | test(\"Z$\"))" "$LOG" >/dev/null' "a valid line is appended as one JSON line"
+ok '$EL append --type note --what first >/dev/null && [ "$(wc -l <"$LOG")" = 1 ] && jq -e ".schema_version == 3 and .type == \"note\" and (.time | test(\"Z$\"))" "$LOG" >/dev/null' "a valid line is appended as one JSON line"
 cp "$LOG" "$T/before"
 out=$($EL append --type change --what x --old '{"API_TOKEN":"plant-aaa","name":"n1"}' --new '{"PLANTED_SETTING":"plant-bbb","/a/b/PASSWORD":"plant-ccc","name":"n2"}' 2>&1); rc=$?
 ok '[ $rc = 0 ] && [ "$(wc -l <"$LOG")" = 2 ]' "a second line is appended"
@@ -187,13 +190,13 @@ IID=$(jq -r .install_id "$R/.stella/install.json"); SD="python3 -I $H/bin/stella
 U4='^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 rm -f "$LOG"; printf '%s\n' '{"schema_version":1,"time":"2026-01-01T00:00:00Z","type":"apply","who":{"role":null,"channel":null,"user":"owner"},"what":"features","detail":"backup b1 token t1"}' >"$LOG"; chmod 600 "$LOG"
 cp "$LOG" "$T/before"; $EL append --type note --what w6a >/dev/null 2>&1; $EL append --type note --what w6b >/dev/null 2>&1
-ok 'tail -n 2 "$LOG" | jq -se --arg i "$IID" --arg u "$U4" "length == 2 and all(.schema_version == 2 and .install_id == \$i and (.global_id | test(\$u))) and .[0].global_id != .[1].global_id" >/dev/null' "T7d each new line has schema_version 2, its own global_id (UUID4) and this install's install_id"
+ok 'tail -n 2 "$LOG" | jq -se --arg i "$IID" --arg u "$U4" "length == 2 and all(.schema_version == 3 and .install_id == \$i and (.global_id | test(\$u))) and .[0].global_id != .[1].global_id" >/dev/null' "T7d each new line has schema_version 3 (F1c W1; was 2), its own global_id (UUID4) and this install's install_id"
 ok 'head -c "$(wc -c <"$T/before")" "$LOG" | cmp -s - "$T/before"' "T7d a line written before the ids is never rewritten"
 ok '$EL tail --json -n 3 2>"$T/e" | jq -e ".[0].what == \"features\" and .[0].schema_version == 1 and (.[0] | has(\"global_id\") | not)" >/dev/null && [ ! -s "$T/e" ]' "T7d tail reads an old line (version 1, no ids) by its position and fields, not as unreadable"
 python3 -I $H/bin/stella-apply.py history features --json >"$T/o" 2>"$T/e"; rc=$?
 ok '[ $rc = 0 ] && jq -e ".unreadable_lines == 0 and (.events | map(.detail) | index(\"backup b1 token t1\") != null)" "$T/o" >/dev/null' "T7d stella-apply history still finds an old line by its what (exit $rc)"
 sed -n 1p "$LOG" >"$T/ev1.json"; sed -n 2p "$LOG" >"$T/ev2.json"
-ok '$SD validate event "$T/ev1.json" >/dev/null && $SD validate event "$T/ev2.json" >/dev/null' "T7d the event schema accepts an old line (version 1) and a new one (version 2)"
+ok '$SD validate event "$T/ev1.json" >/dev/null && $SD validate event "$T/ev2.json" >/dev/null' "T7d the event schema accepts an old line (version 1) and a new one (version 3 since F1c W1)"
 ok '! $SD validate event <(jq -c ".global_id = \"x\"" "$T/ev2.json") >/dev/null 2>&1 && ! $SD validate event <(jq -c ".install_id = \"x\"" "$T/ev2.json") >/dev/null 2>&1' "T7d a global_id or install_id that is not a UUID is refused by the schema"
 G=$(tail -n 1 "$LOG" | jq -r .global_id); cp "$LOG" "$T/before"
 python3 -I -c "
@@ -209,7 +212,7 @@ ok '[ $? = 0 ] && [ "$(wc -l <"$LOG")" = $(( $(wc -l <"$T/before") + 1 )) ] && h
 python3 -I -c "
 import sys; sys.path.insert(0, sys.argv[1]); import event_log as e
 e.append({**e.build('note', 'v1shape'), 'schema_version': 1, 'install_id': '00000000-0000-4000-8000-000000000000'})" "$H/bin" 2>/dev/null
-ok 'tail -n 1 "$LOG" | jq -e --arg i "$IID" --arg u "$U4" ".what == \"v1shape\" and .schema_version == 2 and .install_id == \$i and (.global_id | test(\$u))" >/dev/null' "T7d a caller's line in the old shape, or naming another install, is written as version 2 with this install's ids"
+ok 'tail -n 1 "$LOG" | jq -e --arg i "$IID" --arg u "$U4" ".what == \"v1shape\" and .schema_version == 3 and .install_id == \$i and (.global_id | test(\$u))" >/dev/null' "T7d a caller's line in the old shape, or naming another install, is written as version 3 (F1c W1; was 2) with this install's ids"
 cp "$R/.stella/install.json" "$T/install.keep"
 for how in 'jq "del(.install_id)" "$T/install.keep" >"$R/.stella/install.json"' 'rm "$R/.stella/install.json"'; do
   eval "$how"; cp "$LOG" "$T/before"; $EL append --type note --what noid >"$T/o" 2>&1; rc=$?
@@ -230,5 +233,219 @@ for k in rq:approval-request dc:approval-decision; do
   ok '$SD validate ${k#*:} "$T/${k%%:*}.json" >/dev/null && $SD validate ${k#*:} <(ids "$T/${k%%:*}.json") >/dev/null' "T7d ${k#*:}: an old record (version 1) and one with global_id and install_id (version 2) validate"
   ok '! $SD validate ${k#*:} <(ids "$T/${k%%:*}.json" | jq ".global_id = \"r1\"") >/dev/null 2>&1 && ! $SD validate ${k#*:} <(ids "$T/${k%%:*}.json" | jq ".install_id = 5") >/dev/null 2>&1' "T7d ${k#*:}: a global_id or install_id that is not a UUID is refused"
 done
+# ---- F1c W1 (T6a, T6b, T6c event-log cases; design D1, codes STL-EVT-901..906): the chained trusted log, verify, proof_lines(),
+# the agents' untrusted stream. The guard cases of T6c (state_paths, hooks) belong to W4a's selftests. ----
+ixr() { jq -r "$1" "$R/.stella/data-files.json"; }
+STATE=$R/$(ixr .event_writer_state); UNT=$R/$(ixr .untrusted_events); WID=$(ixr .event_writer_id); POL=$R/.stella/owner-auth.json
+EU="python3 -I $H/bin/event_untrusted.py"
+uuid() { python3 -I -c "import uuid; print(uuid.uuid4())"; }
+hex64() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+V() { $EL verify --json >"$T/v" 2>"$T/e"; echo $?; }
+prob() { jq -e --arg c "$1" --argjson l "$2" '.problems | any(.code == $c and .line == $l)' "$T/v" >/dev/null 2>&1; }
+probc() { jq -e --arg c "$1" '.problems | any(.code == $c)' "$T/v" >/dev/null 2>&1; }
+snap() { cat "$LOG" "$STATE" 2>/dev/null | sha256sum; }
+rm -f "$LOG" "$STATE"
+( umask 000; for w in a1 a2 a3 a4; do $EL append --type note --what $w >/dev/null 2>&1; done )
+ok '[ "$(wc -l <"$LOG")" = 4 ] && jq -s -e --arg w "$WID" --arg i "$IID" "all(.schema_version == 3 and .writer == {id: \$w, install_id: \$i} and (.mac | test(\"^[0-9a-f]{64}$\"))) and ([.[].seq] == [1, 2, 3, 4]) and ([range(1; 4) as \$k | .[\$k].prev == .[\$k - 1].mac] | all) and (.[0].prev as \$g | (\$g | type == \"string\" and length > 0) and ([.[].mac] | index([\$g]) == null))" "$LOG" >/dev/null' "W1 each line: schema_version 3, writer {index event_writer_id, this install}, seq +1, prev = the previous mac (a genesis value first), mac 64 hex"
+L4=$(tail -n 1 "$LOG")
+ok '[ -f "$STATE" ] && [ ! -L "$STATE" ] && [ "$(stat -c %a "$STATE")" = 600 ] && [ "$(stat -c %h "$STATE")" = 1 ] && jq -e --argjson s 4 --arg m "$(jq -r .mac <<<"$L4")" "([.. | numbers] | index([\$s]) != null) and ([.. | strings] | index([\$m]) != null)" "$STATE" >/dev/null' "W1 the writer state: 0600 even under umask 000, one link, holds the last seq and mac"
+r=$(V); ok '[ $r = 0 ] && jq -e ".problems == [] and (.legacy | if type == \"array\" then length else . end) == 0" "$T/v" >/dev/null' "W1 verify --json: an untouched log passes"
+$EL verify >"$T/o" 2>&1; ok '[ $? = 0 ]' "W1 verify (plain): an untouched log passes"
+cp "$LOG" "$T/good"; cp -p "$STATE" "$T/sgood"
+rs() { cp "$T/good" "$LOG"; rm -f "$STATE"; cp -p "$T/sgood" "$STATE"; }
+unch() { jq -c --arg g "$(uuid)" '.schema_version = 2 | .global_id = $g | .what = "inserted" | del(.writer, .seq, .prev, .mac)' <<<"$L4"; }
+forge() { jq -c --arg g "$(uuid)" --arg m "$(hex64)" "$1"' | .global_id = $g | .seq = (.seq + 1) | .prev = .mac | .mac = $m | .what = "forged"' <<<"$L4"; }
+tamper() {   # tamper <shell that changes $LOG> <code> <line, or - for any> <name>
+  local r c=$2 l=$3; rs; eval "$1"; r=$(V)
+  ok '[ $r = 1 ] && if [ $l = - ]; then probc $c; else prob $c $l; fi' "W1 verify: $4: exit 1, $c"; }
+tamper 'sed -i "2s/\"what\":\"a2\"/\"what\":\"a2x\"/" "$LOG"' STL-EVT-901 2 "an edited line (line 2)"
+tamper 'sed -i "2s/\"what\":\"a2\"/\"what\":\"evil\",\"what\":\"a2\"/" "$LOG"' STL-EVT-901 2 "a duplicate key added to a line (parses to the same object; line 2)"
+tamper 'sed -i 2d "$LOG"' STL-EVT-902 - "a deleted middle line"
+tamper 'sed -i "\$d" "$LOG"' STL-EVT-902 - "a deleted last line (tail behind the writer state)"
+tamper 'awk "NR == 2 { k = \$0; next } NR == 3 { print; print k; next } { print }" "$T/good" >"$LOG"' STL-EVT-903 - "lines 2 and 3 swapped"
+tamper 'awk -v x="$(unch)" "NR == 3 { print x } { print }" "$T/good" >"$LOG"' STL-EVT-904 3 "an unchained line inserted after the chain started (line 3)"
+tamper 'unch >>"$LOG"' STL-EVT-904 5 "an unchained line appended (line 5)"
+tamper 'forge . >>"$LOG"' STL-EVT-901 5 "a next-seq line with a made-up mac (line 5)"
+tamper 'forge ".writer.id = \"zz-other\"" >>"$LOG"' STL-EVT-906 5 "a forged writer id (line 5)"
+tamper 'forge ".writer.install_id = \"$(uuid)\"" >>"$LOG"' STL-EVT-906 5 "a forged install id (line 5)"
+tamper 'tail -n 1 "$T/good" >>"$LOG"' STL-EVT-903 5 "a genuine line replayed at the end (line 5)"
+# the tester's R5 (wave-1 pass): a forged next-seq line past the state is not adopted by the next append; verify: only 901 at it
+rm -f "$LOG" "$STATE"; for w in a1 a2; do $EL append --type note --what "$w" >/dev/null 2>&1; done
+jq -c --arg g "$(uuid)" --arg m "$(hex64)" '.global_id = $g | .seq = (.seq + 1) | .prev = .mac | .mac = $m | .what = "forged"' <<<"$(tail -n 1 "$LOG")" >>"$LOG"
+$EL append --type note --what a3 >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ]' "R5 the owner appends after the forged line"
+ok '[ "$(tail -n 1 "$LOG" | jq .seq)" = 3 ] && [ "$(tail -n 1 "$LOG" | jq -r .prev)" = "$(sed -n 2p "$LOG" | jq -r .mac)" ]' "R5 the new line continues from the last genuine line (seq 3, prev = mac of line 2), not from the forged one"
+$EL verify --json >"$T/v" 2>/dev/null
+ok 'jq -e "[.problems[] | [.code, .line]] == [[\"STL-EVT-901\", 3]]" "$T/v" >/dev/null' "R5 verify: exactly 901 at the forged line 3 (now: $(jq -c '[.problems[] | [.code, .line]]' "$T/v"))"
+# the tester's R7 (wave-1 pass): the state keeps its key and seq but its last mac is replaced; verify reports 903 at the next line
+rm -f "$LOG" "$STATE"; for w in a1 a2; do $EL append --type note --what "$w" >/dev/null 2>&1; done
+jq -c --arg m "$(hex64)" '.mac = $m' "$STATE" >"$T/st" && cat "$T/st" >"$STATE"   # in place: mode and link count kept
+ok '[ "$(stat -c %a "$STATE")" = 600 ]' "R7 (fixture) state rewritten in place, still 0600"
+$EL append --type note --what a3 >/dev/null 2>&1
+$EL verify --json >"$T/v" 2>/dev/null; rc=$?
+ok '[ $rc = 1 ] && jq -e ".problems | any(.code == \"STL-EVT-903\" and .line == 3)" "$T/v" >/dev/null' "R7 a line chained from a swapped state mac: verify exit 1, 903 at line 3 (now: $(jq -c '[.problems[] | [.code, .line]]' "$T/v"))"
+$EL verify >"$T/o" 2>&1; ok '[ $? = 1 ] && grep -q STL-EVT-903 "$T/o"' "W1 verify (plain): a problem exits 1 and prints its code"
+for how in 'rm -f "$STATE"' 'chmod 644 "$STATE"' 'mv "$STATE" "$T/sreal"; ln -s "$T/sreal" "$STATE"' 'ln "$STATE" "$T/slink2"'; do
+  rs; eval "$how"; r=$(V); ok '[ $r = 1 ] && probc STL-EVT-905' "W1 writer state unsafe ($how): verify exit 1, STL-EVT-905"
+  $EL append --type note --what after >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 1 ] && grep -q STL-EVT-905 "$T/o" && cmp -s "$LOG" "$T/good"' "W1 writer state unsafe ($how): append refused (905), nothing written (no new genesis)"
+  rm -f "$STATE" "$T/sreal" "$T/slink2"
+done
+rs; jq 'del(.key)' "$T/sgood" >"$STATE"; chmod 600 "$STATE"; r=$(V); ok '[ $r = 1 ] && probc STL-EVT-905' "W1 a writer state without its key: verify exit 1, STL-EVT-905"
+# the crash window: the line is written, the state is not (killed between): the next append continues the chain from that line
+rs; $EL append --type note --what a5 >/dev/null 2>&1; cp -p "$T/sgood" "$STATE"
+r=$(V); ok '[ $r = 0 ]' "W1 a log one genuine line ahead of the writer state (a writer killed between line and state) verifies"
+$EL append --type note --what a6 >/dev/null 2>&1; r=$(V)
+ok '[ $r = 0 ] && [ "$(tail -n 1 "$LOG" | jq .seq)" = 6 ] && jq -e ".seq == 6" "$STATE" >/dev/null' "W1 the next append continues from that line (seq 6), the state catches up"
+# the state's write fails after the line is synced (twice): both appends succeed, the line stands; the next append walks forward over both
+python3 -I -c '
+import sys; sys.path.insert(0, sys.argv[1]); import event_log as e
+def no(s): raise e.EventError("STL-EVT-905", "planted")
+e.save_state = no
+for w in ("a7", "a8"):
+    assert e.append(e.build("note", w))["seq"] in (7, 8)' "$H/bin" >"$T/o" 2>&1; rc=$?
+$EL append --type note --what a9 >/dev/null 2>&1; r=$(V)
+ok '[ $rc = 0 ] && [ $r = 0 ] && [ "$(jq -sc "[.[].seq]" "$LOG")" = "[1,2,3,4,5,6,7,8,9]" ] && jq -e ".seq == 9" "$STATE" >/dev/null' "W1 a state write that fails after the line: the append stands, the next append continues from seq 8 (two lines ahead), verify passes"
+# the first trusted write: its state is made before the line; when the line then fails, that new state is removed again (nothing changed)
+rm -f "$LOG" "$STATE"; python3 -I -c '
+import os, sys; sys.path.insert(0, sys.argv[1]); import event_log as e
+real = os.write
+def boom(fd, b):
+    if os.readlink(f"/proc/self/fd/{fd}") == e.log_path(): raise OSError(28, "No space left on device")
+    return real(fd, b)
+os.write = boom
+try:
+    e.append(e.build("note", "first")); sys.exit(1)
+except e.EventError as x:
+    print(x.code)' "$H/bin" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && grep -q STL-CFG-318 "$T/o" && [ ! -e "$LOG" ] && [ ! -e "$STATE" ] && [ -z "$(ls -A "$(dirname "$STATE")")" ]' "W1 the first line fails to write: no log, no state, no temp file left (nothing changed)"
+# legacy lines (v1/v2) before the chain: reported as legacy, never a problem, never rewritten
+rm -f "$LOG" "$STATE"
+for k in 1 2; do jq -c --arg g "$(uuid)" --arg w "legacy$k" '.schema_version = 2 | .global_id = $g | .what = $w | del(.writer, .seq, .prev, .mac)' <<<"$L4" >>"$LOG"; done
+cp "$LOG" "$T/before"; $EL append --type note --what c1 >/dev/null 2>&1; $EL append --type note --what c2 >/dev/null 2>&1
+r=$(V); ok '[ $r = 0 ] && jq -e ".problems == [] and ((.legacy | if type == \"array\" then length else . end) == 2)" "$T/v" >/dev/null && head -c "$(wc -c <"$T/before")" "$LOG" | cmp -s - "$T/before"' "W1 two legacy v2 lines then a chain: verify exit 0, legacy 2, the old lines unchanged"
+# worker environments: the writer (append, verify: it reads the key) refuses for every signal (STL-CFG-312); the untrusted stream takes them
+SIGNALS="marker user sandbox worktree board-worker board-down policy-unreadable $(jq -r '.worker_signals.token_env[] | "token:" + .' "$POL" | tr '\n' ' ')"
+fp() { echo "$(cat /proc/sys/kernel/random/boot_id):$(sed 's/.*) //' /proc/1/stat | awk '{print $20}')|$(sed 's/.*) //' /proc/$1/stat | awk '{print $20}')"; }
+mkdir -p "$T/pb-down" "$T/pb-worker"; printf '#!/usr/bin/env bash\nexit 1\n' >"$T/pb-down/hermes"
+cat >"$T/pb-worker/hermes" <<S
+#!/usr/bin/env bash
+case " \$* " in
+  *" list "*) echo '[{"id":"c1"}]';;
+  *" show "*) echo '{"task":{"id":"c1","assignee":"w"},"runs":[{"id":7,"ended_at":null}],"events":[{"kind":"claimed","run_id":7,"payload":{"lock":"h:1"}},{"kind":"worker_bound","run_id":7,"payload":{"pid":$$,"claim_lock":"h:1","started_at":"$(fp $$)"}}]}';;
+  *) exit 1;;
+esac
+S
+chmod +x "$T"/pb-*/hermes
+as_worker() {   # as_worker <signal> <cmd...>: exactly that signal present; the policy is restored after
+  local s=$1 pb=$T/pb cwd=$T rc envs=(STUB_NOTHING=1); shift
+  cp -p "$POL" "$T/pol.keep"
+  case $s in
+    marker) envs=(STUB_WORKER_MARK=1);;
+    token:*) envs=("${s#token:}=t0k-planted");;
+    user) jq --arg u "$(id -un)" '.worker_signals.users += [$u]' "$T/pol.keep" >"$POL";;
+    sandbox) : >"$T/sandbox-flag"; jq --arg f "$T/sandbox-flag" '.worker_signals.sandbox_files += [$f]' "$T/pol.keep" >"$POL";;
+    worktree) cwd=$R/$(jq -r '.worker_signals.worktree_dirs[0]' "$T/pol.keep")/card-1; mkdir -p "$cwd";;
+    board-worker) pb=$T/pb-worker;;
+    board-down) pb=$T/pb-down;;
+    policy-unreadable) printf '{not json' >"$POL";;
+  esac
+  (cd "$cwd" && env "${envs[@]}" PATH="$pb:$BASEPATH" "$@"); rc=$?
+  cp -p "$T/pol.keep" "$POL"; rm -f "$T/sandbox-flag"
+  return $rc; }
+$EL append --type note --what owner-seed >/dev/null 2>&1
+# GB-1 (RT-1): the library, imported by a worker, refuses every read of the writer key and every trusted write (312); the chain check
+# reports 312 and gives no proof; reading the log's lines (no secret) still works
+LIBW='import sys; sys.path.insert(0, sys.argv[1]); import event_log as e
+calls = {"append": lambda: e.append(e.build("approval-decision", "zz-lib", new={"decision": "approved"})), "load_state": e.load_state,
+         "save_state": lambda: e.save_state({"key": "0" * 64, "seq": 0, "mac": e.GENESIS}), "proof_lines": e.proof_lines}
+for n, f in calls.items():
+    try:
+        f(); print(n, "ran"); sys.exit(1)
+    except e.EventError as x:
+        if x.code != "STL-CFG-312":
+            print(n, x.code); sys.exit(1)
+p, _, proof = e.chain()
+if proof or [c for c, _, _ in p] != ["STL-CFG-312"]:
+    print("chain", p); sys.exit(1)
+print("tail", len(e.tail()), "read_log", len(e.read_log()[0]))'
+for s in $SIGNALS; do
+  S0=$(snap); as_worker "$s" $EL append --type capability-used --what "zz-forge-$s" >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 1 ] && grep -q STL-CFG-312 "$T/o" && [ "$(snap)" = "$S0" ]' "W1 worker signal $s: event_log.py append refused (STL-CFG-312), log and state untouched"
+  as_worker "$s" $EL verify --json >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 1 ] && grep -q STL-CFG-312 "$T/o" && [ "$(snap)" = "$S0" ]' "W1 worker signal $s: event_log.py verify (it reads the key) refused (STL-CFG-312)"
+  as_worker "$s" $EU append --type approval-decision --what "zz-unt-$s" --source "zz-src-$s" >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 0 ] && tail -n 1 "$UNT" | jq -e --arg w "zz-unt-$s" --arg s "zz-src-$s" ".trusted == false and .what == \$w and .source == \$s and .type == \"approval-decision\" and (has(\"seq\") or has(\"mac\") or has(\"prev\") or has(\"writer\") | not)" >/dev/null && [ "$(snap)" = "$S0" ]' "W1 worker signal $s: event_untrusted.py appends a \"trusted\": false line (no chain fields) to the untrusted stream; the trusted log and state untouched"
+  as_worker "$s" python3 -I -c "$LIBW" "$H/bin" >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 0 ] && grep -qE "^tail [1-9][0-9]* read_log [1-9]" "$T/o" && [ "$(snap)" = "$S0" ]' "GB-1 worker signal $s: the library refuses append, load_state, save_state, proof_lines (STL-CFG-312) and chain() gives no proof; log and state untouched; tail() and read_log() still read ($(tail -n 1 "$T/o"))"
+done
+ok 'tail -n 1 "$UNT" | jq -e --arg i "$IID" "(.global_id | test(\"^[0-9a-f-]{36}$\")) and .install_id == \$i and .schema_version == 3" >/dev/null && python3 -I $H/bin/stella_data.py validate event <(tail -n 1 "$UNT") >/dev/null' "W1 an untrusted line has its own global_id and this install's id, and passes the event schema"
+ok '[ -f "$H/bin/event_untrusted.py" ] && ! grep -nE "^\s*(import|from)\s+(event_log|owner_auth|hmac)\b|event_writer_state|owner_key" "$H/bin/event_untrusted.py" >/dev/null' "W1 event_untrusted.py imports no writer, key or chain code"
+cp "$UNT" "$T/ubefore"
+python3 -I -c '
+import sys; sys.path.insert(0, sys.argv[1]); import event_untrusted as u, event_log as e
+assert (u.WRITE_MAX, u.WRITE_DEPTH) == (e.WRITE_MAX, e.WRITE_DEPTH)
+try:
+    u.line_of("t", "x" * u.WRITE_MAX); sys.exit(1)   # beyond what one argument can carry (the kernel caps it): the library call
+except u.Refused as r:
+    print(r.code)' "$H/bin" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && grep -q STL-CFG-313 "$T/o" && cmp -s "$UNT" "$T/ubefore"' "W1 an untrusted line beyond the writer's size limit (the same limits as the writer's) is refused (313), nothing written"
+$EU append --type "" --what w >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-CFG-313 "$T/o" && cmp -s "$UNT" "$T/ubefore"' "W1 an untrusted line with an empty type is refused (313)"
+mv "$UNT" "$T/ureal"; ln -s "$T/ureal" "$UNT"; $EU append --type t --what w >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-CFG-318 "$T/o" && cmp -s "$T/ureal" "$T/ubefore"' "W1 an untrusted stream that is a symbolic link is refused (318), its target untouched"
+rm "$UNT"; mv "$T/ureal" "$UNT"
+$EU bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "W1 event_untrusted.py usage error exits 2"
+# proof_lines(): only chained lines whose mac verifies, each once; forged, unchained and untrusted lines count for nothing
+PL() { python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import event_log as e; print(json.dumps(e.proof_lines()))' "$H/bin" >"$T/pl" 2>"$T/e"; }
+rm -f "$LOG" "$STATE"
+for w in capability-used:zz-cap-genuine approval-decision:zz-appr-genuine qa-pass:zz-qa-genuine; do $EL append --type ${w%%:*} --what ${w#*:} >/dev/null 2>&1; done
+cp "$LOG" "$T/good"; L3=$(tail -n 1 "$T/good")
+PL; ok 'jq -e "[.[].what] == [\"zz-cap-genuine\", \"zz-appr-genuine\", \"zz-qa-genuine\"]" "$T/pl" >/dev/null' "W1 proof_lines() on an untouched chain: the three lines, in file order"
+for ty in capability-used approval-decision qa-pass; do
+  jq -c --arg t "$ty" --arg g "$(uuid)" --arg m "$(hex64)" '.type = $t | .what = "zz-forged-chained-" + $t | .global_id = $g | .seq = (.seq + 1) | .prev = .mac | .mac = $m' <<<"$L3" >>"$LOG"
+  jq -c --arg t "$ty" --arg g "$(uuid)" '.type = $t | .what = "zz-forged-plain-" + $t | .global_id = $g | del(.seq, .prev, .mac)' <<<"$L3" >>"$LOG"
+done
+sed -n 2p "$T/good" >>"$LOG"; grep -m1 zz-unt- "$UNT" >>"$LOG"
+r=$(V); PL
+ok '[ $r = 1 ] && jq -e "[.[].what] == [\"zz-cap-genuine\", \"zz-appr-genuine\", \"zz-qa-genuine\"] and all(has(\"mac\") and .trusted != false)" "$T/pl" >/dev/null' "W1 forged chained and unchained lines, a replayed approval and an untrusted line copied in: verify fails, proof_lines() keeps the three genuine lines once"
+rm -f "$STATE"; python3 -I -c '
+import sys; sys.path.insert(0, sys.argv[1]); import event_log as e
+try:
+    e.proof_lines(); sys.exit(1)
+except e.EventError as x:
+    print(x.code)' "$H/bin" >"$T/o" 2>&1
+ok '[ $? = 0 ] && grep -q STL-EVT-905 "$T/o"' "W1 proof_lines() with the chain present and the state missing raises STL-EVT-905 (never an empty proof)"
+rm -f "$LOG"; PL; ok '[ -s "$T/pl" ] && jq -e ". == []" "$T/pl" >/dev/null' "W1 proof_lines() with no chain and no state: []"
+# GB-7 (CRT-5): the owner's install-id change leaves every earlier genuine line genuine: verify passes, proof_lines() keeps them all
+rm -f "$LOG" "$STATE"; for w in i1 i2; do $EL append --type zz-iid --what $w >/dev/null 2>&1; done
+INS=$R/$(ixr '.files[] | select(.id == "install") | .path'); cp -p "$INS" "$T/ins.gb7"
+jq --arg i "$(uuid)" '.install_id = $i' "$T/ins.gb7" >"$INS"; $EL append --type zz-iid --what i3 >/dev/null 2>&1
+r=$(V); PL; cp -p "$T/ins.gb7" "$INS"
+ok '[ $r = 0 ] && jq -e ".problems == []" "$T/v" >/dev/null && jq -e "[.[] | select(.type == \"zz-iid\") | .what] == [\"i1\", \"i2\", \"i3\"]" "$T/pl" >/dev/null && [ "$(sed -n 1p "$LOG" | jq -r .writer.install_id)" != "$(sed -n 3p "$LOG" | jq -r .writer.install_id)" ]' "GB-7 an install-id change between lines: verify exit $r with no problem ($(jq -c '[.problems[].code]' "$T/v")), proof_lines() keeps the lines from before and after it"
+# the key never leaves the state: not in the log, the untrusted stream, any output or alert line
+rm -f "$LOG" "$STATE"; $EL append --type note --what k1 >"$T/out1" 2>&1; $EL verify --json >>"$T/out1" 2>&1; $EL tail --json >>"$T/out1" 2>&1
+# R16 (fix-pass tester on d3fb7ff, kills mutant EL3): a worker's append is refused 312 before the line is judged (a line the writer
+# would refuse still gets 312, not 313) and before the trusted log's folder is touched (no log, no lock file made)
+mv "$LOG" "$T/r16.log"; [ -e "$LOG.lock" ] && mv "$LOG.lock" "$T/r16.lock"
+D16=$(dirname "$LOG"); snap16() { (cd "$D16" && ls -la --time-style=+%s.%N 2>/dev/null | grep -v ' \.\.\?$'); }
+snap16 >"$T/r16.before"
+R16C='import sys; sys.path.insert(0, sys.argv[1]); import event_log as el
+try:
+    v = 0
+    for _ in range(20 if sys.argv[2] == "deep" else 0): v = [v]
+    el.append(el.build("note", "zz-r16", new=v))
+except el.EventError as e:
+    print(e.code); sys.exit(3)
+print("written")'
+as_worker marker python3 -I -c "$R16C" "$H/bin" deep >"$T/r16.o1" 2>&1; rc=$?
+ok '[ $rc = 3 ] && grep -qx STL-CFG-312 "$T/r16.o1"' "R16 a worker's append of a line the writer would refuse is refused 312 first (rc=$rc)"
+as_worker marker python3 -I -c "$R16C" "$H/bin" plain >"$T/r16.o2" 2>&1; rc=$?
+ok '[ $rc = 3 ] && grep -qx STL-CFG-312 "$T/r16.o2"' "R16 a worker's append of a valid line is refused 312 (rc=$rc)"
+snap16 >"$T/r16.after"
+ok 'cmp -s "$T/r16.before" "$T/r16.after" && [ ! -e "$LOG" ] && [ ! -e "$LOG.lock" ]' "R16 the trusted log's folder is untouched: no log, no lock file made"
+mv "$T/r16.log" "$LOG"; [ -e "$T/r16.lock" ] && mv "$T/r16.lock" "$LOG.lock"
+K=$(jq -r .key "$STATE" 2>/dev/null)
+ok '[ ${#K} -ge 32 ] && ! grep -rqF -- "$K" "$LOG" "$UNT" "$T/out1" "$T/sup" 2>/dev/null' "W1 the writer key (in the state only) is in no log line, untrusted line, output or alert"
 $EL bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "usage error exits 2"
 [ $fails = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

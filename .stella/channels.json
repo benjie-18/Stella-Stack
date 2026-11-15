@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "host_kind": "host-cli",
+  "adapter_timeout_s": 60,
+  "ask_ttl_s": 86400,
+  "env": {
+    "path": [
+      "/usr/local/bin",
+      "/usr/bin",
+      "/bin"
+    ],
+    "pass": [
+      "HOME",
+      "TMPDIR",
+      "STELLA_ROOT",
+      "OWNER_CONFIG",
+      "ESCALATE_SUP_DIR",
+      "HERMES_HOME"
+    ],
+    "worker_token": "approval-service-child"
+  },
+  "resume": {
+    "argv": [
+      "bin/adapters/kanban-resume.sh"
+    ],
+    "timeout_s": 60
+  },
+  "entries": [
+    {
+      "id": "discord",
+      "kind": "discord",
+      "deliver": [
+        "bin/adapters/discord.sh",
+        "deliver",
+        "ESCALATIONS_CHANNEL_ID",
+        "bin/escalation-discord.sh"
+      ],
+      "collect": [
+        "bin/adapters/discord.sh",
+        "collect",
+        "ESCALATIONS_CHANNEL_ID",
+        "bin/escalation-discord.sh"
+      ],
+      "enabled": true,
+      "global_id": "db8e65cc-7f5c-4ca6-85ec-befc6da40060",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "host-cli",
+      "kind": "host-cli",
+      "deliver": [
+        "bin/adapters/host-cli.sh",
+        "deliver"
+      ],
+      "collect": [
+        "bin/adapters/host-cli.sh",
+        "collect"
+      ],
+      "enabled": true,
+      "global_id": "4121cfcc-7a4c-46e4-9539-af1e44c75278",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    }
+  ]
+}

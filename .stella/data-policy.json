@@ -38,6 +38,9 @@
     "card": {
       "sync_class": "local-only"
     },
+    "channel": {
+      "sync_class": "local-only"
+    },
     "connection": {
       "sync_class": "local-only"
     },
@@ -45,6 +48,9 @@
       "sync_class": "local-only"
     },
     "device": {
+      "sync_class": "local-only"
+    },
+    "endpoint": {
       "sync_class": "local-only"
     },
     "event": {
@@ -56,7 +62,13 @@
     "feature": {
       "sync_class": "local-only"
     },
+    "profile": {
+      "sync_class": "local-only"
+    },
     "project": {
+      "sync_class": "local-only"
+    },
+    "role": {
       "sync_class": "local-only"
     },
     "role-assignment": {

@@ -13,10 +13,28 @@ has redact keys or stores a secret setting is masked whole). A key written as a 
 segments matches. The log path and its lock are refused (STL-CFG-318) when they are, or pass through, a symbolic link.
 Limits (not fixable here): `who` is what the caller says, the OS user name for the apply tool; any caller that can run
 this tool can append a line of any type; keeping roles from writing the file directly is the job of the hooks' path rules.
+The chain (F1c B7, design D1): every line written is schema_version 3 and carries writer {id: the index's event_writer_id,
+install_id}, seq (the last chained line's + 1), prev (that line's mac; GENESIS for the first) and mac = HMAC-SHA256 with the writer
+key of the line's canonical JSON without mac (canon()). The key, the last seq and the last mac live in the index's
+event_writer_state (a private file: 0600, one link, this user's; made before the first chained line, so no line outlives its key;
+never printed). A line is written first, then the state: a writer killed between them leaves the log one genuine line ahead,
+which the next append continues from (so a failed state write after a synced line does not fail the append). With chained lines in the log and no usable state the writer refuses (STL-EVT-905) and
+never starts a new chain. `verify` reports edited (901), deleted (902), reordered or replayed (903), inserted unchained (904) and
+forged-writer (906: a writer id that is not the index's, or a writer install id that is not the line's own; an install id changed
+since is no forgery, the keyed mac is the proof) lines with their line numbers, and lines from before the chain as legacy;
+proof_lines() gives the lines that count as proof (a chained line of this writer whose mac verifies, each seq once). Agents write
+only to the untrusted stream (bin/event_untrusted.py), which nothing reads as proof. Every read or write of the writer key (so every
+append, chain check and proof_lines()) refuses in a worker environment (STL-CFG-312, asked of bin/worker_env.py by owner_only(),
+from append() and state_path(), whatever the entry point); reading the log's lines (tail, read_log) does not need the key.
+shortcut: until E1 a worker process can still open the state file itself (the hooks' path rules are the first line); E1 runs the
+writer as the engine's own user.
 CLI: event_log.py append --type T --what W [--old JSON] [--new JSON] [--code C] [--detail D] [--role R] [--channel C] [--user U]
      event_log.py tail [--json] [-n N]       the last N lines (default 20), masked again on the way out; lines that are not
                                              event objects are counted and reported on stderr (one STL-CFG-318 line)
-Exit: 0 ok; 1 refused (STL-CFG-313 invalid line, STL-CFG-318 log not writable; the catalog's plain message on stderr); 2 usage.
+     event_log.py verify [--json]            check the chain against the writer state; --json: {problems: [{code, line,
+                                             problem}], legacy: N} (line: 1-based in the log, null for the state)
+Exit: 0 ok; 1 refused or a problem found (STL-CFG-313 invalid line, STL-CFG-318 log not writable, STL-EVT-901..906 the chain, STL-CFG-312
+a worker; the catalog's plain message on stderr); 2 usage.
 The stack root is the parent of this file's folder, or STELLA_ROOT (a scratch root in tests). Importers use build, prepare,
 append, preflight, mask, redactor, scrub, SECRETS, note_secrets, depth, read_log, path, inside, locked, open_file, open_dir, mkdirs,
 say and fail. A file opened for writing (the log, a lock) must have one hard link; every line written is synced.
@@ -24,19 +42,22 @@ Limits of a line (one rule for the writer and the reader, the reader's with a ma
 WRITE_DEPTH or a line beyond WRITE_MAX bytes (313); the reader counts a line beyond READ_DEPTH / READ_MAX, or one it cannot
 parse, mask or print for any reason, as unreadable (reported, 318) and goes on. Every file opened (log, lock) must be a regular
 file, opened without blocking, through a folder checked at the moment of the open: a FIFO is refused (318), never waited for."""
-import argparse, contextlib, fcntl, json, os, re, stat, sys, time, uuid
+import argparse, contextlib, fcntl, hashlib, hmac, json, os, re, secrets, stat, sys, time, uuid
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
 import alert_catalog
 import stella_data as sd
+import worker_env
+from event_untrusted import WRITE_DEPTH, WRITE_MAX, depth   # one limit for both streams; that file may not import this one
 
 OWN = os.path.realpath(os.path.dirname(BIN))
 ROOT = os.path.realpath(sd.ROOT)
 MASK = "***"
 MAX_FILE = 8 << 20   # shortcut: a data, state or backup file larger than this is refused, not read; the limit is in code, upgrade when the index carries one
-WRITE_DEPTH, READ_DEPTH = 16, 64   # nesting of a line: the writer's limit is far below the reader's, so a written line always reads back
-WRITE_MAX, READ_MAX = 1 << 20, 4 << 20   # bytes of a line, same idea
+READ_DEPTH, READ_MAX = 64, 4 << 20   # nesting and bytes of a line: far above the writer's limits, so a written line always reads back
+GENESIS = "genesis"   # prev of the first chained line: never a mac (a mac is 64 hex)
+HEX64 = re.compile(r"[0-9a-f]{64}")
 
 class EventError(Exception):
     def __init__(self, code, problem, extra=None):
@@ -150,18 +171,6 @@ def scrub(text):
             text = re.sub(r"(?<![A-Za-z0-9])" + re.escape(x) + r"(?![A-Za-z0-9])", MASK, text)
     return text
 
-def depth(v):
-    """The nesting of a value, counted without recursion (the input's depth must not decide the stack)."""
-    todo, d = [(v, 1)], 0
-    while todo:
-        x, n = todo.pop()
-        d = max(d, n)
-        if isinstance(x, dict):
-            todo += [(y, n + 1) for y in x.values()]
-        elif isinstance(x, list):
-            todo += [(y, n + 1) for y in x]
-    return d
-
 def say(code, problem, alert=False, extra=None):
     """The catalog code and its plain message on stderr (the problem text and extra values scrubbed); with alert=True one alert
     line too."""
@@ -271,7 +280,8 @@ def prepare(line, row_id=None, scrub_detail=True, install_id=None):
     changes anything; append() does the same again when it writes.
     scrub_detail=False: the caller's detail is the tool's own text (no outside value in it), which a scrub by substring could garble.
     The ids are set after masking (they are not secrets): the caller's global_id or a new one, and this install's id; install_id:
-    the id of the install file the caller is writing (an apply of the install row, its candidate checked by the install schema)."""
+    the id of the install file the caller is writing (an apply of the install row, its candidate checked by the install schema).
+    A caller's own chain fields (writer, seq, prev, mac) and a "trusted" key are never kept."""
     try:
         iid = install_id or sd.install_id()   # no line without the install id
     except Exception as e:
@@ -285,7 +295,9 @@ def prepare(line, row_id=None, scrub_detail=True, install_id=None):
             note_secrets(line.get(k), red)   # the values masked in this line are scrubbed from its detail too
             if sens and line.get(k) is not None and not isinstance(line[k], (dict, list)):
                 SECRETS.add(str(line[k]))
-        line = {**mask(line, red), "schema_version": 2, "global_id": gid, "install_id": iid}
+        wr = {"id": sd.load(sd.INDEX)["event_writer_id"], "install_id": iid}
+        line = {**{k: v for k, v in mask(line, red).items() if k != "trusted"}, "schema_version": 3, "global_id": gid, "install_id": iid,
+                "writer": wr, "seq": 0, "prev": "0" * 64, "mac": "0" * 64}   # stand-ins for the shape and size: append() chains under the lock
         for k in ("old", "new"):
             if sens and k in line and line[k] is not None and not isinstance(line[k], (dict, list)):
                 line[k] = MASK   # a scalar has no key to match: for such a row it is masked whole
@@ -314,53 +326,83 @@ def repeated(data, gid):
     return False
 
 def append(line, row_id=None, scrub_detail=True, install_id=None):
-    """Mask, validate, append one line under the lock and sync it; returns the line written. EventError 313 (invalid, nothing
-    written, also for a global_id already in the log) or 318 (not written). The line goes out in one write; if that fails or is
-    short, the file is cut back."""
-    line, data = prepare(line, row_id, scrub_detail, install_id)
+    """Mask, validate, chain and append one line under the lock and sync it, then the writer state; returns the line written.
+    EventError 312 (a worker environment, nothing touched), 313 (invalid, nothing written, also for a global_id already in the log),
+    905 (the writer state is not usable) or 318 (not written). The line goes out in one write; if that or the state's write fails or
+    is short, the file is cut back."""
+    owner_only()
+    line, _ = prepare(line, row_id, scrub_detail, install_id)
     try:
         p = log_path()
         with locked(p + ".lock"):
             made = not os.path.lexists(p)   # a log this append makes and then cannot write a line to is removed again
-            fd = size = None
+            fd = size = st = None
+            fresh = done = False
             try:
                 fd = open_file(p, os.O_RDWR | os.O_APPEND | os.O_CREAT)
                 size = os.fstat(fd).st_size
-                # shortcut: the whole log is read on every append to find a repeated global_id; keep an id index when the log grows large
-                if size and repeated(os.pread(fd, size, 0), line["global_id"]):
+                # shortcut: the whole log is read on every append (a repeated global_id, the last chained line); keep an index when it grows large
+                old = os.pread(fd, size, 0) if size else b""
+                if repeated(old, line["global_id"]):
                     raise EventError("STL-CFG-313", "event line: its global_id is already in the log; nothing was written")
-                if size and os.pread(fd, 1, size - 1) != b"\n":
+                lines, st = [(s, loads(s)) for s in split(old)], load_state()
+                if st is None:
+                    if any(chained(d) for _, d in lines):
+                        raise EventError("STL-EVT-905", "the writer state is missing while the log holds chained lines; nothing was written, no new chain started")
+                    st, fresh = {"key": secrets.token_hex(32), "seq": 0, "mac": GENESIS}, True
+                    save_state(st)   # the key exists before the first line that needs it
+                for s, d in lines:   # genuine lines past the state (its write failed or was killed after their line): the chain goes on from them
+                    if chained(d) and d.get("seq") == st["seq"] + 1 and d.get("prev") == st["mac"] and genuine(st["key"], line["writer"]["id"], s, d):
+                        st = {**st, "seq": d["seq"], "mac": d["mac"]}
+                line = {**line, "seq": st["seq"] + 1, "prev": st["mac"]}
+                line["mac"] = mac_of(st["key"], line)
+                data = (json.dumps(line, ensure_ascii=True, separators=(",", ":")) + "\n").encode()
+                if len(data) > WRITE_MAX:
+                    raise EventError("STL-CFG-313", f"event line: larger than {WRITE_MAX} bytes")
+                if size and old[-1:] != b"\n":
                     data = b"\n" + data   # a fragment from a killed writer: the new line starts on its own
                 if os.write(fd, data) != len(data):
                     raise OSError("short write")
                 os.fsync(fd)   # a line is as durable as the state it reports
+                done = True
             except BaseException:   # whatever stops it after the create (a failure, an interrupt): whole or not at all
                 with contextlib.suppress(OSError):
                     if made:   # the lock is held: no other line can be in a log this call made
                         os.unlink(p)
                     elif size is not None:
                         os.ftruncate(fd, size)
+                if fresh:   # a state this call made for a line it did not write
+                    with contextlib.suppress(OSError, ValueError):
+                        os.unlink(state_path())
                 raise
             finally:
                 if fd is not None:
                     os.close(fd)
+            with contextlib.suppress(EventError):   # the line stands: a state left behind is caught up by the next append (above)
+                save_state({**st, "seq": line["seq"], "mac": line["mac"]})
     except (OSError, ValueError) as e:
         raise EventError("STL-CFG-318", why(e))
     return line
 
+def raw():
+    """The log's bytes (b"" when there is none); EventError 318 when it cannot be read."""
+    try:
+        with os.fdopen(open_file(log_path(), os.O_RDONLY), "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        return b""
+    except (OSError, ValueError) as e:
+        raise EventError("STL-CFG-318", why(e))
+
+def split(data):
+    lines = data.split(b"\n")
+    return lines[:-1] if lines[-1] == b"" else lines
+
 def read_log(n=None):
     """([events], bad): the last n lines (all when None), split on \\n only, masked again; bad = lines that are not a JSON object,
     are larger or nested deeper than the writer's limits allow for, or cannot be masked (any exception): one unreadable line
-    never stops a reader."""
-    try:
-        with os.fdopen(open_file(log_path(), os.O_RDONLY), "rb") as f:
-            lines = f.read().split(b"\n")
-    except FileNotFoundError:
-        return [], 0
-    except (OSError, ValueError) as e:
-        raise EventError("STL-CFG-318", why(e))
-    if lines[-1] == b"":
-        lines.pop()
+    never stops a reader. Every line is returned, chained or not: a reader that takes a line as proof uses proof_lines()."""
+    lines = split(raw())
     if n is not None:
         lines = lines[-n:] if n > 0 else []
     red, out, bad = redactor(), [], 0
@@ -374,6 +416,165 @@ def read_log(n=None):
             pass
         bad += 1
     return out, bad
+
+# ---- the chain (F1c B7, design D1) ----
+def loads(s):
+    """The line as a dict, or None when it is no event object a reader can take (see read_log)."""
+    try:
+        d = json.loads(s) if len(s) <= READ_MAX else None
+        return d if isinstance(d, dict) and depth(d) <= READ_DEPTH else None
+    except Exception:
+        return None
+
+def chained(d):
+    return d is not None and "mac" in d
+
+def canon(line):
+    """The bytes the mac covers: the line without mac, keys sorted, no spaces, ASCII."""
+    return json.dumps({k: v for k, v in line.items() if k != "mac"}, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+
+def mac_of(key, line):
+    return hmac.new(bytes.fromhex(key), canon(line), hashlib.sha256).hexdigest()
+
+def ours(d, wid):
+    """d names this writer: the index's writer id wid and the install id the line itself carries (the mac covers both, so an install
+    id changed since the line was written is no forgery)."""
+    return d.get("writer") == {"id": wid, "install_id": d.get("install_id")}
+
+def genuine(key, wid, s, d):
+    """d (parsed from the bytes s) was written by this writer: ours(d, wid), s is byte for byte as the writer writes d (a
+    duplicate key or a changed spacing is an edit), and its mac is the key's."""
+    try:
+        return ours(d, wid) and json.dumps(d, ensure_ascii=True, separators=(",", ":")).encode() == s \
+            and hmac.compare_digest(str(d["mac"]), mac_of(key, d))
+    except Exception:
+        return False
+
+def owner_only():
+    """EventError STL-CFG-312 in a worker environment (bin/worker_env.py): the writer key and the trusted log are the owner's."""
+    w = worker_env.reason()
+    if w:
+        raise EventError("STL-CFG-312", f"{w}: the trusted event log is written and checked by the owner's tools only (agents write with event_untrusted.py); nothing was done")
+
+def state_path():
+    """The writer state's path; every read and write of the key comes through here, so here a worker environment is refused (312)."""
+    owner_only()
+    return path(sd.load(sd.INDEX)["event_writer_state"])
+
+def load_state():
+    """The writer state {key, seq, mac}, or None when there is none. EventError 905 when it cannot be opened or read, or is not a
+    private file (a symbolic link on the way or itself, not a regular file, a second hard link, another owner, a mode not 0600),
+    or does not hold a 64-hex key, a seq and the mac of that seq (GENESIS for 0). The key is never in a message."""
+    try:
+        fd = open_file(state_path(), os.O_RDONLY)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, KeyError, sd.DataError) as e:
+        raise EventError("STL-EVT-905", f"the writer state cannot be opened ({why(e)})")
+    with os.fdopen(fd, "rb") as f:
+        st = os.fstat(f.fileno())
+        if stat.S_IMODE(st.st_mode) != 0o600 or st.st_nlink != 1 or st.st_uid != os.geteuid():
+            raise EventError("STL-EVT-905", "the writer state is not a private file (mode 0600, one link, this user's)")
+        try:
+            s = json.loads(f.read(MAX_FILE + 1))
+            ok = isinstance(s, dict) and isinstance(s.get("key"), str) and HEX64.fullmatch(s["key"]) and type(s.get("seq")) is int \
+                and s["seq"] >= 0 and (s.get("mac") == GENESIS if s["seq"] == 0 else isinstance(s.get("mac"), str) and HEX64.fullmatch(s["mac"]))
+        except Exception:
+            ok = False
+    if not ok:
+        raise EventError("STL-EVT-905", "the writer state does not hold a key, a seq and a mac")
+    return s
+
+def save_state(s):
+    """The writer state written whole: a 0600 temp file in its folder (whatever the umask), synced, renamed over the old one.
+    EventError 905 when it cannot be."""
+    try:
+        d, name = os.path.split(state_path())
+        mkdirs(d)
+        dfd = open_dir(d)
+        try:
+            tmp = name + ".tmp"   # under the log's lock: no other writer
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp, dir_fd=dfd)
+            try:
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dfd)
+                try:
+                    os.fchmod(fd, 0o600)
+                    b = json.dumps({"schema_version": 1, "key": s["key"], "seq": s["seq"], "mac": s["mac"]}).encode()
+                    if os.write(fd, b) != len(b):
+                        raise OSError("short write")
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+                os.rename(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)
+            except BaseException:   # no temp copy of the key is left behind
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp, dir_fd=dfd)
+                raise
+            with contextlib.suppress(OSError):
+                os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except (OSError, ValueError, KeyError, sd.DataError) as e:
+        raise EventError("STL-EVT-905", f"the writer state cannot be written ({why(e)})")
+
+def chain():
+    """(problems [(code, line number or None, problem)], legacy, proof): the log checked against the writer state. legacy = the
+    lines before the first chained one (from before the chain: never proof, never a problem); proof = the chained lines of this
+    writer whose mac verifies, each seq once (the first copy), in file order. The state is read before the log, so a line
+    appended between the two reads is the crash window's one line ahead, never a gap."""
+    try:
+        st = load_state()
+    except EventError as e:
+        st = e
+    lines = [(s, loads(s)) for s in split(raw())]
+    legacy = next((i for i, (_, d) in enumerate(lines) if chained(d)), len(lines))
+    if isinstance(st, EventError):
+        return [(st.code, None, st.problem)], legacy, []
+    if st is None:
+        return ([("STL-EVT-905", None, "the writer state is missing while the log holds chained lines")] if legacy < len(lines) else []), legacy, []
+    wid = sd.load(sd.INDEX)["event_writer_id"]
+    probs, proof, at, last_seq, last_mac = [], [], {}, 0, GENESIS   # at: seq -> line number of its first genuine copy
+    for n, (s, d) in enumerate(lines[legacy:], legacy + 1):
+        if not chained(d):
+            probs.append(("STL-EVT-904", n, "a line without the chain after the chain started (inserted)"))
+        elif not ours(d, wid):
+            probs.append(("STL-EVT-906", n, "the line names another writer, or a writer install that is not its own"))
+        elif not genuine(st["key"], wid, s, d):
+            probs.append(("STL-EVT-901", n, "the line does not match its mac (edited, or forged without the key)"))
+        else:
+            q = d["seq"]
+            if q <= last_seq or (q == last_seq + 1 and d["prev"] != last_mac):
+                probs.append(("STL-EVT-903", n, f"seq {q} comes after seq {last_seq} (reordered or replayed)"))
+            if q not in at:
+                at[q] = n
+                proof.append(d)
+            if q > last_seq:
+                last_seq, last_mac = q, d["mac"]
+    q, top = 1, max(st["seq"], last_seq)
+    while q <= top:   # runs of missing seqs, one problem each (a cut log is one problem, not one per line)
+        if q in at:
+            q += 1
+            continue
+        e = q
+        while e + 1 <= top and e + 1 not in at:
+            e += 1
+        n = min((n for x, n in at.items() if x > e), default=len(lines) + 1)
+        probs.append(("STL-EVT-902", n, f"the chained line{'s' if e > q else ''} with seq {q}{f'..{e}' if e > q else ''} {'are' if e > q else 'is'} missing (deleted)"))
+        q = e + 1
+    return sorted(probs, key=lambda p: p[1]), legacy, proof
+
+def proof_lines():
+    """The lines that count as proof (a capability used, an approval, a grant, a QA pass), masked again, in file order: chained
+    lines of this writer whose mac verifies, each seq once; never a legacy, unchained, forged or untrusted line. [] when there is no
+    chain yet. EventError when the writer state cannot be used: 905 with chained lines in the log and the state missing or unsafe,
+    312 in a worker environment (never an empty proof)."""
+    probs, _, proof = chain()
+    bad = next((p for p in probs if p[1] is None), None)   # a problem of the state, not of a line
+    if bad:
+        raise EventError(bad[0], bad[2])
+    red = redactor()
+    return [mask(d, red) for d in proof]
 
 def tail(n=20):
     """The last n event lines as dicts (see read_log for the lines that are not events)."""
@@ -400,18 +601,22 @@ def main(argv):
     t = sub.add_parser("tail")
     t.add_argument("--json", action="store_true")
     t.add_argument("-n", type=int, default=20)
+    v = sub.add_parser("verify")
+    v.add_argument("--json", action="store_true")
     o = ap.parse_args(argv)
     try:
-        if o.cmd == "append":   # B.1 (r5, W4-CRT3-01): the owner's command refuses itself in a worker's environment (a marker of the role table's worker_markers)
-            try:
-                marks = sd.load(sd.load(sd.INDEX)["role_table"])["worker_markers"]
-                assert isinstance(marks, list) and marks and all(isinstance(m, str) and m for m in marks)
-            except Exception:
-                return fail("STL-CFG-312", "the list of worker markers is not available, so it cannot be told that this is not a worker; nothing was appended")
-            if any(os.environ.get(m) for m in marks):
-                return fail("STL-CFG-312", "a worker marker is set: the event log is appended by the owner's tools only; nothing was appended")
+        if o.cmd in ("append", "verify"):   # owner commands (append writes the chain, verify reads the key): never in a worker's environment
+            owner_only()
+        if o.cmd == "append":
             who = {w: getattr(o, w) for w in ("role", "channel", "user") if getattr(o, w)}
             print(json.dumps(append(build(o.type, o.what, o.old, o.new, o.code, o.detail, who)), ensure_ascii=False))
+        elif o.cmd == "verify":
+            probs, legacy, _ = chain()
+            print(json.dumps({"problems": [{"code": c, "line": n, "problem": m} for c, n, m in probs], "legacy": legacy}) if o.json
+                  else f"event log: {legacy} legacy line(s) from before the chain, {len(probs)} problem(s)")
+            for k, (c, n, m) in enumerate(probs):
+                say(c, f"line {n}: {m}" if n else m, alert=k == 0)   # one alert line for a run, every problem on stderr
+            return 1 if probs else 0
         else:
             ls, bad = read_log(o.n)
             esc = lambda x: json.dumps(str(x))[1:-1]   # a field cannot start a line of its own

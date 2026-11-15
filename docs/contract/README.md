@@ -48,9 +48,12 @@ owner's path writes it), `redact_keys` (key names whose values are masked in log
 holds the entries), `id_field` (several fields, comma separated, make an id joined with `:`; approved hosts use `host,port`)
 and, on a row with records, `record_kind` (a kind of the data policy's `record_kinds`; a row with records that names none, or
 names a kind the policy does not list, is refused).
-It also names the event log, the backup folder, the applied-state file and the role table. Every path in the index is
+It also names the event log, the backup folder, the applied-state file, the role table, and (F1c) the owner key stub
+(`owner_key`), the approval store (`approval_store`), the event writer's state and identity (`event_writer_state`,
+`event_writer_id`) and the untrusted event stream (`untrusted_events`). Every path in the index is
 relative, has no `..` part and must resolve (symlinks followed) inside the stack root; `check` refuses one that does not,
-and `get`, `list` and `search` never read it. The index row of the index is `owner_only`: it decides which files are. A row
+and `get`, `list` and `search` never read it. `untrusted_events`, the one state path a worker writes, never is, holds or lies
+inside another state path of the index: `check` refuses that overlap (STL-CFG-310) and the stream's writer and reader refuse it. The index row of the index is `owner_only`: it decides which files are. A row
 whose schema marks any field `x-owner-only`, and the row of the `install` schema, must be `owner_only` too (the apply gate is per
 row, so an open row would let any role write an owner-only field); `check` refuses either one left open, naming the row.
 **A row is charged for its own fault only**, also for where its path points. A JSON row whose path, a folder in that path below
@@ -98,7 +101,13 @@ object deeper in a file whose schema declares a `global_id` (a privacy grant) is
 `global_id` joins the same check and its `id` is unique in its list. The old `id` (or the row's `id_field`) is the record's
 alias and stays unique per schema as before, and no alias equals the `global_id` of another record in any data file: the reads of `stella_data.py` (`get <id> <entry>`) and every `x-ref` accept the
 alias or the `global_id`; `bin/settings.py get/set` take the key only. Both fields are always required: there is no switch
-that turns the check off (owner decision 2026-11-13). **A migration that changes what a schema requires ships with its code**
+that turns the check off (owner decision 2026-11-13). The role table (`docs/hermes-local/roles.json`, no index row) holds
+records too (FV-01, F1c): every profile row and every role entry carries `global_id` and `install_id`, required by
+`roles.schema.json`; `bin/roles.py check` (STL-CFG-303) and `stella_data.py check` (STL-CFG-310) refuse one missing or
+malformed and a `global_id` two records of the table share; the profile or role name stays the alias, and the data policy's
+record kinds `profile` and `role` are local-only. An env row (an index row of format `env`, a KEY=value file: the limits,
+the owner settings) has no per-value id and its file format does not change: a value of an env row is identified by the
+index row's `global_id` plus its key (owner decision 2026-11-14). **A migration that changes what a schema requires ships with its code**
 (the run branch carries the migrated files) **and is undone by reverting that merge, code and data together**; the apply
 contract's `rollback` covers value changes only, since it restores only bytes that pass the current checks.
 **The ids migration** (for live data that diverged before that merge): `stella_data.py ids-migrate <id> --out <file>`
@@ -319,6 +328,17 @@ The resolver that applies the precedence is built in a later phase; this file is
 ### `.stella/approved-hosts.json`
 `hosts[]`: host (a host name; a wildcard `*.` needs at least two labels after it, so `*.com` is refused), port, scope and approved_by (not empty), approved_at and expires_at
 (`YYYY-MM-DDTHH:MM:SSZ`, UTC, real dates; expires_at may be null and is after approved_at). One entry per host and port. Ships empty. The live firewall does not read it yet.
+
+### `.stella/devices.json` (device registry) and the primary lease
+`entries[]`: id, global_id, install_id, kind (phone, computer), public_key (an Ed25519 PEM), role (primary, secondary, phone,
+worker-node), paired_at, revoked_at (null while paired). Owner-only and identity-critical; ships empty. A paired device is the
+owner-auth provider of kind `device-signature`: it signs canonical `{digest, nonce, expires_at, device_id[, phrase]}` (raw
+Ed25519, base64 in `signature`), checked with `openssl pkeyutl -verify -rawin`, where the openssl program is the absolute path in the paired-device provider's `params.openssl` (data; never looked up on PATH); unknown STL-OWN-811, revoked 812. Every accepted
+device-signed request writes one alert (`remote.alert_code` of the policy) and counts toward `remote.rate_limit` (813 past it).
+*To pair or revoke:* an owner write of the row (`stella-apply.py apply devices --from <file>`; set revoked_at to revoke).
+`bin/devices.py list|check [--json]`. The primary lease is a contract only (`.stella/schemas/primary-lease.schema.json`:
+account, engine_id, install_id, lease_id, acquired_at, expires_at; one engine per account); `bin/lease_double.py` is its test
+double (814 for a second holder); U1 builds the real lease.
 
 ### `.stella/capabilities.json` (capability registry)
 One schema for tools, skills, MCP servers, commands and extensions: `id`, `kind`, `summary`, `keywords`, `inputs`,
@@ -579,8 +599,17 @@ key, or by the key's hash when that name would be longer than a file name may be
   for a private row (owner-only alone does not suppress it). A new file's event has `old: null`: null on a side means there was
   no file; a side whose file exists and does not parse is `{"unparsed": true}` and the detail says so. `append --code` must be in the
   alert catalog. `tail` escapes every field it prints.
-- **Limits that remain.** The owner-only gate (`worker_markers` in the role table, then `roles.py prove`) cannot prove an owner
-  from inside the process: a caller can clear its marker variables, shadow the board tool on `PATH` or detach from its parent.
+- **Owner proof (F1c W4b).** An `apply` or `rollback` of an owner-only row that writes needs, after the worker refusal, an
+  owner proof (`bin/owner_auth.py` require) for the action `{op, target: the row id, old_digest, new_digest}` (sha256 of the
+  file's bytes before and after; no file: of no bytes): the proofs of `--proof <file>` alone, else one made with the host's owner
+  key (none: STL-OWN-806). A change touching an identity-critical target (the owner-auth policy's `identity_critical`:
+  `<row>` or `<row>:<JSON pointer>` with `*` for one segment, an env row's keys being `/KEY`; plus registry settings whose
+  sensitivity is identity_critical; a side that does not parse counts) needs class `identity_critical`: on the host the typed
+  phrase (policy `phrase.template`, `{what}` = the row id), shown with the changed key names and the masked diff; none, or
+  another text, is STL-OWN-808. `apply --dry-run` prints `action: <JSON>` for such a row; the event line names the provider
+  ids used (`auth`). `settings.py set` passes `--proof` through; its key-typed confirmation (STL-CFG-317) is gone.
+- **Limits that remain.** The worker refusal of the owner-only gate (`bin/worker_env.py`: the role table's `worker_markers`,
+  the owner-auth policy's `worker_signals`, then `roles.py prove`) cannot prove an owner from inside the process: a caller can clear its marker variables, shadow the board tool on `PATH` or detach from its parent.
   **The boundary is the hooks of every role refusing to run `bin/stella-apply.py` and `bin/event_log.py` (and writing the owner
   files and the state paths) at all (item W4).** `who` in an event line is the OS user name only, and any caller that can run
   `event_log.py append` can append a line of any type; W4's path rules keep roles from writing the log directly. The applied
@@ -597,7 +626,8 @@ key, or by the key's hash when that name would be longer than a file name may be
 
 Owner settings and owner data change only through the owner's tools (`bin/settings.py`, `bin/stella-apply.py`); no role runs them, writes the files, or reads the apply tool's state. **A text guard cannot decide what a shell will do**, so this is three layers, each holding on its own for the roles it covers; the write guard is the mistake guard in front of them, and no acceptance claim rests on it alone:
 
-1. **Roles that run in the OS box** (`sandbox.boxed_profiles`): the box is the boundary. The main checkout is mounted read-only; the owner settings, the canary and the apply tool's state (the `backup_dir`, `applied_state` and `event_log` the data index names) are not mounted at all, so a one-liner in any interpreter finds neither file nor listing.
+1. **Roles that run in the OS box** (`sandbox.boxed_profiles`): the box is the boundary. The main checkout is mounted read-only; the owner settings, the canary and the apply tool's state (the `backup_dir`, `applied_state`, `event_log`, `owner_key`, `approval_store` and `event_writer_state` the data index names; the
+untrusted stream `untrusted_events` is the agents' and is not among them) are not mounted at all, so a one-liner in any interpreter finds neither file nor listing.
 2. **Roles that do not run in the box** (`runs_unboxed` true in the role table: the coordinator, and the fallback role of a profile with no row): their hooks refuse every write. The table says so in data and `bin/roles.py` checks it: every profile outside `boxed_profiles` has a role with `runs_unboxed` true; such a role has explicit `platform_toolsets` (the fallback: every Hermes platform, `file` and `terminal` only), on each tool of `write_tools` a hook entry marked `"writes": "refused"` (an allow-list terminal, deny-write) and none marked `"writes": "judged"` (the write guard); every such role also has a hook for any tool name no other matcher names (the catch-all: marked `"catch_all": true` in the table with the template matcher `^(?!(?:{tools})$).+$`; registration fills `{tools}` with the profile's other matchers and the role's `catch_all_tools` (the tools it may use, named in the table as data: default-deny, the repo's rule); a tool Hermes resolves for the role that `catch_all_tools` does not name stays inside the catch-all, refused, and registration and `--check` report it in one coded line so the owner adds a row; the matcher audit proves each catch-all matches none of its role's tools and does match a made-up name). A role a profile serves has explicit `platform_toolsets`. A role that is in the box but served by no profile carries every guard of `judged_hooks` (the full judged set: write guard, git guard, model guard, skill guard, secret guard; defined once, in the table), and `roles.py check` refuses a table where one of them drops one. An allow-list terminal runs `git` only in a repository it can vouch for: the toplevel found by looking for `.git` is the stack folder or the main checkout of a project bound to the board, and its `.git` is a plain folder; a repository a boxed worker left in its profile home, the box tmp folder, `/tmp` or a card worktree is never one (its config can name a program: fsmonitor, external diff, textconv, a clean filter, a pager, `core.hooksPath`, an alias, `gpg.program`). A hook timeout is Hermes's to handle (its policy is outside this repo); the stack registers every guard `fail_closed` (`register-escalation-hook.sh --check` reports an entry that lacks it), and every expansion a guard does is bounded in work (`roles.braces`, the path look-ups), so no input of any length takes a guard past a fraction of its timeout. A profile that is given a role without this must be boxed first.
 3. **The merge** (`bin/merge-card.sh`): whatever reaches a card branch, however it was made (plumbing, another agent CLI's git, a patch), meets one check, and the check judges what the merge will do. `git merge-tree` computes the tree the merge would produce (every merge base, so a branch that reaches main by two routes and rolls an owner file back is seen; a main-side rename into owner data cannot carry a branch edit of the old name in), the paths that tree changes in main (`-z`, no rename detection in the compare) must hold no path a role may not write (owner data, the owner settings files and the apply tool's state paths: `roles.py owner_paths`, one list, tracked or force-added past an ignore rule), and the merge, made in the index first, must produce that same tree. If the merged tree cannot be computed the merge is refused, never guessed (STL-CFG-303); an offending path is refused with every flag (STL-CFG-312) and nothing is merged. Paths are compared with the lists **by identity, not spelling** (`roles.py hits`: the device and inode of each existing component, so an 8.3 short name, a case variant or a link is the protected folder; a name that names nothing on disk is compared by its casefolded names below the deepest folder it shares with a protected path, never by what it looks like, so a git revision such as `HEAD~1` is no protected path). Paths that define the boundary itself (`bin/roles.py boundary`: the table's `boundary_paths` list, which holds every file the boundary's own code loads, the data files it opens by a fixed path included (the alert catalog and its code page, the board text, the SOUL rules), and a selftest recomputes from the import and source graph and from the paths named on the code lines of those files so it cannot rot, every hook file or command of the table, and, in a folder the boundary's python imports from (`bin/` is one), every folder, any name without a suffix (a link to a package folder elsewhere is loaded as a package) and every file python loads (`.py`, `.pyc`, `.so`) whatever its name, since a module looked up late is on no list (round 10), plus any other file named like a module the boundary imports) are listed and refused unless the owner passes `--i-have-read-the-boundary-changes`. **The card's test command runs in the OS box** (`bin/box.py exec`), in a throw-away worktree of the branch tip that the merge makes itself and removes after (never the card's own worktree, whose `.git` file and git dir entry a worker can rewrite; a repository whose worktrees read a config of their own, `extensions.worktreeConfig`, gets no box and no merge): that worktree writable, the rest read-only, the owner settings and state paths not mounted, the worker markers set; where the box cannot start the merge is refused with a coded line and the tests do not run outside it (there is no flag for that); with `--push` the merged main's tests run in the box too. What the box does not stop here: the test code still decides its own exit code (the review reads the diff), and it reads whatever the box shows read-only.
 

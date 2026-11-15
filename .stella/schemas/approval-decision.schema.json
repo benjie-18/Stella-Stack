@@ -1,13 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Approval decision",
-  "description": "schema_version 2 (from F1b): every new record has global_id and install_id; whatever writes one stamps both, the install id read through stella_data.install_id(). schema_version 1: a record from before the ids; it is never rewritten, it is read and validated as it is, and it is still found by what identified it then (its request_id). The schema subset has no conditional, so the schema accepts either version with the ids optional; that a version 2 record has both is the writer's rule.",
+  "description": "schema_version 2 (from F1b): every new record has global_id and install_id; whatever writes one stamps both, the install id read through stella_data.install_id(). schema_version 1: a record from before the ids; it is never rewritten, it is read and validated as it is, and it is still found by what identified it then (its request_id). The schema subset has no conditional, so the schema accepts either version with the ids optional; that a version 2 record has both is the writer's rule. schema_version 3 (F1c W3): the `new` of a trusted approval-decision event line written by bin/approvals.py; digest is the approved action's digest, decided_by.channel the channel id, decided_by.user the owner-auth provider ids that proved the answer (never a user id).",
   "type": "object",
   "properties": {
     "schema_version": {
       "enum": [
         1,
-        2
+        2,
+        3
       ]
     },
     "global_id": {
@@ -62,6 +63,11 @@
         "string",
         "null"
       ]
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "The digest of the action the decision is for (the request's)."
     }
   },
   "required": [

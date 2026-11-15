@@ -211,20 +211,16 @@
     {
       "id": "event-log",
       "kind": "command",
-      "summary": "Append one line to the event log with secrets masked, or read its last lines",
+      "summary": "Append one chained line to the trusted event log with secrets masked (owner tools only), read its last lines, or verify its chain",
       "keywords": [
         "event",
         "log",
         "audit",
         "history"
       ],
-      "inputs": "an event (who, what, old, new) or a line count",
-      "outputs": "one JSON line per event; STL-CFG-318 when the log cannot be written",
-      "allowed_roles": [
-        "dispatcher",
-        "builder",
-        "reviewer"
-      ],
+      "inputs": "an event (who, what, old, new), a line count, or verify [--json]",
+      "outputs": "one JSON line per event (schema_version 3: writer, seq, prev, mac); verify: the problems with their line numbers (STL-EVT-901..906) and the legacy count; STL-CFG-318 when the log cannot be written, STL-CFG-312 in a worker environment",
+      "allowed_roles": [],
       "risk_class": "write",
       "hosts": [],
       "secrets": [],
@@ -276,8 +272,8 @@
         "dry-run",
         "settings"
       ],
-      "inputs": "a data file id and a candidate file",
-      "outputs": "the change summary; STL-CFG-312 for a worker on an owner-only file, STL-CFG-313 when the candidate is invalid",
+      "inputs": "a data file id and a candidate file; for an owner-only file optionally a proof file (--proof) instead of the host's owner key",
+      "outputs": "the change summary (a dry run of an owner-only file also prints the action a proof must cover); STL-CFG-312 for a worker on an owner-only file, STL-OWN-801..813 without a valid owner proof (806 no owner key, 808 an identity-critical change without its typed phrase), STL-CFG-313 when the candidate is invalid",
       "allowed_roles": [],
       "risk_class": "write",
       "hosts": [],
@@ -301,8 +297,8 @@
         "get",
         "rollback"
       ],
-      "inputs": "a setting key and, to change it, a value",
-      "outputs": "the value or the change summary; STL-CFG-311 for an unknown key, STL-CFG-312 for a worker, STL-CFG-313 for a store file that holds a key twice, STL-CFG-315 for a bad value, STL-CFG-317 when an identity-critical setting is changed without a terminal",
+      "inputs": "a setting key and, to change it, a value; optionally a proof file (--proof) instead of the host's owner key",
+      "outputs": "the value or the change summary; STL-CFG-311 for an unknown key, STL-CFG-312 for a worker, STL-CFG-313 for a store file that holds a key twice, STL-CFG-315 for a bad value, STL-OWN-806 without an owner key, STL-OWN-808 when an identity-critical setting is changed without its typed phrase",
       "allowed_roles": [],
       "risk_class": "write",
       "hosts": [],
@@ -343,6 +339,224 @@
         "result": "shipped"
       },
       "global_id": "ad9e7db7-16c4-48dd-a758-95bb23193656",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "owner-auth",
+      "kind": "command",
+      "summary": "The owner-authenticator: check the owner-auth policy, list its providers, create the owner key (setup), make and verify owner proofs bound to one exact action, a nonce and an expiry",
+      "keywords": [
+        "owner",
+        "proof",
+        "owner key",
+        "authenticator",
+        "provider",
+        "nonce",
+        "identity-critical",
+        "phrase"
+      ],
+      "inputs": "an action file {op, target, old_digest, new_digest | new}, an action class and, to verify, a proof file",
+      "outputs": "a proof (JSON) or the provider ids used; STL-CFG-312 in a worker environment, STL-CFG-310 for an invalid policy, STL-OWN-801..809 and 811..813 for a refused proof or key; an accepted device-signed request writes one remote alert (policy remote.alert_code)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/owner_auth.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "573739f3-1e89-4127-8b3c-13a30be2910c",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "stella-data-stubs",
+      "kind": "command",
+      "summary": "List the stubs (features entries with due_phase and replaced_by) due at or before a phase of the features phase order; fails while one is due",
+      "keywords": [
+        "stub",
+        "due_phase",
+        "replaced_by",
+        "phase",
+        "features"
+      ],
+      "inputs": "a phase of the features phase_order",
+      "outputs": "JSON or text: the stubs due {id, due_phase, replaced_by}; exit 1 with STL-OWN-810 when any is due, 2 for an unknown phase",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/stella_data.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "1b9d5cf8-b5ff-4715-a64a-2838c9f22d61",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "event-untrusted",
+      "kind": "command",
+      "summary": "Append one line marked untrusted to the agents' event stream (never proof of anything)",
+      "keywords": [
+        "event",
+        "log",
+        "untrusted",
+        "agent",
+        "note"
+      ],
+      "inputs": "--type, --what, and optionally --source and --detail",
+      "outputs": "one JSON line with \"trusted\": false in the untrusted stream; STL-CFG-313 for an invalid or oversized line, STL-CFG-318 when the stream cannot be written",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/event_untrusted.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "5de36c04-3b9d-454b-8d1f-61b365a9a586",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "approvals",
+      "kind": "command",
+      "summary": "The approval service (host side): make approval requests bound to an exact action, a nonce and an expiry, take agents' approval-ask lines in, deliver requests on the channel adapters, collect and decide answers (owner proof per channel kind), and tell a request's status from the trusted event log",
+      "keywords": [
+        "approval",
+        "request",
+        "answer",
+        "channel",
+        "adapter",
+        "nonce",
+        "needs_input",
+        "voice"
+      ],
+      "inputs": "an action file and class, summary, card and ttl; a request id; a channel id; a decision (approved or denied)",
+      "outputs": "the request record (JSON), a message ref, decided answers, or pending/approved/denied/expired; STL-CFG-312 in a worker environment, STL-OWN-820..831 for a refused answer, request or adapter",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/approvals.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "ffb93179-0a25-47f9-a5cf-c16abda683ad",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "devices",
+      "kind": "command",
+      "summary": "List the paired devices of the device registry, or check it (schema, each id once, Ed25519 public keys); pairing and revoking are owner writes of the devices row through apply",
+      "keywords": [
+        "device",
+        "paired device",
+        "phone",
+        "revoke",
+        "registry",
+        "ed25519"
+      ],
+      "inputs": "list or check, optional --json",
+      "outputs": "the entries (JSON array with --json), or check's verdict; exit 1 with STL-CFG-310 when the registry is invalid",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/devices.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "32fd50e6-f009-4ef7-9ff6-dceef9c3a59a",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "lease-double",
+      "kind": "command",
+      "summary": "Test double of the primary lease: claim, release or show the one lease per account in a state file (U1 builds the real lease)",
+      "keywords": [
+        "lease",
+        "primary",
+        "account",
+        "engine",
+        "test double"
+      ],
+      "inputs": "claim|release|show with --state FILE --account A [--engine E] [--ttl S]",
+      "outputs": "the lease (JSON, the primary-lease contract) or null; STL-OWN-814 when another engine holds it or a non-holder releases",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/lease_double.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "72c0dd38-7348-4693-957c-4ac211381d93",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "loopback-guard",
+      "kind": "command",
+      "summary": "Judge a request to the local HTTP API against the loopback API contract: Host, Origin (every request), endpoint, API token, Origin and CSRF token on a state-changing request, owner proof on an owner-write endpoint (the library the real API calls; the CLI replays one request)",
+      "keywords": [
+        "loopback",
+        "api",
+        "host",
+        "origin",
+        "csrf",
+        "token",
+        "owner-write",
+        "rebinding"
+      ],
+      "inputs": "a request file {method, path, headers, body, session {api_token, csrf_token, port}}",
+      "outputs": "{ok, code[, cause, message]} on stdout; exit 0 allowed, 1 refused with STL-OWN-850..858 and one alert line; an accepted owner proof is spent",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/loopback_guard.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "1f7505b9-04c7-48d0-ad9c-7bc8efce683d",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "loopback-api-double",
+      "kind": "command",
+      "summary": "The loopback API's test double: serves the contract's endpoints on the IPv4 loopback address and a free port with the loopback guard in front, and does nothing else (until E1 builds the real API)",
+      "keywords": [
+        "loopback",
+        "api",
+        "double",
+        "test",
+        "http"
+      ],
+      "inputs": "--port P (0 = a free port) and --session F ({api_token, csrf_token})",
+      "outputs": "the bound port on the first stdout line; HTTP 200 {ok: true} or 4xx {ok: false, code[, cause], message} per request; STL-OWN-858/859 when it cannot start",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/loopback-api-double.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "c62fd95a-734a-497f-b4c8-e2f0ce1d1699",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

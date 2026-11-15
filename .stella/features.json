@@ -1,5 +1,14 @@
 {
   "schema_version": 1,
+  "phase_order": [
+    "F0",
+    "F1",
+    "F1b",
+    "F1c",
+    "E1",
+    "E2",
+    "E3"
+  ],
   "entries": [
     {
       "id": "escalation",
@@ -316,6 +325,39 @@
       ],
       "flag": null,
       "global_id": "e4ef3505-e328-40e1-9064-e4c92054266b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "owner-key-linux",
+      "owner_phase": "F1c",
+      "status": "on",
+      "depends_on": [],
+      "flag": null,
+      "due_phase": "E1",
+      "replaced_by": "the Linux platform keystore through the platform adapter (E1); until then the owner key is a 0600 file (index owner_key)",
+      "global_id": "168c4d96-ce54-4c22-9d18-957ca130f592",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "owner-key-windows",
+      "owner_phase": "F1c",
+      "status": "on",
+      "depends_on": [],
+      "flag": null,
+      "due_phase": "E2",
+      "replaced_by": "the Windows platform keystore through the platform adapter (E2); until then the owner key is a 0600 file (index owner_key)",
+      "global_id": "5215c0cb-8650-46e8-92e6-9a114f239713",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "owner-key-macos",
+      "owner_phase": "F1c",
+      "status": "on",
+      "depends_on": [],
+      "flag": null,
+      "due_phase": "E3",
+      "replaced_by": "the macOS platform keystore through the platform adapter (E3); until then the owner key is a 0600 file (index owner_key)",
+      "global_id": "98327e31-a3ed-4f02-bffa-f5878fec1d22",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

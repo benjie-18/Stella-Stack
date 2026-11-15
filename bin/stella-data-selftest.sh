@@ -221,21 +221,21 @@ ok 'jq -e ".entries[] | select(.id == \"fallback-gateway\") | .enabled and (.mod
 RT="$ROOT/docs/hermes-local/roles.json"
 FB=$(jq -r .fallback_role "$RT"); R1=$(jq -r --arg fb "$FB" '[.roles | keys[] | select(. != $fb)][0]' "$RT")
 ok 'python3 -I "$SD" validate roles "$RT" >/dev/null 2>&1' "79 control: validate roles accepts the shipped table"
-n=0
-for f in '.profiles["qa-p"] = {"role": "qa-no-such-role"}' '.fallback_role = "qa-no-such-role"' ".roles[\"$FB\"].may_complete = true" \
+n=0   # a record a fixture adds gets a fresh global_id ($g) and this install's install_id ($i) (FV-01); a copy keeps its install_id
+for f in ".profiles[\"qa-p\"] = {\"role\": \"qa-no-such-role\", \"global_id\": \$g, \"install_id\": \$i}" '.fallback_role = "qa-no-such-role"' ".roles[\"$FB\"].may_complete = true" \
          ".roles[\"$R1\"].hooks += [{\"matcher\": \"x\", \"file\": \"bin/roles.py\", \"command\": \"/workspace/bin/roles.py\"}]" \
-         ".roles[\"$R1\"].hooks += [{\"matcher\": \"(\", \"command\": \"/workspace/bin/roles.py\"}]" ".roles[\"qa bad name\"] = .roles[\"$R1\"]" \
+         ".roles[\"$R1\"].hooks += [{\"matcher\": \"(\", \"command\": \"/workspace/bin/roles.py\"}]" ".roles[\"qa bad name\"] = (.roles[\"$R1\"] | .global_id = \$g)" \
          ".roles[\"$R1\"].requirements.allowed_data_classes = [\"public\n\"]" ".roles[\"$R1\"].git_identity = {\"name\": \"WORKER_GIT_NAME\"}" \
          ".roles[\"$R1\"].allowed_overrides = [\"model\", \"model\"]" '.protected.repo += [.protected.repo[0]]' \
          ".roles[\"$R1\"].requirements.allowed_data_classes = [\"bogus\"]" '.schema_version = true' '.schema_version = "1"' \
          ".roles[\"$R1\"].requirements.min_context_tokens = 9007199254740992" ".roles[\"$R1\"].may_answer_for_owner = 1" \
-         ".roles[\"$FB\"].requirements.allowed_data_classes += [\"zz-extra\"]" '.profiles["qa bad"] = {"role": .fallback_role}' \
+         ".roles[\"$FB\"].requirements.allowed_data_classes += [\"zz-extra\"]" ".profiles[\"qa bad\"] = {\"role\": .fallback_role, \"global_id\": \$g, \"install_id\": \$i}" \
          ".roles[\"$R1\"].qa_unknown_key = 1" ".roles[\"$R1\"].complete_needs_reveiw = true" ".profiles[.profiles | keys[0]].qa_unknown_key = 1" '.qa_unknown_key = 1'; do
-  n=$((n+1)); mk rt$n; jq "$f" "$RT" >"$T/rtc$n.json"; cp "$T/rtc$n.json" "$T/rt$n/docs/hermes-local/roles.json"
+  n=$((n+1)); mk rt$n; jq --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$IID" "$f" "$RT" >"$T/rtc$n.json"; cp "$T/rtc$n.json" "$T/rt$n/docs/hermes-local/roles.json"
   ok 'refuses rt'$n' validate roles "$T/rtc'$n'.json" && grep -q "^STL-CFG-310 " "$T/o"' "80.$n validate roles refuses a broken table: $f"
   ok 'refuses rt'$n' check && grep -q "^STL-CFG-310 " "$T/o"' "81.$n check refuses the same table in the index's role_table, as STL-CFG-310 lines"
 done
-mk rtd; jq '.roles["qa-x"] = .roles.'"$FB"' | .roles["qa-x"].requirements.allowed_data_classes = ["public","bogus"]' "$RT" >"$T/rtd.json"
+mk rtd; jq --arg g "$(cat /proc/sys/kernel/random/uuid)" '.roles["qa-x"] = (.roles.'"$FB"' | .global_id = $g) | .roles["qa-x"].requirements.allowed_data_classes = ["public","bogus"]' "$RT" >"$T/rtd.json"
 ok 'refuses rtd validate roles "$T/rtd.json" && [ "$(grep -c "^STL-CFG-310 " "$T/o")" = 1 ] && grep -q "qa-x" "$T/o" && grep -q "allowed_data_classes\[1\]" "$T/o" && ! grep -q bogus "$T/o"' "82 a data class the data policy does not define: validate roles refuses it, one STL-CFG-310 line naming it"
 # R5: a role table under STELLA_ROOT is judged against that root's hook files, not the fixed stack root's
 mk r5a; mkdir -p "$T/r5a/docs/hermes-local/hooks/qa"; cp "$ROOT/docs/hermes-local/hooks/default/deny-write.sh" "$T/r5a/docs/hermes-local/hooks/qa/only-here.sh"
@@ -1048,4 +1048,45 @@ mk oi; ed oi data-files.json '(.files[] | select(.schema == "install")).owner_on
 ok 'refuses oi check && grep -q "^STL-CFG-310 .*install: .*owner_only.*install" "$T/o"' "263b the install row not owner_only is refused, even with no x-owner-only mark in its schema"
 mk oc; ed oc data-files.json '(.files[] | select(.schema == "capabilities")).owner_only = false'; ed oc schemas/install.schema.json 'walk(if type == "object" then del(."x-owner-only") else . end)'
 ok 'sd oc check >"$T/o" 2>&1 && [ "$(jq "[.files[] | select(.schema == \"capabilities\")][0].owner_only" "$T/oc/.stella/data-files.json")" = false ]' "263c control: a row whose schema marks no owner-only field may be open"
+# F1c-RT2-02 (RT2-2, product rule 14): the role table's records join the one global_id set of the data files, in check and validate roles
+mk gt; GT=$T/gt/$(jq -r .role_table "$ROOT/.stella/data-files.json"); cp "$GT" "$T/gt.keep"
+GC=$(jq -r '[.entries[] | .global_id // empty][0] // empty' "$ROOT/.stella/connections.json")
+GP=$(jq -r '.profiles | keys[0]' "$GT"); GL=$(jq -r '.roles | keys[0]' "$GT")
+ok '[ -n "$GC" ] && [ -n "$GP" ] && [ -n "$GL" ] && sd gt check >"$T/o" 2>&1' "264a control: a connections global_id, a profile and a role exist, and the copy checks clean"
+jq --arg p "$GP" --arg r "$GL" '.profiles[$p].global_id = .roles[$r].global_id' "$T/gt.keep" >"$GT"
+ok 'refuses gt check' "264b control: a profile sharing a role's global_id is refused"
+jq --arg p "$GP" --arg g "$GC" '.profiles[$p].global_id = $g' "$T/gt.keep" >"$GT"
+ok 'refuses gt check && grep -q "^STL-CFG-310 .*role-table: .*global_id is also the global_id of" "$T/o" && ! grep -q "$GC" "$T/o"' "264c a profile whose global_id is a connections record's is refused by check, and the id is not printed"
+jq --arg r "$GL" --arg g "$GC" '.roles[$r].global_id = $g' "$T/gt.keep" >"$GT"
+ok 'refuses gt check && grep -q "^STL-CFG-310 .*connections: .*global_id is also the global_id of" "$T/o"' "264d a role whose global_id is a connections record's is refused by check, on both rows"
+cp "$T/gt.keep" "$GT"; jq --arg r "$GL" --arg g "$GC" '.roles[$r].global_id = $g' "$T/gt.keep" >"$T/gt-cand.json"
+ok 'refuses gt validate roles "$T/gt-cand.json" && grep -q "^STL-CFG-310 .*global_id: already the global_id of a record" "$T/o" && ! grep -q "$GC" "$T/o" && sd gt validate roles "$T/gt.keep" >"$T/o" 2>&1 && grep -qx valid "$T/o"' "264e validate roles refuses a candidate role holding a connections global_id; the table as shipped validates"
+# F1c-CRT-03 (CRT2-3, GB-1 family): the data reader every tool imports refuses the files that hold a key (owner key, writer state) in a worker
+mk wk; WT=$T/wk/$(jq -r .role_table "$ROOT/.stella/data-files.json"); jq '.worker_markers = ["STUB_WORKER_MARK"]' "$WT" >"$T/wk.rt" && cp "$T/wk.rt" "$WT"
+FK=$(printf 'ab%.0s' $(seq 32))   # a made-up key: the case shows it never comes back
+for k in owner_key event_writer_state; do p=$T/wk/$(jq -r ".$k" "$ROOT/.stella/data-files.json"); mkdir -p "$(dirname "$p")"; echo "{\"key\":\"$FK\",\"seq\":0}" >"$p"; done
+KR() { STELLA_ROOT=$T/wk python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import stella_data as sd
+for k in sys.argv[2:]:
+    try:
+        print(k + (":GOT" if sd.load(sd.load(sd.INDEX)[k]) else ":EMPTY"))
+    except sd.DataError as e:
+        print(k + ":" + getattr(e, "code", "DataError"))' "$BIN" owner_key event_writer_state 2>&1; }
+ok 'r=$(STUB_WORKER_MARK=1 KR); [ "$(echo $r)" = "owner_key:STL-CFG-312 event_writer_state:STL-CFG-312" ] && ! echo "$r" | grep -q "$FK"' "265a in a worker, stella_data.load() of the owner key and of the writer state refuses with STL-CFG-312, the key never returned"
+ok 'STUB_WORKER_MARK=1 STELLA_ROOT=$T/wk python3 -I "$SD" validate event "$T/wk/$(jq -r .event_writer_state "$ROOT/.stella/data-files.json")" >"$T/o" 2>&1; [ $? = 1 ] && grep -q "^STL-CFG-312 " "$T/o" && ! grep -q "$FK" "$T/o"' "265b in a worker, the CLI reading the writer state as a file refuses with one STL-CFG-312 line, no key"
+ok 'STUB_WORKER_MARK=1 sd wk get connections --json >/dev/null 2>"$T/o" && STUB_WORKER_MARK=1 sd wk check >"$T/o" 2>&1' "265c control: in a worker, reads of non-secret data (get, check) still work"
+# F1c CRT-F-5: untrusted_events, the one state path a worker writes, never is, holds or lies inside another state path of the index
+WI=$T/wk/.stella/data-files.json; cp "$WI" "$T/wk.idx"
+for k in owner_key event_writer_state event_log approval_store applied_state backup_dir role_table; do
+  v=$(jq -r ".$k" "$T/wk.idx"); [ "$k" = approval_store ] && v="$v/requests/apr-zz.json"
+  jq --arg v "$v" '.untrusted_events = $v' "$T/wk.idx" >"$WI"
+  ok 'refuses wk check && grep -q "^STL-CFG-310 .*untrusted_events" "$T/o"' "266a check refuses untrusted_events = (or inside) the $k path, STL-CFG-310"
+done
+jq --arg v "$(dirname "$(jq -r .owner_key "$T/wk.idx")")" '.untrusted_events = $v' "$T/wk.idx" >"$WI"
+ok 'refuses wk check && grep -q "^STL-CFG-310 .*untrusted_events" "$T/o"' "266b check refuses an untrusted_events that holds a state path (the owner key's folder)"
+KP=$T/wk/$(jq -r .owner_key "$T/wk.idx"); s0=$(sha256sum <"$KP")
+jq --arg v "$(jq -r .owner_key "$T/wk.idx")" '.untrusted_events = $v' "$T/wk.idx" >"$WI"
+STUB_WORKER_MARK=1 STELLA_ROOT=$T/wk python3 -I "$BIN/event_untrusted.py" append --type zz --what zz >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q "^STL-CFG-318 " "$T/o" && [ "$(sha256sum <"$KP")" = "$s0" ]' "266c a worker's untrusted line never lands in the owner key file: event_untrusted.py append refuses STL-CFG-318 ($rc)"
+cp "$T/wk.idx" "$WI"
+ok 'sd wk check >"$T/o" 2>&1 && STUB_WORKER_MARK=1 STELLA_ROOT=$T/wk python3 -I "$BIN/event_untrusted.py" append --type zz --what zz >"$T/o" 2>&1' "266d control: the shipped index checks and a worker's untrusted line is appended"
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

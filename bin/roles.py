@@ -30,6 +30,8 @@ WORKSPACES = ("git-worktree", "read-parent-worktree", "none")
 OVERRIDES = ("model", "provider")
 NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 KEY = re.compile(r"[A-Z][A-Z0-9_]*")   # an owner config key (config/owner.env)
+UUID4 = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")   # a record's global_id (the same pattern as the data tool's)
+UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")   # its install_id: any install's (a record keeps it when moved)
 BACKEND = re.compile(r"[a-z0-9_]+")   # a Hermes terminal.backend name
 SANDBOX_KEYS = {"schema_version", "backend", "unboxed_backend", "boxed_profiles", "plugin_dir", "tmp_dir", "home_ro", "hide",
                 "sibling_dirs", "canary", "env", "env_unset", "snapshot_keep_hours", "home_protect", "profile_overrides"}
@@ -47,11 +49,11 @@ SCHEMA_VERSION = 1
 # hold them, and roles-selftest checks they are equal. A key a reader starts to use is added in both in the same change.
 ROLE_KEYS = set(PERMS) | {"workspace", "allowed_overrides", "requirements", "background_review", "complete_metadata",
                           "complete_needs_review", "workers", "skills_disabled", "platform_toolsets", "config", "git_identity", "hooks",
-                          "runs_unboxed", "catch_all_tools"}
+                          "runs_unboxed", "catch_all_tools", "global_id", "install_id"}
 HOOK_KEYS = {"matcher", "file", "command", "timeout", "workers", "writes", "catch_all"}   # writes: "refused" = the hook refuses every write; "judged" = a text guard that lets some through
 CATCH_ALL = "^(?!(?:{tools})$).+$"   # T5: the matcher of a catch_all hook; {tools} is filled at render time with the profile's other matchers and the tools of its role's toolsets
 WRITES = ("refused", "judged")
-PROFILE_KEYS = {"role", "worker", "dir", "soul", "display_name", "approval_evidence", "review_callers", "capability_fallback"}
+PROFILE_KEYS = {"role", "worker", "dir", "soul", "display_name", "approval_evidence", "review_callers", "capability_fallback", "global_id", "install_id"}
 TOP_KEYS = {"_comment", "schema_version", "fallback_role", "protected", "owner_settings", "owner_data", "owner_commands", "data_index",
             "worker_markers", "self_config_kinds", "profiles", "roles", "sandbox", "owner_commands_by_name", "boundary_paths", "write_tools", "worker_pins",
             "main_branch", "judged_hooks", "read_verbs"}
@@ -266,6 +268,17 @@ def validate(d, root=ROOT):
         if fbp is not None and (not isinstance(fbp, str) or fbp == p or not isinstance(profs.get(fbp), dict)
                                 or profs[fbp].get("role") != row["role"]):   # RT10-01: a list or object is named, not a crash
             errs.append(f"profile {p}: capability_fallback must name another profile of the same role")
+    seen = {}   # product rule 14: each profile row and role entry is a record with global_id and install_id; a global_id is one record's
+    for kind, recs in (("profile", profs), ("role", roles)):
+        for n, x in ((n, x) for n, x in recs.items() if isinstance(x, dict)):
+            for f, pat in (("global_id", UUID4), ("install_id", UUID)):
+                if not (isinstance(x.get(f), str) and pat.fullmatch(x[f])):
+                    errs.append(f"{kind} {n}: {f} is " + ("missing" if f not in x else "not a lower-case UUID" + (" of version 4" if f == "global_id" else "")))
+            g = x.get("global_id")
+            if isinstance(g, str) and g in seen:
+                errs.append(f"{kind} {n}: its global_id is also the global_id of {seen[g]}")
+            elif isinstance(g, str):
+                seen[g] = f"{kind} {n}"
     pr = d.get("protected")
     if not isinstance(pr, dict) or not all(_set(pr.get(k)) and pr[k] for k in ("repo", "home")):
         errs.append("protected needs non-empty repo and home lists, no entry twice")
@@ -514,12 +527,15 @@ def owner_settings(d):
     return [f"{ROOT}/{p}" for p in d["owner_settings"]]
 
 
+STATE_KEYS = ("backup_dir", "applied_state", "event_log", "owner_key", "approval_store", "event_writer_state")   # the index keys that name state paths (B1, F1c D0)
+
+
 def index(d, root=None):
     """The data index (d['data_index']) parsed and shape-checked. Raises RolesError when it cannot be read: callers fail closed."""
     try:
         with open(f"{root or ROOT}/{d['data_index']}", encoding="utf-8") as f:
             ix = json.load(f, object_pairs_hook=_pairs)
-        if not (isinstance(ix, dict) and all(_rel(ix.get(k)) for k in ("backup_dir", "applied_state", "event_log"))
+        if not (isinstance(ix, dict) and all(_rel(ix.get(k)) for k in STATE_KEYS)
                 and isinstance(ix.get("files"), list)
                 and all(isinstance(x, dict) and _rel(x.get("path")) and isinstance(x.get("owner_only"), bool) for x in ix["files"])):
             raise ValueError("shape")
@@ -535,7 +551,7 @@ def owner_paths(d, root=None):
     apply tool's state paths too: every path no role may write. Raises RolesError."""
     ix = index(d, root)
     return sorted({d["data_index"], *d["owner_data"], *d["owner_settings"], *(x["path"] for x in ix["files"] if x["owner_only"]),
-                   ix["backup_dir"], ix["applied_state"], ix["event_log"]})   # K1: the apply tool's state is a path no role writes either, the same list
+                   *(ix[k] for k in STATE_KEYS)})   # K1: the state paths are paths no role writes either, the same list
 
 
 def owner_data(d):
@@ -545,9 +561,10 @@ def owner_data(d):
 
 def state_paths(d, root=None):
     """B1 (F1 W4): the apply tool's state, relative: its backups (owner values in clear), applied state and event log (old and new
-    owner values). No role reads or writes them and no OS box mounts them. Raises RolesError when the index cannot be read."""
+    owner values); F1c D0: the owner-key stub, the approval store (a folder) and the event writer's state (its key). No role reads or
+    writes them and no OS box mounts them; the agents' untrusted event stream is not one. Raises RolesError when the index cannot be read."""
     ix = index(d, root)
-    return [ix["backup_dir"], ix["applied_state"], ix["event_log"]]
+    return [ix[k] for k in STATE_KEYS]
 
 
 def state_trees(d):

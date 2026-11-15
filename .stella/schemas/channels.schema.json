@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Approval channels",
+  "description": "The approval service's delivery adapters (F1c B2, design D3; bin/approvals.py). One row per channel: deliver gets the request (no secret) as JSON on stdin and prints its message ref; collect gets the pending requests delivered on that channel as a JSON array on stdin ({id, nonce, message_ref}) and prints one JSON answer line per answer ({request_id, nonce, decision: approved|denied, user, message_ref, digest?}). A new channel, of a known kind or a new one, is a new row: no code change. Whether a kind may answer is the owner-auth policy's channel_kinds, never this file. An argv's first item is a path relative to the stack root (no .. part) or an absolute path. Owner-only: only the owner path writes it.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "host_kind": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "description": "The channel kind of the host terminal's own answer (approvals.py answer, proved by the owner key); whether it may answer is the owner-auth policy's channel_kinds."
+    },
+    "adapter_timeout_s": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 600,
+      "description": "How long one deliver or collect run may take; past it the adapter is killed and its run fails (STL-OWN-830)."
+    },
+    "ask_ttl_s": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2592000,
+      "description": "The ttl (seconds) of a request intake makes from an agent's approval-ask."
+    },
+    "env": {
+      "type": "object",
+      "description": "The fixed environment every deliver, collect and resume runs with (RT2-4: nothing else of the caller's environment is inherited, so a program planted in a folder on the caller's PATH, or BASH_ENV, never runs). path: PATH, in order, absolute folders only (no : in one; never a folder agents can write: every program found there runs for the approval service, CRT-F-6). pass: the caller's variables passed by name when set (scratch roots, owner config file; never an interpreter or program override). A row's argv words that are variable names (an owner config key such as its channel id) pass for that argv too. worker_token: the value every agent token variable of the owner-auth worker_signals gets there, so each child is a worker environment with no owner authority (CRT-F-6; a marker, not a secret).",
+      "properties": {
+        "path": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^/[^:]*$"}},
+        "pass": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}},
+        "worker_token": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+      },
+      "required": ["path", "pass", "worker_token"],
+      "additionalProperties": false
+    },
+    "resume": {
+      "type": "object",
+      "description": "Runs once per decision (an accepted answer approved or denied, or the expiry: expired), never while pending: argv plus the request's card id and the decision word, and the decision as JSON on stdin (board unblock).",
+      "properties": {
+        "argv": {"$ref": "#/$defs/argv"},
+        "timeout_s": {"type": "integer", "minimum": 1, "maximum": 600}
+      },
+      "required": ["argv", "timeout_s"],
+      "additionalProperties": false
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]*$"},
+          "kind": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$", "description": "A free id, not a code enum: whether it answers is the owner-auth policy's channel_kinds (a kind not listed answers nothing)."},
+          "deliver": {"$ref": "#/$defs/argv"},
+          "collect": {"$ref": "#/$defs/argv"},
+          "enabled": {"type": "boolean"},
+          "global_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+          "install_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+        },
+        "required": ["id", "kind", "deliver", "collect", "enabled", "global_id", "install_id"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "$defs": {
+    "argv": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    }
+  },
+  "required": ["schema_version", "host_kind", "adapter_timeout_s", "ask_ttl_s", "env", "resume", "entries"],
+  "additionalProperties": false
+}

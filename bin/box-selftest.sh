@@ -8,6 +8,7 @@ set -u
 T=$(mktemp -d); trap '[ -n "${KEEP:-}" ] || rm -rf "$T"' EXIT
 W=/workspace; S=${STAGE:-/workspace/bin}   # roles.py under test (a staged copy while it is being replaced)
 RF=${ROLES_FILE:-$W/docs/hermes-local/roles.json}
+IID=$(jq -r .install_id "$W/$(jq -r '.files[] | select(.schema == "install") | .path' "$W/$(jq -r .data_index "$RF")")")   # FV-01 (the install row's document; no import, so the test map's reach stays as it was): a role-table record a fixture adds carries a fresh global_id and this install's install_id
 fails=0
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); [ -s "$T/out" ] && sed 's/^/     /' "$T/out" | tail -4; fi; }
 # a worker profile (git-worktree role) and a read-only reviewing one, from the table
@@ -409,7 +410,7 @@ ok '[ "$(ROLES_FILE=$T/roles.json python3 -I "$T/ta.py" "$S" "$PX" "$P")" = "[\"
 # W2-RT-01: a profile whose role lacks may_answer_for_owner (listed or not, whatever its `assignable`) is no trusted author
 for r in $(jq -r '.roles | to_entries[] | select(.value.may_answer_for_owner != true) | .key' "$RF"); do
   # a served role needs explicit platform_toolsets (W4 r3 table rule); one that has none gets those of the first boxed profile's role
-  jq --arg r "$r" '. as $d | .profiles["qa-p"] = {"role": $r} | .sandbox.boxed_profiles += ["qa-p"] | .roles[$r].platform_toolsets |= (if [(. // {})[] | length] | add // 0 > 0 then . else $d.roles[$d.profiles[$d.sandbox.boxed_profiles[0]].role].platform_toolsets end)' "$T/roles.json" >"$T/roles-x.json"
+  jq --arg r "$r" --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$IID" '. as $d | .profiles["qa-p"] = {"global_id": $g, "install_id": $i, "role": $r} | .sandbox.boxed_profiles += ["qa-p"] | .roles[$r].platform_toolsets |= (if [(. // {})[] | length] | add // 0 > 0 then . else $d.roles[$d.profiles[$d.sandbox.boxed_profiles[0]].role].platform_toolsets end)' "$T/roles.json" >"$T/roles-x.json"
   ok '[ -n "$PX" ] && [ "$(ROLES_FILE=$T/roles-x.json python3 -I "$T/ta.py" "$S" qa-p "$P")" = "[]" ]' "W2-RT-01: role $r (no may_answer_for_owner): its comments are not the owner's answers"
 done
 # cluster C round (red-team S6M-RC C-01, C-03, C-04, C-05, C-08, C-09)

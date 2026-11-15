@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Host access",
+  "description": "The post-1.0 host operator's switches (F1c B3, App Post-GoLive 'host control and senses'): host access, its routes and each action's state. Owner-only; turning host access on, switching on a route or setting an action to run is identity-critical (the typed confirmation phrase). Ships all off.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "enabled": {
+      "type": "boolean",
+      "description": "Host access as a whole; false = no route and no action is used."
+    },
+    "routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+          "enabled": {"type": "boolean"},
+          "global_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+          "install_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+        },
+        "required": ["id", "enabled", "global_id", "install_id"],
+        "additionalProperties": false
+      }
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+          "state": {"enum": ["off", "ask", "run"], "description": "off = never; ask = ask first (one bound confirmation); run = runs without asking (dangerous actions: identity-critical)."},
+          "global_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+          "install_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+        },
+        "required": ["id", "state", "global_id", "install_id"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["schema_version", "enabled", "routes", "actions"],
+  "additionalProperties": false
+}
