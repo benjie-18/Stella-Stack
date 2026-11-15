@@ -26,6 +26,7 @@ BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
 import event_log as el
 import owner_config as oc
+import resolve
 import stella_data as sd
 import worker_env
 
@@ -226,15 +227,10 @@ def doc(schema):
     return sd.checked(sd.load(row["path"]), row["path"], schema)
 
 
-def choose(order, sources):
-    """(value, source) of the first (value, source) pair whose value is set."""
-    return next(((v, s) for v, s in zip(order, sources) if v is not None), (None, None))
-
-
 def explain(project):
     """What holds for `project`, and where each value comes from. Read-only; every id and name is read from the data."""
     now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-    ra, pol, gr, rt = doc("role-assignments"), doc("data-policy"), doc("grants"), sd.routing()
+    pol, gr = doc("data-policy"), doc("grants")
     row = sd.entry(pol["projects"], project)
     names = {project} | ({row.get("global_id")} | {k for k, v in pol["projects"].items() if v is row} if row else set())   # a project is its alias or its global_id
     settings = []
@@ -244,26 +240,19 @@ def explain(project):
             need_owner(f"{e['key']} (stored in {srow['path']})")
         value, src = ("***", "global") if e["sensitivity"] == SECRET else current(e)
         settings.append({"key": e["key"], "value": value, "source": "default" if src == "default" else "global", "sensitivity": e["sensitivity"]})
-    sel = ra.get("selection", {})   # selection, selection.projects and crossing_grants are optional in their schemas
-    pid, psrc = next(((sel["projects"][n], "project") for n in sorted(names) if n in sel.get("projects", {})), (sel.get("global"), "global"))
-    preset = ra["effort_modes"].get(pid) or sd.refuse("preset", pid or "(none selected)")
-    mode = pol["default"]["mode"] == "local_only" or bool(row) and row["mode"] == "local_only"   # DC-04: the default policy binds every project
+    try:   # the per-role view is the resolver's own answer (resolve.role_view): class order, pins, last resort and where each comes from
+        views = {r: resolve.role_view(r, project) for r in sorted(set(role_table()["roles"]) - {role_table()["fallback_role"]})}
+    except resolve.Refusal as r:
+        raise Refuse(r.code, str(r))
+    first = next(iter(views.values()))
+    pid, psrc, mode = first["preset"]["id"], first["preset"]["source"], first["local_only"]
     eff = pol["default"] if pol["default"]["mode"] == "local_only" or not row else row
     esrc = "default" if eff is pol["default"] else "project"
-    exempt = {x["role"]: x for x in rt["exempt_roles"]}
-    mine = [a for a in ra["assignments"] if a.get("class_order") is not None and a["scope"]["level"] in ("project", "global")
-            and (a["scope"]["level"] == "global" or a["scope"].get("project") in names)]
-    roles = {}
-    for r in sorted(set(role_table()["roles"]) - {role_table()["fallback_role"]}):
-        x = preset.get("roles", {}).get(r, {})
-        ov = next((a for lvl in ("project", "global") for a in mine if a["role"] == r and a["scope"]["level"] == lvl), None)
-        if r in exempt:
-            order, osrc = exempt[r]["class_order"], "exempt role (routing data)"
-        else:
-            order, osrc = choose([ov and ov["class_order"], x.get("class_order"), preset.get("class_order")],
-                                 ["assignment override", "preset role entry", "preset default"])
-        roles[r] = {"active": x.get("active", True), "class_order": order, "class_order_source": osrc, "pins": x.get("pins", []),
-                    "fallbacks": x.get("fallbacks", []), "last_resort": x.get("last_resort", preset.get("last_resort"))}
+    # role_view says "preset" for a role entry and for the preset's default alike; the label splits them (the order itself is the resolver's)
+    entries = doc("role-assignments")["effort_modes"][pid].get("roles", {})
+    label = lambda r, v: ("preset role entry" if entries.get(r, {}).get("class_order") is not None else "preset default") if v["order_source"] == "preset" else v["order_source"]
+    roles = {r: {k: v[k] for k in ("active", "class_order", "needs_class", "last_resort", "pins", "preset_pins", "fallbacks")} | {"class_order_source": label(r, v)}
+             for r, v in views.items()}
     grants = []
     for kind, lst in (("privacy", pol["privacy_grants"]), ("crossing", gr.get("crossing_grants", []))):
         for g in lst:
