@@ -12,7 +12,7 @@ CLI: stella-apply.py apply <id> --from <file> [--dry-run] [--proof <file>]
      stella-apply.py history <id> [--json]                  the event lines of <id> and its backups
 Exit: 0 ok (a no-change apply too); 1 refused or failed, or drift (check); 2 usage. Every failure prints its catalog code and a
 plain message (310 unreadable data, 311 unknown id, 312 owner-only, 313 a change refused before it started, 314 drift, 315 a
-setting's own code, 316 no, damaged or unrecorded backup, 318 event log, 321 a change that stopped after it started (what is
+setting's own code, STL-MDL-727 a candidate that changes or removes a built-in preset (stella_data.frozen; a dry run too), 316 no, damaged or unrecorded backup, 318 event log, 321 a change that stopped after it started (what is
 left and the one command that finishes or undoes it), 322 a read command refused, 323 an unfinished step seen by check); an
 unexpected exception or an interrupt (Ctrl-C, SIGTERM) is exit 1 and one coded line, never a traceback.
 Every write of a command is entered in STEPS, with how to undo it, BEFORE it starts (did); a failure or an interrupt undoes
@@ -905,6 +905,12 @@ def validate(row, rel, data):
         raise bad(why)
     return doc
 
+def kept(row, old_doc, new_doc):
+    """What a candidate may not change in the file it replaces (the data tool's rule, frozen(): a built-in preset), refused with
+    that rule's own code before anything is written; apply and its dry run alike."""
+    for code, why in sd.frozen(row["schema"], old_doc, new_doc):
+        raise bad(why, code)
+
 def added(rid, base, after):
     """The one rule of the whole-set check: a candidate (and a saved copy a rollback restores) may not add a problem to the set.
     Each problem LINE is judged, never a whole row: a line (row, text) of the data tool that was not there before the change
@@ -1235,6 +1241,7 @@ def dry_run(row, key, tgt, rel, cand):
     cur = read(tgt)
     old_doc, parses = parse_or_none(row, cur)
     note_secrets(old_doc, red)
+    kept(row, old_doc, new_doc)
     good, junk, strange, _ = scan(key, sha(cur) if cur is not None else None)
     act, err = pending_action(key, cur, cand, good, junk, strange, applied().get(key))
     if act == "refuse":
@@ -1354,6 +1361,7 @@ def apply_locked(row, key, tgt, rel, cand):
     cur = begin(key, tgt, sha(cand))   # the one read of the file, and the snapshot, after the validation
     old_doc, parses = parse_or_none(row, cur)
     note_secrets(old_doc, red)
+    kept(row, old_doc, new_doc)
     rec = applied().get(key)
     good, junk, strange, _ = scan(key, sha(cur) if cur is not None else None)
     act, err = pending_action(key, cur, cand, good, junk, strange, rec)

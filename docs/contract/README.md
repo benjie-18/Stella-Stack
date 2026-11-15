@@ -276,11 +276,11 @@ source is on a hub). A provider may carry `realtime` {`audio`, `video`} for mode
 The shipped Claude Code login (`claude-subscription`, CLI `claude-code`, used by the builder-claude and reviewer-claude
 profiles) is `cli-login` with `terms_ok` null; every other shipped entry is `api`.
 Routing fields (F2, all optional): `link_class` on a provider and `models[].link_class` (an override) name a link class of
-`routing.json` (x-ref: an unknown id is refused); `stella_data.link_class(prov, model, routing)` is the one function that names
+`routing.json` (x-ref: an unknown id is refused); `stella_data.link_class(prov, model)` is the one function that names
 a link's class: the model's, else the connection's, else the class `routing.json` `class_defaults` gives a link whose
 `reach()` is local, or an aggregator; any other link has no class and is not routable. `protocol` (an api provider's wire
-shape, an id of `.stella/protocols.json`) and `models[].score` (advertised suitability, a stub until the F2c benchmark) are
-shape-checked only. Capabilities are advertised values until the F2b probe (`probe_source: "advertised"`); a null capability
+shape) is an x-ref to an entry of `.stella/protocols.json`; `models[].score` (advertised suitability, a stub until the F2c
+benchmark) is shape-checked only. Capabilities are advertised values until the F2b probe (`probe_source: "advertised"`); a null capability
 meets no requirement of a role (`stella_data.unmet(requirements, capabilities)`).
 
 ### `.stella/data-policy.json`
@@ -366,12 +366,21 @@ by id {`cooldown_s`, `max_cooldown_s`, `scope` link or connection}, `same_connec
 per fact, what a missing record or field counts as; ships true, so hosted links are excluded}; `credentials` {`backend`,
 `backends{}` by id {`kind` none or dir, `path`}} (ships kind none: every read is refused until the secrets broker).
 *To add a link class, tier, driver or trigger:* add the entry; no code names one.
-**Not checked yet** (the rule block of F2 W1 is written but not applied; until it is, only the schema and the x-refs judge
-these): a class id inside a `class_order`, `needs_class`, `last_resort` and `based_on`; the roles named in a preset and in this
-file; a `when` that is no trigger; a preset that turns off a required role (STL-MDL-725) or pins a model that fails the role's
-requirements (STL-MDL-726); a class with `hosted: false` on a link that leaves the machine; a `dir` backend outside a
-protected state path; a grant's scope shape; and the apply tool's refusal of a change to a built-in preset (STL-MDL-727).
-`routing_state` and `card_facts` are not yet in `bin/roles.py` STATE_KEYS, so the role guards do not protect them yet.
+**What `check` refuses** (rules `presets`, `routing`, `link classes`, `grant scopes` of `bin/stella_data.py`; an unknown id
+fails closed and is never printed): a class a `class_order`, `needs_class` or `last_resort` names that `link_classes` does not
+define; a `based_on` that is no preset; a role in a preset or in this file that is not an assignable role of the role table; a
+`when` that is neither `always` nor a trigger; a preset that sets `active: false` for a role `workflow.required_roles` lists as
+`always` or under a trigger that can fire (STL-MDL-725); an active role's pin or fallback whose model is not listed for its
+connection or does not meet the role's requirements by the catalog's advertised capabilities, a null one meeting none
+(STL-MDL-726; an inactive role's links are not judged); a link class with `hosted: false` on a link that leaves the machine
+(by `reach()`; the locality rules themselves read `reach()` only, never the label); an id listed twice; a cooldown above its
+cap; a consent approval class or alert code that does not exist; a credentials backend that is not defined, and a `dir`
+backend whose path is not inside a protected state path of the index; a grant whose scope level and project disagree.
+**Built-in presets.** `bin/stella-apply.py apply` (a dry run too) refuses a candidate that changes any key of a preset marked
+`builtin: true`, or drops it (STL-MDL-727, `stella_data.frozen()`); a custom preset (a new id, `builtin` false or absent)
+applies and can be changed. A candidate that drops a built-in preset something still names is refused by the validity check
+first (STL-CFG-313). `routing_state` and `card_facts` are protected state paths (`bin/roles.py` STATE_KEYS): no role reads or
+writes them.
 
 ### `.stella/grants.json`
 `grants[]` (capability grants, F1c) and (F2, optional) `crossing_grants[]`: `id`, `global_id`, `install_id`, `preset` and
