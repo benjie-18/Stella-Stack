@@ -48,7 +48,8 @@
     "bin/settings.py",
     "bin/event_log.py",
     "bin/route.py",
-    "bin/credentials.py"
+    "bin/credentials.py",
+    "bin/consent.py"
   ],
   "owner_commands_by_name": [
     "bin/merge-card.sh"
@@ -99,7 +100,8 @@
     "bin/worker_env.py",
     "bin/route.py",
     "bin/credentials.py",
-    "bin/resolve.py"
+    "bin/resolve.py",
+    "bin/consent.py"
   ],
   "write_tools": [
     "write_file",

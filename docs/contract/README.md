@@ -748,6 +748,27 @@ the read-only resolver at most. `route.py` holds no routing rule: it walks the c
 - **A link that needs a grant is never skipped.** With a card and an importable module `consent`,
   `consent.gate(ctx, link)` -> {`status`: `granted`, `waiting` or `queued`, `code`, `request_id`} decides; with no card, or no
   such module, the task stops with STL-MDL-719 and one inbox alert and raises no approval request. Exit 3: the task waits.
+- **Consent** (`bin/consent.py`, an owner command of the role table; host only, STL-CFG-312 in a worker environment). The gate
+  asks the resolver again and answers `granted` only when it no longer asks for a grant. Else, for the grant the resolver
+  names (kind `crossing`: preset and class, a `crossing_grants` row; kind `privacy`: data class and connection, a
+  `privacy_grants` row; always `scope` project: a Stella-wide grant is the owner's own apply): one approval request (class
+  and ttl: `routing.json` `consent`), delivered on every channel that may answer, one trusted event line `routing.consent`;
+  a pending request of the same grant is reused. The request's action is the apply tool's own, `{op: apply, target: the
+  index row of the grant file, old_digest, new_digest}`: sha256 of the file now and of the file with the grant row appended
+  (that row has no `request_id` yet; the candidate applied is the same document with `request_id` set). A request counts
+  only by the approval service's word (the trusted log) and only while its digest is the digest of that action rebuilt on
+  the file as it is now: a file that changed since (a revoke included), a denied or an expired request asks again. An
+  approved request is applied through `bin/stella-apply.py` with a proof of this host's owner key bound to those bytes.
+  Where the grant rows are identity-critical (the shipped owner-auth data) the apply needs the typed phrase, which the gate
+  never asks: the task stays `waiting` (STL-MDL-719) and the owner is told, once per request in the inbox, the one host
+  command `consent.py complete <request id>`, which runs the apply on the terminal (no terminal: STL-OWN-808).
+  Unattended run mode (`UNATTENDED_MODE`, read by `settings.py`'s reader; when its store holds no value, from the owner
+  file the owner config reader names) off: `waiting`. On: the task is noted in the state's `queue`, the inbox gets one
+  alert with `consent.alert_code_queue`, and the answer is `queued`; the request is still raised once.
+  `consent.py pending --json` lists the requests not yet settled; `consent.py revoke <grant id> --out <file>` writes the
+  candidate in which that grant carries `revoked_at` (never over a file) for the owner to apply, and applies nothing.
+  The state file keeps `consents` {grant key: `request_id`, `kind`, `row`, `task`, `card`, `told`} and `queue` {task:
+  `request_id`, `link`, `card`, `at`}; like the rest of it, they prove nothing.
 - **Notice.** A pick or switch to a class of higher `privacy_rank` than the class of the chain's first link sends one inbox
   alert and writes one event line with `consent.alert_code_notice`, whatever the grant.
 - **Event lines** (trusted log): `routing.pick` (a call's or attempt's first link, with the resolver's `decision` reason),
