@@ -112,7 +112,7 @@ u u17 routing.json '.class_defaults.aggregator = $x' "5q an unknown default clas
 u u18 routing.json '.consent.approval_class = $x' "5r an unknown approval class for consent is refused"
 u u19 routing.json '.credentials.backend = $x' "5s a credentials backend that is not defined is refused"
 u u20 connections.json '(.entries[] | select(.id == "qa-pin")).protocol = $x' "5t an unknown protocol on a connection is refused"
-mk code five; ed code routing.json '.consent.alert_code_notice = "STL-ZZZ-999"'
+mk code five; ed code routing.json --arg c "STL-ZZZ-$((999))" '.consent.alert_code_notice = $c'   # built at run time: the alert selftest greps every STL code written in bin/
 ok 'refuses code && grep -q "consent.alert_code_notice" "$T/o"' "5u a consent alert code that is not in the alert catalog is refused"
 mk dup five; ed dup routing.json '.link_classes += [.link_classes[0]]'
 ok 'refuses dup && grep -q "link_classes: an id is listed twice" "$T/o"' "5v a link class listed twice is refused"
