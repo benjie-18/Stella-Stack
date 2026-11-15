@@ -452,6 +452,7 @@
         "protocol": {
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "x-ref": "protocols/entries",
           "description": "An api provider's wire shape: the id of an entry of .stella/protocols.json."
         }
       },
