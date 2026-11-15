@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Capability grants",
-  "description": "The capabilities the owner has granted (F1c B3). Owner-only and identity-critical: only the owner path writes it, with the typed confirmation phrase. Ships empty.",
+  "description": "The capabilities the owner has granted (F1c B3) and the owner's crossing grants (F2). Owner-only and identity-critical: only the owner path writes it, with the typed confirmation phrase. Ships empty.",
   "x-one-document": true,
   "type": "object",
   "properties": {
@@ -28,7 +28,10 @@
             "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
           },
           "expires_at": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
           },
           "global_id": {
@@ -42,11 +45,115 @@
             "description": "The UUID of the install that made the record (its .stella/install.json)."
           }
         },
-        "required": ["capability", "to", "approved_at", "expires_at", "global_id", "install_id"],
+        "required": [
+          "capability",
+          "to",
+          "approved_at",
+          "expires_at",
+          "global_id",
+          "install_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "crossing_grants": {
+      "type": "array",
+      "x-owner-only": true,
+      "description": "The owner's crossing grants (F2 D1.4): a preset may use its last-resort link class while the grant is in force (stella_data.grant_in_force: started, not ended, not revoked, in its scope). Optional: a file written before F2 has none.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "global_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            "description": "The record's global id: a lower-case version 4 UUID, unique across every data file (product rule 14)."
+          },
+          "install_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "description": "The UUID of the install that made the record (its .stella/install.json)."
+          },
+          "preset": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+            "x-ref": "role-assignments/effort_modes",
+            "description": "The preset the crossing belongs to (a key of role-assignments.json effort_modes)."
+          },
+          "to_class": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+            "x-ref": "routing/link_classes",
+            "description": "The link class the grant lets that preset cross to (its last_resort)."
+          },
+          "scope": {
+            "type": "object",
+            "properties": {
+              "level": {
+                "enum": [
+                  "global",
+                  "project"
+                ]
+              },
+              "project": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+              }
+            },
+            "required": [
+              "level"
+            ],
+            "additionalProperties": false,
+            "description": "Where the grant holds: one project (level project, with project) or Stella-wide (level global). `check` refuses a level without its project, or a project beside level global."
+          },
+          "granted_at": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+            "description": "When the owner revoked the grant (null or absent: not revoked). From then on it grants nothing; a value that is no real date grants nothing either."
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "The approval request the grant was accepted through, or null (the owner's own apply)."
+          }
+        },
+        "required": [
+          "id",
+          "global_id",
+          "install_id",
+          "preset",
+          "to_class",
+          "scope",
+          "granted_at"
+        ],
         "additionalProperties": false
       }
     }
   },
-  "required": ["schema_version", "grants"],
+  "required": [
+    "schema_version",
+    "grants"
+  ],
   "additionalProperties": false
 }

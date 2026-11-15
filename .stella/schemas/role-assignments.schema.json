@@ -24,13 +24,129 @@
           },
           "no_silent_fallback": {
             "type": "boolean"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "builtin": {
+            "type": "boolean",
+            "description": "True: a built-in preset. The apply tool refuses every candidate that changes or removes it; only the weekly model check (F2c) and a signed release (E1) update it."
+          },
+          "based_on": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+            "description": "The preset a custom preset was copied from, or null (started blank). `check` refuses an id that is no preset."
+          },
+          "class_order": {
+            "$ref": "#/$defs/class_order"
+          },
+          "frontier_when": {
+            "type": "object",
+            "properties": {
+              "tiers": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+                  "x-ref": "routing/task_tiers"
+                }
+              }
+            },
+            "required": [
+              "tiers"
+            ],
+            "additionalProperties": false,
+            "description": "The class named needs_class goes first when the task's tier is listed here (routing.json task_tiers[]), or when no link of class_order meets the role's requirements."
+          },
+          "needs_class": {
+            "$ref": "#/$defs/class_or_null"
+          },
+          "last_resort": {
+            "$ref": "#/$defs/class_or_null",
+            "description": "The class used only under a crossing grant (grants.json crossing_grants[]), or null: none."
+          },
+          "verification_depth": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many Q1 reads the QA reviewer counts under this preset."
+          },
+          "changelog": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "string",
+                  "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+                },
+                "by": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "what": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                }
+              },
+              "required": [
+                "at",
+                "by",
+                "what"
+              ],
+              "additionalProperties": false
+            },
+            "description": "One line per update of a built-in preset (who, when, what), newest last."
+          },
+          "roles": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "active": {
+                  "type": "boolean",
+                  "description": "False turns the role off under this preset; `check` refuses that for a role the workflow requires (routing.json workflow.required_roles)."
+                },
+                "class_order": {
+                  "$ref": "#/$defs/class_order"
+                },
+                "last_resort": {
+                  "$ref": "#/$defs/class_or_null"
+                },
+                "pins": {
+                  "$ref": "#/$defs/links",
+                  "description": "Links tried first. `check` refuses a pin of an active role whose model does not meet the role's requirements."
+                },
+                "fallbacks": {
+                  "$ref": "#/$defs/links",
+                  "description": "Links tried after the class candidates; checked like pins."
+                },
+                "escalation_chain": {
+                  "$ref": "#/$defs/links",
+                  "description": "The stronger rungs a card's builder climbs to (stored only; the walk is F2b)."
+                }
+              },
+              "required": [
+                "active"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Per role of the role table (the key): what this preset changes for it."
           }
         },
         "required": [
           "allowed_localities",
           "no_silent_fallback"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "description": "A routing preset (F2 D1.1): an effort mode is a preset. Every key but the first two is optional, so a file written before F2 stays valid; a role the preset does not list follows the preset's own values and is active."
       },
       "propertyNames": {
         "pattern": "^[a-z0-9][a-z0-9._:-]*$"
@@ -78,30 +194,7 @@
           "chain": {
             "type": "array",
             "items": {
-              "type": "object",
-              "properties": {
-                "connection": {
-                  "type": "string",
-                  "pattern": "^[a-z0-9][a-z0-9._:-]*$",
-                  "x-ref": "connections",
-                  "x-ref-where": {
-                    "kind": "provider"
-                  },
-                  "description": "The link's connection: the id (alias) or global_id of a provider in the connections catalog. A link is a connection plus a model of it (F1b D6)."
-                },
-                "model": {
-                  "type": "string"
-                },
-                "parameters": {
-                  "type": "object"
-                }
-              },
-              "required": [
-                "connection",
-                "model",
-                "parameters"
-              ],
-              "additionalProperties": false
+              "$ref": "#/$defs/link"
             },
             "minItems": 1
           },
@@ -114,6 +207,9 @@
             "type": "string",
             "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
             "description": "The UUID of the install that made the record (its .stella/install.json); a record moved from another install keeps it."
+          },
+          "class_order": {
+            "$ref": "#/$defs/class_order"
           }
         },
         "required": [
@@ -125,6 +221,34 @@
         ],
         "additionalProperties": false
       }
+    },
+    "selection": {
+      "type": "object",
+      "properties": {
+        "global": {
+          "$ref": "#/$defs/preset"
+        },
+        "projects": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/preset"
+          }
+        },
+        "cards": {
+          "type": "object",
+          "propertyNames": {
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/preset"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "description": "Which preset is active: the card's beats the project's beats global (the default; ships standard)."
     }
   },
   "required": [
@@ -132,5 +256,76 @@
     "effort_modes",
     "assignments"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "link": {
+      "type": "object",
+      "properties": {
+        "connection": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "x-ref": "connections",
+          "x-ref-where": {
+            "kind": "provider"
+          },
+          "description": "The link's connection: the id (alias) or global_id of a provider in the connections catalog. A link is a connection plus a model of it (F1b D6)."
+        },
+        "model": {
+          "type": "string"
+        },
+        "parameters": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "connection",
+        "model",
+        "parameters"
+      ],
+      "additionalProperties": false
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/link"
+      }
+    },
+    "class": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "x-ref": "routing/link_classes",
+      "description": "The id of a link class (routing.json link_classes[])."
+    },
+    "class_or_null": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "description": "A link class id or null. `check` refuses an id routing.json link_classes does not define."
+    },
+    "class_order": {
+      "type": "array",
+      "items": {
+        "type": [
+          "string",
+          "array"
+        ],
+        "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+        "items": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+        },
+        "minItems": 1,
+        "uniqueItems": true
+      },
+      "description": "Link classes in the order they are tried. An item is a class id, or a list of class ids: the best suited of these. `check` refuses an id routing.json link_classes does not define."
+    },
+    "preset": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "x-ref": "role-assignments/effort_modes",
+      "description": "The id of a preset (a key of effort_modes)."
+    }
+  }
 }

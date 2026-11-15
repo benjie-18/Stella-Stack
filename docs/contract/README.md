@@ -50,7 +50,9 @@ and, on a row with records, `record_kind` (a kind of the data policy's `record_k
 names a kind the policy does not list, is refused).
 It also names the event log, the backup folder, the applied-state file, the role table, and (F1c) the owner key stub
 (`owner_key`), the approval store (`approval_store`), the event writer's state and identity (`event_writer_state`,
-`event_writer_id`) and the untrusted event stream (`untrusted_events`). Every path in the index is
+`event_writer_id`), the untrusted event stream (`untrusted_events`) and (F2) the failover state (`routing_state`, a file) and the
+card facts store (`card_facts`, a folder: one `<card>.json` {`project`, `carries_secrets`, `vault_content`} per card, written on
+the host only; the card document an agent writes is never read for these facts). Every path in the index is
 relative, has no `..` part and must resolve (symlinks followed) inside the stack root; `check` refuses one that does not,
 and `get`, `list` and `search` never read it. `untrusted_events`, the one state path a worker writes, never is, holds or lies
 inside another state path of the index: `check` refuses that overlap (STL-CFG-310) and the stream's writer and reader refuse it. The index row of the index is `owner_only`: it decides which files are. A row
@@ -273,6 +275,13 @@ no rule row counts as never) and its `locality` is `local` or `hub` (a home-auto
 source is on a hub). A provider may carry `realtime` {`audio`, `video`} for models that take live audio or video (schema only).
 The shipped Claude Code login (`claude-subscription`, CLI `claude-code`, used by the builder-claude and reviewer-claude
 profiles) is `cli-login` with `terms_ok` null; every other shipped entry is `api`.
+Routing fields (F2, all optional): `link_class` on a provider and `models[].link_class` (an override) name a link class of
+`routing.json` (x-ref: an unknown id is refused); `stella_data.link_class(prov, model, routing)` is the one function that names
+a link's class: the model's, else the connection's, else the class `routing.json` `class_defaults` gives a link whose
+`reach()` is local, or an aggregator; any other link has no class and is not routable. `protocol` (an api provider's wire
+shape, an id of `.stella/protocols.json`) and `models[].score` (advertised suitability, a stub until the F2c benchmark) are
+shape-checked only. Capabilities are advertised values until the F2b probe (`probe_source: "advertised"`); a null capability
+meets no requirement of a role (`stella_data.unmet(requirements, capabilities)`).
 
 ### `.stella/data-policy.json`
 `data_classes[]`, `local_hosts[]` (the host names that count as local; a provider declared local may list only these), a `default` and `projects{}`; each has `mode` (`open`, `local_only`, `allowed_providers`) and
@@ -293,7 +302,9 @@ never synced, stored only when the owner asks, sent to a hosted model only under
 reach a worker's or the supervisor's context; `secret` is never synced and never hosted. A class with no rule row gets the
 most restrictive rules (never, owner_asks, never, text_only); a rule row for a class `data_classes` does not define is
 refused. `privacy_grants[]` (`id`, `global_id`, `install_id`, `data_class`, `connection` (an x-ref to the catalog),
-`granted_at`, optional `expires_at`) is `x-owner-only` and ships empty; routing (F2) reads it.
+`granted_at`, optional `expires_at`, and (F2) optional `scope` {`level` global or project, `project`}, `revoked_at` and
+`request_id`) is `x-owner-only` and ships empty; routing reads it. A grant with no `scope` is Stella-wide, as before F2.
+`check` refuses a grant for a class whose hosted rule is not `grant` (a class that never reaches a hosted link takes none).
 
 ### `.stella/install.json`
 The install's one document, owner-only: `install_id` (this install's UUID, made once, `x-owner-only`). No switch turns the
@@ -319,11 +330,54 @@ whose connection is cloud or `data_policy.hosted`, each data class the role hand
 follows its `class_rules` `hosted`: `allowed` passes, `never` (and a class with no rule row) is refused outright, `grant`
 needs a `privacy_grants` entry for that class naming the connection (id or `global_id`) that is in force: `granted_at` a
 real date not in the future, and `expires_at` (null or absent never expires) a real date after `granted_at` and not past;
-any other grant grants nothing. A private project never routes to a hosted connection (`policy_allows`). Card app rules are
+any other grant grants nothing. F2: one function, `stella_data.grant_in_force(grant, project, now)` (`now` naive UTC), judges
+privacy grants and crossing grants alike: the dates above, plus `scope` (level project holds in that project only and never
+for a task with no project; level global or no scope is Stella-wide) and `revoked_at` (a real date still ahead; any other
+value stops the grant). `route_problems(policies, classes, provider, now, project)` takes the project (a global assignment
+passes none) and returns `[{kind: terms|never|grant, data_class, text}]`: only kind `grant` can be lifted by a grant.
+A private project never routes to a hosted connection (`policy_allows`). Card app rules are
 F2's: when F2 routes by card, it refuses a `cli-login` app whose `terms_ok` is not true, and a hosted integration aggregator app
 (`integration_aggregator: true`) on a card that carries secrets or belongs to a private project.
 The resolver that applies the precedence is built in a later phase; this file is the data and the validator.
 *To add one:* append an assignment with a new `id`.
+**Presets (F2).** An effort mode is a routing preset. Beside its two required keys an entry may carry `label`, `builtin`,
+`based_on` (the preset it was copied from, or null), `class_order` (link classes in the order they are tried; an item is a
+class id, or a list of ids: the best suited of these), `frontier_when` {`tiers`} with `needs_class` (that class goes first for
+a listed task tier, or when no link of `class_order` meets the role's requirements), `last_resort` (a class used only under a
+crossing grant), `verification_depth`, `changelog[]` {`at`, `by`, `what`} and `roles{}`: per role `active` and optional
+`class_order`, `last_resort`, `pins[]`, `fallbacks[]`, `escalation_chain[]` (links; the chain is stored only, the walk is
+F2b). A role not listed follows the preset's own values and is active. Shipped, all `builtin: true`: standard (one best-of
+group of free cloud and local; frontier is its `needs_class` for the medium and complex tiers), eco (local, free cloud; last
+resort frontier), max (frontier, free cloud; last resort local), local_only (local). `selection` {`global`, `projects{}`,
+`cards{}`} names the active preset (card beats project beats global; ships standard). An assignment may add `class_order`
+(the owner's per-role override). Every key is optional, so a file written before F2 stays valid. The ids that cannot be null
+(`frontier_when.tiers`, the three `selection` levels) are x-refs: an unknown one is refused and never printed.
+*To add a preset:* add a key under `effort_modes` (blank, or a copy of any preset with `based_on`), then select it.
+
+### `.stella/routing.json` (F2)
+One owner-only document beside the presets: `link_classes[]` {`id`, `privacy_rank` (0 = most private), `hosted`};
+`class_defaults` {`local`, `aggregator`} (the class of a link that names none); `task_tiers[]` {`id`}; `drivers[]` {`id`,
+`mid_task`} (the engine's own loop may switch mid-task, a worker CLI only between attempts; a `cli-login` connection never
+switches mid-task); `exempt_roles[]` {`role`, `class_order`, `in_fallback_chain`} (the preset class rules do not apply to
+them, and that is never a crossing); `card_roles[]` (the roles that work a card: the resolver needs the card);
+`workflow` {`required_roles[]` {`role`, `when`: `always` or a trigger id}, `triggers{}` {`can_fire`}}; `failover` {`triggers{}`
+by id {`cooldown_s`, `max_cooldown_s`, `scope` link or connection}, `same_connection_first`, `max_switches_per_task`,
+`retry_count`}; `consent` {`approval_class`, `ttl_s`, `alert_code_queue`, `alert_code_notice`}; `card_facts` {`when_missing`:
+per fact, what a missing record or field counts as; ships true, so hosted links are excluded}; `credentials` {`backend`,
+`backends{}` by id {`kind` none or dir, `path`}} (ships kind none: every read is refused until the secrets broker).
+*To add a link class, tier, driver or trigger:* add the entry; no code names one.
+**Not checked yet** (the rule block of F2 W1 is written but not applied; until it is, only the schema and the x-refs judge
+these): a class id inside a `class_order`, `needs_class`, `last_resort` and `based_on`; the roles named in a preset and in this
+file; a `when` that is no trigger; a preset that turns off a required role (STL-MDL-725) or pins a model that fails the role's
+requirements (STL-MDL-726); a class with `hosted: false` on a link that leaves the machine; a `dir` backend outside a
+protected state path; a grant's scope shape; and the apply tool's refusal of a change to a built-in preset (STL-MDL-727).
+`routing_state` and `card_facts` are not yet in `bin/roles.py` STATE_KEYS, so the role guards do not protect them yet.
+
+### `.stella/grants.json`
+`grants[]` (capability grants, F1c) and (F2, optional) `crossing_grants[]`: `id`, `global_id`, `install_id`, `preset` and
+`to_class` (x-refs: a preset, a link class), `scope` {`level` global or project, `project`}, `granted_at`, `expires_at`,
+`revoked_at`, `request_id`. A crossing grant lets that preset use its last-resort class while it is in force
+(`stella_data.grant_in_force`). Owner-only and identity-critical; ships empty.
 
 ### `.stella/approved-hosts.json`
 `hosts[]`: host (a host name; a wildcard `*.` needs at least two labels after it, so `*.com` is refused), port, scope and approved_by (not empty), approved_at and expires_at

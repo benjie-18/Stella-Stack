@@ -2311,8 +2311,10 @@
       "globs": [
         ".stella/grants.json",
         ".stella/host-access.json",
+        ".stella/routing.json",
         ".stella/schemas/grants.schema.json",
-        ".stella/schemas/host-access.schema.json"
+        ".stella/schemas/host-access.schema.json",
+        ".stella/schemas/routing.schema.json"
       ],
       "targets": [
         "commit-guard",

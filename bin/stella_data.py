@@ -67,6 +67,17 @@ TYPES = {"object": dict, "array": list, "string": str, "integer": int, "number":
 class DataError(Exception):
     """A data file or path this tool cannot use; the message names it and never holds a data value."""
 
+class Coded(str):
+    """A problem line of `check` that has a catalog code of its own (any other line is STL-CFG-310)."""
+    def __new__(cls, code, text):
+        s = super().__new__(cls, text)
+        s.code = code
+        return s
+
+
+OFF_REQUIRED, CHAIN_FAILS, BUILTIN_EDIT = "STL-MDL-725", "STL-MDL-726", "STL-MDL-727"   # the preset rule's codes (F2 D1.9)
+
+
 class Refused(DataError):
     """A read of a file that holds a key (KEY_STATE) in a worker environment: STL-CFG-312, whoever imports this reader (GB-1)."""
     code = "STL-CFG-312"
@@ -200,7 +211,8 @@ def jload(path, label=None):
         raise DataError(f"{label or path}: cannot be read ({type(e).__name__})")
 
 
-STATE = ("event_log", "backup_dir", "applied_state", "role_table", "owner_key", "approval_store", "event_writer_state", "untrusted_events")
+STATE = ("event_log", "backup_dir", "applied_state", "role_table", "owner_key", "approval_store", "event_writer_state", "routing_state",
+         "card_facts", "untrusted_events")   # the index keys that name a path; the last is the agents' stream (untrusted())
 
 
 def untrusted(idx):
@@ -743,26 +755,57 @@ def policy_allows(pol, prov):
         or (pol["mode"] == "allowed_providers" and prov["id"] in pol["allowed_providers"])
 
 
-def route_problems(pols, need, prov, now):
-    """Why a link to provider prov may not serve a role that handles the data classes `need` (F1b D6; next to policy_allows, the one
-    routing rule): a cli-login link needs terms_ok true; on a cloud link (by reach(): hosted counts), each class's hosted rule in every data policy:
-    never refuses, grant needs a privacy grant for that class naming this connection (id or global_id) that is in force (live)."""
+def grant_in_force(g, project, now):
+    """Whether a grant row (a privacy grant of the data policy, a crossing grant of the grants data) holds for a task of `project`
+    (its id as the scope spells it; None: a task with no project) at `now` (naive UTC). The one judge of both lists: scope
+    (level global, or no scope at all = Stella-wide; level project holds in that project only, never with no project);
+    granted_at a real date not in the future; expires_at (if any) a real date after it and not past; revoked_at (if any) a
+    real date still ahead. A date that is no real date grants nothing (fail closed)."""
+    sc = g.get("scope", {"level": "global"})
+    if not (sc.get("level") == "global" or sc.get("level") == "project" and project is not None and sc.get("project") == project):
+        return False
+    a, x, r = (when(g, f) if f in g else None for f in ("granted_at", "expires_at", "revoked_at"))
+    return bool(a) and a <= now and (x is None or bool(x) and a < x and now < x) and (r is None or bool(r) and now < r)
+
+
+def route_problems(pols, need, prov, now, project=None):
+    """Why a link to provider prov may not serve a role that handles the data classes `need`, for a task of `project` (None: no
+    project, so only a Stella-wide grant counts) (F1b D6; next to policy_allows, the one routing rule): [{kind, data_class, text}].
+    kind terms: a cli-login link needs terms_ok true. On a link that leaves the machine (by reach(): hosted counts), each class's
+    hosted rule in every data policy: kind never refuses outright (no grant is offered); kind grant needs a privacy grant for that
+    class naming this connection (id or global_id) that is in force (grant_in_force)."""
     out = [] if prov["type"] != "cli-login" or prov.get("terms_ok") is True else \
-        ["is cli-login, and the owner has not recorded terms_ok true (the provider's terms allow this use)"]
+        [{"kind": "terms", "data_class": None, "text": "is cli-login, and the owner has not recorded terms_ok true (the provider's terms allow this use)"}]
     if reach(prov) == "local":
         return out
     names = {prov["id"], prov.get("global_id")}
-    def live(g):   # in force: granted_at a real date not in the future; expires_at (if any) a real date after it, not past; a bad date is no grant
-        a, x = when(g, "granted_at"), (when(g, "expires_at") if "expires_at" in g else None)
-        return bool(a) and a <= now and (x is None or bool(x) and a < x and now < x)
     for _, d in pols:
         for k in need:
             h = class_rule(d, k)["hosted"]
-            if h == "allowed" or h == "grant" and any(g["data_class"] == k and g["connection"] in names and live(g) for g in d["privacy_grants"]):
+            if h == "allowed" or h == "grant" and any(g["data_class"] == k and g["connection"] in names and grant_in_force(g, project, now) for g in d["privacy_grants"]):
                 continue
-            out.append(f"is cloud or hosted, and data class {idn(k, True)} " + ("reaches one only under a privacy grant, and no grant in force (started, not ended) names this connection"
-                                                                            if h == "grant" else "never reaches one (its rule is hosted never, or it has no rule row)"))
-    return list(dict.fromkeys(out))
+            out.append({"kind": "grant" if h == "grant" else "never", "data_class": k, "text": f"is cloud or hosted, and data class {idn(k, True)} " + (
+                "reaches one only under a privacy grant, and no grant in force here (started, not ended, not revoked, in scope) names this connection"
+                if h == "grant" else "never reaches one (its rule is hosted never, or it has no rule row)")})
+    return list({m["text"]: m for m in out}.values())
+
+
+def link_class(prov, model, rt):
+    """The class of the link (connection prov, model id), the one function that names it: the model's own link_class, else its
+    connection's, else the class the routing data's class_defaults names for a link whose reach() is local or for an aggregator. None:
+    the link has no class and is not routable. rt: the routing document."""
+    m = next((m for m in prov["models"] if m["id"] == model), {})
+    d = rt["class_defaults"]
+    return m.get("link_class") or prov.get("link_class") or d.get("local" if reach(prov) == "local" else "aggregator" if prov.get("aggregator") else None)
+
+
+def unmet(req, caps):
+    """The requirements of a role (roles.py requirements) that a model's advertised capabilities do not meet, by name; a null
+    capability meets no requirement. The resolver and the preset rule both ask here."""
+    import roles
+    return [k for k in roles.REQ_BOOLS if req.get(k) and caps.get(k) is not True] + \
+        (["min_context_tokens"] if req.get("min_context_tokens", 0) > (caps.get("context_tokens") or 0) else [])
+
 
 def class_problems(table, classes):
     return [f"{n}: requirements.allowed_data_classes[{i}] ({desc(k)}) is not in data-policy data_classes" for n, r in table["roles"].items()
@@ -887,6 +930,8 @@ def rule_sync(c):
         for i, g in enumerate(pol["privacy_grants"]):
             if g["data_class"] not in classes:
                 P(rid, f"privacy_grants[{i}].data_class ({desc(g['data_class'])}) is not in data_classes")
+            elif class_rule(pol, g["data_class"])["hosted"] != "grant":   # DC-08: a class that never reaches a hosted link takes no grant, one always allowed needs none
+                P(rid, f"privacy_grants[{i}]: the hosted rule of data class {idn(g['data_class'], True)} is not grant, so no grant applies to it")
     known = set.intersection(*(set(d["record_kinds"]) for _, d in pols)) if pols else set()
     pins = schema_of(FRAME).get("x-record-kind-of", {})   # a row's label cannot move its records (the projects) onto another kind
     for r in c["rs"]:
@@ -953,8 +998,8 @@ def rule_assignments(c):
                     P(rid, f"{w}: {pn} is {reach(prov)} for routing, which effort mode {idn(a['effort_mode'])} forbids")
                 if not all(policy_allows(p, prov) for p in policies):
                     P(rid, f"{w}: {pn} is not allowed by the data policy for {idn(proj) if proj else 'the default'} (an override never widens the policy)")
-                for m in route_problems(pols, need, prov, now):
-                    P(rid, f"{w}: {pn} {m}")
+                for m in route_problems(pols, need, prov, now, pid):
+                    P(rid, f"{w}: {pn} {m['text']}")
                 if any(k not in prov["data_policy"]["data_classes_allowed"] for k in need):   # an empty list allows no class
                     P(rid, f"{w}: {pn} does not allow every data class that role {idn(a['role'])} handles")
                 if a["role"] not in prov.get("allowed_roles", []):   # an empty list allows no role
