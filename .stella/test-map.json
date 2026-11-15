@@ -2727,6 +2727,11 @@
       "why": "F2 W7b: reached through the resolver that bin/escalate.sh now names (from reach)."
     },
     {
+      "globs": ["bin/resolve.py", "bin/route.py", "bin/credentials.py", "bin/consent.py", "bin/approvals.py", ".stella/protocols.json"],
+      "targets": ["approvals", "devices", "settings", "settings-explain", "stella-apply", "watchdog"],
+      "why": "F2 W6 fix: bin/settings.py explain imports the resolver (resolve.role_view), so every selftest that can reach settings.py reaches the resolver and what it imports (from reach)."
+    },
+    {
       "globs": ["bin/settings.py", ".stella/connections.json"],
       "targets": ["box"],
       "why": "F2 W7b: bin/box.py takes the review model from the resolver, which reads these (from reach)."

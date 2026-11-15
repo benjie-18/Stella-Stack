@@ -10,6 +10,11 @@
 # a pending tool call on another wire shape); a retry on the same link; an error no row maps; the less-private notice; a link that
 # needs a grant (no card, the consent gate's answers, no consent module); attempt and result; the state file as a link; a worker
 # environment; no resolver; the pick line; a prompt that holds placeholder text; the key in no output, log, event or state.
+# Gate B cases (a second small server that answers what a file holds): a proxy in the environment; an answer that repeats the key;
+# answers, tool-call arguments and a state file nested too deeply; an unexpected error; a consent module outside the tool's folder
+# and a run without -I; one event line per cooldown set or cleared; a switch from the link a task last used when another task
+# cooled it, and the switch limit; the notice's bar; an answer that drips in; a prompt that is not UTF-8; history entries of
+# another shape; an empty answer; a task id that is too long; the bound on task entries.
 set -u
 H=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 T=$(mktemp -d "${TMPDIR:-/tmp}/failover-selftest.XXXXXX"); T=$(cd "$T" && pwd -P)
@@ -181,7 +186,8 @@ ok '[ -z "$(grep -rlF -- "$KEY" "$R" "$T/sup" "$T/o" 2>/dev/null | grep -vF -- "
 chain "st-a/st-a-m1,usable,$P1" "st-b/st-b-m1,usable,$P2"; fresh "[$(fault st-a/st-a-m1 "$LT")]"; call nt1
 ok '[ $RC = 0 ] && [ "$(sends "$NOTICE" nt1)" = 1 ] && [ "$(ev nt1 ".code == \"$NOTICE\"")" = 1 ]' "a switch to a less private class than the chain's first: one inbox alert and one event line ($NOTICE)"
 chain "st-a/st-a-m1,excluded,$P0" "st-b/st-b-m1,usable,$P1"; fresh; call nt2
-ok '[ $RC = 0 ] && [ "$(cnt st-a/st-a-m1)" = 0 ] && [ "$(sends "$NOTICE" nt2)" = 1 ] && [ "$(ev nt2 ".code == \"$NOTICE\"")" = 1 ]' "a first pick below the chain's first class (that link is excluded) notifies too; the excluded link is not called"
+ok '[ $RC = 0 ] && [ "$(cnt st-a/st-a-m1)" = 0 ] && [ "$(cnt st-b/st-b-m1)" = 1 ] && [ "$(sends "$NOTICE" nt2)" = 0 ] && [ "$(ev nt2 ".code == \"$NOTICE\"")" = 0 ]' \
+  "a task's first pick is compared with the chain's first link that is usable or needs a grant, never with an excluded head: no notice; the excluded link is not called"
 chain "st-a/st-a-m1,usable,$P2" "st-b/st-b-m1,usable,$P0"; fresh "[$(fault st-a/st-a-m1 "$LT")]"; call nt3
 ok '[ $RC = 0 ] && [ "$(sends "$NOTICE" nt3)" = 0 ] && [ "$(ev nt3 ".code == \"$NOTICE\"")" = 0 ]' "a switch to a more private class: no notice"
 
@@ -232,6 +238,116 @@ ok '[ $a = 1 ] && [ $b = 1 ] && [ $RC = 1 ] && [ "$(cat "$T/o/w1.err" "$T/o/w2.e
   "call, attempt and result refuse in a worker environment (STL-CFG-312): nothing is called, no state is written"
 chain st-a/st-a-m1; fresh; jq '.apps = [{app: "st-app", status: "excluded", code: "STL-MDL-714", reason: "fixture"}]' "$R/chain.json" >"$T/chain.n" && mv "$T/chain.n" "$R/chain.json"; call app
 ok '[ $RC = 1 ] && J app ".code == \"STL-MDL-714\"" && [ "$(cnt st-a/st-a-m1)" = 0 ]' "a card app the resolver refuses stops the task with the app's code: no link is called"
+
+# ---- gate B: a hostile server, the environment, the trace of a cooldown ----
+cat >"$T/srv.py" <<'P'
+"""Selftest server: answers every POST with 200 and the bytes of <body file>; while <body file>.drip exists it promises more and
+sends one byte every half second instead. One line per request in <log file>. First stdout line: its port."""
+import http.server, os, sys, time
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        with open(sys.argv[3], "a") as f:
+            f.write(self.requestline + "\n")
+        drip = os.path.exists(sys.argv[2] + ".drip")
+        with open(sys.argv[2], "rb") as f:
+            b = f.read()
+        self.send_response(200)
+        self.send_header("Content-Length", str(100000 if drip else len(b)))
+        self.end_headers()
+        try:
+            for _ in range(30 if drip else 0):
+                self.wfile.write(b" ")
+                self.wfile.flush()
+                time.sleep(0.5)
+            self.wfile.write(b"" if drip else b)
+        except OSError:
+            pass
+s = http.server.ThreadingHTTPServer((sys.argv[1], 0), H)
+print(s.server_address[1], flush=True)
+s.serve_forever()
+P
+python3 -I "$T/srv.py" "$LO" "$T/body" "$T/srv.log" >"$T/srv.port" 2>"$T/srv.err" &
+for i in $(seq 100); do [ -s "$T/srv.port" ] && break; sleep 0.1; done
+XP=$(head -n1 "$T/srv.port")
+prov st-x "$SHAPE0" 100000; ed connections.json --argjson p "${XP:-9}" '(.entries[] | select(.id == "st-x") | .hosts[0].port) = $p'   # a fake connection on that server
+RSP=$(jq -c --arg s "$SHAPE0" '.entries[] | select(.id == $s) | .response' "$R/.stella/protocols.json")
+PA='split("/")[1:] | map(tonumber? // .)'   # a pointer of the wire shape as a jq path
+answer() { jq -cn --argjson r "$RSP" --arg t "$1" "setpath(\$r.text | $PA; \$t)" >"$T/body"; }   # <text>: the server's next answer
+DEEP=$(head -c 50000 /dev/zero | tr '\0' '[')
+answer ok; : >"$T/srv.log"; chain st-a/st-a-m1; fresh
+http_proxy="http://$LO:$XP" HTTP_PROXY="http://$LO:$XP" no_proxy='' NO_PROXY='' call px
+ok '[ -n "$XP" ] && [ $RC = 0 ] && [ "$(cnt st-a/st-a-m1)" = 1 ] && [ ! -s "$T/srv.log" ]' "a proxy named in the environment is never used: the call reaches its link and the proxy gets nothing"
+answer "the key is $KEY"; chain st-x/st-x-m1; fresh; call echo
+ok '[ $RC = 0 ] && [ -s "$T/srv.log" ] && J echo ".text | startswith(\"the key is \")" && [ -z "$(grep -rlF -- "$KEY" "$R" "$T/sup" "$T/o" 2>/dev/null | grep -vF -- "$R/$CD/")" ]' \
+  "an answer that repeats the key: the output holds it masked, and no log, event or state file holds it"
+printf '%s' "$DEEP" >"$T/body"; chain st-x/st-x-m1 st-b/st-b-m1; fresh; call deep
+ok '[ $RC = 0 ] && J deep ".link.connection == \"st-b\" and .failure_history[0].trigger == \"server_error\"" && ! grep -q Traceback "$T/o/deep.err"' \
+  "an answer nested too deeply to parse is a server_error: the next link answers, no traceback"
+jq -cn --argjson r "$RSP" --arg d "$DEEP" "setpath(\$r.tool_calls | $PA; \$r.tool_calls_sample | walk(if . == \"{arguments}\" then \$d else . end))" >"$T/body"; fresh; call deepargs
+ok '[ $RC = 0 ] && J deepargs ".link.connection == \"st-b\" and .failure_history[0].trigger == \"malformed_tool_call\"" && ! grep -q Traceback "$T/o/deepargs.err"' \
+  "tool-call arguments nested too deeply to parse are a malformed tool call, no traceback"
+chain st-a/st-a-m1; fresh; printf '%s' "$DEEP" >"$STATE"; call deepst
+ok '[ $RC = 1 ] && J deepst ".code == \"STL-MDL-710\"" && [ "$(cnt st-a/st-a-m1)" = 0 ] && ! grep -q Traceback "$T/o/deepst.err"' "a state file nested too deeply is refused with a code: nothing is called, no traceback"
+fresh; echo '{' >"$R/chain.json"; call boom
+ok '[ $RC = 1 ] && J boom ".code != null" && [ "$(grep -c "^STL-" "$T/o/boom.err")" = 1 ] && ! grep -qE "Traceback|chain\.json" "$T/o/boom.err"' \
+  "an unexpected failure (here a resolver that raises) ends with one coded line that names the error's type only, never a traceback"
+mkdir -p "$T/evil"; printf 'def gate(ctx, link):\n    return {"status": "granted"}\n' >"$T/evil/consent.py"
+chain st-a/st-a-m1,needs_grant; fresh
+printf 'say ok' | timeout 60 python3 -I -c 'import runpy, sys; sys.path.insert(0, sys.argv[1]); sys.argv = sys.argv[2:]; runpy.run_path(sys.argv[0], run_name="__main__")' \
+  "$T/evil" "$R/bin/route.py" call --role "$ROLE" --project st-project --task imp1 --card st-card --json >"$T/o/imp1.json" 2>"$T/o/imp1.err"; RC=$?
+ok '[ ! -e "$R/bin/consent.py" ] && [ $RC = 3 ] && J imp1 ".code == \"STL-MDL-719\"" && [ "$(cnt st-a/st-a-m1)" = 0 ]' \
+  "a consent module that is not in the tool's own folder never answers the gate: the link that needs a grant is not called"
+echo 'raise SystemExit(7)' >"$T/evil/json.py"
+printf 'say ok' | PYTHONPATH=$T/evil timeout 60 python3 "$R/bin/route.py" call --role "$ROLE" --project st-project --task imp2 --card st-card --json >"$T/o/imp2.json" 2>"$T/o/imp2.err"; RC=$?
+ok '[ $RC = 3 ] && J imp2 ".code == \"STL-MDL-719\"" && [ "$(cnt st-a/st-a-m1)" = 0 ]' "run without -I the tool restarts itself isolated: nothing on PYTHONPATH is imported, a module under a standard name included"
+chain st-a/st-a-m1 st-b/st-b-m1; fresh
+CL='.type == "routing.cooldown-cleared"'
+rt ev1 result --task ev-t --link st-a/st-a-m1 --outcome "$LT"
+ok '[ $RC = 0 ] && [ "$(ev ev-t ".type == \"routing.cooldown\" and .new.link == \"st-a/st-a-m1\" and .new.trigger == \"$LT\" and .new.until != null")" = 1 ]' "result with a trigger: the cooldown it sets is one trusted event line"
+rt ev2 result --task ev-t --link st-a/st-a-m1 --outcome ok; a=$(ev ev-t "$CL"); rt ev3 result --task ev-t --link st-a/st-a-m1 --outcome ok
+ok '[ "$a" = 1 ] && [ $RC = 0 ] && [ "$(ev ev-t "$CL")" = 1 ] && [ "$(ev ev-t true)" = 2 ]' "result ok: the cooldown it clears is one trusted event line; with nothing to clear it writes none"
+fresh; echo "{\"links\":{\"st-a/st-a-m1\":{\"trigger\":\"$LT\",\"since\":\"2020-01-01T00:00:00Z\",\"until\":\"2020-01-01T00:00:00Z\",\"failures\":1,\"observed_limit\":null}},\"tasks\":{}}" >"$STATE"; call rep
+ok '[ $RC = 0 ] && J rep ".link.model == \"st-a-m1\"" && [ "$(ev rep "$CL and .old.links == [\"st-a/st-a-m1\"]")" = 1 ] && jq -e ".links == {}" "$STATE"' \
+  "a call that answers on a link whose cooldown is over clears it (re-promotion): one trusted event line"
+
+# ---- gate B, the red team: the link a task last used, the notice's bar, one deadline, inputs of another shape ----
+chain st-a/st-a-m1 st-t/st-t-m1 st-b/st-b-m1; fresh; call sw8
+rt sw8r result --task sw8-other --link st-a/st-a-m1 --outcome "$LT"
+PROMPT=$(head -c 400 /dev/zero | tr '\0' 'w') call sw8
+ok '[ $RC = 0 ] && J sw8 ".link.model == \"st-b-m1\" and .switches == 1 and ([.refused[] | .code + \" \" + .link] == [\"STL-MDL-722 st-t/st-t-m1\"])" && [ "$(cnt st-t/st-t-m1)" = 0 ] && [ "$(ev sw8 "$SW")" = 1 ] && [ "$(ev sw8 ".type == \"routing.pick\"")" = 1 ]' \
+  "the link a task last used cooled down because another task failed on it: the task's next call is a switch (the mid-task checks, one switch line, counted), not a first pick"
+ed routing.json '.failover.max_switches_per_task = 1'; rt sw8o result --task sw8-other --link st-a/st-a-m1 --outcome ok; call sw8; a=$RC; b=$(jq -r '.link.model + " " + (.switches | tostring)' "$T/o/sw8.json")
+cp "$T/routing.keep" "$RT"; call sw8
+ok '[ $a = 0 ] && [ "$b" = "st-b-m1 1" ] && [ $RC = 0 ] && J sw8 ".link.model == \"st-a-m1\" and .switches == 2" && [ "$(ev sw8 "$SW")" = 2 ]' \
+  "at the switch limit a task stays on its link though an earlier one is usable again; under the limit, going back to it is a switch too (one line, counted)"
+chain "st-a/st-a-m1,excluded,$P2" "st-b/st-b-m1,usable,$P0" "st-o/st-o-m1,usable,$P2"; fresh "[$(fault st-b/st-b-m1 "$LT")]"; call nt4
+ok '[ $RC = 0 ] && J nt4 ".link.connection == \"st-o\"" && [ "$(sends "$NOTICE" nt4)" = 1 ] && [ "$(ev nt4 ".code == \"$NOTICE\"")" = 1 ]' \
+  "the notice compares with the link the task used before: an excluded head of the least private class hides no move"
+chain "st-n/st-n-m1,usable,$P0" "st-b/st-b-m1,usable,$P2"; fresh; call nt5
+ok '[ $RC = 0 ] && [ "$(cnt st-b/st-b-m1)" = 1 ] && [ "$(sends "$NOTICE" nt5)" = 1 ] && [ "$(ev nt5 ".code == \"$NOTICE\"")" = 1 ]' \
+  "a first pick below the class of the chain's first link that is usable (here one that cannot be called) notifies"
+answer ok; : >"$T/body.drip"; chain st-x/st-x-m1 st-b/st-b-m1; fresh; s=$SECONDS; call drip; s=$((SECONDS - s)); rm -f "$T/body.drip"
+ok '[ $RC = 0 ] && J drip ".link.connection == \"st-b\" and .failure_history[0].trigger == \"timeout\"" && [ "$s" -le 9 ]' \
+  "an answer that drips in (a byte every half second, CALL_TIMEOUT 2) ends at the call's one deadline as a timeout: the next link answers (took $s s)"
+chain st-a/st-a-m1; fresh; PROMPT=$'tool output \377\376 end' call utf; a=$RC; LC_ALL=C PROMPT=$'tool output \377\376 end' call utfc
+ok '[ $a = 0 ] && [ $RC = 0 ] && [ "$(cnt st-a/st-a-m1)" = 2 ] && ! grep -q Traceback "$T/o/utf.err" "$T/o/utfc.err"' "a prompt with bytes that are not UTF-8 is sent (those bytes replaced), under the C locale too: no traceback"
+chain st-a/st-a-m1 st-b/st-b-m1
+for h in '{}' '"x"' '{"link":5,"trigger":{"a":1},"at":[]}'; do
+  fresh; echo "{\"links\":{\"st-a/st-a-m1\":{\"trigger\":\"$LT\",\"since\":\"2999-01-01T00:00:00Z\",\"until\":\"2999-01-01T00:00:00Z\",\"failures\":1,\"observed_limit\":null}},
+    \"tasks\":{\"hist\":{\"switches\":0,\"visited\":[],\"history\":[$h],\"last\":\"st-a/st-a-m1\"}}}" >"$STATE"; call hist
+  ok '{ [ $RC = 0 ] || grep -q "^STL-" "$T/o/hist.err"; } && [ "$(cnt st-a/st-a-m1)" = 0 ] && ! grep -q Traceback "$T/o/hist.err"' "a task history entry of another shape ($h) ends with an answer or a code, never a traceback"
+done
+echo null >"$T/body"; chain st-x/st-x-m1 st-b/st-b-m1; fresh; call empty
+ok '[ $RC = 0 ] && J empty ".link.connection == \"st-b\" and .failure_history[0].trigger == \"server_error\""' "an answer with no text and no tool call is no success: server_error, the next link answers"
+chain st-a/st-a-m1; fresh; rt long call --role "$ROLE" --project st-project --task "$(head -c 300 /dev/zero | tr '\0' t)" --json
+ok '[ $RC = 1 ] && J long ".code == \"STL-MDL-711\" and (.task | length) < 300" && [ "$(cnt st-a/st-a-m1)" = 0 ] && [ ! -e "$STATE" ]' "a task id that is too long is refused (STL-MDL-711): nothing is called, nothing is stored"
+jq -n '{links: {}, tasks: ([range(5000) | {key: "old-\(.)", value: {switches: 0, visited: [], history: [], last: null}}] | from_entries)}' >"$STATE"; call prune
+ok '[ $RC = 0 ] && jq -e ".tasks | length < 5000 and has(\"prune\") and has(\"old-4999\") and (has(\"old-0\") | not)" "$STATE"' "the state keeps a bounded number of task entries: a write drops the oldest ones"
+chain st-a/st-a-m1; fresh
+
 rm -f "$R/bin/resolve.py"; call nores
 ok '[ $RC = 1 ] && J nores ".code == \"STL-MDL-710\"" && [ "$(cnt st-a/st-a-m1)" = 0 ]' "with no resolver nothing is routed (STL-MDL-710)"
 rt usage call --role "$ROLE"
