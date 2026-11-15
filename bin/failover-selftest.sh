@@ -181,7 +181,8 @@ ok '[ -z "$(grep -rlF -- "$KEY" "$R" "$T/sup" "$T/o" 2>/dev/null | grep -vF -- "
 chain "st-a/st-a-m1,usable,$P1" "st-b/st-b-m1,usable,$P2"; fresh "[$(fault st-a/st-a-m1 "$LT")]"; call nt1
 ok '[ $RC = 0 ] && [ "$(sends "$NOTICE" nt1)" = 1 ] && [ "$(ev nt1 ".code == \"$NOTICE\"")" = 1 ]' "a switch to a less private class than the chain's first: one inbox alert and one event line ($NOTICE)"
 chain "st-a/st-a-m1,excluded,$P0" "st-b/st-b-m1,usable,$P1"; fresh; call nt2
-ok '[ $RC = 0 ] && [ "$(cnt st-a/st-a-m1)" = 0 ] && [ "$(sends "$NOTICE" nt2)" = 1 ] && [ "$(ev nt2 ".code == \"$NOTICE\"")" = 1 ]' "a first pick below the chain's first class (that link is excluded) notifies too; the excluded link is not called"
+ok '[ $RC = 0 ] && [ "$(cnt st-a/st-a-m1)" = 0 ] && [ "$(cnt st-b/st-b-m1)" = 1 ] && [ "$(sends "$NOTICE" nt2)" = 0 ] && [ "$(ev nt2 ".code == \"$NOTICE\"")" = 0 ]' \
+  "a task's first pick is compared with the chain's first link that is usable or needs a grant, never with an excluded head: no notice; the excluded link is not called"
 chain "st-a/st-a-m1,usable,$P2" "st-b/st-b-m1,usable,$P0"; fresh "[$(fault st-a/st-a-m1 "$LT")]"; call nt3
 ok '[ $RC = 0 ] && [ "$(sends "$NOTICE" nt3)" = 0 ] && [ "$(ev nt3 ".code == \"$NOTICE\"")" = 0 ]' "a switch to a more private class: no notice"
 
@@ -306,6 +307,40 @@ ok '[ "$a" = 1 ] && [ $RC = 0 ] && [ "$(ev ev-t "$CL")" = 1 ] && [ "$(ev ev-t tr
 fresh; echo "{\"links\":{\"st-a/st-a-m1\":{\"trigger\":\"$LT\",\"since\":\"2020-01-01T00:00:00Z\",\"until\":\"2020-01-01T00:00:00Z\",\"failures\":1,\"observed_limit\":null}},\"tasks\":{}}" >"$STATE"; call rep
 ok '[ $RC = 0 ] && J rep ".link.model == \"st-a-m1\"" && [ "$(ev rep "$CL and .old.links == [\"st-a/st-a-m1\"]")" = 1 ] && jq -e ".links == {}" "$STATE"' \
   "a call that answers on a link whose cooldown is over clears it (re-promotion): one trusted event line"
+
+# ---- gate B, the red team: the link a task last used, the notice's bar, one deadline, inputs of another shape ----
+chain st-a/st-a-m1 st-t/st-t-m1 st-b/st-b-m1; fresh; call sw8
+rt sw8r result --task sw8-other --link st-a/st-a-m1 --outcome "$LT"
+PROMPT=$(head -c 400 /dev/zero | tr '\0' 'w') call sw8
+ok '[ $RC = 0 ] && J sw8 ".link.model == \"st-b-m1\" and .switches == 1 and ([.refused[] | .code + \" \" + .link] == [\"STL-MDL-722 st-t/st-t-m1\"])" && [ "$(cnt st-t/st-t-m1)" = 0 ] && [ "$(ev sw8 "$SW")" = 1 ] && [ "$(ev sw8 ".type == \"routing.pick\"")" = 1 ]' \
+  "the link a task last used cooled down because another task failed on it: the task's next call is a switch (the mid-task checks, one switch line, counted), not a first pick"
+ed routing.json '.failover.max_switches_per_task = 1'; rt sw8o result --task sw8-other --link st-a/st-a-m1 --outcome ok; call sw8; a=$RC; b=$(jq -r '.link.model + " " + (.switches | tostring)' "$T/o/sw8.json")
+cp "$T/routing.keep" "$RT"; call sw8
+ok '[ $a = 0 ] && [ "$b" = "st-b-m1 1" ] && [ $RC = 0 ] && J sw8 ".link.model == \"st-a-m1\" and .switches == 2" && [ "$(ev sw8 "$SW")" = 2 ]' \
+  "at the switch limit a task stays on its link though an earlier one is usable again; under the limit, going back to it is a switch too (one line, counted)"
+chain "st-a/st-a-m1,excluded,$P2" "st-b/st-b-m1,usable,$P0" "st-o/st-o-m1,usable,$P2"; fresh "[$(fault st-b/st-b-m1 "$LT")]"; call nt4
+ok '[ $RC = 0 ] && J nt4 ".link.connection == \"st-o\"" && [ "$(sends "$NOTICE" nt4)" = 1 ] && [ "$(ev nt4 ".code == \"$NOTICE\"")" = 1 ]' \
+  "the notice compares with the link the task used before: an excluded head of the least private class hides no move"
+chain "st-n/st-n-m1,usable,$P0" "st-b/st-b-m1,usable,$P2"; fresh; call nt5
+ok '[ $RC = 0 ] && [ "$(cnt st-b/st-b-m1)" = 1 ] && [ "$(sends "$NOTICE" nt5)" = 1 ] && [ "$(ev nt5 ".code == \"$NOTICE\"")" = 1 ]' \
+  "a first pick below the class of the chain's first link that is usable (here one that cannot be called) notifies"
+answer ok; : >"$T/body.drip"; chain st-x/st-x-m1 st-b/st-b-m1; fresh; s=$SECONDS; call drip; s=$((SECONDS - s)); rm -f "$T/body.drip"
+ok '[ $RC = 0 ] && J drip ".link.connection == \"st-b\" and .failure_history[0].trigger == \"timeout\"" && [ "$s" -le 9 ]' \
+  "an answer that drips in (a byte every half second, CALL_TIMEOUT 2) ends at the call's one deadline as a timeout: the next link answers (took $s s)"
+chain st-a/st-a-m1; fresh; PROMPT=$'tool output \377\376 end' call utf; a=$RC; LC_ALL=C PROMPT=$'tool output \377\376 end' call utfc
+ok '[ $a = 0 ] && [ $RC = 0 ] && [ "$(cnt st-a/st-a-m1)" = 2 ] && ! grep -q Traceback "$T/o/utf.err" "$T/o/utfc.err"' "a prompt with bytes that are not UTF-8 is sent (those bytes replaced), under the C locale too: no traceback"
+chain st-a/st-a-m1 st-b/st-b-m1
+for h in '{}' '"x"' '{"link":5,"trigger":{"a":1},"at":[]}'; do
+  fresh; echo "{\"links\":{\"st-a/st-a-m1\":{\"trigger\":\"$LT\",\"since\":\"2999-01-01T00:00:00Z\",\"until\":\"2999-01-01T00:00:00Z\",\"failures\":1,\"observed_limit\":null}},
+    \"tasks\":{\"hist\":{\"switches\":0,\"visited\":[],\"history\":[$h],\"last\":\"st-a/st-a-m1\"}}}" >"$STATE"; call hist
+  ok '{ [ $RC = 0 ] || grep -q "^STL-" "$T/o/hist.err"; } && [ "$(cnt st-a/st-a-m1)" = 0 ] && ! grep -q Traceback "$T/o/hist.err"' "a task history entry of another shape ($h) ends with an answer or a code, never a traceback"
+done
+echo null >"$T/body"; chain st-x/st-x-m1 st-b/st-b-m1; fresh; call empty
+ok '[ $RC = 0 ] && J empty ".link.connection == \"st-b\" and .failure_history[0].trigger == \"server_error\""' "an answer with no text and no tool call is no success: server_error, the next link answers"
+chain st-a/st-a-m1; fresh; rt long call --role "$ROLE" --project st-project --task "$(head -c 300 /dev/zero | tr '\0' t)" --json
+ok '[ $RC = 1 ] && J long ".code == \"STL-MDL-711\" and (.task | length) < 300" && [ "$(cnt st-a/st-a-m1)" = 0 ] && [ ! -e "$STATE" ]' "a task id that is too long is refused (STL-MDL-711): nothing is called, nothing is stored"
+jq -n '{links: {}, tasks: ([range(5000) | {key: "old-\(.)", value: {switches: 0, visited: [], history: [], last: null}}] | from_entries)}' >"$STATE"; call prune
+ok '[ $RC = 0 ] && jq -e ".tasks | length < 5000 and has(\"prune\") and has(\"old-4999\") and (has(\"old-0\") | not)" "$STATE"' "the state keeps a bounded number of task entries: a write drops the oldest ones"
 chain st-a/st-a-m1; fresh
 
 rm -f "$R/bin/resolve.py"; call nores
