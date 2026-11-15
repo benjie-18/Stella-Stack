@@ -26,7 +26,6 @@ BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
 import event_log as el
 import owner_config as oc
-import resolve
 import stella_data as sd
 import worker_env
 
@@ -240,6 +239,7 @@ def explain(project):
             need_owner(f"{e['key']} (stored in {srow['path']})")
         value, src = ("***", "global") if e["sensitivity"] == SECRET else current(e)
         settings.append({"key": e["key"], "value": value, "source": "default" if src == "default" else "global", "sensitivity": e["sensitivity"]})
+    import resolve   # here, not at the top: bin/route.py imports this file before its own guarded resolver import
     try:   # the per-role view is the resolver's own answer (resolve.role_view): class order, pins, last resort and where each comes from
         views = {r: resolve.role_view(r, project) for r in sorted(set(role_table()["roles"]) - {role_table()["fallback_role"]})}
     except resolve.Refusal as r:
