@@ -145,6 +145,9 @@
     "settings": {
       "mark": "hermetic"
     },
+    "settings-explain": {
+      "mark": "hermetic"
+    },
     "stella-apply": {
       "mark": "hermetic"
     },
@@ -292,6 +295,18 @@
       "targets": [
         "settings"
       ]
+    },
+    {
+      "globs": [
+        "bin/settings-explain-selftest.sh",
+        ".claude/settings.json",
+        ".stella/owner-auth.json",
+        ".stella/settings.json"
+      ],
+      "targets": [
+        "settings-explain"
+      ],
+      "why": "F2 W6: the explain selftest and the data it reads that no other row sends it (bin/test-map.py reach)"
     },
     {
       "globs": [
@@ -1606,6 +1621,7 @@
         "bin/settings.py"
       ],
       "targets": [
+        "settings-explain",
         "alert",
         "approvals",
         "devices",
@@ -2668,7 +2684,8 @@
         "docs/hermes-local/roles.json"
       ],
       "targets": [
-        "presets"
+        "presets",
+        "settings-explain"
       ],
       "why": "F2 W1: the presets selftest (presets, routing data, grants and the apply tool's built-in refusal, in scratch roots) and every file it can reach: the data files and schemas check judges (from reading: the index names them), the data and apply tools, the owner authenticator and what those name (bin/test-map.py reach)"
     }
