@@ -293,7 +293,9 @@
       ],
       "targets": [
         "alert",
+        "approvals",
         "box",
+        "devices",
         "escalate",
         "event-log",
         "kanban-board",
@@ -306,8 +308,7 @@
         "stella-apply",
         "stella-data",
         "watchdog",
-        "write-guard",
-        "devices"
+        "write-guard"
       ],
       "why": "reached by base name: selftests that name the settings registry (.stella/settings.json) also count for this file"
     },
@@ -1122,7 +1123,9 @@
       ],
       "targets": [
         "alert",
+        "approvals",
         "box",
+        "devices",
         "escalate",
         "event-log",
         "hardcode-lint",
@@ -1136,8 +1139,7 @@
         "stella-apply",
         "stella-data",
         "watchdog",
-        "write-guard",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
     },
@@ -1592,6 +1594,8 @@
       ],
       "targets": [
         "alert",
+        "approvals",
+        "devices",
         "escalate",
         "hardcode-lint",
         "kanban-board",
@@ -1602,8 +1606,7 @@
         "settings",
         "stella-apply",
         "watchdog",
-        "write-guard",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -2512,6 +2515,7 @@
         "docs/contract/loopback-api.md"
       ],
       "targets": [
+        "devices",
         "loopback"
       ],
       "why": "F1c W5: the loopback API guard, its test double, its selftest (the tester's wave-3 T5a cases) and the contract document it names the codes in"
