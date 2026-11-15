@@ -5,9 +5,10 @@ is refused. A folder backend (a test backend) keeps one file per secret name in 
 bin/stella_data.py refuses any other place): this user's, mode 0600, one hard link, no symbolic link on its way, holding the value as
 one line of printable ASCII with no line break.
 Importers: get(name) -> the value, in-process only (bin/route.py puts it into the request header and nowhere else);
-check(names) -> True only when the backend holds keys and every name (the resolver asks it for an aggregator's broker entries);
-state(names) -> {backend, kind, ok, missing}; never a value.
-All refuse in a worker environment (bin/worker_env.py): a key never reaches a worker. No value is in any message, log or error.
+check(names) -> True only when the backend holds keys and every name, False for anything else (the resolver asks it for an
+aggregator's broker entries; a plain yes or no that raises no refusal); state(names) -> {backend, kind, ok, missing}; never a value.
+Nothing is read in a worker environment (bin/worker_env.py): get and state refuse, check says no. A key never reaches a worker,
+and no value is in any message, log or error.
 CLI: credentials.py check [--json] [<name>...]   the state; exit 0 when the backend holds keys and every name asked for, else 1; 2 usage.
 There is no command that prints a value.
 Refusals (class Refused: code, problem): STL-MDL-728 the key was not read (why, never the value); STL-CFG-312 a worker environment;
@@ -91,8 +92,12 @@ def state(names=()):
 
 
 def check(names=()):
-    """True only when the backend holds keys and every one of `names`; Refused in a worker environment."""
-    return state(names)["ok"]
+    """A plain yes or no for the resolver: True only when the backend holds keys and every one of `names`. Any refusal is a no,
+    a worker environment included (nothing is read there)."""
+    try:
+        return state(names)["ok"]
+    except Refused:
+        return False
 
 
 def main(argv):

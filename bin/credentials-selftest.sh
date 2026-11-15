@@ -66,9 +66,10 @@ cred u1 get ST_ONE_KEY; a=$RC; cred u2 check --value ST_ONE_KEY
 ok '[ $a = 2 ] && [ $RC = 2 ] && ! grep -qF -- "$KEY" "$T/o/u1.json" "$T/o/u1.err" "$T/o/u2.json" "$T/o/u2.err"' "no command prints a value: anything but check is a usage error (2)"
 
 # ---- a worker environment; a backend outside the protected state paths ----
-export STUB_WORKER_MARK=1; cred w1 check --json ST_ONE_KEY; a=$RC; drive w1g get ST_ONE_KEY; unset STUB_WORKER_MARK
+export STUB_WORKER_MARK=1; cred w1 check --json ST_ONE_KEY; a=$RC; drive w1g get ST_ONE_KEY; drive w1c check ST_ONE_KEY; unset STUB_WORKER_MARK
 ok '[ $a = 1 ] && grep -q STL-CFG-312 "$T/o/w1.err" && [ ! -s "$T/o/w1.json" ] && grep -q "^ST_ONE_KEY refused STL-CFG-312 " "$T/o/w1g.out" && ! grep -qF -- "$KEY" "$T/o/w1g.out" "$T/o/w1.err"' \
-  "check and get refuse in a worker environment (STL-CFG-312), no value"
+  "the check command and get refuse in a worker environment (STL-CFG-312), no value"
+ok '[ "$(cat "$T/o/w1c.out")" = "ST_ONE_KEY held False" ] && [ ! -s "$T/o/w1c.err" ]' "check() in-process answers no in a worker environment for a key the backend holds, and prints nothing"
 mkdir -p "$R/st-open"; (umask 077; printf '%s' "$KEY" >"$R/st-open/ST_ONE_KEY"); ed '.credentials.backends["st-dir"].path = "st-open"'
 drive out get ST_ONE_KEY
 ok 'grep -q "^ST_ONE_KEY refused STL-CFG-310 " "$T/o/out.out" && ! grep -qF -- "$KEY" "$T/o/out.out"' "a folder backend outside the protected state paths is refused with the data that names it (STL-CFG-310), nothing read"

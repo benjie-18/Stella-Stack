@@ -758,7 +758,8 @@ the read-only resolver at most. `route.py` holds no routing rule: it walks the c
   is, or passes through, a link. `until` = now + `cooldown_s`, doubled per repeated failure up to `max_cooldown_s`; one
   success clears the link.
 - **Keys.** `credentials.get(name)` (in-process only; no command prints a value), `credentials.check(names)` -> True only
-  when the backend holds every name (the resolver asks it for an aggregator's broker entries) and `credentials.state(names)`
+  when the backend holds every name, False for anything else, a worker environment included (a plain yes or no: the resolver
+  asks it for an aggregator's broker entries) and `credentials.state(names)`
   -> {`backend`, `kind`, `ok`, `missing`}, which the CLI `credentials.py check [--json] [<name>...]` prints. The backend is `routing.json` `credentials`: kind `none` refuses every read (STL-MDL-728) until the secrets
   broker; kind `dir` is one file per name (this user's, 0600, one link, no symbolic link on the way, one line of printable
   ASCII). `route.py` reads the first name of the connection's `secrets[]`, puts it into the request header only, and it is in
