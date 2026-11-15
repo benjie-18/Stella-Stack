@@ -244,9 +244,9 @@ def explain(project):
             need_owner(f"{e['key']} (stored in {srow['path']})")
         value, src = ("***", "global") if e["sensitivity"] == SECRET else current(e)
         settings.append({"key": e["key"], "value": value, "source": "default" if src == "default" else "global", "sensitivity": e["sensitivity"]})
-    sel = ra["selection"]
-    pid, psrc = next(((sel["projects"][n], "project") for n in sorted(names) if n in sel["projects"]), (sel["global"], "global"))
-    preset = ra["effort_modes"].get(pid) or sd.refuse("preset", pid)
+    sel = ra.get("selection", {})   # selection, selection.projects and crossing_grants are optional in their schemas
+    pid, psrc = next(((sel["projects"][n], "project") for n in sorted(names) if n in sel.get("projects", {})), (sel.get("global"), "global"))
+    preset = ra["effort_modes"].get(pid) or sd.refuse("preset", pid or "(none selected)")
     mode = pol["default"]["mode"] == "local_only" or bool(row) and row["mode"] == "local_only"   # DC-04: the default policy binds every project
     eff = pol["default"] if pol["default"]["mode"] == "local_only" or not row else row
     esrc = "default" if eff is pol["default"] else "project"
@@ -265,7 +265,7 @@ def explain(project):
         roles[r] = {"active": x.get("active", True), "class_order": order, "class_order_source": osrc, "pins": x.get("pins", []),
                     "fallbacks": x.get("fallbacks", []), "last_resort": x.get("last_resort", preset.get("last_resort"))}
     grants = []
-    for kind, lst in (("privacy", pol["privacy_grants"]), ("crossing", gr["crossing_grants"])):
+    for kind, lst in (("privacy", pol["privacy_grants"]), ("crossing", gr.get("crossing_grants", []))):
         for g in lst:
             sc = g.get("scope", {"level": "global"})
             if not (sc["level"] == "global" or sc.get("project") in names):
