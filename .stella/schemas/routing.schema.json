@@ -1,0 +1,308 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Routing",
+  "description": "What the resolver, failover and consent read beside the presets (F2 D1.2): link classes, task tiers, drivers, exempt and card roles, the roles the workflow requires, failover timing, consent, card facts and the credentials backend. Owner-only: only the owner's path writes it.",
+  "x-one-document": true,
+  "type": "object",
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "class": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "x-ref": "routing/link_classes",
+      "description": "The id of a link class (link_classes[])."
+    },
+    "class_order": {
+      "type": "array",
+      "items": {
+        "type": ["string", "array"],
+        "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+        "items": {
+          "$ref": "#/$defs/id"
+        },
+        "minItems": 1,
+        "uniqueItems": true
+      },
+      "description": "Link classes in the order they are tried. An item is a class id, or a list of class ids: the best suited of these. `check` refuses an id link_classes does not define."
+    },
+    "code": {
+      "type": "string",
+      "pattern": "^STL-[A-Z]+-[0-9]{3}$"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "link_classes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "privacy_rank": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "0 is the most private; a move to a class with a higher rank is a move to a less private class (the owner is notified)."
+          },
+          "hosted": {
+            "type": "boolean",
+            "description": "Whether links of this class leave the machine. `check` refuses a class with hosted false on a link whose reach is not local (stella_data.reach(): cloud, a hosted connection, an aggregator); the locality rules themselves read reach(), never this label."
+          }
+        },
+        "required": ["id", "privacy_rank", "hosted"],
+        "additionalProperties": false
+      }
+    },
+    "class_defaults": {
+      "type": "object",
+      "properties": {
+        "local": {
+          "$ref": "#/$defs/class",
+          "description": "The class of a link that names none and whose reach is local."
+        },
+        "aggregator": {
+          "$ref": "#/$defs/class",
+          "description": "The class of an aggregator's link that names none."
+        }
+      },
+      "additionalProperties": false,
+      "description": "The class of a link whose connection and model name no link_class (stella_data.link_class()). Any other link without a class is not routable."
+    },
+    "task_tiers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "required": ["id"],
+        "additionalProperties": false
+      },
+      "description": "The task tiers a preset's frontier_when may list (the planner rubric's project tiers)."
+    },
+    "drivers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "mid_task": {
+            "type": "boolean",
+            "description": "Whether a link driven this way may switch mid-task (the engine's own model loop) or only between attempts (a worker CLI). A cli-login connection never switches mid-task, whatever the driver."
+          }
+        },
+        "required": ["id", "mid_task"],
+        "additionalProperties": false
+      }
+    },
+    "exempt_roles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A role of the role table."
+          },
+          "class_order": {
+            "$ref": "#/$defs/class_order"
+          },
+          "in_fallback_chain": {
+            "type": "boolean",
+            "description": "False: the role has no fallback chain (its own class order only, no failover to another link)."
+          }
+        },
+        "required": ["role", "class_order", "in_fallback_chain"],
+        "additionalProperties": false
+      },
+      "description": "Roles the preset class rules do not apply to: each follows its own class order under every preset, and that is never a last-resort crossing."
+    },
+    "card_roles": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "description": "The roles that work a card: the resolver refuses one of them with no card (the card facts decide the hard exclusions)."
+    },
+    "workflow": {
+      "type": "object",
+      "properties": {
+        "required_roles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "type": "string",
+                "minLength": 1
+              },
+              "when": {
+                "type": "string",
+                "minLength": 1,
+                "description": "`always`, or the id of a trigger (triggers{}): the role is required while that trigger can fire."
+              }
+            },
+            "required": ["role", "when"],
+            "additionalProperties": false
+          },
+          "description": "The roles the workflow requires: `check` refuses a preset that sets one inactive."
+        },
+        "triggers": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "can_fire": {
+                "type": "boolean"
+              }
+            },
+            "required": ["can_fire"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["required_roles", "triggers"],
+      "additionalProperties": false
+    },
+    "failover": {
+      "type": "object",
+      "properties": {
+        "triggers": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "cooldown_s": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "max_cooldown_s": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "scope": {
+                "enum": ["link", "connection"],
+                "description": "What the cooldown covers: the one link (connection plus model), or every link of the connection."
+              }
+            },
+            "required": ["cooldown_s", "max_cooldown_s", "scope"],
+            "additionalProperties": false
+          },
+          "description": "The failures that move a task to the next link, by id (a protocol's errors[] name them), each with its cooldown: until = now + cooldown_s, doubled per repeated failure up to max_cooldown_s."
+        },
+        "same_connection_first": {
+          "type": "boolean",
+          "description": "True: the next model of the same connection is tried before the task leaves that connection."
+        },
+        "max_switches_per_task": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "retry_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How often the same link is tried again before the switch."
+        }
+      },
+      "required": ["triggers", "same_connection_first", "max_switches_per_task", "retry_count"],
+      "additionalProperties": false
+    },
+    "consent": {
+      "type": "object",
+      "properties": {
+        "approval_class": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The approval class of a consent request (an approval_class of the approval-request schema)."
+        },
+        "ttl_s": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "alert_code_queue": {
+          "$ref": "#/$defs/code",
+          "description": "The alert of a task queued for a grant (unattended mode on): a code of the alert catalog."
+        },
+        "alert_code_notice": {
+          "$ref": "#/$defs/code",
+          "description": "The alert of a move to a less private link class: a code of the alert catalog."
+        }
+      },
+      "required": ["approval_class", "ttl_s", "alert_code_queue", "alert_code_notice"],
+      "additionalProperties": false
+    },
+    "card_facts": {
+      "type": "object",
+      "properties": {
+        "when_missing": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "description": "Per card fact (carries_secrets, vault_content): the value a missing record or a missing field counts as. Ships true: fail closed, every hosted link is excluded."
+        }
+      },
+      "required": ["when_missing"],
+      "additionalProperties": false,
+      "description": "The card facts are a host-side store (index key card_facts: one <card>.json per card, written on the host only), never the card document an agent writes."
+    },
+    "credentials": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "$ref": "#/$defs/id",
+          "description": "The backend in use: a key of backends."
+        },
+        "backends": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": ["none", "dir"],
+                "description": "none: every read is refused with a code (until the secrets broker, B1). dir: one file per name in a folder (a test backend)."
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+                "description": "kind dir: the folder, relative to the stack root; `check` refuses one that is not inside a protected state path of the index."
+              }
+            },
+            "required": ["kind"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["backend", "backends"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["schema_version", "link_classes", "class_defaults", "task_tiers", "drivers", "exempt_roles", "card_roles", "workflow", "failover", "consent", "card_facts", "credentials"],
+  "additionalProperties": false
+}

@@ -16,7 +16,8 @@ CLI: stella_data.py check [--json] [<id>]       validate every data file against
      stella_data.py stubs --phase P [--json]    the stubs (features entries with due_phase) due at or before phase P of the
                                                 features phase_order: exit 1 and STL-OWN-810 when any is, 0 when none; an
                                                 unknown phase is a usage error (2)
-Exit: 0 ok; 1 a problem (one line per problem or unreadable file, code STL-CFG-310) or an unknown id (STL-CFG-311, one
+Exit: 0 ok; 1 a problem (one line per problem or unreadable file, code STL-CFG-310; the preset rule's own: STL-MDL-725 a preset
+turns off a role the workflow requires, STL-MDL-726 an active role's pin or fallback fails its requirements) or an unknown id (STL-CFG-311, one
 alert line) or, in a worker environment, a read of a file that holds a key (KEY_STATE: STL-CFG-312); 2 usage. No command ends
 in a traceback.
 The stack root is the parent of this file's folder, or STELLA_ROOT (a scratch root in tests; the alert line then goes under it).
@@ -66,6 +67,17 @@ TYPES = {"object": dict, "array": list, "string": str, "integer": int, "number":
 
 class DataError(Exception):
     """A data file or path this tool cannot use; the message names it and never holds a data value."""
+
+class Coded(str):
+    """A problem line of `check` that has a catalog code of its own (any other line is STL-CFG-310)."""
+    def __new__(cls, code, text):
+        s = super().__new__(cls, text)
+        s.code = code
+        return s
+
+
+OFF_REQUIRED, CHAIN_FAILS, BUILTIN_EDIT = "STL-MDL-725", "STL-MDL-726", "STL-MDL-727"   # the preset rule's codes (F2 D1.9)
+
 
 class Refused(DataError):
     """A read of a file that holds a key (KEY_STATE) in a worker environment: STL-CFG-312, whoever imports this reader (GB-1)."""
@@ -200,7 +212,8 @@ def jload(path, label=None):
         raise DataError(f"{label or path}: cannot be read ({type(e).__name__})")
 
 
-STATE = ("event_log", "backup_dir", "applied_state", "role_table", "owner_key", "approval_store", "event_writer_state", "untrusted_events")
+STATE = ("event_log", "backup_dir", "applied_state", "role_table", "owner_key", "approval_store", "event_writer_state", "routing_state",
+         "card_facts", "untrusted_events")   # the index keys that name a path; the last is the agents' stream (untrusted())
 
 
 def untrusted(idx):
@@ -743,26 +756,57 @@ def policy_allows(pol, prov):
         or (pol["mode"] == "allowed_providers" and prov["id"] in pol["allowed_providers"])
 
 
-def route_problems(pols, need, prov, now):
-    """Why a link to provider prov may not serve a role that handles the data classes `need` (F1b D6; next to policy_allows, the one
-    routing rule): a cli-login link needs terms_ok true; on a cloud link (by reach(): hosted counts), each class's hosted rule in every data policy:
-    never refuses, grant needs a privacy grant for that class naming this connection (id or global_id) that is in force (live)."""
+def grant_in_force(g, project, now):
+    """Whether a grant row (a privacy grant of the data policy, a crossing grant of the grants data) holds for a task of `project`
+    (its id as the scope spells it; None: a task with no project) at `now` (naive UTC). The one judge of both lists: scope
+    (level global, or no scope at all = Stella-wide; level project holds in that project only, never with no project);
+    granted_at a real date not in the future; expires_at (if any) a real date after it and not past; revoked_at (if any) a
+    real date still ahead. A date that is no real date grants nothing (fail closed)."""
+    sc = g.get("scope", {"level": "global"})
+    if not (sc.get("level") == "global" or sc.get("level") == "project" and project is not None and sc.get("project") == project):
+        return False
+    a, x, r = (when(g, f) if f in g else None for f in ("granted_at", "expires_at", "revoked_at"))
+    return bool(a) and a <= now and (x is None or bool(x) and a < x and now < x) and (r is None or bool(r) and now < r)
+
+
+def route_problems(pols, need, prov, now, project=None):
+    """Why a link to provider prov may not serve a role that handles the data classes `need`, for a task of `project` (None: no
+    project, so only a Stella-wide grant counts) (F1b D6; next to policy_allows, the one routing rule): [{kind, data_class, text}].
+    kind terms: a cli-login link needs terms_ok true. On a link that leaves the machine (by reach(): hosted counts), each class's
+    hosted rule in every data policy: kind never refuses outright (no grant is offered); kind grant needs a privacy grant for that
+    class naming this connection (id or global_id) that is in force (grant_in_force)."""
     out = [] if prov["type"] != "cli-login" or prov.get("terms_ok") is True else \
-        ["is cli-login, and the owner has not recorded terms_ok true (the provider's terms allow this use)"]
+        [{"kind": "terms", "data_class": None, "text": "is cli-login, and the owner has not recorded terms_ok true (the provider's terms allow this use)"}]
     if reach(prov) == "local":
         return out
     names = {prov["id"], prov.get("global_id")}
-    def live(g):   # in force: granted_at a real date not in the future; expires_at (if any) a real date after it, not past; a bad date is no grant
-        a, x = when(g, "granted_at"), (when(g, "expires_at") if "expires_at" in g else None)
-        return bool(a) and a <= now and (x is None or bool(x) and a < x and now < x)
     for _, d in pols:
         for k in need:
             h = class_rule(d, k)["hosted"]
-            if h == "allowed" or h == "grant" and any(g["data_class"] == k and g["connection"] in names and live(g) for g in d["privacy_grants"]):
+            if h == "allowed" or h == "grant" and any(g["data_class"] == k and g["connection"] in names and grant_in_force(g, project, now) for g in d["privacy_grants"]):
                 continue
-            out.append(f"is cloud or hosted, and data class {idn(k, True)} " + ("reaches one only under a privacy grant, and no grant in force (started, not ended) names this connection"
-                                                                            if h == "grant" else "never reaches one (its rule is hosted never, or it has no rule row)"))
-    return list(dict.fromkeys(out))
+            out.append({"kind": "grant" if h == "grant" else "never", "data_class": k, "text": f"is cloud or hosted, and data class {idn(k, True)} " + (
+                "reaches one only under a privacy grant, and no grant in force here (started, not ended, not revoked, in scope) names this connection"
+                if h == "grant" else "never reaches one (its rule is hosted never, or it has no rule row)")})
+    return list({m["text"]: m for m in out}.values())
+
+
+def link_class(prov, model, rt=None):
+    """The class of the link (connection prov, model id), the one function that names it: the model's own link_class, else its
+    connection's, else the class the routing data's class_defaults names for a link whose reach() is local or for an aggregator. None:
+    the link has no class and is not routable. rt: the routing document (default: the one a read serves, routing())."""
+    m = next((m for m in prov["models"] if m["id"] == model), {})
+    d = (rt if rt is not None else routing())["class_defaults"]
+    return m.get("link_class") or prov.get("link_class") or d.get("local" if reach(prov) == "local" else "aggregator" if prov.get("aggregator") else None)
+
+
+def unmet(req, caps):
+    """The requirements of a role (roles.py requirements) that a model's advertised capabilities do not meet, by name; a null
+    capability meets no requirement. The resolver and the preset rule both ask here."""
+    import roles
+    return [k for k in roles.REQ_BOOLS if req.get(k) and caps.get(k) is not True] + \
+        (["min_context_tokens"] if req.get("min_context_tokens", 0) > (caps.get("context_tokens") or 0) else [])
+
 
 def class_problems(table, classes):
     return [f"{n}: requirements.allowed_data_classes[{i}] ({desc(k)}) is not in data-policy data_classes" for n, r in table["roles"].items()
@@ -808,7 +852,7 @@ def store_problems(s, rs):
 
 # The cross-file rules. Each gets c = {"by": schema -> {entry id: entry} (the merged view), "whole": schema -> [(row id, parsed
 # file)], "src": schema -> {entry id: row id}, "P": P(row id, problem), "rs": the index rows, "ids": the index row ids, "table":
-# the role table} and reads only the schemas its row in RULES names (TABLE is the role table). Only files that passed
+# the role table, "idx": the index} and reads only the schemas its row in RULES names (TABLE is the role table). Only files that passed
 # their schema reach it. D(c, schema, entry id) is the row that holds an entry, so a problem is charged to that row.
 def D(c, sch, k=None):
     return c["src"].get(sch, {}).get(k) or next((rid for rid, _ in c["whole"].get(sch, [])), sch)
@@ -887,6 +931,10 @@ def rule_sync(c):
         for i, g in enumerate(pol["privacy_grants"]):
             if g["data_class"] not in classes:
                 P(rid, f"privacy_grants[{i}].data_class ({desc(g['data_class'])}) is not in data_classes")
+            elif class_rule(pol, g["data_class"])["hosted"] != "grant":   # DC-08: a class that never reaches a hosted link takes no grant, one always allowed needs none
+                P(rid, f"privacy_grants[{i}]: the hosted rule of data class {idn(g['data_class'], True)} is not grant, so no grant applies to it")
+            for m in scope_problems(g):
+                P(rid, f"privacy_grants[{i}]: {m}")
     known = set.intersection(*(set(d["record_kinds"]) for _, d in pols)) if pols else set()
     pins = schema_of(FRAME).get("x-record-kind-of", {})   # a row's label cannot move its records (the projects) onto another kind
     for r in c["rs"]:
@@ -953,12 +1001,158 @@ def rule_assignments(c):
                     P(rid, f"{w}: {pn} is {reach(prov)} for routing, which effort mode {idn(a['effort_mode'])} forbids")
                 if not all(policy_allows(p, prov) for p in policies):
                     P(rid, f"{w}: {pn} is not allowed by the data policy for {idn(proj) if proj else 'the default'} (an override never widens the policy)")
-                for m in route_problems(pols, need, prov, now):
-                    P(rid, f"{w}: {pn} {m}")
+                for m in route_problems(pols, need, prov, now, pid):
+                    P(rid, f"{w}: {pn} {m['text']}")
                 if any(k not in prov["data_policy"]["data_classes_allowed"] for k in need):   # an empty list allows no class
                     P(rid, f"{w}: {pn} does not allow every data class that role {idn(a['role'])} handles")
                 if a["role"] not in prov.get("allowed_roles", []):   # an empty list allows no role
                     P(rid, f"{w}: {pn} does not list role {nm(a['role'], allroles, 'role')} in its allowed_roles")
+
+
+def scope_problems(g):
+    """A grant's scope against itself: level project names its project, level global names none (no scope at all: Stella-wide)."""
+    sc = g.get("scope")
+    return [] if sc is None or (sc["level"] == "project") == ("project" in sc) else \
+        [f"scope.level {sc['level']} {'needs' if sc['level'] == 'project' else 'has no'} project"]
+
+
+def order_problems(order, classes, at):
+    """The places where a class order names a class the routing data does not define (the place and the type, never the value)."""
+    return [f"{at}[{i}]{f'[{j}]' if isinstance(it, list) else ''} ({desc(k)}) is not a link class of the routing data"
+            for i, it in enumerate(order) for j, k in enumerate(it if isinstance(it, list) else [it]) if k not in classes]
+
+
+def inside_state(rel, idx):
+    """Whether a path of the data is, or lies inside, a protected state path of the index (bin/roles.py STATE_KEYS: what every
+    role's read and write guards refuse)."""
+    import roles
+    try:
+        p = safe(rel)
+        return any(os.path.commonpath([p, x]) == x for x in (safe(idx[k]) for k in roles.STATE_KEYS))
+    except DataError:
+        return False
+
+
+def rule_presets(c):
+    """The presets (effort modes) against the routing data, the catalog and the role table (F2 D1.9): every class, preset and
+    role a preset names exists; no preset turns off a role the workflow requires (always, or under a trigger that can fire:
+    OFF_REQUIRED); no active role keeps a pin or a fallback whose model is not listed for its connection or does not meet the
+    role's requirements by the catalog's advertised capabilities (CHAIN_FAILS). An inactive role's links are not judged."""
+    P, table, conn = c["P"], c["table"], c["by"].get("connections", {})
+    roles = set(table["roles"]) - {table["fallback_role"]}   # the fail-closed row is no role to route
+    for _, rt in c["whole"].get("routing", []):
+        classes, wf = {x["id"] for x in rt["link_classes"]}, rt["workflow"]
+        need = {x["role"] for x in wf["required_roles"] if x["when"] == "always" or wf["triggers"].get(x["when"], {}).get("can_fire")}
+        for rid, ra in c["whole"].get("role-assignments", []):
+            for a in ra["assignments"]:
+                for m in order_problems(a.get("class_order", []), classes, f"{idn(a['id'])}: class_order"):
+                    P(rid, m)
+            for pid, mode in ra["effort_modes"].items():
+                w = f"preset {kname(pid)}"
+                if mode.get("based_on") is not None and mode["based_on"] not in ra["effort_modes"]:
+                    P(rid, f"{w}: based_on ({desc(mode['based_on'])}) is not a preset")
+                known = {r: x for r, x in mode.get("roles", {}).items() if r in roles}
+                for r in mode.get("roles", {}).keys() - known.keys():
+                    P(rid, f"{w}: roles: {nm(r, table['roles'], 'a key')} is not an assignable role in the role table")
+                for at, x in [(w, mode)] + [(f"{w}: role {idn(r, True)}", x) for r, x in known.items()]:
+                    for f in ("needs_class", "last_resort"):
+                        if x.get(f) is not None and x[f] not in classes:
+                            P(rid, f"{at}: {f} ({desc(x[f])}) is not a link class of the routing data")
+                    for m in order_problems(x.get("class_order", []), classes, f"{at}: class_order"):
+                        P(rid, m)
+                for r, x in known.items():
+                    if not x["active"]:
+                        if r in need:
+                            P(rid, Coded(OFF_REQUIRED, f"{w} turns off role {idn(r, True)}, which the workflow requires (routing data, workflow.required_roles)"))
+                        continue
+                    for f in ("pins", "fallbacks"):
+                        for i, l in enumerate(x.get(f, [])):
+                            prov = entry(conn, l["connection"])
+                            if prov is None or prov["kind"] != "provider":
+                                continue   # its x-ref (connections, kind provider) refuses it, naming the field
+                            mod = next((m for m in prov["models"] if m["id"] == l["model"]), None)
+                            miss = ["its model is not listed for its connection"] if mod is None else unmet(table["roles"][r]["requirements"], mod["capabilities"])
+                            if miss:
+                                P(rid, Coded(CHAIN_FAILS, f"{w}: role {idn(r, True)}: {f}[{i}] fails the role's requirements ({', '.join(miss)})"))
+
+
+def rule_routing(c):
+    """The routing data against itself, the role table, the alert catalog and the index: ids listed once; every role it names is
+    assignable; an exempt role's class order names known classes; a required role's `when` is always or a trigger; a cooldown
+    is not above its cap; consent names an approval class and alert codes that exist; the credentials backend in use is
+    defined, and a dir backend lies inside a protected state path (DC-05: no role may read the keys)."""
+    P, table = c["P"], c["table"]
+    roles = set(table["roles"]) - {table["fallback_role"]}
+    for rid, rt in c["whole"].get("routing", []):
+        for k in ("link_classes", "task_tiers", "drivers"):
+            if len({x["id"] for x in rt[k]}) != len(rt[k]):
+                P(rid, f"{k}: an id is listed twice")
+        wf, co, cr = rt["workflow"], rt["consent"], rt["credentials"]
+        for at, r in [(f"exempt_roles[{i}].role", x["role"]) for i, x in enumerate(rt["exempt_roles"])] \
+                + [(f"card_roles[{i}]", x) for i, x in enumerate(rt["card_roles"])] \
+                + [(f"workflow.required_roles[{i}].role", x["role"]) for i, x in enumerate(wf["required_roles"])]:
+            if r not in roles:
+                P(rid, f"{at}: {nm(r, table['roles'], 'it')} is not an assignable role in the role table")
+        for i, x in enumerate(rt["exempt_roles"]):
+            for m in order_problems(x["class_order"], {y["id"] for y in rt["link_classes"]}, f"exempt_roles[{i}].class_order"):
+                P(rid, m)
+        for i, x in enumerate(wf["required_roles"]):
+            if x["when"] != "always" and x["when"] not in wf["triggers"]:
+                P(rid, f"workflow.required_roles[{i}].when ({desc(x['when'])}) is neither always nor a trigger of workflow.triggers")
+        for k, t in rt["failover"]["triggers"].items():
+            if t["cooldown_s"] > t["max_cooldown_s"]:
+                P(rid, f"failover.triggers: {kname(k)}: cooldown_s is above max_cooldown_s")
+        if co["approval_class"] not in schema_of("approval-request")["properties"]["approval_class"]["enum"]:
+            P(rid, f"consent.approval_class ({desc(co['approval_class'])}) is not an approval class of the approval-request schema")
+        for k in ("alert_code_queue", "alert_code_notice"):
+            if co[k] not in alert_catalog.catalog():
+                P(rid, f"consent.{k} ({desc(co[k])}) is not in the alert catalog")
+        if cr["backend"] not in cr["backends"]:
+            P(rid, f"credentials.backend ({desc(cr['backend'])}) is not a key of credentials.backends")
+        for k, b in cr["backends"].items():
+            if b["kind"] == "dir" and not inside_state(b.get("path"), c["idx"]):
+                P(rid, f"credentials.backends: {kname(k)}: a dir backend needs a path inside a protected state path of the index (anywhere else a role could read the keys)")
+
+
+def rule_link_classes(c):
+    """DC-03: a link class that is not hosted never labels a link that leaves the machine (by reach(): cloud, a hosted
+    connection, an aggregator). The locality rules read reach() alone; this keeps the label from saying otherwise."""
+    for _, rt in c["whole"].get("routing", []):
+        hosted = {x["id"]: x["hosted"] for x in rt["link_classes"]}
+        for k, e in c["by"].get("connections", {}).items():
+            for i, m in enumerate(e["models"] if e["kind"] == "provider" and reach(e) != "local" else []):
+                cls = link_class(e, m["id"], rt)
+                if hosted.get(cls) is False:
+                    c["P"](D(c, "connections", k), f"{idn(e['id'])}: models[{i}] has link class {idn(cls, True)}, which is not hosted, but the link leaves the machine (cloud, a hosted connection or an aggregator)")
+
+
+def rule_grants(c):
+    for rid, d in c["whole"].get("grants", []):
+        for i, g in enumerate(d.get("crossing_grants", [])):
+            for m in scope_problems(g):
+                c["P"](rid, f"crossing_grants[{i}]: {m}")
+
+
+def frozen(schema, old, new):
+    """[(code, problem)]: what a candidate `new` of a row of that schema may not change in the document `old` it replaces. The
+    apply tool refuses each, a dry run too (a rollback restores bytes and is not judged here). Today: a preset marked builtin
+    true, changed in any key or dropped (BUILTIN_EDIT); a file that does not parse has no preset to keep."""
+    if schema != "role-assignments" or not all(isinstance(d, dict) and isinstance(d.get("effort_modes"), dict) for d in (old, new)):
+        return []
+    return [(BUILTIN_EDIT, f"preset {kname(k)} is built in, and the candidate changes or removes it; copy it under a new id (based_on) to make your own")
+            for k, m in old["effort_modes"].items() if isinstance(m, dict) and m.get("builtin") is True and not same(m, new["effort_modes"].get(k))]
+
+
+@functools.lru_cache(maxsize=None)
+def routing():
+    """The routing document (the one file of the schema routing) as a read serves it: a DataError while check refuses anything
+    it rests on."""
+    ids = [r["id"] for r in rows() if r["format"] == "json" and r["schema"] == "routing"]
+    by = served(ids)
+    docs = [d for i in ids for _, d in by["_rows"][i][0]]
+    if len(docs) != 1:
+        raise DataError("the routing data cannot be read (no file of its schema)")
+    return docs[0]
 
 
 def phases(f):
@@ -1039,6 +1233,10 @@ def rule_catalog(c):
             say_("an integration_aggregator keeps its tokens in its provider's cloud: its data_policy says hosted true")
         if "realtime" in e and e["kind"] != "provider":
             say_("realtime is for a provider (its models take live audio or video)")
+        if "protocol" in e and (cli or e["kind"] != "provider"):
+            say_("protocol is for an api provider (its wire shape)")
+        if "link_class" in e and e["kind"] != "provider":
+            say_("link_class is for a provider")
         if e["locality"] == "hub" and e["kind"] != "input_source":
             say_("locality hub is for an input source only")
         if e["kind"] == "input_source" and e["locality"] == "cloud":
@@ -1080,6 +1278,10 @@ RULES = [("data policy and catalog", ("data-policy", "connections"), ("data-poli
          ("sync classes and record kinds", ("data-policy",), ("data-policy",), rule_sync),
          ("role data classes", (TABLE,), (TABLE, "data-policy"), rule_role_classes),
          ("role assignments", ("role-assignments",), ("role-assignments", "connections", "data-policy", TABLE), rule_assignments),
+         ("presets", ("role-assignments",), ("role-assignments", "routing", "connections", TABLE), rule_presets),
+         ("routing", ("routing",), ("routing", TABLE), rule_routing),
+         ("link classes", ("connections",), ("connections", "routing"), rule_link_classes),
+         ("grant scopes", ("grants",), ("grants",), rule_grants),
          ("features", ("features",), ("features",), rule_features),
          *((f"{s} allowed_roles", (s,), (s, TABLE), rule_allowed_roles(s)) for s in ("capabilities", "extension", "connections")),
          ("extensions switched on", ("extension",), ("extension",), rule_extensions_on),
@@ -1313,7 +1515,7 @@ def judge(reads=None):
     for n in sorted(NEEDED - have):
         P(FRAME, f"cross-file rules could not run: no JSON data file has schema {n}", {NOROW + n})
     members_of = lambda s: [TABLE] if s == TABLE else rows_of.get(s, [])
-    c = {"by": by, "whole": whole, "src": by["_src"], "P": P, "rs": rs, "ids": ids, "table": table}
+    c = {"by": by, "whole": whole, "src": by["_src"], "P": P, "rs": rs, "ids": ids, "table": table, "idx": idx}
     blocked = {}   # judged member -> the refused members that kept its rules from running
     for name, judges, rd, fn in run:
         blk = [m for s in rd for m in (([TABLE] if not table_ok else []) if s == TABLE else [NOROW + s] if s not in have
@@ -1513,8 +1715,9 @@ def main(argv):
         probs = check(args[0] if args else None)
         lines = []
         for d, m in probs:
-            body = alert_catalog.render("STL-CFG-310", {"problem": f"{d}: {m}"})[0]
-            lines.append({"code": "STL-CFG-310", "data": d, "problem": m, "message": body.split("\n")[1]})
+            code = getattr(m, "code", "STL-CFG-310")   # a rule's own code (Coded)
+            body = alert_catalog.render(code, {"problem": f"{d}: {m}"})[0]
+            lines.append({"code": code, "data": d, "problem": m, "message": body.split("\n")[1]})
         try:
             skipped = unopened()
         except DataError:
@@ -1522,7 +1725,7 @@ def main(argv):
         if as_json:
             print(json.dumps({"ok": not probs, "problems": lines, "not_opened": skipped}, indent=2, ensure_ascii=False))
         else:
-            print("\n".join(f"STL-CFG-310 {l['message']}" for l in lines) or "data OK")
+            print("\n".join(f"{l['code']} {l['message']}" for l in lines) or "data OK")
             if skipped:
                 print(f"not opened (env format, read by the apply tool): {', '.join(skipped)}")
         return 1 if probs else 0

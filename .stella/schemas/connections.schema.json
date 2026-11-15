@@ -199,6 +199,20 @@
                   "object",
                   "null"
                 ]
+              },
+              "link_class": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+                "x-ref": "routing/link_classes",
+                "description": "This model's link class, when it differs from its connection's."
+              },
+              "score": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "description": "The advertised suitability of the model (higher is better), a stub until the role benchmark (F2c): it ranks Standard's best-suited choice."
               }
             },
             "required": [
@@ -428,6 +442,18 @@
           ],
           "additionalProperties": false,
           "description": "A provider whose models take live audio or video (schema only, nothing uses it yet)."
+        },
+        "link_class": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "x-ref": "routing/link_classes",
+          "description": "A provider's link class (routing.json link_classes[]). Without one: the class routing.json class_defaults names for a link whose reach is local, or for an aggregator; any other provider without one is not routable."
+        },
+        "protocol": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "x-ref": "protocols/entries",
+          "description": "An api provider's wire shape: the id of an entry of .stella/protocols.json."
         }
       },
       "required": [

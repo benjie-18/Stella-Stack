@@ -1,4 +1,5 @@
 {
   "schema_version": 1,
-  "grants": []
+  "grants": [],
+  "crossing_grants": []
 }

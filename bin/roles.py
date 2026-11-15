@@ -527,7 +527,8 @@ def owner_settings(d):
     return [f"{ROOT}/{p}" for p in d["owner_settings"]]
 
 
-STATE_KEYS = ("backup_dir", "applied_state", "event_log", "owner_key", "approval_store", "event_writer_state")   # the index keys that name state paths (B1, F1c D0)
+STATE_KEYS = ("backup_dir", "applied_state", "event_log", "owner_key", "approval_store", "event_writer_state",
+              "routing_state", "card_facts")   # the index keys that name state paths (B1, F1c D0; F2 DC-06: failover state and card facts)
 
 
 def index(d, root=None):
@@ -561,7 +562,8 @@ def owner_data(d):
 
 def state_paths(d, root=None):
     """B1 (F1 W4): the apply tool's state, relative: its backups (owner values in clear), applied state and event log (old and new
-    owner values); F1c D0: the owner-key stub, the approval store (a folder) and the event writer's state (its key). No role reads or
+    owner values); F1c D0: the owner-key stub, the approval store (a folder) and the event writer's state (its key); F2 DC-06: the
+    failover state and the card facts store (a folder), which the host alone writes. No role reads or
     writes them and no OS box mounts them; the agents' untrusted event stream is not one. Raises RolesError when the index cannot be read."""
     ix = index(d, root)
     return [ix[k] for k in STATE_KEYS]
