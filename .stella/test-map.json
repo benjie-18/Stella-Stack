@@ -184,6 +184,12 @@
     },
     "resolver": {
       "mark": "hermetic"
+    },
+    "failover": {
+      "mark": "hermetic"
+    },
+    "credentials": {
+      "mark": "hermetic"
     }
   },
   "test_like": [
@@ -2693,9 +2699,25 @@
       "why": "F2 W1: the presets selftest (presets, routing data, grants and the apply tool's built-in refusal, in scratch roots) and every file it can reach: the data files and schemas check judges (from reading: the index names them), the data and apply tools, the owner authenticator and what those name (bin/test-map.py reach)"
     },
     {
+      "globs": ["bin/route.py", "bin/failover-selftest.sh", "bin/credentials.py", "bin/resolve.py", ".claude/settings.json", ".stella/connections.json", ".stella/data-files.json", ".stella/features.json", ".stella/protocols.json", ".stella/routing.json", ".stella/schemas/event.schema.json", ".stella/settings.json", ".supervisor/limits.env", "SUPERVISOR.md", "bin/alert-catalog.sh", "bin/alert.sh", "bin/alert_catalog.py", "bin/apply-hermes-local.sh", "bin/devices.py", "bin/escalation-complete.sh", "bin/escalation-discord.sh", "bin/escalation-on-block.sh", "bin/escalation-on-claim.sh", "bin/escalation-on-complete.sh", "bin/escalation-thread.sh", "bin/event_log.py", "bin/event_untrusted.py", "bin/kanban-board.sh", "bin/kanban-guard.sh", "bin/mock_provider.py", "bin/owner-config.sh", "bin/owner_auth.py", "bin/owner_config.py", "bin/register-escalation-hook.sh", "bin/register-toolsets.sh", "bin/role-guard.py", "bin/roles.py", "bin/settings.py", "bin/stella-apply.py", "bin/stella_data.py", "bin/worker_env.py", "docs/alert-codes.md", "docs/hermes-local/alert-catalog.json", "docs/hermes-local/board.md", "docs/hermes-local/roles.json"],
+      "targets": ["failover"],
+      "why": "F2 W4: the failover selftest (bin/route.py against the mock provider, a stand-in resolver and a folder key backend, in a scratch root) and every file it can reach: the model call and its key interface, the routing, catalog, wire-shape and settings data it reads, the event writer, the alert sender and what those name (bin/test-map.py reach)"
+    },
+    {
+      "globs": ["bin/credentials.py", "bin/credentials-selftest.sh", "bin/route.py", "bin/resolve.py", ".claude/settings.json", ".stella/data-files.json", ".stella/protocols.json", ".stella/routing.json", ".stella/schemas/event.schema.json", ".stella/settings.json", ".supervisor/limits.env", "SUPERVISOR.md", "bin/alert-catalog.sh", "bin/alert.sh", "bin/alert_catalog.py", "bin/apply-hermes-local.sh", "bin/devices.py", "bin/escalation-complete.sh", "bin/escalation-discord.sh", "bin/escalation-on-block.sh", "bin/escalation-on-claim.sh", "bin/escalation-on-complete.sh", "bin/escalation-thread.sh", "bin/event_log.py", "bin/event_untrusted.py", "bin/kanban-board.sh", "bin/kanban-guard.sh", "bin/owner-config.sh", "bin/owner_auth.py", "bin/owner_config.py", "bin/register-escalation-hook.sh", "bin/register-toolsets.sh", "bin/role-guard.py", "bin/roles.py", "bin/settings.py", "bin/stella-apply.py", "bin/stella_data.py", "bin/worker_env.py", "docs/alert-codes.md", "docs/hermes-local/alert-catalog.json", "docs/hermes-local/board.md", "docs/hermes-local/roles.json"],
+      "targets": ["credentials"],
+      "why": "F2 W4: the credentials selftest (bin/credentials.py with the shipped backend and a folder backend, in a scratch root) and every file it can reach: the key interface, the routing data that names the backend, the event writer it borrows its file checks from and what those name (bin/test-map.py reach)"
+    },
+    {
       "globs": [
         "bin/resolver-selftest.sh",
         "bin/resolve.py",
+        "bin/credentials.py",
+        "bin/route.py",
+        "bin/settings.py",
+        ".claude/settings.json",
+        ".stella/protocols.json",
+        ".stella/settings.json",
         ".stella/connections.json",
         ".stella/data-files.json",
         ".stella/data-policy.json",

@@ -720,6 +720,51 @@ The canonical env writer refuses a value that holds both a single quote and any 
 - STL-GRD-605 no longer says nothing was merged: with `--push` it can be raised after the local merge, and the merge output says which it is (nothing merged, or merged locally and not pushed, with the undo). A `merge-check/<card>` branch left by an interrupted merge is reused.
 - The write guard refuses every call with STL-CFG-303 while an owner command file cannot be read: its by-bytes rule for copies cannot be proven then.
 
+## Model calls, failover and keys (F2: `bin/route.py`, `bin/credentials.py`)
+Both are owner commands of the role table (no role runs them) and refuse in a worker environment (STL-CFG-312): a worker gets
+the read-only resolver at most. `route.py` holds no routing rule: it walks the chain `resolve.resolve(ctx)` returns (ctx:
+`role`, `project`, `card`, `tier`, `driver`, `task`) and never adds a link, a grant or a class to it.
+- `route.py call --role R --project P [--card C] [--tier T] [--driver D] [--pending-tool-call] --task ID --json`, prompt on
+  stdin (the engine loop's driver): calls the task's next link through its connection's wire shape (`protocol`, an entry of
+  `.stella/protocols.json`; the first host of the catalog entry, plain HTTP only to a `local_hosts` name or a loopback address,
+  TLS to any other; a redirect is never followed) and moves on after a failure until a link answers. Output: `task`, `link`
+  {`connection`, `model`}, `link_class`, `text`, `tool_calls`, `usage`, `model`, `switches`, `failure_history[]`, `refused[]`
+  {`link`, `code`, `reason`}, `stubs[]`. The call timeout is the `CALL_TIMEOUT` setting.
+- `route.py attempt` (same arguments, no prompt; a worker CLI's launcher): one link and the task's `failure_history`, no model
+  call, never a switch inside an attempt. `route.py result --task ID --link <connection>/<model> --outcome ok|<trigger id>`:
+  how the attempt ended; a trigger cools the link, so the next attempt starts on the next link.
+- **A failure becomes a trigger** by the wire shape's `errors` rows (first match). The transport itself says `timeout` and
+  `server_error` (no answer, no connection, an answer that is not JSON); tool-call arguments that do not parse are
+  `malformed_tool_call`. An error no row maps is no trigger: the task stops (STL-MDL-710). `failover.retry_count` tries the
+  same link again first.
+- **The next link** is the first of the chain that is `usable` or `needs_grant`, not in cooldown, and has not failed in this
+  task (the loop guard); with `failover.same_connection_first` a link of the connection just left goes first. A task that has
+  no link left, or would pass `failover.max_switches_per_task`, stops with STL-MDL-723.
+- **Mid-task switch** (`call` only): refused (STL-MDL-722, one event line; the link after it is judged) when the chain says the
+  link is not `mid_task`, when its advertised `context_tokens` do not hold the conversation (about four bytes a token; stub
+  `routing-advertised-context`) or when `--pending-tool-call` is given and the link speaks another wire shape. A link with no
+  wire shape (a `cli-login` connection) is never called here.
+- **A link that needs a grant is never skipped.** With a card and an importable module `consent`,
+  `consent.gate(ctx, link)` -> {`status`: `granted`, `waiting` or `queued`, `code`, `request_id`} decides; with no card, or no
+  such module, the task stops with STL-MDL-719 and one inbox alert and raises no approval request. Exit 3: the task waits.
+- **Notice.** A pick or switch to a class of higher `privacy_rank` than the class of the chain's first link sends one inbox
+  alert and writes one event line with `consent.alert_code_notice`, whatever the grant.
+- **Event lines** (trusted log): `routing.pick` (a call's or attempt's first link, with the resolver's `decision` reason),
+  `routing.switch` (STL-MDL-721, `old.link` and `new.link`), `routing.switch-refused` (722), `routing.notice`. No pick or switch
+  happens without its line.
+- **State** (index key `routing_state`, a protected state path; proof of nothing): `links` {`<connection>/<model>`, or
+  `<connection>` for a trigger of scope `connection`: `trigger`, `since`, `until`, `failures`, `observed_limit`} and `tasks`
+  {task: `switches`, `visited[]`, `history[]` {`link`, `trigger`, `at`}, `left`}; written whole under a lock, refused when it
+  is, or passes through, a link. `until` = now + `cooldown_s`, doubled per repeated failure up to `max_cooldown_s`; one
+  success clears the link.
+- **Keys.** `credentials.get(name)` (in-process only; no command prints a value), `credentials.check(names)` -> True only
+  when the backend holds every name, False for anything else, a worker environment included (a plain yes or no: the resolver
+  asks it for an aggregator's broker entries) and `credentials.state(names)`
+  -> {`backend`, `kind`, `ok`, `missing`}, which the CLI `credentials.py check [--json] [<name>...]` prints. The backend is `routing.json` `credentials`: kind `none` refuses every read (STL-MDL-728) until the secrets
+  broker; kind `dir` is one file per name (this user's, 0600, one link, no symbolic link on the way, one line of printable
+  ASCII). `route.py` reads the first name of the connection's `secrets[]`, puts it into the request header only, and it is in
+  no message, event, state or output.
+
 ## Alert codes
 `STL-CFG-310` (a data file is invalid), `STL-CFG-311` (a name is not in the data) and `STL-CFG-319` (an env-format row is
 not readable through this tool) are used by `stella_data.py`.
