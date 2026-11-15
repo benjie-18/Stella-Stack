@@ -128,7 +128,8 @@
           "probed_at": null,
           "probe_source": null,
           "cost": null,
-          "limits": null
+          "limits": null,
+          "worker_run": true
         },
         {
           "id": "opus",
