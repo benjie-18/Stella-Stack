@@ -8,9 +8,11 @@
 # cover every site of those rules (intake and collect; the payload, Discord and host-cli).
 # Gate B cycle 2: the attack scripts CRT2-1, CRT2-2, RT2-3 (text shown to the owner: masked and filtered in every field, in the
 # payload, Discord and host-cli) and RT2-4 (a fixed child environment), and the fix-pass R13, unchanged; env covers every child.
+# Final round: the attack script CRT-F-6 (a program in an env.path folder, run by resume, minted an owner proof), unchanged; env
+# checks the rule for every child: each runs marked as a worker environment (an agent token of the owner-auth worker_signals).
 set -u
 H=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
-SECTIONS="t1a t1b t2a t2b t7b t6b adapters expiry r10 crt1 rt4 rt5 crt7 rt7 gb4 gb5 crt21 crt22 rt23 rt24 env r13"
+SECTIONS="t1a t1b t2a t2b t7b t6b adapters expiry r10 crt1 rt4 rt5 crt7 rt7 gb4 gb5 crt21 crt22 rt23 rt24 env r13 crtf6"
 if [ $# = 0 ]; then
   fails=0
   for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || fails=$((fails+1)); done
@@ -401,6 +403,8 @@ esac
 S
 chmod +x "$T/bin/fakepy"
 export HERMES_PY=$T/bin/fakepy
+# the shipped env.pass hands no interpreter override to the adapters (CRT-F-6); this scratch channels file passes the fake one (data)
+jq '.env.pass += ["HERMES_PY"]' "$CH" >"$T/ch.new" && cat "$T/ch.new" >"$CH"
 jq --arg lk "$CHLK" '.resume = {argv: ["'"$T/resume.sh"'"], timeout_s: 10}' "$CH" >"$T/ch.new" && cat "$T/ch.new" >"$CH"
 A=$(act settings:QUEUE_MAX dz); ID=$(mkreq dz write "$A" card-dz 120)
 $AP deliver "$ID" --channel "$DC" >"$T/o" 2>&1; rc=$?
@@ -731,6 +735,10 @@ for k in deliver collect resume; do
   ok '[ -s "$T/env-$k" ] && grep -qx "PATH=$WANT" "$T/env-$k" && ! grep -qE "^(ZZ_LEAK|BASH_ENV)=" "$T/env-$k" && grep -qx "HOME=$HOME" "$T/env-$k"' "$k: PATH is the data's, a variable env.pass names (HOME) passes, the caller's ZZ_LEAK and BASH_ENV do not"
 done
 ok 'grep -qx "ZZ_NAMED=n1" "$T/env-deliver"' "deliver: the variable the row's argv names (an owner config key) passes"
+TOK=$(jq -r '.worker_signals.token_env | join("|")' "$POL")
+for k in deliver collect resume; do
+  ok '[ -n "$TOK" ] && grep -qE "^($TOK)=.+" "$T/env-$k"' "CRT-F-6 $k: the child runs marked as a worker environment (an agent token of the owner-auth worker_signals is set)"
+done
 ;;
 r13) # Gate B fix cycle 1 pass R13 (GB-4, GB-5: mutants AP3 AP6 AP7 AP9-AP13): an untrusted value fails alone; display masks every secret shape, unchanged
 ok 'has approvals.py' "precondition: bin/approvals.py exists"
@@ -786,6 +794,42 @@ jq -c '.entries += [{key: "ZZ_S13", sensitivity: "secret", store: {key: "ZZ_S13"
 $AP deliver "$ID" --channel "$DC" >"$T/o4" 2>&1; rc=$?; cp -p "$T/set.keep" "$SET"; cp "$T/o4" "$T/o"
 F=$(reqof card-r13-a13)
 ok '[ -n "$ID" ] && [ -n "$F" ] && [ "$(newof card-r13-a13)" = "\"***\"" ]' "a value that cannot be judged is delivered as *** (deliver rc=$rc $(codes "$T/o4"), delivered new: $([ -n "$F" ] && newof card-r13-a13 || echo none))"
+;;
+crtf6) # final round CRT-F-6: every process approvals.py starts runs marked as a worker, so a program found in an env.path folder
+       # (here the resume's hermes) has no owner authority; part 1 checks the shipped env data on this host. Unchanged but one
+       # assertion: "no proof minted" also holds for an empty minted.json (jq 1.6 -e exits 0 on empty input, so the script's
+       # `! jq -e .mac` fails when the refused prove leaves the redirect's empty file)
+# ---- part 1: the shipped env.path (data), read only ----
+wr=""; for d in $(jq -r '.env.path[]' "$TREE/.stella/channels.json"); do [ -w "$d" ] && wr="$wr $d"; done
+ok '[ -z "$wr" ]' "no env.path folder of the shipped channels.json is writable by this (the agents') user (writable:${wr:- none})"
+first=""; for d in $(jq -r '.env.path[]' "$TREE/.stella/channels.json"); do [ -x "$d/hermes" ] && { first=$d; break; }; done
+ok '[ -z "$first" ] || [ ! -w "$first" ]' "the resume command's hermes resolves to a folder the agents' user cannot write (resolves in: ${first:-nowhere})"
+ok '! jq -e ".env.pass | index(\"HERMES_PY\")" "$TREE/.stella/channels.json" >/dev/null' "env.pass does not hand the adapters an interpreter override (HERMES_PY)"
+# ---- part 2: the chain, in the scratch ----
+ST="$PY $B/settings.py"; mkdir -p "$R/config"; printf "# fake owner file\nWORKER_GIT_NAME='Fake One'\n" >"$R/config/owner.env"
+printf "CALL_TIMEOUT=600\n" >"$R/.supervisor/limits.env"; chmod 600 "$R/config/owner.env"; chmod 640 "$R/.supervisor/limits.env"
+dryaction() { grep -m1 '^action: ' "$1" 2>/dev/null | sed 's/^action: //' >"$2"; [ -s "$2" ] && jq -e .target "$2" >/dev/null 2>&1; }
+$OA init-key >/dev/null 2>&1
+st $ST set CALL_TIMEOUT 904 --dry-run >"$T/dry" 2>&1; dryaction "$T/dry" "$T/x.act"
+UL=$T/user-local-bin; mkdir -p "$UL"
+cat >"$UL/hermes" <<S
+#!/usr/bin/env bash
+case " \$* " in
+  *" unblock "*) python3 -I "$B/owner_auth.py" prove --class owner_write --action "$T/x.act" >"$T/minted.json" 2>"$T/minted.err";;
+  *) echo "[]";;
+esac
+S
+chmod +x "$UL/hermes"
+jq --arg ul "$UL" '.env.path = (.env.path[:-1] + [$ul]) | .resume = {argv: ["bin/adapters/kanban-resume.sh"], timeout_s: 30}' "$CH" >"$T/ch.new" && cat "$T/ch.new" >"$CH"
+A=$(act settings:ZZ_ANY f6); RID=$(mkreq f6 write "$A" t_zzcard6 600)
+$AP answer "$RID" --decision denied >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ]' "precondition: the owner denies a request on the host (rc=$rc)"
+ok '! ([ -s "$T/minted.json" ] && jq -e .mac "$T/minted.json" >/dev/null 2>&1)' "a program run by resume (an env.path folder) cannot mint an owner proof ($( [ -s "$T/minted.json" ] && echo 'minted: provider '$(jq -r .provider "$T/minted.json") || echo 'none'))"
+ok 'grep -q STL-CFG-312 "$T/minted.err"' "the program's owner_auth.py prove was refused STL-CFG-312 (a worker environment)"
+if [ -s "$T/minted.json" ]; then
+  st $ST set CALL_TIMEOUT 904 --proof "$T/minted.json" >"$T/o" 2>&1; rc=$?
+  ok '[ $rc != 0 ]' "the minted proof does not change an owner setting (settings.py set --proof rc=$rc, limits $(grep -o 'CALL_TIMEOUT=.*' "$R/.supervisor/limits.env"))"
+fi
 ;;
 esac
 finish

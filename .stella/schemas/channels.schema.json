@@ -27,12 +27,13 @@
     },
     "env": {
       "type": "object",
-      "description": "The fixed environment every deliver, collect and resume runs with (RT2-4: nothing else of the caller's environment is inherited, so a program planted in a folder on the caller's PATH, or BASH_ENV, never runs). path: PATH, in order, absolute folders only (no : in one; put folders agents can write last, so they never shadow a system tool). pass: the caller's variables passed by name when set (scratch roots, owner config file, Discord helper). A row's argv words that are variable names (an owner config key such as its channel id) pass for that argv too.",
+      "description": "The fixed environment every deliver, collect and resume runs with (RT2-4: nothing else of the caller's environment is inherited, so a program planted in a folder on the caller's PATH, or BASH_ENV, never runs). path: PATH, in order, absolute folders only (no : in one; never a folder agents can write: every program found there runs for the approval service, CRT-F-6). pass: the caller's variables passed by name when set (scratch roots, owner config file; never an interpreter or program override). A row's argv words that are variable names (an owner config key such as its channel id) pass for that argv too. worker_token: the value every agent token variable of the owner-auth worker_signals gets there, so each child is a worker environment with no owner authority (CRT-F-6; a marker, not a secret).",
       "properties": {
         "path": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^/[^:]*$"}},
-        "pass": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}}
+        "pass": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}},
+        "worker_token": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
       },
-      "required": ["path", "pass"],
+      "required": ["path", "pass", "worker_token"],
       "additionalProperties": false
     },
     "resume": {

@@ -43,7 +43,7 @@ file (same device and inode, or the same name up to case), a file with more than
 a row: that row only), and every file opened must be a regular file, opened without blocking, through folders checked at that
 moment. Whether a row is one file or a folder of entries is the data tool's one rule (folder_row): not the disk, not the record.
 Owner-only rows (index owner_only) are refused (312) in a worker environment (bin/worker_env.py, asked first: a worker never
-spends a proof). Then, inside the lock, an apply or rollback that writes needs an owner proof (bin/owner_auth.py require, F1c
+spends a proof), and so is a --from file that holds a key (stella_data.key_check: the index owner_key, event_writer_state). Then, inside the lock, an apply or rollback that writes needs an owner proof (bin/owner_auth.py require, F1c
 D4) for the action {op, target: the row, old_digest, new_digest} (sha256 of the bytes before and after): the proofs of the
 --proof file alone (a device-signed request), else one made with this host's owner key (none: 806). A change that touches an
 identity-critical target (owner-auth policy identity_critical, and registry settings marked so) needs class identity_critical:
@@ -1211,6 +1211,10 @@ def do_apply(arg, src, dry):
     except OSError as e:
         raise bad(f"cannot read the candidate file: {e.strerror}")
     with os.fdopen(fd, "rb") as f:
+        try:   # a file that holds a key is the owner's: refused in a worker before a byte is read (GB-1, CRT-F-4)
+            sd.key_check(os.fstat(f.fileno()), "the candidate file")
+        except sd.Refused as e:
+            raise bad(str(e), e.code) from None
         if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
             raise bad("the candidate is not a regular file")
         cand = f.read(el.MAX_FILE + 1)

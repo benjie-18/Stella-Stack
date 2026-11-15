@@ -71,9 +71,14 @@ is relative to the stack root or absolute. A new channel, of a known kind or a n
 new kind also needs its `channel_kinds` entry and a channel-identity provider in the owner-auth policy).
 
 Every deliver, collect and resume runs with a fixed environment, never the caller's: `PATH` is the file's `env.path`
-(absolute folders, in order; folders agents can write go last so they never shadow a system tool), and of the caller's
-variables only those `env.pass` names and those the row's argv names (an owner config key such as the Discord channel id)
-pass. A program planted on the caller's `PATH`, or `BASH_ENV`, never runs in an adapter (RT2-4).
+(absolute folders, in order; never a folder agents can write), and of the caller's variables only those `env.pass` names
+and those the row's argv names (an owner config key such as the Discord channel id) pass; `env.pass` hands no interpreter
+or program override. A program planted on the caller's `PATH`, or `BASH_ENV`, never runs in an adapter (RT2-4). That
+environment is also a worker environment (CRT-F-6): every agent token variable of the owner-auth `worker_signals` is set to
+`env.worker_token`, so nothing an adapter or resume starts has owner authority (owner proofs, trusted event lines and key
+files are refused, STL-CFG-312); `approvals.py` alone decides. The resume's `hermes` must therefore lie in an `env.path`
+folder; on a host where it is only in a folder agents can write, resume fails (STL-OWN-831) until it is installed in one
+they cannot.
 
 1. **deliver**: the request on stdin (`id, nonce, summary, approval_class, card, target, expires_at, digest, action`; no
    secret); show it in the channel's own medium and print one message ref. Delivering the same request twice shows it once.

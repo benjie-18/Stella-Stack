@@ -59,7 +59,7 @@ def line_of(kind, what, source=None, detail=None):
 def append(data):
     """Append the bytes whole under a lock, or not at all (a short or failed write is cut back)."""
     try:
-        p = sd.plain(sd.load(sd.INDEX)["untrusted_events"])   # as spelled under the root, no link on the way
+        p = sd.plain(sd.untrusted(sd.load(sd.INDEX)))   # as spelled under the root, no link on the way, no owner state path
         os.makedirs(os.path.dirname(p), 0o700, exist_ok=True)
         fd = os.open(p, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)   # read: the last byte (a fragment)
     except (OSError, sd.DataError, KeyError, TypeError) as e:

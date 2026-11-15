@@ -52,7 +52,8 @@ It also names the event log, the backup folder, the applied-state file, the role
 (`owner_key`), the approval store (`approval_store`), the event writer's state and identity (`event_writer_state`,
 `event_writer_id`) and the untrusted event stream (`untrusted_events`). Every path in the index is
 relative, has no `..` part and must resolve (symlinks followed) inside the stack root; `check` refuses one that does not,
-and `get`, `list` and `search` never read it. The index row of the index is `owner_only`: it decides which files are. A row
+and `get`, `list` and `search` never read it. `untrusted_events`, the one state path a worker writes, never is, holds or lies
+inside another state path of the index: `check` refuses that overlap (STL-CFG-310) and the stream's writer and reader refuse it. The index row of the index is `owner_only`: it decides which files are. A row
 whose schema marks any field `x-owner-only`, and the row of the `install` schema, must be `owner_only` too (the apply gate is per
 row, so an open row would let any role write an owner-only field); `check` refuses either one left open, naming the row.
 **A row is charged for its own fault only**, also for where its path points. A JSON row whose path, a folder in that path below

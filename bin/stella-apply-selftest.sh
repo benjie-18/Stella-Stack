@@ -1436,5 +1436,23 @@ jq '.entries |= map(select(has("terms_ok") | not))' "$CN" >"$C/r15-c3.json"; cat
 rm -f "$(BK)"/connections/*/file.applied
 try "$CN" connections "$C/r15-c3.json"
 ok '[ $rc = 1 ] && grep -q STL-OWN-808 "$T/o"' "R15 (3) recording a hand edit whose applied-before content is not known is judged whole (fail closed): 808 ($rc)"
+# CRT-F-4 (GB-1 rule): a file that holds a key (index owner_key, event_writer_state) given as --from is refused STL-CFG-312 in a
+# worker environment before a byte is read, the same identity check as the data reader; no part of either key in the output
+WS=$R/$(jq -r .event_writer_state "$R/.stella/data-files.json"); KF=$R/$OKEY
+PATH=$PB:$OWNER $EL append --type zz-crtf4 --what owner-line >/dev/null 2>&1
+ok '[ -s "$WS" ] && [ -s "$KF" ]' "CRT-F-4 precondition: the writer state and the owner key exist"
+WK=$(jq -r .key "$WS" 2>/dev/null); OK_=$(tr -d '\n' <"$KF")
+leak() { local f=$1 k; for k in "$WK" "$OK_"; do [ -n "$k" ] || continue; for i in 0 16 32 48; do grep -qF "${k:$i:16}" "$f" && return 0; done; done; return 1; }
+ln "$WS" "$T/ws-link"   # a hard link elsewhere is the same file
+for row in versions capabilities; do
+  for kf in "$WS" "$KF" "$T/ws-link"; do
+    for mode in --dry-run ""; do
+      STUB_WORKER_MARK=1 PATH=$PB:$OWNER setsid -w $AP apply "$row" --from "$kf" $mode </dev/null >"$T/o" 2>&1; rc=$?
+      ok 'grep -q STL-CFG-312 "$T/o"' "CRT-F-4 worker (marker): stella-apply apply $row --from $(basename "$kf") ${mode:-(apply)} refuses STL-CFG-312 before reading a key file (rc=$rc)"
+      ok '! leak "$T/o"' "CRT-F-4 worker (marker): no part of a key in the output of apply $row --from $(basename "$kf") ${mode:-(apply)}"
+    done
+  done
+done
+rm -f "$T/ws-link"
 $AP bogus >/dev/null 2>&1; ok '[ $? = 2 ]' "usage error exits 2"
 [ $fails = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

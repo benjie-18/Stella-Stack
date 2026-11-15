@@ -289,6 +289,38 @@ ok '[ $rc = 1 ] && c STL-OWN-809' "GB-6 the openssl named in the data is the one
 STORE=$R/$(ix .approval_store); mkdir -p "$T/evil-remote"; rm -rf "$STORE/remote"; ln -s "$T/evil-remote" "$STORE/remote"
 vf "$T/f2" "$A8"; ok '[ $rc = 1 ] && c STL-CFG-310 && [ -z "$(ls -A "$T/evil-remote")" ]' "GB-8 the store's remote folder is a symbolic link: a genuine device request is refused (STL-CFG-310), nothing written through it"
 rm -f "$STORE/remote"; vf "$T/f2" "$A8"; ok '[ $rc = 0 ]' "GB-8 the same request once the remote folder is plain again: verified (the refusal spent no nonce)"
+# CRT-F-2 (B6): the remote change's alert line is written before the change counts; when it cannot be written the change is
+# refused at every entry point (verify, settings.py set --proof, the loopback guard), no nonce spent, no remote record
+polset '.remote.rate_limit = {count: 100, window_s: 3600}'
+A=$(act settings:CALL_TIMEOUT f20); sign "$T/f20" "$DEVP" zz-phone-1 phone "$(adig "$A")" 120; N0=$(nal "$RAC"); vf "$T/f20" "$A"
+ok '[ $rc = 0 ] && [ "$(nal "$RAC")" = $((N0+1)) ]' "CRT-F-2 control: a device-signed change is accepted and raises one $RAC alert (rc=$rc)"
+mv "$ALERTS" "$T/alerts.keep"; mkdir -p "$ALERTS"; R0=$(ls "$STORE/remote" | wc -l)
+A=$(act settings:CALL_TIMEOUT f21); sign "$T/f21" "$DEVP" zz-phone-1 phone "$(adig "$A")" 120; vf "$T/f21" "$A"
+ok '[ $rc != 0 ]' "CRT-F-2 owner_auth.py verify: a remote owner change whose alert cannot be written is refused (rc=$rc)"
+st $ST set CALL_TIMEOUT 901 --dry-run >"$T/dry" 2>&1
+if dryaction "$T/dry" "$T/f2s.act"; then
+  sign "$T/f22" "$DEVP" zz-phone-1 phone "$(adig "$T/f2s.act")" 120
+  st $ST set CALL_TIMEOUT 901 --proof "$T/f22" >"$T/o" 2>&1; rc=$?
+  ok '[ $rc != 0 ] && ! grep -q "CALL_TIMEOUT=.\?901" "$LIMF"' "CRT-F-2 settings.py set --proof: no remote change applied without its alert (rc=$rc)"
+else ok false "CRT-F-2 settings.py set --dry-run gave no action line"; fi
+cat >"$T/lb.py" <<'PY'
+import hashlib, json, sys; sys.path.insert(0, sys.argv[1]); import loopback_guard as g
+doc = g.contract(); ep = next(e for e in doc["endpoints"] if e["scope"] == "owner-write"); body = b'{"zz": 1}'
+act = {"op": "http", "target": f"{ep['method']} {ep['path']}", "old_digest": "0" * 64, "new_digest": hashlib.sha256(body).hexdigest()}
+if sys.argv[2] == "action":
+    json.dump(act, open(sys.argv[3], "w")); sys.exit(0)
+port = 8765; s = {"api_token": "tok-zz", "csrf_token": "csrf-zz", "port": port}
+h = {"Host": f"127.0.0.1:{port}", "Origin": f"http://127.0.0.1:{port}", doc["token_header"]: "tok-zz", doc["csrf_header"]: "csrf-zz",
+     doc["proof_header"]: open(sys.argv[3]).read()}
+print(json.dumps(g.judge(ep["method"], ep["path"], h, body, s)))
+PY
+$PY "$T/lb.py" "$B" action "$T/lb.act"; sign "$T/f23" "$DEVP" zz-phone-1 phone "$(adig "$T/lb.act")" 120
+$PY "$T/lb.py" "$B" judge "$T/f23" >"$T/o" 2>"$T/ve"; r=$(tail -n1 "$T/o")
+ok '[ "$(jq -r ".[0]" <<<"$r")" != null ]' "CRT-F-2 loopback guard: an owner-write request with a device proof whose alert cannot be written is refused (judge: $r)"
+ok '[ "$(ls "$STORE/remote" | wc -l)" = "$R0" ]' "CRT-F-2 no remote change was recorded while the alert sink was broken"
+rmdir "$ALERTS"; mv "$T/alerts.keep" "$ALERTS"; vf "$T/f21" "$A"
+ok '[ $rc = 0 ] && [ "$(nal "$RAC")" = $((N0+2)) ]' "CRT-F-2 the refused request verifies once the alert log is writable again (its nonce was not spent), one more $RAC alert"
+cp -p "$T/pol.w2b" "$POL"
 
 # ---- T8c: the primary-lease contract and its test double ----
 LD="$PY $B/lease_double.py"; S=$T/lease-state.json; SD="$PY $B/stella_data.py"; SCH=$R/.stella/schemas/primary-lease.schema.json

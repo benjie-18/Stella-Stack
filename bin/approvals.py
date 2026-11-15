@@ -21,7 +21,9 @@ Untrusted input (a stream line, an ask's detail, an adapter's answer line) goes 
 limits, any failure reported with a code and skipped (GB-4). A channel is given the exact action, masked by display() (GB-5),
 and every free text it may show (summary, target, op, new) only through for_owner(): masked like new, controls, bidi controls and
 line separators made ?, so an adapter prints already-safe text. Adapters and resume run with a fixed environment (run(): PATH
-from the channels file's env.path, absolute folders; only the variables env.pass and the row's argv name pass).
+from the channels file's env.path, absolute folders; only the variables env.pass and the row's argv name pass), marked as a
+worker environment (CRT-F-6: every agent token variable of the owner-auth worker_signals = env.worker_token), so no program they
+start has owner authority (owner proofs, trusted event lines, key files: STL-CFG-312); this command alone decides.
 CLI: approvals.py request --class C --action F --summary S --card K --ttl SECONDS [--requester PROFILE] [--json]
      approvals.py intake [--json]                 one request per new approval-ask line, delivered on every answering channel
      approvals.py deliver ID --channel CH         the row's deliver argv gets the request on stdin; prints the message ref
@@ -223,9 +225,13 @@ def channel(cid):
 def run(argv, payload, limit, code, doc, extra=()):
     """(exit code, stdout) of the data argv plus extra with payload (JSON) on stdin; argv[0] relative = under the stack root.
     Else Refusal(code). Its environment is fixed (RT2-4): PATH is the channels file's env.path, and of the caller's variables
-    only those env.pass names and those the data argv names pass (a planted program on the caller's PATH, BASH_ENV: never)."""
-    e = doc["env"]
-    env = {k: os.environ[k] for k in [*e["pass"], *filter(ENV_NAME.fullmatch, argv[1:])] if k in os.environ} | {"PATH": ":".join(e["path"])}
+    only those env.pass names and those the data argv names pass (a planted program on the caller's PATH, BASH_ENV: never).
+    And it is a worker environment (CRT-F-6): every agent token variable of the owner-auth worker_signals is set; none named: refused."""
+    e, tokens = doc["env"], oa.policy()["worker_signals"]["token_env"]
+    if not tokens:
+        raise Refusal(code, "the owner-auth worker_signals name no agent token variable, so a child cannot be marked as a worker")
+    env = ({k: os.environ[k] for k in [*e["pass"], *filter(ENV_NAME.fullmatch, argv[1:])] if k in os.environ} | {"PATH": ":".join(e["path"])}
+           | dict.fromkeys(tokens, e["worker_token"]))
     try:
         exe = argv[0] if os.path.isabs(argv[0]) else sd.safe(argv[0])
         p = subprocess.Popen([exe, *argv[1:], *extra], stdin=subprocess.PIPE, stdout=subprocess.PIPE, start_new_session=True, env=env)
@@ -363,7 +369,7 @@ def decide(ans, row, pol, doc):
 def intake():
     """(records made, refused asks): one request per approval-ask line not yet taken, delivered on each answering channel."""
     try:
-        p = el.path(sd.load(sd.INDEX)["untrusted_events"])
+        p = el.path(sd.untrusted(sd.load(sd.INDEX)))
         # shortcut: the whole stream is read on every intake; keep a read offset when it grows large
         with os.fdopen(el.open_file(p, os.O_RDONLY), "rb") as f:   # no link, no FIFO: refused at the open, never waited for
             data = f.read()

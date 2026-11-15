@@ -172,19 +172,25 @@ def key_gate(what):
         raise Refused(f"{what}: holds a key, which only the owner's tools read ({w}); nothing was read")
 
 
+def key_check(st, what):
+    """key_gate when st (an os.stat result) is a KEY_STATE file, by identity: a hard link or another spelling is the same file.
+    Every reader of a file a caller names asks this before a byte is read (jload, the apply tool's --from)."""
+    closed_ids()
+    if _keys and (st.st_dev, st.st_ino) in _keys:
+        key_gate(what)
+
+
 def jload(path, label=None):
     shut, ident = closed_ids(), lambda st: (st.st_dev, st.st_ino)
     no = DataError(f"{label or path}: is an owner setting of the role table or the file of an env row, which this tool never opens")
     try:
         if shut and ident(os.stat(path)) in shut:
             raise no
-        if _keys and ident(os.stat(path)) in _keys:
-            key_gate(label or path)
+        key_check(os.stat(path), label or path)
         with open(path, encoding="utf-8") as f:
             if shut and ident(os.fstat(f.fileno())) in shut:   # swapped between the stat and the open: nothing is read
                 raise no
-            if _keys and ident(os.fstat(f.fileno())) in _keys:
-                key_gate(label or path)
+            key_check(os.fstat(f.fileno()), label or path)
             doc = json.load(f, object_pairs_hook=_pairs, parse_constant=_bad_const, parse_float=_float, parse_int=_int)
         _sound(doc)
         return doc
@@ -192,6 +198,26 @@ def jload(path, label=None):
         raise DataError(f"{label or path}: {e if isinstance(e, ValueError) else 'nested too deeply'}")
     except OSError as e:
         raise DataError(f"{label or path}: cannot be read ({type(e).__name__})")
+
+
+STATE = ("event_log", "backup_dir", "applied_state", "role_table", "owner_key", "approval_store", "event_writer_state", "untrusted_events")
+
+
+def untrusted(idx):
+    """The index's untrusted_events path as spelled, when it neither is, holds nor lies inside another state path of the index
+    (CRT-F-5: the agents' stream never lands in an owner file); else a DataError. A path that cannot be resolved is refused where
+    it is used and by check, not here."""
+    def real(k):
+        try:
+            return safe(idx[k])
+        except DataError:
+            return None
+    u = real("untrusted_events")
+    for k in STATE[:-1]:
+        p = real(k)
+        if u and p and os.path.commonpath([u, p]) in (u, p):
+            raise DataError(f"untrusted_events overlaps the {k} path: the agents' event stream never is, holds or lies inside an owner state path")
+    return idx["untrusted_events"]
 
 
 def spelled(rel):
@@ -1153,11 +1179,15 @@ def judge(reads=None):
                 P(r["id"], f"redact_keys[{i}] is not a regular expression")
         if has_records(r) and not r.get("record_kind"):
             P(r["id"], "a row with records names its record_kind (a kind of the data policy's record_kinds)")
-    for rel in [idx[k] for k in ("event_log", "backup_dir", "applied_state", "role_table", "owner_key", "approval_store", "event_writer_state", "untrusted_events")]:
+    for rel in [idx[k] for k in STATE]:
         try:
             safe(rel)
         except DataError as e:
             P(FRAME, str(e))
+    try:
+        untrusted(idx)
+    except DataError as e:
+        P(FRAME, str(e))
     try:
         table = load(idx["role_table"])
     except Exception:
@@ -1330,16 +1360,14 @@ def unopened():
 
 
 def say(code, problem, alert=False):
-    """The catalog's plain message for a code, on stderr; with alert=True also one line in the alert log."""
+    """The catalog's plain message for a code, on stderr; with alert=True also one line in the alert log. Returns whether
+    the alert line was written (None without alert)."""
     body, tag, kv = alert_catalog.render(code, {"problem": problem})
-    if alert:
-        sup = os.environ.get("ESCALATE_SUP_DIR") or f"{alert_catalog.ROOT}/.supervisor"
-        size = lambda: os.path.getsize(f"{sup}/logs/alerts.log") if os.path.exists(f"{sup}/logs/alerts.log") else 0
-        before = size()
-        alert_catalog.log(tag, kv)
-        if size() == before:
-            print("the alert line could not be written to the alert log", file=sys.stderr)
+    written = alert_catalog.log(tag, kv) if alert else None
+    if written is False:
+        print("the alert line could not be written to the alert log", file=sys.stderr)
     print(f"{code} {body.split(chr(10))[1]}", file=sys.stderr)
+    return written
 
 
 def refuse(kind, name):
