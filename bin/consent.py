@@ -20,20 +20,24 @@ Library (bin/route.py calls it when the next link a task would use needs a grant
       is `queued`.
 CLI (host only: every command refuses in a worker environment, STL-CFG-312, before it reads or writes anything):
   consent.py pending --json             the consent requests not yet settled: pending, approved and waiting for `complete`,
-                                        or changed (made for another state of the grant file: it grants nothing any more)
+                                        or changed (made for another state of the grant file, or spent: it grants nothing)
   consent.py complete <request id>      the approved request's grant, applied on this terminal (the apply tool shows the change
                                         and asks the typed phrase when the change needs it; no terminal: STL-OWN-808)
   consent.py revoke <grant id> --out F  writes the candidate file F (0600, never over a file) in which that grant carries
                                         revoked_at; the owner applies it (the command is printed). Nothing is applied here.
-The proof (DC-02). A request counts only by the approval service's word (approvals.current: the trusted log) and only while
-its digest is the digest of {op: apply, target: the index row of the grant file, old_digest: sha256 of that file now,
-new_digest: sha256 of the candidate rebuilt on it}; a file that changed since asks again, so no answer is replayed onto
-another state of the grants (a revoke included). The candidate hashed for the request is the file with the grant row
-appended; the row cannot hold its request's id then (the id exists only once the request is stored), so the candidate applied
-is that same document with `request_id` set on the row. `granted_at` is the time of the request.
+The proof (DC-02). A request counts only when this module made it (a trusted routing.consent line names it; its trusted
+request line carries the routing data's consent approval class; it is no worker's ask), only by the approval service's word
+(approvals.current: the trusted log) and only while its digest is the digest of {op: apply, target: the index row of the
+grant file, old_digest: sha256 of that file now, new_digest: sha256 of the candidate rebuilt on it}; a file that changed
+since asks again, so no answer is replayed onto another state of the grants (a revoke included). The candidate hashed for
+the request is the file with the grant row appended; the row cannot hold its request's id then (the id exists only once the
+request is stored), so the candidate applied is that same document with `request_id` set on the row. `granted_at` is the
+time of the request. An approved request is applied once: it is spent as soon as a trusted line of the grant file's row
+(the apply tool's own line of that write) put its id into the file, so a grant file put back to its old bytes asks again.
 State (route.py's state file, under its lock; proof of nothing): `consents` {grant key: {request_id, kind, row, task, card,
-told}} (which request stands for which grant, and the row to rebuild its candidate from: both are judged against the trusted
-log and the digests on every use) and `queue` {task: {request_id, link, card, at}}.
+told}} and `queue` {task: {request_id, link, card, at}}. Of a consents entry only the request id and the row's id, global_id
+and granted_at are used: the row's grant fields and its scope (always the project) are rebuilt from what the call needs
+(the commands: from the request's trusted routing.consent line), and an entry whose row is not that rebuilt row asks again.
 shortcut: a queued task is taken off the queue when its grant is applied, not when its request is denied or expires; upgrade
 when the board reports task ends to route.py (its own shortcut).
 Exit: 0 ok; 1 refused or failed (the catalog code and its plain message); 2 usage."""
@@ -53,11 +57,12 @@ import stella_data as sd
 WAITING, PHRASE = "STL-MDL-719", "STL-OWN-808"   # a task waits for the owner; the apply tool's refusal where the typed phrase cannot be asked
 UNATTENDED = "UNATTENDED_MODE"   # the settings registry key
 CONSENTS, QUEUE = "consents", "queue"   # this module's keys of the state document
+EVENT = "routing.consent"   # the type of this module's trusted line of a request it made
 # grant kind (the resolver's word) -> the schema of the data file that holds it, its list there, the fields that name it
 KINDS = {"crossing": ("grants", "crossing_grants", ("preset", "to_class")),
          "privacy": ("data-policy", "privacy_grants", ("data_class", "connection"))}
 CODE = re.compile(r"STL-[A-Z]+-[0-9]{3}")
-# what `pending` lists, and what comes next for each (changed: the grant file is no longer the one the request was made for)
+# what `pending` lists, and what comes next for each (changed: the grant file is no longer the one the request was made for, or the request is spent)
 NEXT = {"pending": "the owner's answer", "approved": "consent.py complete {rid}", "changed": "it grants nothing; the task's next call asks again"}
 
 
@@ -152,24 +157,46 @@ def apply(target, cur, cand, tty=False, dry=False):
         return r.returncode, r.stdout + r.stderr
 
 
-def standing(e):
-    """What a consents entry of the state is worth: (word, request id, target, the grant file's bytes, the candidate to apply).
-    The word is the approval service's (the trusted log; a pending request past its expiry is settled there), and approved or
-    pending count only while the request's digest is the digest of the action rebuilt now from the entry's row; else the
-    word is "changed". The candidate to apply is the rebuilt one with the request id on its row."""
-    rid, row = e.get("request_id"), e.get("row")
-    if e.get("kind") not in KINDS or not isinstance(row, dict):
-        return None, rid, None, None, None
-    target, lkey, cur, doc = grant_file(e["kind"])
+def grant_row(ids, fields, pid):
+    """The grant row of a request, always scoped to the project. ids gives only its id, global_id and granted_at."""
+    return {"id": ids.get("id"), "global_id": ids.get("global_id"), "install_id": sd.install_id(), **fields,
+            "scope": {"level": "project", "project": pid}, "granted_at": ids.get("granted_at")}
+
+
+def standing(e, want=None):
+    """What a consents entry of the state is worth: (word, request id, target, the grant file's bytes, the candidate to apply,
+    kind, the grant row). The entry only names a request and the row's id, global_id and granted_at; nothing else of it is used.
+    - The request must be one this module made: a trusted routing.consent line names it. That line says the kind, the project
+      and the grant's fields; want (the gate: what this call needs) replaces them. Its trusted request line must carry the
+      routing data's consent approval class, and its record no worker's ask. Else the word is None (it proves nothing here).
+    - The word is the approval service's (the trusted log; a pending request past its expiry is settled there).
+    - approved or pending count only while the entry's row is the row rebuilt from those values and the request's digest is the
+      digest of the action rebuilt now from it; and approved only until the request is spent: a trusted line of the grant
+      file's row (the apply tool's) that put this request id into the file. Else the word is "changed".
+    The candidate to apply is the rebuilt one with the request id on its row."""
+    rid, ids = e.get("request_id"), e.get("row")
+    none = (None, rid, None, None, None, None, None)
+    if not isinstance(rid, str) or not isinstance(ids, dict):
+        return none
+    lines = [d for d in el.proof_lines() if isinstance(d.get("new"), dict)]
+    made = next((d["new"] for d in lines if d.get("type") == EVENT and d["new"].get("request_id") == rid), None)
+    if made is None or made.get("kind") not in KINDS:
+        return none
+    kind, pid, fields = want or (made["kind"], made.get("project"), {n: made.get(n) for n in KINDS[made["kind"]][2]})
+    target, lkey, cur, doc = grant_file(kind)
     cdoc, _ = approvals.channels()
     try:
         with approvals.lock():
-            rec, _, _, word = approvals.current(rid, cdoc)
+            rec, req, _, word = approvals.current(rid, cdoc)
     except approvals.Refusal:   # a store record that cannot be used decides nothing
-        return None, rid, None, None, None
-    if word in ("approved", "pending") and oa.digest(action(target, cur, with_row(doc, lkey, row))) != rec["digest"]:
+        return none
+    if word is None or req.get("approval_class") != sd.routing()["consent"]["approval_class"] or rec.get("ask") is not None:
+        return none
+    row = grant_row(ids, fields, pid)
+    if word in ("approved", "pending") and (ids != row or oa.digest(action(target, cur, with_row(doc, lkey, row))) != rec["digest"]
+                                            or any(d.get("what") == target and rid in d["new"].values() for d in lines)):
         word = "changed"
-    return word, rid, target, cur, with_row(doc, lkey, {**row, "request_id": rid})
+    return word, rid, target, cur, with_row(doc, lkey, {**row, "request_id": rid}), kind, row
 
 
 # ---- the gate ----
@@ -196,8 +223,7 @@ def ask(ctx, key, kind, fields, pid, gk, con):
     is stored with its trusted line and delivered on every channel that may answer, the state notes it (the next call
     reuses it) and one trusted event line says so."""
     target, lkey, cur, doc = grant_file(kind)
-    row = {"id": f"{kind}-{secrets.token_hex(6)}", "global_id": str(uuid.uuid4()), "install_id": sd.install_id(), **fields,
-           "scope": {"level": "project", "project": pid}, "granted_at": time.strftime(oa.TIME, time.gmtime())}
+    row = grant_row({"id": f"{kind}-{secrets.token_hex(6)}", "global_id": str(uuid.uuid4()), "granted_at": time.strftime(oa.TIME, time.gmtime())}, fields, pid)
     cand = with_row(doc, lkey, row)
     rc, out = apply(target, cur, cand, dry=True)
     if rc:
@@ -217,7 +243,7 @@ def ask(ctx, key, kind, fields, pid, gk, con):
                     sd.say(x.code, x.problem)
     with state() as st:
         box(st, CONSENTS)[gk] = {"request_id": rec["id"], "kind": kind, "row": row, "task": ctx["task"], "card": ctx["card"], "told": False}
-    el.append(el.build("routing.consent", f"task {ctx['task']}", code=WAITING, detail=summary, who={"role": ctx["role"]},
+    el.append(el.build(EVENT, f"task {ctx['task']}", code=WAITING, detail=summary, who={"role": ctx["role"]},
                        new={"request_id": rec["id"], "link": key, "kind": kind, "project": pid, **fields}))
     return rec["id"]
 
@@ -273,7 +299,7 @@ def judged(ctx, link):
         if gk in applied:   # applied, and the resolver still asks for it: never a loop
             return {"status": "waiting", "code": WAITING, "request_id": None}
         ent = saved(CONSENTS).get(gk)
-        word, rid, target, cur, cand = standing(ent) if isinstance(ent, dict) else (None, None, None, None, None)
+        word, rid, target, cur, cand, *_ = standing(ent, (kind, pid, fields)) if isinstance(ent, dict) else [None] * 5
         if word == "approved":
             rc, out = apply(target, cur, cand)
             if rc:
@@ -301,9 +327,9 @@ def gate(ctx, link):
 def cmd_pending(a):
     out = []
     for e in saved(CONSENTS).values():
-        word, rid, *_ = standing(e) if isinstance(e, dict) else (None, None)
+        word, rid, _, _, _, kind, row = standing(e) if isinstance(e, dict) else [None] * 7
         if word in NEXT:
-            out.append({"request_id": rid, "status": word, "kind": e["kind"], "grant": e["row"], "task": e.get("task"), "card": e.get("card"),
+            out.append({"request_id": rid, "status": word, "kind": kind, "grant": row, "task": e.get("task"), "card": e.get("card"),
                         "next": NEXT[word].format(rid=rid)})
     print(json.dumps(out, indent=2, ensure_ascii=False))
     return 0
@@ -311,18 +337,18 @@ def cmd_pending(a):
 
 def cmd_complete(a):
     gk, e = next(((k, e) for k, e in saved(CONSENTS).items() if isinstance(e, dict) and e.get("request_id") == a.id), (None, None))
-    if e is None:
+    word, rid, target, cur, cand, _, row = standing(e) if e else [None] * 7
+    if word is None:   # no entry names it, or it is not a request this module made
         sd.refuse("routing consent request", sd.shown(a.id))
-    word, rid, target, cur, cand = standing(e)
     if word != "approved":
-        raise Refused(*(approvals.refusal_of(rid, word) if word in (None, "denied", "expired") else
+        raise Refused(*(approvals.refusal_of(rid, word) if word in ("denied", "expired") else
                         (WAITING, f"request {rid} is not answered yet; nothing was applied") if word == "pending" else
-                        (WAITING, f"request {rid} was made for another state of the grant file, which changed since; nothing was applied, and the task's next call asks again")))
+                        (WAITING, f"request {rid} no longer stands (the grant file changed since it was made, or its grant was applied once already); nothing was applied, and the task's next call asks again")))
     rc, _ = apply(target, cur, cand, tty=True)
     if rc:
         return 1   # the apply tool said why
     settled(gk, rid)
-    print(json.dumps({"request_id": rid, "status": route.GRANTED, "grant": e["row"].get("id"), "target": target}))
+    print(json.dumps({"request_id": rid, "status": route.GRANTED, "grant": row["id"], "target": target}))
     return 0
 
 

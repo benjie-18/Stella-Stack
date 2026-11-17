@@ -12,7 +12,10 @@
 # request id); pending; revoke (candidate only, never over a file, unknown id) and the next call after the owner applied it;
 # denied and expired requests; unattended run mode (the settings reader first, then the owner file; queued once, one alert);
 # fake entries as data only (a new approval class, a new queue alert code, another ttl, a new project); a policy under which
-# the grant rows need no phrase (the gate applies alone, the queue is cleared); a privacy grant; a worker environment.
+# the grant rows need no phrase (the gate applies alone, the queue is cleared); a privacy grant; under that policy still: a
+# pending request applies nothing, an approved request consent did not make (another approval class, or the consent class with
+# a row for another scope) applies nothing, and an applied request is spent (the grant file and the state entry put back: asked
+# again, for both grant files); a worker environment.
 set -u
 H=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 T=$(mktemp -d "${TMPDIR:-/tmp}/consent-selftest.XXXXXX"); T=$(cd "$T" && pwd -P)
@@ -122,6 +125,9 @@ reqid() { jq -r '.problem // ""' "$T/o/$1.json" 2>/dev/null | grep -o 'apr-[0-9a
 reqs() { find "$REQ" -maxdepth 1 -name '*.json' -type f 2>/dev/null | grep -c .; }
 rq() { jq -r "$2" "$REQ/$1.json"; }                                                      # <request id> <jq>
 row() { jq -c --arg r "$1" '.consents[] | select(.request_id == $r) | .row' "$ST"; }     # <request id>: the grant row the state keeps for it
+gkey() { jq -r --arg r "$1" '.consents | to_entries[] | select(.value.request_id == $r) | .key' "$ST"; }   # <request id>: its key in the state
+kept() { KEPT=$(jq -c --arg k "$(gkey "$1")" '{k: $k, v: .consents[$k]}' "$ST"); }       # <request id>: its state entry, kept
+back() { jq --argjson e "$KEPT" '.consents[$e.k] = $e.v' "$ST" >"$ST.n" && mv "$ST.n" "$ST"; }   # the kept entry, put back in the state
 answer() { setsid -w python3 -I "$R/bin/approvals.py" answer "$1" --decision "${2:-approved}" </dev/null >"$T/o/answer" 2>&1; }   # the owner's answer on the host, by the owner key
 typed() {  # <index row> <command>...: the command on a pseudo-terminal, the owner typing the phrase for a change of that row
   timeout 100 python3 -I "$T/pty.py" "$(jq -r --arg w "$1" '.phrase.template | gsub("\\{what\\}"; $w)' "$POL")" "${@:2}" >"$T/o/typed" 2>&1
@@ -222,10 +228,40 @@ ed "$AREL" '.selection.global = "st-all"'; ed "$RJREL" --arg r "$CR" --arg k "$G
 d0=$(sha "$DF"); att p1 one; R8=$(reqid p1)
 ok '[ -n "$GCLASS" ] && [ $RC = 3 ] && [ -n "$R8" ] && [ "$(rq "$R8" .action.target)" = "$DROW" ] && [ "$(rq "$R8" .action.old_digest)" = "$d0" ] && [ "$(sha "$DF")" = "$d0" ]' \
   "a link that needs a privacy grant: one request whose action targets the data policy's row"
-answer "$R8"; att p1 one
+answer "$R8"; kept "$R8"; cp "$DF" "$T/policy.old"; att p1 one
 ok '[ $RC = 0 ] && grow "$R8" | jq -e --arg k "$GCLASS" ".data_class == \$k and .connection == \"st-far\" and .scope == {level: \"project\", project: \"st-one\"}" && check' \
   "approved: the privacy grant row (data class, connection, project scope, request id) is applied and the task gets the link"
+cp "$T/policy.old" "$DF"; back; att p1 one; R8B=$(reqid p1)
+ok '[ $RC = 3 ] && [ -n "$R8B" ] && [ "$R8B" != "$R8" ] && [ "$(sha "$DF")" = "$d0" ] && [ "$(rq "$R8B" .action.target)" = "$DROW" ]' \
+  "its request is spent: the data policy put back to its old bytes and the state entry put back, the call asks again instead of applying it twice"
+answer "$R8B"; att p1 one
 
+# ---- still where the rows need no phrase: only an approved request that consent itself made applies, and only once ----
+# (the project that holds the privacy grant: the crossing grant is then the only one its link needs)
+ed "$AREL" '.selection.global = "st-cross"'; CC=$(jq -r .consent.approval_class "$RT")
+OC=$(jq -r --arg c "$CC" '[.properties.approval_class.enum[] | select(. != $c)][0]' "$R/.stella/schemas/approval-request.schema.json")
+word() { python3 -I "$R/bin/approvals.py" status "$1" --json 2>/dev/null | jq -r .status; }                # <request id>: the approval service's word
+plant() {  # <consent's request> <jq change of its row> <approval class>: RF = an approved request of that class, not made by consent, for the apply of the changed row; the state entry is pointed at it
+  local gk row; gk=$(gkey "$1"); row=$(row "$1" | jq -c "$2")
+  jq -n --arg t "$GROW" --arg o "$(sha "$GF")" --arg n "$(jq --indent 2 --argjson r "$row" '.crossing_grants += [$r]' "$GF" | sha256sum | cut -d' ' -f1)" \
+    '{op: "apply", target: $t, old_digest: $o, new_digest: $n}' >"$T/act.json"
+  RF=$(python3 -I "$R/bin/approvals.py" request --class "$3" --action "$T/act.json" --summary "selftest: not a consent request" --card st-c-one --ttl 600 --json 2>/dev/null | jq -r '.id // empty'); answer "$RF"
+  jq --arg k "$gk" --arg r "$RF" --argjson row "$row" '.consents[$k] += {request_id: $r, row: $row}' "$ST" >"$ST.n" && mv "$ST.n" "$ST"
+}
+att v1 one; R9=$(reqid v1); gv=$(sha "$GF"); att v1 one
+ok '[ -n "$R9" ] && [ $RC = 3 ] && [ "$(reqid v1)" = "$R9" ] && [ "$(word "$R9")" = pending ] && J v1 ".link == null" && [ "$(grows "$R9")" = 0 ] && [ "$(sha "$GF")" = "$gv" ]' \
+  "a pending request applies nothing here either: the task still waits on it, with no grant row and no link"
+plant "$R9" '.scope = {level: "global"}' "$OC"; n=$(reqs); att v1 one; RN=$(reqid v1)
+ok '[ -n "$OC" ] && [ "$(word "$RF")" = approved ] && [ $RC = 3 ] && [ -n "$RN" ] && [ "$RN" != "$RF" ] && [ "$(reqs)" = $((n + 1)) ] && [ "$(grows "$RF")" = 0 ] && [ "$(sha "$GF")" = "$gv" ]' \
+  "an approved request of another approval class, which the state names with a Stella-wide row, applies nothing: the call asks again"
+plant "$RN" '.scope.project = "st-elsewhere"' "$CC"; setsid -w $CO complete "$RF" </dev/null >"$T/o/cf" 2>&1; x=$?; att v1 one; RN2=$(reqid v1)
+ok '[ "$(word "$RF")" = approved ] && [ $x = 1 ] && grep -q STL-CFG-311 "$T/o/cf" && [ $RC = 3 ] && [ -n "$RN2" ] && [ "$RN2" != "$RF" ] && [ "$(grows "$RF")" = 0 ] && [ "$(sha "$GF")" = "$gv" ]' \
+  "an approved request of the consent class that consent did not make (its row for another project) applies nothing: complete refuses it (STL-CFG-311) and the call asks again"
+answer "$RN2"; kept "$RN2"; cp "$GF" "$T/grants.old"; att v1 one; x=$RC; y=$(grows "$RN2")
+cp "$T/grants.old" "$GF"; back
+setsid -w $CO complete "$RN2" </dev/null >"$T/o/cs" 2>&1; z=$?; att v1 one; RN3=$(reqid v1)
+ok '[ $x = 0 ] && [ "$y" = 1 ] && [ $z = 1 ] && grep -q STL-MDL-719 "$T/o/cs" && [ $RC = 3 ] && [ -n "$RN3" ] && [ "$RN3" != "$RN2" ] && [ "$(grows "$RN2")" = 0 ] && [ "$(sha "$GF")" = "$gv" ] && check' \
+  "an approved request is spent once applied: the grant file put back to its old bytes and the state entry put back, complete refuses it and the call asks again"
 # ---- a worker environment ----
 n=$(reqs); bad=""
 for c in "pending --json" "complete $R2C" "revoke $GID --out $T/w.json"; do
