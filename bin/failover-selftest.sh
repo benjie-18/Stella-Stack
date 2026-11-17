@@ -251,7 +251,8 @@ ok '[ $RC = 1 ] && J app ".code == \"STL-MDL-714\"" && [ "$(cnt st-a/st-a-m1)" =
 # ---- gate B: a hostile server, the environment, the trace of a cooldown ----
 cat >"$T/srv.py" <<'P'
 """Selftest server: answers every POST with 200 and the bytes of <body file>; while <body file>.drip exists it promises more and
-sends one byte every half second instead. One line per request in <log file>. First stdout line: its port."""
+sends one byte every half second instead; while <body file>.head exists it sends the status line at once, then one header byte
+every half second for 15 s, then the answer. One line per request in <log file>. First stdout line: its port."""
 import http.server, os, sys, time
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
@@ -263,6 +264,17 @@ class H(http.server.BaseHTTPRequestHandler):
         drip = os.path.exists(sys.argv[2] + ".drip")
         with open(sys.argv[2], "rb") as f:
             b = f.read()
+        if os.path.exists(sys.argv[2] + ".head"):
+            try:
+                self.wfile.write(b"HTTP/1.0 200 OK\r\nX-Slow: ")
+                for _ in range(30):
+                    self.wfile.write(b"x")
+                    self.wfile.flush()
+                    time.sleep(0.5)
+                self.wfile.write(b"\r\nContent-Length: %d\r\n\r\n" % len(b) + b)
+            except OSError:
+                pass
+            return
         self.send_response(200)
         self.send_header("Content-Length", str(100000 if drip else len(b)))
         self.end_headers()
@@ -341,6 +353,15 @@ ok '[ $RC = 0 ] && [ "$(cnt st-b/st-b-m1)" = 1 ] && [ "$(sends "$NOTICE" nt5)" =
 answer ok; : >"$T/body.drip"; chain st-x/st-x-m1 st-b/st-b-m1; fresh; s=$SECONDS; call drip; s=$((SECONDS - s)); rm -f "$T/body.drip"
 ok '[ $RC = 0 ] && J drip ".link.connection == \"st-b\" and .failure_history[0].trigger == \"timeout\"" && [ "$s" -le 9 ]' \
   "an answer that drips in (a byte every half second, CALL_TIMEOUT 2) ends at the call's one deadline as a timeout: the next link answers (took $s s)"
+: >"$T/body.head"; fresh; s=$SECONDS; call driphead; s=$((SECONDS - s)); rm -f "$T/body.head"
+ok '[ $RC = 0 ] && J driphead ".link.connection == \"st-b\" and .failure_history[0].trigger == \"timeout\"" && [ "$s" -le 9 ]' \
+  "headers that drip in (a byte every half second) are cut at the same deadline: it covers the whole call, not the body alone (took $s s)"
+chain "st-a/st-a-m1,cooldown,$P0" "st-b/st-b-m1,usable,$P1"; fresh; call nt6
+ok '[ $RC = 0 ] && [ "$(cnt st-a/st-a-m1)" = 0 ] && [ "$(cnt st-b/st-b-m1)" = 1 ] && [ "$(sends "$NOTICE" nt6)" = 1 ] && [ "$(ev nt6 ".code == \"$NOTICE\"")" = 1 ]' \
+  "a task's first pick behind a cooling head of a more private class notifies (only an excluded head is skipped); the cooling link is not called"
+answer "x${KEY}x"; chain st-x/st-x-m1; fresh; call glued
+ok '[ $RC = 0 ] && J glued ".text | startswith(\"x\") and endswith(\"x\")" && [ -z "$(grep -rlF -- "$KEY" "$R" "$T/sup" "$T/o" 2>/dev/null | grep -vF -- "$R/$CD/")" ]' \
+  "an answer that holds the key glued to other characters: the output holds it masked all the same"
 chain st-a/st-a-m1; fresh; PROMPT=$'tool output \377\376 end' call utf; a=$RC; LC_ALL=C PROMPT=$'tool output \377\376 end' call utfc
 ok '[ $a = 0 ] && [ $RC = 0 ] && [ "$(cnt st-a/st-a-m1)" = 2 ] && ! grep -q Traceback "$T/o/utf.err" "$T/o/utfc.err"' "a prompt with bytes that are not UTF-8 is sent (those bytes replaced), under the C locale too: no traceback"
 chain st-a/st-a-m1 st-b/st-b-m1
