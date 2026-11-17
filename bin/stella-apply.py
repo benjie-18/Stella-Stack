@@ -908,17 +908,19 @@ def validate(row, rel, data):
 def kept(row, key, rel, cur, old_doc, new_doc, good, rec):
     """What a candidate may not change in the document it replaces (the data tool's rule, frozen(): a built-in preset), refused
     with that rule's own code before anything is written; apply and its dry run alike. The file is that document only while
-    it holds its baseline's bytes (drift_of: the applied ones; never applied: the committed ones). A file edited by hand,
-    damaged or missing says nothing of what was built in (W1-CVER-01, W1-RT-04): the candidate is then compared with the
-    document last applied (prior_doc, as the owner proof judges a hand edit), or, that one not known, the committed one."""
-    blob = None if rec else git_blob(rel)
-    want = rec["sha256"] if rec else sha(blob) if blob is not None else None
-    if want is not None and (cur is None or sha(cur) != want):
-        base = prior_doc(row, key, good, rec)
-        if base is None and (blob := blob if blob is not None else git_blob(rel)) is not None:
-            base = parse_or_none(row, blob)[0]
-        # shortcut: with no applied copy and no committed file the file itself is the only document known, upgrade when a release signs its built-in presets (E1)
-        old_doc = base if base is not None else old_doc
+    it holds the applied bytes or the committed ones (W1-RT-11: an update that arrives committed, a release merged outside
+    this tool, is the baseline whatever was applied before, so the next apply goes through and putting the older built-in
+    back is refused). A file edited by hand, damaged or missing says nothing of what was built in (W1-CVER-01, W1-RT-04):
+    the candidate is then compared with the document last applied (prior_doc, as the owner proof judges a hand edit), or,
+    that one not known, the committed one."""
+    if not (rec and cur is not None and sha(cur) == rec["sha256"]):
+        blob = git_blob(rel)
+        if cur is None or cur != blob:
+            base = prior_doc(row, key, good, rec)
+            if base is None and blob is not None:
+                base = parse_or_none(row, blob)[0]
+            # shortcut: with no applied copy and no committed file the file itself is the only document known, upgrade when a release signs its built-in presets (E1)
+            old_doc = base if base is not None else old_doc
     for code, why in sd.frozen(row["schema"], old_doc, new_doc):
         raise bad(why, code)
 

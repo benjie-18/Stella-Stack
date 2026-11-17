@@ -128,7 +128,7 @@
         "required": ["role", "class_order", "in_fallback_chain"],
         "additionalProperties": false
       },
-      "description": "Roles the preset class rules do not apply to: each follows its own class order under every preset, and that is never a last-resort crossing."
+      "description": "Roles the preset class rules do not apply to: each follows its own class order under every preset, and that is never a last-resort crossing. `check` refuses a class order here that names a hosted class: no preset's localities bind these roles, so the order itself keeps them on links that do not leave the machine."
     },
     "card_roles": {
       "type": "array",
