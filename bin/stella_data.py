@@ -1056,20 +1056,16 @@ def inside_state(rel, idx):
         return False
 
 
-def has_links(mode, x):
-    """Whether a preset `mode` gives a role (x: its row of the preset's roles) anything to resolve from, as the resolver builds
-    a chain: off, or a pin, a fallback, a class order (its own, else the preset's), a last resort (likewise) or a needs class."""
-    return bool(not x["active"] or x.get("pins") or x.get("fallbacks") or x.get("class_order", mode.get("class_order"))
-                or (x["last_resort"] if "last_resort" in x else mode.get("last_resort")) is not None or mode.get("needs_class") is not None)
-
-
 def rule_presets(c):
     """The presets (effort modes) against the routing data, the catalog and the role table (F2 D1.9): every class, preset and
     role a preset names exists; no preset turns off a role the workflow requires (always, or under a trigger that can fire:
     OFF_REQUIRED) or an exempt role (it stays on under every preset); no active role keeps a pin or a fallback that
-    link_problems() refuses (CHAIN_FAILS; an inactive role's links are not judged); no active role is left with no link at
-    all (W1-RT-02: nothing to resolve from is off in effect; OFF_REQUIRED for a role the workflow requires, else CHAIN_FAILS)."""
+    link_problems() refuses (CHAIN_FAILS; an inactive role's links are not judged); no active role is left with no link that
+    can serve it (W1-RT-02, W1-RT-10: off in effect; OFF_REQUIRED for a role the workflow requires, else CHAIN_FAILS): of its
+    pins, its fallbacks and the catalog's links of its class order, needs class and last resort, one at least passes
+    link_problems() (the owner's global assignment for the role counts: the assignment rule judges its chain)."""
     P, table, conn = c["P"], c["table"], c["by"].get("connections", {})
+    flat = lambda order: {k for it in order for k in (it if isinstance(it, list) else [it])}
     roles = set(table["roles"]) - {table["fallback_role"]}   # the fail-closed row is no role to route
     for _, rt in c["whole"].get("routing", []):
         classes, wf, exempt = {x["id"] for x in rt["link_classes"]}, rt["workflow"], {x["role"] for x in rt["exempt_roles"]}
@@ -1081,6 +1077,19 @@ def rule_presets(c):
             owned = {(a["role"], a["effort_mode"]) for a in ra["assignments"] if a["scope"]["level"] == "global"}   # the owner's pins, in every project
             for pid, mode in ra["effort_modes"].items():
                 w = f"preset {kname(pid)}"
+
+                def judged(r, last, prov, model):   # as the resolver: the preset's localities bind neither an exempt role nor a link of the last-resort class
+                    free = r in exempt or last is not None and link_class(prov, model, rt) == last
+                    return link_problems(table, r, prov, model, None if free else mode["allowed_localities"], pid)
+
+                def linked(r):   # an active role has a link that can serve it; a role the preset does not list follows the preset and is active
+                    x = mode.get("roles", {}).get(r, {"active": True})
+                    last = x["last_resort"] if "last_resort" in x else mode.get("last_resort")
+                    its = flat(x.get("class_order", mode.get("class_order", []))) | ({mode.get("needs_class"), last} - {None})
+                    named = [(entry(conn, l["connection"]), l["model"]) for f in ("pins", "fallbacks") for l in x.get(f, [])]
+                    return not x["active"] or (r, pid) in owned or any(not judged(r, last, p, m) for p, m in
+                        [(p, m) for p, m in named if p and p["kind"] == "provider"]
+                        + [(p, m["id"]) for p in conn.values() if p["kind"] == "provider" for m in p["models"] if link_class(p, m["id"], rt) in its])
                 if mode.get("based_on") is not None and mode["based_on"] not in ra["effort_modes"]:
                     P(rid, f"{w}: based_on ({desc(mode['based_on'])}) is not a preset")
                 known = {r: x for r, x in mode.get("roles", {}).items() if r in roles}
@@ -1105,17 +1114,14 @@ def rule_presets(c):
                             prov = entry(conn, l["connection"])
                             if prov is None or prov["kind"] != "provider":
                                 continue   # its x-ref (connections, kind provider) refuses it, naming the field
-                            # as the resolver: the preset's localities bind neither an exempt role nor a link of the last-resort class
-                            free = r in exempt or last is not None and link_class(prov, l["model"], rt) == last
-                            miss = link_problems(table, r, prov, l["model"], None if free else mode["allowed_localities"], pid)
+                            miss = judged(r, last, prov, l["model"])
                             if miss:
                                 P(rid, Coded(CHAIN_FAILS, f"{w}: role {idn(r, True)}: {f}[{i}] fails the role's requirements ({'; '.join(miss)})"))
-                # an active role with nothing to resolve from: a role the preset does not list follows the preset and is active
-                bare = {r for r in roles - exempt if (r, pid) not in owned and not has_links(mode, mode.get("roles", {}).get(r, {"active": True}))}
+                bare = {r for r in roles - exempt if not linked(r)}
                 for code, rs, why in ((OFF_REQUIRED, bare & need, ", which the workflow requires (routing data, workflow.required_roles)"), (CHAIN_FAILS, bare - need, "")):
                     if rs:
-                        P(rid, Coded(code, f"{w} gives no link to {', '.join(idn(r, True) for r in sorted(rs))}{why}: "
-                                           "active with no pin, class order, needs class, fallback or last resort"))
+                        P(rid, Coded(code, f"{w} gives no link to {', '.join(idn(r, True) for r in sorted(rs))}{why}: active, and no pin, fallback or "
+                                           "link of its class order, needs class or last resort can serve it (connection, model and role rules)"))
 
 
 def rule_routing(c):

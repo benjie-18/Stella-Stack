@@ -395,8 +395,9 @@ listing the role or not allowing every data class it handles, a CLI login withou
 meeting the role's requirements by the catalog's advertised capabilities, a null one meeting none, the link outside the
 preset's `allowed_localities` unless its class is the role's last resort) (STL-MDL-726; an inactive role's links are not
 judged; a preset has no project, so the project's policy and grants are judged for an assignment and by the resolver); a
-preset that leaves an active role no link at all: no pin (its own, or the owner's global assignment), class order, needs
-class, fallback or last resort (STL-MDL-725 for a required role, else STL-MDL-726); an empty class order; a link class with
+preset that leaves an active role no link that can serve it: of its pins, its fallbacks and the catalog's links of its class
+order, needs class and last resort, none passes the link judge (the owner's global assignment for the role counts as one)
+(STL-MDL-725 for a required role, else STL-MDL-726); an empty class order; a link class with
 `hosted: false` on a link that leaves the machine
 (by `reach()`; the locality rules themselves read `reach()` only, never the label); a hosted class whose `privacy_rank` is
 not above that of every class that is not hosted; an id listed twice, an exempt role too; an exempt role's class order

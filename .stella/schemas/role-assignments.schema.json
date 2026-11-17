@@ -146,7 +146,7 @@
           "no_silent_fallback"
         ],
         "additionalProperties": false,
-        "description": "A routing preset (F2 D1.1): an effort mode is a preset. Every key but the first two is optional; a role the preset does not list follows the preset's own values and is active. `check` refuses a preset that leaves an active role no link at all: no pin (the preset's, or the owner's global assignment for the role), class order, needs class, fallback or last resort."
+        "description": "A routing preset (F2 D1.1): an effort mode is a preset. Every key but the first two is optional; a role the preset does not list follows the preset's own values and is active. `check` refuses a preset that leaves an active role no link that can serve it: none of its pins, its fallbacks and the catalog's links of its class order, needs class and last resort passes the link judge (the owner's global assignment for the role counts as one)."
       },
       "propertyNames": {
         "pattern": "^[a-z0-9][a-z0-9._:-]*$"
