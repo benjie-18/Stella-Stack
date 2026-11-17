@@ -148,6 +148,26 @@ ok 'refuses x7' "4v a failover trigger set that lacks one of its triggers is ref
 mk x7b five; ed x7b routing.json '.failover.triggers["qa-zz-unknown"] = .failover.triggers[.failover.triggers | keys[0]]'
 ok 'refuses x7b && unseen' "4w an unknown failover trigger is refused"
 
+# ---- Gate B wave 3: W1-RT-09 (an exempt role stays off hosted classes), W1-RT-10 (a class order no link can serve is no chain) ----
+mk x9 five; ed x9 routing.json --arg l "$LOCAL" --arg h "$HOSTED" '.exempt_roles[0].class_order = [$l, $h]'
+ok 'refuses x9 && grep -q "exempt_roles\[0\].class_order names a hosted link class" "$T/o"' "4x an exempt role whose class order names a hosted class is refused"
+mk x9b five; ed x9b routing.json --arg l "$LOCAL" --arg h "$HOSTED" '.exempt_roles[0].class_order = [[$h, $l]]'
+ok 'refuses x9b && grep -q "names a hosted link class" "$T/o"' "4y the same inside a best-of group"
+# qa-void: a class that is not hosted; qa-bare: a preset whose only class it is. The fake connection's models take the class one by one.
+BARE='.effort_modes["qa-bare"] = {allowed_localities: ["local"], no_silent_fallback: false, class_order: ["qa-void"]}'
+VOID() { echo "(.entries[] | select(.id == \"qa-pin\")).models[$1].link_class = \"qa-void\""; }   # <index in MODELS>
+mk v1 five; ed v1 routing.json --arg l "$LOCAL" '.link_classes += [(.link_classes[] | select(.id == $l)) + {id: "qa-void"}]'
+ed v1 connections.json --argjson dc "$(jq -c .data_classes "$ROOT/.stella/data-policy.json")" '(.entries[] | select(.id == "qa-pin")).data_policy.data_classes_allowed = $dc'
+ed v1 role-assignments.json "$BARE"
+ok 'refuses v1 && grep -q "^$C_OFF .*qa-bare.*gives no link" "$T/o" && grep -q "^$C_CHAIN .*qa-bare.*gives no link" "$T/o"' \
+  "4z a preset whose only class no link of the catalog has is refused: $C_OFF for the required roles, $C_CHAIN for the others"
+mk v2 v1; ed v2 connections.json "$(VOID 2)"
+ok 'refuses v2 && grep -q "qa-bare.*gives no link to .*$PINROLE" "$T/o"' "4z-a the class holding only a model that fails a role's requirements gives that role no link"
+mk v3 v2; ed v3 connections.json "$(VOID 1)"
+ok 'passes v3' "4z-b control: one model of the class that meets every role's requirements, and the preset is valid"
+ed v3 connections.json '(.entries[] | select(.id == "qa-pin")).enabled = false'
+ok 'refuses v3 && grep -q "qa-bare.*gives no link" "$T/o"' "4z-c a link of the class is judged as a pin is: its connection switched off, and the roles have no link again"
+
 # ---- unknown ids fail closed, the value never printed ----
 u() {  # <root> <file> <jq filter> <text>
   mk "$1" five; ed "$1" "$2" --arg x qa-zz-unknown --arg l "$LOCAL" --arg p "$PINROLE" "$3"
@@ -325,6 +345,21 @@ for mode in --dry-run ""; do
 done
 ax "$AP" apply role-assignments --from "$T/c/applied.json" >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && cmp -s "$RAF" "$T/c/applied.json"' "15a control: the document last applied goes back over the damaged file (exit $rc: $(head -c 160 "$T/o" | tr '\n' ' '))"
+# W1-RT-11: a built-in update that arrives committed (a release merged outside the apply tool) is the baseline while the file
+# holds the committed bytes, whatever was applied before: the owner's next apply goes through, and putting the older built-in back does not
+jq --arg b "$B1" '.effort_modes[$b].changelog += [{at: "2026-11-16T00:00:00Z", by: "qa", what: "a release"}]' "$T/c/applied.json" >"$RAF"
+git -C "$A" -c user.name=t -c user.email=t@example.invalid commit -qam release >/dev/null 2>&1
+jq '.effort_modes["qa-after"] = (.effort_modes["qa-custom"] + {label: "QA after"})' "$RAF" >"$T/c/after.json"
+jq --slurpfile a "$T/c/applied.json" --arg b "$B1" '.effort_modes[$b] = $a[0].effort_modes[$b]' "$RAF" >"$T/c/undo.json"
+ax "$AP" apply role-assignments --from "$T/c/after.json" --dry-run >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && [ -z "$(git -C "$A" status --porcelain -- .stella/role-assignments.json)" ]' "16.1 after a committed update of a built-in preset, a candidate that adds a custom preset is accepted (dry run; exit $rc: $(head -c 160 "$T/o" | tr '\n' ' '))"
+n=1
+for mode in --dry-run ""; do
+  n=$((n+1)); s0=$(sha); ax "$AP" apply role-assignments --from "$T/c/undo.json" $mode >"$T/o" 2>&1; rc=$?
+  ok '[ $rc = 1 ] && coded "$C_BUILTIN" && [ "$(sha)" = "$s0" ]' "16.$n a candidate that puts the built-in preset of before the update back${mode:+ (dry run)} is refused with $C_BUILTIN (exit $rc)"
+done
+ax "$AP" apply role-assignments --from "$T/c/after.json" >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && cmp -s "$RAF" "$T/c/after.json"' "16.4 and the custom preset applies (exit $rc: $(head -c 160 "$T/o" | tr '\n' ' '))"
 aproot "$T/ap2"; rm -f "$RAF"   # never applied, the file gone: the committed document is the baseline
 jq --arg b "$B1" '.effort_modes["qa-made"] = (.effort_modes[$b] + {label: "QA made", based_on: $b} | del(.changelog))' "$RA" >"$T/c/b-new2.json"
 ax "$AP" apply role-assignments --from "$T/c/b-new2.json" >"$T/o" 2>&1; rc=$?
