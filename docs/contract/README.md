@@ -808,6 +808,13 @@ the read-only resolver at most. `route.py` holds no routing rule: it walks the c
   `route.py` is refused (STL-MDL-711) and the state keeps the task entries used last.
 - **The resolver's per-role view** is `resolve.role_view(role, project, card=None)` (the preset, class order and its
   source, last resort, pins and fallbacks `resolve()` itself uses); `settings.py explain` prints it.
+- **A project id given to the resolver** (the request's, a card facts record's, an assignment scope's) is a listed project
+  only when it is that project's id or `global_id` exactly. It is refused (STL-MDL-711) when it is a listed one but for
+  case or outer spaces, and when it does not match the pattern the data policy schema sets for a project key (an
+  invisible, full-width or look-alike character, a combining mark, an empty id), so a misspelling never drops a project's
+  private or Local only marking. An id that matches the pattern and is not listed follows the default policy.
+- **A cooldown the resolver reads** from the state file: an `until` that is text but no date counts as still ahead (the
+  link is `cooldown`, `cooldown_until` null), as `route.py` reads it.
 - **State** (index key `routing_state`, a protected state path; proof of nothing): `links` {`<connection>/<model>`, or
   `<connection>` for a trigger of scope `connection`: `trigger`, `since`, `until`, `failures`, `observed_limit`} and `tasks`
   {task: `switches`, `visited[]`, `history[]` {`link`, `trigger`, `at`}, `last`}; written whole under a lock, refused when it
