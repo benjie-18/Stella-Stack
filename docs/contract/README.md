@@ -795,15 +795,17 @@ the read-only resolver at most. `route.py` holds no routing rule: it walks the c
   The state file keeps `consents` {grant key: `request_id`, `kind`, `row`, `task`, `card`, `told`} and `queue` {task:
   `request_id`, `link`, `card`, `at`}; like the rest of it, they prove nothing.
 - **Notice.** A pick or switch to a class of higher `privacy_rank` than the class of the link the task used last (on a
-  task's first pick: of the chain's first link that is `usable` or `needs_grant`, never an excluded or cooling head) sends
-  one inbox alert and writes one event line with `consent.alert_code_notice`, whatever the grant.
+  task's first pick: of the chain's first link that is not `excluded`; a head that cools down or needs a grant is that bar,
+  only an excluded head is skipped) sends one inbox alert and writes one event line with `consent.alert_code_notice`,
+  whatever the grant.
 - **A switch is judged from the task's last link** (state field `last`), whoever caused the cooldown: picking any other
   link on a later call is a counted switch with the mid-task checks, also when the task goes back to an earlier link.
 - **Event lines** (trusted log): `routing.pick` (a call's or attempt's first link, with the resolver's `decision` reason),
   `routing.switch` (STL-MDL-721, `old.link` and `new.link`), `routing.switch-refused` (722), `routing.notice`,
   `routing.cooldown` (`result` cooled a link) and `routing.cooldown-cleared` (a success cleared it). No pick, switch or
   cooldown change by `result` happens without its line.
-- **Bounds.** One deadline (`CALL_TIMEOUT`) covers a whole answer body; a body that cannot be parsed, or holds no text and
+- **Bounds.** One wall-clock deadline (`CALL_TIMEOUT`) covers a whole call: name lookup, connect, status line, headers and
+  body; past it the result is `timeout`, whatever the server still sends. A body that cannot be parsed, or holds no text and
   no tool call, is `server_error`; no proxy variable of the environment is followed; a task id longer than the limit in
   `route.py` is refused (STL-MDL-711) and the state keeps the task entries used last.
 - **The resolver's per-role view** is `resolve.role_view(role, project, card=None)` (the preset, class order and its
@@ -819,7 +821,8 @@ the read-only resolver at most. `route.py` holds no routing rule: it walks the c
   -> {`backend`, `kind`, `ok`, `missing`}, which the CLI `credentials.py check [--json] [<name>...]` prints. The backend is `routing.json` `credentials`: kind `none` refuses every read (STL-MDL-728) until the secrets
   broker; kind `dir` is one file per name (this user's, 0600, one link, no symbolic link on the way, one line of printable
   ASCII). `route.py` reads the first name of the connection's `secrets[]`, puts it into the request header only, and it is in
-  no message, event, state or output.
+  no message, event, state or output: an answer that repeats the key is printed with the key masked, where it stands whole
+  and where it is glued to other characters.
 
 ## Alert codes
 `STL-CFG-310` (a data file is invalid), `STL-CFG-311` (a name is not in the data) and `STL-CFG-319` (an env-format row is

@@ -30,11 +30,13 @@ A step (one pick of a link, the same for call and attempt), in this order:
      waiting | queued, code?, request_id?} decides; with no card or no such module the task stops with STL-MDL-719 and one inbox
      alert, and no approval request is raised. A task that waits exits 3.
   5. a link of a less private class (higher privacy_rank) than the link the task used before (design D4), or, on the task's first
-     pick, than the chain's first link that is usable or needs a grant (never an excluded or cooling head): one inbox alert and one
-     event line with the routing data's consent.alert_code_notice, whatever the grant.
+     pick, than the chain's first link that is not excluded (a head that cools down or needs a grant is that bar; only an
+     excluded head is skipped): one inbox alert and one event line with the routing data's consent.alert_code_notice, whatever
+     the grant.
   6. one trusted event line: `routing.switch` (STL-MDL-721) from the link left, else `routing.pick` with the resolver's reason.
 A failure becomes a trigger by the wire shape's `errors` rows (status, body pattern; first match wins); the transport says timeout
-(the whole answer has one deadline of CALL_TIMEOUT seconds, however the bytes arrive) and server_error (no answer, no connection, an
+(the whole call has one wall-clock deadline of CALL_TIMEOUT seconds: name lookup, connect, status line, headers and body, however
+the bytes arrive) and server_error (no answer, no connection, an
 answer that cannot be parsed as JSON, whatever the reason, or that holds no text and no tool call) and the answer check says
 malformed_tool_call (tool-call arguments that do not parse). An error no row maps is no failover trigger: the task stops
 (STL-MDL-710). A redirect is never followed, and no proxy named in the environment is ever used. The prompt is read as bytes: what
@@ -48,7 +50,7 @@ A task id longer than MAX_TASK characters is refused (STL-MDL-711), and a write 
 shortcut: a task's entry leaves the state only when MAX_TASKS other tasks were used after it (its loop guard and history go with
 it), upgrade (prune at the task's end) when the board reports task ends to this tool.
 Keys: bin/credentials.py get, into the request header only; never in a message, an event, the state or the output (an answer that
-repeats the key is printed with the key masked).
+repeats the key is printed with the key masked, where it stands whole and where it is glued to other characters).
 Imports: run without -I the tool restarts itself under `python3 -I`; the consent module is imported from this tool's own folder only.
 Exit: 0 ok; 1 refused or failed (the catalog code and its plain message on stderr, {code, problem, ...} on stdout; an error the
 tool did not foresee is STL-CFG-310 with the error's type, never a traceback); 2 usage; 3 the task waits for the owner (a grant is
@@ -61,7 +63,7 @@ if __name__ == "__main__" and not sys.flags.isolated:   # run directly: PYTHONPA
     except OSError:   # fail closed: a tool that holds keys does not go on with modules it cannot vouch for
         sys.exit("STL-CFG-310 route.py could not restart itself isolated (python3 -I); nothing was called")
 
-import argparse, contextlib, datetime, http.client, ipaddress, json, re, subprocess, time, urllib.error, urllib.parse, urllib.request
+import argparse, contextlib, datetime, http.client, ipaddress, json, re, subprocess, threading, urllib.error, urllib.parse, urllib.request
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -85,7 +87,8 @@ UNEXPECTED = "STL-CFG-310"   # an error this tool did not foresee: one coded lin
 TIMEOUT_KEY = "CALL_TIMEOUT"   # the settings registry key: the seconds one model call may take
 TIMED_OUT, DOWN, MALFORMED = "timeout", "server_error", "malformed_tool_call"   # triggers no errors row of a wire shape can say
 CONTEXT_STUB = "routing-advertised-context"   # the features entry the context check rests on until F2b's probe
-USABLE, NEEDS_GRANT, GRANTED = "usable", "needs_grant", "granted"   # the resolver's and the consent gate's words
+USABLE, NEEDS_GRANT, EXCLUDED, GRANTED = "usable", "needs_grant", "excluded", "granted"   # the resolver's and the consent gate's words
+KEYS = set()   # the keys read in this run and their JSON-escaped forms: masked in the output wherever they stand, glued to other characters too
 TIME = "%Y-%m-%dT%H:%M:%SZ"
 HOST = re.compile(r"[A-Za-z0-9]([A-Za-z0-9.-]{0,253}[A-Za-z0-9])?")   # a host name or IPv4 address: nothing that could add a path or a user
 WAIT = 3
@@ -295,13 +298,14 @@ def advance(a, doc, rt, cat, refused, tokens=None):
             g = consent.gate(ctx_of(a), link)
             if g.get("status") != GRANTED:
                 raise Stop(g.get("code") or WAITING, f"task {a.task}: link {key} needs a grant (request {g.get('request_id')})", WAIT, alert=False)
-        # the notice's bar: the link the task used before (design D4); on a first pick the chain's first link that is usable or needs
-        # a grant, never an excluded or cooling head. A class the routing data does not rank, or a bar the chain no longer holds:
-        # the link's class counts as least private, the bar's as most (the owner is told).
-        base = next((e for e in chain if (resolve.link_key(e) == prev if prev else e["status"] in (USABLE, NEEDS_GRANT))), None) or {}
+        # the notice's bar: the link the task used before (design D4); on a first pick the chain's first link that is not excluded.
+        # Only an excluded head is skipped: a head that cools down or needs a grant is the bar, so a task that starts while a more
+        # private link cools is told of. A class the routing data does not rank, or a bar the chain no longer holds: the link's
+        # class counts as least private, the bar's as most (the owner is told).
+        base = next((e for e in chain if (resolve.link_key(e) == prev if prev else e["status"] != EXCLUDED)), None) or {}
         inf = float("inf")
         if rank.get(link.get("link_class"), inf) > rank.get(base.get("link_class"), -inf):
-            was = f"the link it used before ({prev}, class {base.get('link_class')})" if prev else f"the first link its chain offers (class {base.get('link_class')})"
+            was = f"the link it used before ({prev}, class {base.get('link_class')})" if prev else f"the first link of its chain that is not excluded (class {base.get('link_class')})"
             code, problem = rt["consent"]["alert_code_notice"], f"task {a.task} uses link {key} (class {link.get('link_class')}), less private than {was}"
             alert(code, problem)
             event("routing.notice", a, code, new={"link": key, "link_class": link.get("link_class")}, detail=problem)
@@ -390,6 +394,32 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 OPENER = urllib.request.build_opener(NoRedirect, urllib.request.ProxyHandler({}))   # no proxy from the environment, ever: the prompt and the key go to the catalog's host
 
 
+def fetch(req, timeout):
+    """(status, raw answer) of one request. One wall-clock deadline covers the whole call (name lookup, connect, status line,
+    headers, body): past it TimeoutError, whatever the server still sends.
+    shortcut: a call cut at the deadline leaves its thread behind until that thread's own socket wait ends or the process does, upgrade to a transport that can be cancelled when streaming lands."""
+    got = []
+
+    def work():
+        try:
+            try:
+                with OPENER.open(req, timeout=timeout) as r:
+                    got.append((r.status, r.read(el.MAX_FILE + 1)))
+            except urllib.error.HTTPError as e:
+                got.append((e.code, e.read(el.MAX_FILE + 1)))
+        except Exception as e:   # handed to the caller, which classes it
+            got.append(e)
+
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+    t.join(timeout)
+    if not got:
+        raise TimeoutError
+    if isinstance(got[0], Exception):
+        raise got[0]
+    return got[0]
+
+
 def send(prov, proto, link, prompt, key, timeout, local):
     """One request to the link: (answer, None, status) or (None, trigger, status); trigger None with no answer: no row maps the error.
     No text of an exception or of an error answer leaves here (either could repeat the key)."""
@@ -406,19 +436,8 @@ def send(prov, proto, link, prompt, key, timeout, local):
     body = json.dumps(render(rq["body"], vals, mt if type(mt) is int else None)).encode()
     headers = {"Content-Type": "application/json", **{k: render(v, dict(vals, key=key or "")) for k, v in rq["headers"].items() if key or "{key}" not in v}}
     req = urllib.request.Request(f"{'http' if plain else 'https'}://{h['host']}:{h['port']}{path}", data=body, headers=headers, method=rq.get("method", "POST"))
-    end = time.monotonic() + timeout   # one deadline for the whole answer: a server that drips bytes holds no task
     try:
-        try:
-            r = OPENER.open(req, timeout=timeout)
-            status = r.status
-        except urllib.error.HTTPError as e:
-            r, status = e, e.code
-        with r:   # shortcut: the deadline is checked between reads, so a status line or headers that drip in are bounded per socket wait only; upgrade with a timer around the whole call when streaming lands
-            raw = b""
-            while len(raw) <= el.MAX_FILE and (chunk := r.read1(1 << 16)):
-                raw += chunk
-                if time.monotonic() > end:
-                    raise TimeoutError
+        status, raw = fetch(req, timeout)   # one deadline for the whole call: a server that drips bytes, in the head or the body, holds no task
     except (OSError, http.client.HTTPException, ValueError) as e:
         slow = isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError)
         return None, TIMED_OUT if slow else DOWN, None
@@ -452,9 +471,12 @@ def resolved(a, rt, mid):
 
 
 def out(a, link, hist, refused, stubs, **more):
-    """The one output line, scrubbed: an answer may repeat the key it was sent."""
-    print(el.scrub(json.dumps({"task": a.task, "link": {"connection": link["connection"], "model": link["model"]}, "link_class": link.get("link_class"),
-                               "parameters": link.get("parameters") or {}, **more, "failure_history": hist, "refused": refused, "stubs": stubs})))
+    """The one output line with no key in it: an answer may repeat the key it was sent, whole or glued to other characters."""
+    line = json.dumps({"task": a.task, "link": {"connection": link["connection"], "model": link["model"]}, "link_class": link.get("link_class"),
+                       "parameters": link.get("parameters") or {}, **more, "failure_history": hist, "refused": refused, "stubs": stubs})
+    for k in sorted(KEYS, key=len, reverse=True):   # wherever it stands; the scrub alone masks a value only where it stands whole
+        line = line.replace(k, el.MASK) if k else line
+    print(el.scrub(line))
 
 
 def cmd_call(a):
@@ -477,7 +499,9 @@ def cmd_call(a):
                 key = credentials.get(prov["secrets"][0])
             except credentials.Refused as x:
                 raise Stop(x.code, f"link {resolve.link_key(link)}: {x.problem}") from None
-            el.SECRETS.update((key, json.dumps(key)[1:-1]))   # scrubbed from every event detail, alert text and output of this run (the output is JSON: its escaped form too)
+            forms = (key, json.dumps(key)[1:-1])   # the output is JSON: the key's escaped form too
+            KEYS.update(forms)
+            el.SECRETS.update(forms)   # scrubbed from every event detail, alert text and output of this run
         for _ in range(rt["failover"]["retry_count"] + 1):
             ans, trigger, status = send(prov, protos[prov["protocol"]], link, prompt, key, timeout, local)
             if ans is not None:
