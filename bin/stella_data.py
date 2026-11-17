@@ -1121,8 +1121,9 @@ def rule_presets(c):
 def rule_routing(c):
     """The routing data against itself, the role table, the alert catalog and the index: ids listed once, an exempt role too; a
     hosted class less private than every class that is not hosted (W1-RT-06); every role it names is assignable; an exempt
-    role's class order names known classes; a required role's `when` is always or a trigger; a cooldown is not above its cap;
-    consent names an approval class and alert codes that exist; the credentials backend in use is defined, and a dir backend lies inside a protected state path (DC-05: no role may read the keys)."""
+    role's class order names known classes, none of them hosted (W1-RT-09); a required role's `when` is always or a trigger;
+    a cooldown is not above its cap; consent names an approval class and alert codes that exist; the credentials backend in
+    use is defined, and a dir backend lies inside a protected state path (DC-05: no role may read the keys)."""
     P, table = c["P"], c["table"]
     roles = set(table["roles"]) - {table["fallback_role"]}
     for rid, rt in c["whole"].get("routing", []):
@@ -1140,9 +1141,12 @@ def rule_routing(c):
                 + [(f"workflow.required_roles[{i}].role", x["role"]) for i, x in enumerate(wf["required_roles"])]:
             if r not in roles:
                 P(rid, f"{at}: {nm(r, table['roles'], 'it')} is not an assignable role in the role table")
+        hosted = {y["id"] for y in rt["link_classes"] if y["hosted"]}
         for i, x in enumerate(rt["exempt_roles"]):
             for m in order_problems(x["class_order"], {y["id"] for y in rt["link_classes"]}, f"exempt_roles[{i}].class_order"):
                 P(rid, m)
+            if hosted & {k for it in x["class_order"] for k in (it if isinstance(it, list) else [it])}:   # W1-RT-09: no preset's localities bind an exempt role
+                P(rid, f"exempt_roles[{i}].class_order names a hosted link class: an exempt role stays on links that do not leave the machine under every preset")
         for i, x in enumerate(wf["required_roles"]):
             if x["when"] != "always" and x["when"] not in wf["triggers"]:
                 P(rid, f"workflow.required_roles[{i}].when ({desc(x['when'])}) is neither always nor a trigger of workflow.triggers")

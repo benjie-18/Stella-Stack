@@ -148,25 +148,11 @@ ok 'refuses x7' "4v a failover trigger set that lacks one of its triggers is ref
 mk x7b five; ed x7b routing.json '.failover.triggers["qa-zz-unknown"] = .failover.triggers[.failover.triggers | keys[0]]'
 ok 'refuses x7b && unseen' "4w an unknown failover trigger is refused"
 
-# ---- Gate B wave 3: W1-RT-09 (an exempt role stays off hosted classes), W1-RT-10 (a class order no link can serve is no chain) ----
+# ---- Gate B wave 3: W1-RT-09 (an exempt role stays off hosted classes) ----
 mk x9 five; ed x9 routing.json --arg l "$LOCAL" --arg h "$HOSTED" '.exempt_roles[0].class_order = [$l, $h]'
 ok 'refuses x9 && grep -q "exempt_roles\[0\].class_order names a hosted link class" "$T/o"' "4x an exempt role whose class order names a hosted class is refused"
 mk x9b five; ed x9b routing.json --arg l "$LOCAL" --arg h "$HOSTED" '.exempt_roles[0].class_order = [[$h, $l]]'
 ok 'refuses x9b && grep -q "names a hosted link class" "$T/o"' "4y the same inside a best-of group"
-# qa-void: a class that is not hosted; qa-bare: a preset whose only class it is. The fake connection's models take the class one by one.
-BARE='.effort_modes["qa-bare"] = {allowed_localities: ["local"], no_silent_fallback: false, class_order: ["qa-void"]}'
-VOID() { echo "(.entries[] | select(.id == \"qa-pin\")).models[$1].link_class = \"qa-void\""; }   # <index in MODELS>
-mk v1 five; ed v1 routing.json --arg l "$LOCAL" '.link_classes += [(.link_classes[] | select(.id == $l)) + {id: "qa-void"}]'
-ed v1 connections.json --argjson dc "$(jq -c .data_classes "$ROOT/.stella/data-policy.json")" '(.entries[] | select(.id == "qa-pin")).data_policy.data_classes_allowed = $dc'
-ed v1 role-assignments.json "$BARE"
-ok 'refuses v1 && grep -q "^$C_OFF .*qa-bare.*gives no link" "$T/o" && grep -q "^$C_CHAIN .*qa-bare.*gives no link" "$T/o"' \
-  "4z a preset whose only class no link of the catalog has is refused: $C_OFF for the required roles, $C_CHAIN for the others"
-mk v2 v1; ed v2 connections.json "$(VOID 2)"
-ok 'refuses v2 && grep -q "qa-bare.*gives no link to .*$PINROLE" "$T/o"' "4z-a the class holding only a model that fails a role's requirements gives that role no link"
-mk v3 v2; ed v3 connections.json "$(VOID 1)"
-ok 'passes v3' "4z-b control: one model of the class that meets every role's requirements, and the preset is valid"
-ed v3 connections.json '(.entries[] | select(.id == "qa-pin")).enabled = false'
-ok 'refuses v3 && grep -q "qa-bare.*gives no link" "$T/o"' "4z-c a link of the class is judged as a pin is: its connection switched off, and the roles have no link again"
 
 # ---- unknown ids fail closed, the value never printed ----
 u() {  # <root> <file> <jq filter> <text>

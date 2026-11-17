@@ -369,7 +369,8 @@ One owner-only document beside the presets: `link_classes[]` {`id`, `privacy_ran
 `class_defaults` {`local`, `aggregator`} (the class of a link that names none); `task_tiers[]` {`id`}; `drivers[]` {`id`,
 `mid_task`} (the engine's own loop may switch mid-task, a worker CLI only between attempts; a `cli-login` connection never
 switches mid-task); `exempt_roles[]` {`role`, `class_order`, `in_fallback_chain`} (the preset class rules do not apply to
-them, and that is never a crossing); `card_roles[]` (the roles that work a card: the resolver needs the card);
+them, and that is never a crossing; their class order names no hosted class, so they stay on links that do not leave the
+machine under every preset); `card_roles[]` (the roles that work a card: the resolver needs the card);
 `workflow` {`required_roles[]` {`role`, `when`: `always` or a trigger id}, `triggers{}` {`can_fire`}}; `failover` {`triggers{}`
 by id {`cooldown_s`, `max_cooldown_s`, `scope` link or connection} (exactly the trigger ids of the protocols schema, every
 one present: the schema pins the set), `same_connection_first`, `max_switches_per_task`,
@@ -393,7 +394,8 @@ preset that leaves an active role no link at all: no pin (its own, or the owner'
 class, fallback or last resort (STL-MDL-725 for a required role, else STL-MDL-726); an empty class order; a link class with
 `hosted: false` on a link that leaves the machine
 (by `reach()`; the locality rules themselves read `reach()` only, never the label); a hosted class whose `privacy_rank` is
-not above that of every class that is not hosted; an id listed twice, an exempt role too; a cooldown above its
+not above that of every class that is not hosted; an id listed twice, an exempt role too; an exempt role's class order
+that names a hosted class; a cooldown above its
 cap; a consent approval class or alert code that does not exist; a credentials backend that is not defined, and a `dir`
 backend whose path is not inside a protected state path of the index; a grant whose scope level and project disagree, or
 whose scope names its project by a global_id (a grant names the alias). The policies of a project come from one helper,
@@ -401,8 +403,10 @@ whose scope names its project by a global_id (a grant names the alias). The poli
 **Built-in presets.** `bin/stella-apply.py apply` (a dry run too) refuses a candidate that changes any key of a preset marked
 `builtin: true`, drops it, or marks another preset `builtin: true` (a new id, or a custom preset turned into one: the owner
 could not edit or remove it afterwards) (STL-MDL-727, `stella_data.frozen()`); a custom preset (a new id, `builtin` false or
-absent) applies and can be changed. The comparison is with the file only while the file holds its baseline's bytes (the
-applied ones; never applied: the committed ones). A file edited by hand, damaged or missing is compared instead with the
+absent) applies and can be changed. The comparison is with the file only while the file holds the applied bytes or the
+committed ones: an update of a built-in preset that arrives committed (a release merged outside the apply tool) is the
+baseline whatever was applied before, so the owner's next apply goes through and a candidate that puts the older built-in
+back is refused. A file edited by hand, damaged or missing is compared instead with the
 document last applied, or, that not known, the committed one: a hand edit of a built-in preset is never recorded by an apply
 of the edited file, and putting the baseline's presets back is allowed. A candidate that drops a built-in preset something still names is refused by the validity check
 first (STL-CFG-313). `routing_state` and `card_facts` are protected state paths (`bin/roles.py` STATE_KEYS): no role reads or
