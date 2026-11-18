@@ -5,6 +5,7 @@
       "id": "chat-completions",
       "request": {
         "method": "POST",
+        "output_shape": {"strict_schema": "/response_format/json_schema/schema", "grammar": "/grammar"},
         "path": "/v1/chat/completions",
         "headers": {"Authorization": "Bearer {key}"},
         "body": {
@@ -19,6 +20,7 @@
         "tool_calls": "/choices/0/message/tool_calls",
         "usage": "/usage",
         "model": "/model",
+        "logprobs": "/choices/0/logprobs/content",
         "usage_keys": ["prompt_tokens", "completion_tokens"],
         "tool_calls_sample": [{"id": "call-1", "type": "function", "function": {"name": "noop", "arguments": "{arguments}"}}]
       },
@@ -31,12 +33,13 @@
         {"status": "5xx", "trigger": "server_error", "sample_body": "{\"error\": {\"message\": \"internal error\"}}"}
       ],
       "models_path": "/v1/models",
-      "models_list": {"items": "/data", "field": "id", "prefix": ""}
+      "models_list": {"items": "/data", "field": "id", "prefix": "", "family": "family", "version": "version"}
     },
     {
       "id": "messages",
       "request": {
         "method": "POST",
+        "output_shape": {"strict_schema": "/output_format/schema"},
         "path": "/v1/messages",
         "headers": {"x-api-key": "{key}", "content-type": "application/json"},
         "body": {
@@ -63,12 +66,13 @@
         {"status": "5xx", "trigger": "server_error", "sample_body": "{\"error\": {\"message\": \"overloaded\"}}"}
       ],
       "models_path": "/v1/models",
-      "models_list": {"items": "/data", "field": "id", "prefix": ""}
+      "models_list": {"items": "/data", "field": "id", "prefix": "", "family": "family", "version": "version"}
     },
     {
       "id": "generate-content",
       "request": {
         "method": "POST",
+        "output_shape": {"strict_schema": "/generationConfig/responseSchema"},
         "path": "/v1beta/models/{model}:generateContent",
         "headers": {"x-goog-api-key": "{key}"},
         "body": {
@@ -94,7 +98,7 @@
         {"status": "5xx", "trigger": "server_error", "sample_body": "{\"error\": {\"status\": \"INTERNAL\", \"message\": \"internal error\"}}"}
       ],
       "models_path": "/v1beta/models",
-      "models_list": {"items": "/models", "field": "name", "prefix": "models/"}
+      "models_list": {"items": "/models", "field": "name", "prefix": "models/", "family": "family", "version": "version"}
     }
   ]
 }

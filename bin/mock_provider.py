@@ -3,12 +3,13 @@
 path prefix /<shape id>, and a model list per shape. Nothing here names a shape, a model or a trigger beyond the fault ids.
 First stdout line: {"port": N, "control": URL}. POST the control document to that URL (it replaces models and faults; call counts stay):
   {"models": {shape: [model ids]}, "faults": [{"shape", "model", "fault", "calls"?, "seconds"?, "tokens"?}]}
-faults: rate_limit daily_cap server_error model_gone context_too_small (the shape's own error row for that trigger),
+traits (control key "traits": [{"shape","model", answers, seed, logprob, recall_tokens, needle, grammar, family, version}]): answers = texts the model gives (first, or one per call by a generator seeded with seed); logprob = per-token items at the shape's response.logprobs, the label token carrying it; recall_tokens = needles in the prompt found only below that many tokens; grammar = a request with a schema at a request.output_shape pointer never gets the non_json fault; family, version = shown in the model list.
+faults: non_json (200 with text that is not JSON) rate_limit daily_cap server_error model_gone context_too_small (the shape's own error row for that trigger),
 timeout (no answer for `seconds`), malformed_tool_call (200 with a tool call whose arguments do not parse).
 A fault with "calls" fires that many times, without it until a new document. GET /_calls: {"counts": {"shape/model": n},
 "requests": [{"shape", "model", "headers", "body"}]}. The protocols file is read on every call: a new shape needs no restart.
 shortcut: state lives in memory and the control is a URL only (no control file), upgrade if a test must set faults before start."""
-import http.server, json, os, re, socket, sys, threading, time
+import http.server, json, os, random, re, socket, sys, threading, time
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -16,7 +17,8 @@ import stella_data as sd
 
 REL = ".stella/protocols.json"
 LOCK = threading.Lock()
-STATE = {"models": {}, "faults": [], "counts": {}, "requests": []}
+STATE = {"models": {}, "faults": [], "counts": {}, "requests": [], "traits": {}}
+NEEDLE = r"\b[A-Z]{1,4}\d{3,}\b"   # what a planted needle looks like in a prompt, unless a trait names needle
 
 
 def shapes():
@@ -75,6 +77,27 @@ def model_of(tmpl, actual, pat=BODY_ID):
     return None
 
 
+def getpath(d, p):
+    try:
+        for x in p.split("/")[1:]:
+            d = d[int(x)] if isinstance(d, list) else d[x]
+        return d
+    except (KeyError, IndexError, ValueError, TypeError):
+        return None
+
+def tokens_of(text, lp):
+    """Per-token items that join to text; the label (the first string value of a JSON verdict, else the first word) is one token and carries lp."""
+    try:
+        v = json.loads(text)
+        label = next((x for x in (v.values() if isinstance(v, dict) else [v]) if isinstance(x, str) and x), None)
+    except ValueError:
+        label = None
+    label = label or (text.split() or [""])[0]
+    i = max(text.find(label), 0)
+    pre, post = text[:i], text[i + len(label):]
+    toks = [(t, 0.0) for t in re.findall(r"\w+|\W", pre)] + [(label, lp)] + [(t, 0.0) for t in re.findall(r"\w+|\W", post)]
+    return [{"token": t, "logprob": w} for t, w in toks if t]
+
 def status_of(spec):
     """A status to answer for a status spec of errors[]: an integer, [lo, hi], "5xx", "500-599"."""
     if isinstance(spec, int):
@@ -110,7 +133,15 @@ class H(http.server.BaseHTTPRequestHandler):
             gone = {f["model"] for f in STATE["faults"] if f["shape"] == shape and f["fault"] == "model_gone" and f["left"] != 0}
             ids = [m for m in STATE["models"].get(shape, []) if m not in gone]
         doc = {}
-        setptr(doc, ml["items"], [{ml["field"]: ml["prefix"] + m} for m in ids])
+        items = []
+        for m in ids:
+            it = {ml["field"]: ml["prefix"] + m}
+            for k in ("family", "version"):   # metadata the control document set for this model, at the item field the shape names
+                v = STATE["traits"].get((shape, m), {}).get("tr", {}).get(k)
+                if ml.get(k) and v is not None:
+                    it[ml[k]] = v
+            items.append(it)
+        setptr(doc, ml["items"], items)
         self.send(200, doc)
 
     def do_POST(self):
@@ -125,10 +156,16 @@ class H(http.server.BaseHTTPRequestHandler):
                        not all(isinstance(f.get(k, 0), (int, float)) and not isinstance(f.get(k, 0), bool) for k in ("calls", "seconds", "tokens")):
                         return self.send(400, {"error": "each fault needs a shape, a model and a fault (text), and calls, seconds, tokens only as numbers"})
                 models = {k: list(v) for k, v in d.get("models", {}).items()}
+                traits = {}
+                for t in d.get("traits", []):
+                    if not all(isinstance(t.get(k), str) and t[k] for k in ("shape", "model")):
+                        return self.send(400, {"error": "each trait needs a shape and a model (text)"})
+                    # the seed makes the sample sequence repeat with the same document
+                    traits[(t["shape"], t["model"])] = {"tr": t, "rng": random.Random(t.get("seed"))}
             except (ValueError, AttributeError, TypeError):
                 return self.send(400, {"error": "bad control document"})
             with LOCK:
-                STATE.update(models=models, faults=faults)   # counts survive a new document
+                STATE.update(models=models, faults=faults, traits=traits)   # counts survive a new document
             return self.send(200, {"ok": True})
         shape, e, rest = self.shape(self.path.split("?")[0])
         if e is None:
@@ -146,17 +183,23 @@ class H(http.server.BaseHTTPRequestHandler):
             STATE["requests"].append({"shape": shape, "model": model, "headers": dict(self.headers), "body": body})
             f = self.pick(shape, model, len(raw) // 4) if m else None
             served = model in STATE["models"].get(shape, [])
+            tr = STATE["traits"].get((shape, model))
+            tr = tr and dict(tr["tr"], pick=tr["rng"].random() if "seed" in tr["tr"] else None, n=len(raw) // 4, raw=raw) or {}
         if not m:   # counted and recorded above, like every call
             return self.send(404, {"error": "no such path"})
         if f is None and not served:
             f = {"fault": "model_gone"}   # a model nobody serves is gone
         fault = f and f["fault"]
+        outs = [p for p in (e["request"].get("output_shape") or {}).values() if isinstance(body, dict) and getpath(body, p) is not None]
+        if fault == "non_json" and tr.get("grammar") and outs:
+            fault = None   # the link enforces the schema it was sent: its text is always JSON
+            tr = dict(tr, enforce=True)
         if fault == "timeout":
             time.sleep(float(f.get("seconds", 30)))
             self.close_connection = True
             return
-        if fault in (None, "malformed_tool_call"):
-            return self.send(200, self.answer(e, model, fault))
+        if fault in (None, "malformed_tool_call", "non_json"):
+            return self.send(200, self.answer(e, model, fault, tr))
         row = next((x for x in e["errors"] if x["trigger"] == fault), None)
         if row is None:
             return self.send(500, {"error": f"{fault}: this shape has no error row for it"})
@@ -181,10 +224,23 @@ class H(http.server.BaseHTTPRequestHandler):
                 return f
         return None
 
-    def answer(self, e, model, fault):
+    def answer(self, e, model, fault, tr=None):
         r = e["response"]
+        tr = tr or {}
         doc = {}
-        setptr(doc, r["text"], "ok")
+        ans = tr.get("answers") or ["ok"]
+        text = ans[int(tr["pick"] * len(ans))] if tr.get("pick") is not None else ans[0]
+        if tr.get("recall_tokens") is not None:   # needles are found only in a short prompt
+            found = re.findall(tr.get("needle") or NEEDLE, tr["raw"]) if tr["n"] < tr["recall_tokens"] else []
+            text = " ".join(found) or "ok"
+        if tr.get("enforce"):
+            try: json.loads(text)
+            except ValueError: text = json.dumps(text)
+        if fault == "non_json":
+            text = "this is not json"
+        setptr(doc, r["text"], text)
+        if tr.get("logprob") is not None and r.get("logprobs"):
+            setptr(doc, r["logprobs"], tokens_of(text, tr["logprob"]))
         setptr(doc, r["model"], model)
         k = r.get("usage_keys") or ["input_tokens", "output_tokens"]
         setptr(doc, r["usage"], {k[0]: 1, k[1]: 1})
