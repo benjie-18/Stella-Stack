@@ -594,6 +594,23 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
+      "id": "probe",
+      "kind": "command",
+      "summary": "Capability probe of a model link (host only): tries the link through its wire shape and records tool calling, parallel tool calls, JSON, the strongest output shape it proves, family and effective context per model version in the probe records (protected state, index key probe_records); one probe.recorded event line per record; due lists the links whose model version has no record; check judges the file.",
+      "keywords": ["probe", "capability", "effective context", "output shape", "tool calling", "model version"],
+      "inputs": "run --connection C --model M [--again] --json | due --json | show [--connection C] [--model M] --json | check --json",
+      "outputs": "JSON (run: the record; due: {due, unreachable}; show: {records, problem}; check: {ok, records, problem}); exit 1 with a catalog code (STL-MDL-734 unknown link, 735 version already probed, 736 no usable answer, STL-CFG-312 in a worker environment)",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/probe.py",
+      "triage": {"result": "shipped"},
+      "global_id": "46fc96f9-0a61-4272-b945-15ff810c9410",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
       "id": "consent",
       "kind": "command",
       "summary": "Routing consent: the accept popup for a link that needs a grant, project-scoped grants applied through the apply tool, unattended queue; pending, complete, revoke",

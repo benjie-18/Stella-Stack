@@ -46,6 +46,11 @@
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The failover state (F2 D1.7): cooldowns per link and the switches of each task; written on the host only; a protected state path. Never proof of a grant or an approval."
     },
+    "probe_records": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The capability probe's records (F2b B), one file (schema probes): what bin/probe.py found out about each model version by trying it; written on the host only; a protected state path, not a data file (no role writes it, git never holds it). bin/probe.py check judges it."
+    },
     "card_facts": {
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
@@ -147,6 +152,7 @@
     "event_writer_state",
     "routing_state",
     "card_facts",
+    "probe_records",
     "untrusted_events",
     "event_writer_id",
     "files"

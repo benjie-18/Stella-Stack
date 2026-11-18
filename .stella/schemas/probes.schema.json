@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Capability probe records",
+  "description": "What bin/probe.py found out about one model of one connection at one model version, by trying it (never by the catalog's word). Written by the probe on the host only. A capability the probe could not test is null, and null meets no requirement. output_shape is an id of routing probe.output_shapes (checked against the routing data).",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "records": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "properties": {
+          "global_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+          "install_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+          "connection": {"type": "string", "minLength": 1, "maxLength": 128},
+          "model": {"type": "string", "minLength": 1, "maxLength": 256},
+          "version": {"type": "string", "minLength": 1, "maxLength": 128},
+          "probed_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+          "family": {"type": ["string", "null"], "maxLength": 128},
+          "tool_calling": {"type": ["boolean", "null"]},
+          "parallel_tool_calls": {"type": ["boolean", "null"]},
+          "json": {"type": ["boolean", "null"]},
+          "vision": {"type": ["boolean", "null"]},
+          "output_shape": {"type": "string", "minLength": 1, "maxLength": 64},
+          "context": {
+            "type": "object",
+            "properties": {
+              "advertised": {"type": ["integer", "null"], "minimum": 0},
+              "effective": {"type": "integer", "minimum": 0},
+              "short_score": {"type": "number", "minimum": 0, "maximum": 1},
+              "points": {
+                "type": "array",
+                "maxItems": 16,
+                "items": {
+                  "type": "object",
+                  "properties": {"tokens": {"type": "integer", "minimum": 1}, "score": {"type": "number", "minimum": 0, "maximum": 1}},
+                  "required": ["tokens", "score"],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": ["advertised", "effective", "short_score", "points"],
+            "additionalProperties": false
+          },
+          "code": {"type": ["string", "null"], "pattern": "^STL-[A-Z]+-[0-9]{3}$"}
+        },
+        "required": ["global_id", "install_id", "connection", "model", "version", "probed_at", "family", "tool_calling", "parallel_tool_calls", "json", "vision", "output_shape", "context", "code"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["schema_version", "records"],
+  "additionalProperties": false
+}
