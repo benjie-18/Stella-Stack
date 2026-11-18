@@ -69,7 +69,7 @@ if [ "$(jq -r '[.events[]? | select(.kind == "blocked")] | last | .payload.kind 
   exit 0
 fi
 
-# Only the path that posts to #escalations needs its channel id; a capability hold (above) posts nothing there.
+# Only the path that posts to the escalations channel needs its id; a capability hold (above) posts nothing there.
 [ -n "$ESCALATIONS_CHANNEL_ID" ] || fail "ESCALATIONS_CHANNEL_ID is empty in config/owner.env" 3
 
 # The thread map is checked first: an existing thread for this card is reused, never re-created or re-announced.

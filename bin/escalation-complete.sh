@@ -16,7 +16,7 @@ row=$(map_row "$card")
 exec 8>"$SUP/state/complete.lock"
 flock 8                                        # hook and cron backstop never post twice
 done_for() { grep -q "^${card}"$'\t'"$1"$'\t' "$DONE" 2>/dev/null; }
-sup_done() { done_for supervisor || [ -z "${SUPERVISOR_CHANNEL_ID:-}" ]; }   # no #supervisor channel configured: that step is not owed
+sup_done() { done_for supervisor || [ -z "${SUPERVISOR_CHANNEL_ID:-}" ]; }   # no supervisor channel configured: that step is not owed
 done_for legacy && exit 0
 done_for thread && sup_done && done_for delete_prompt && exit 0
 
