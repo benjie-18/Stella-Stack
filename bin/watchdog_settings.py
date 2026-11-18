@@ -36,7 +36,7 @@ def zone(name):
     return ZoneInfo(name)
 
 
-OPTIONAL = ("test_rerun", "model_watch")   # --check skips these when absent; a consumer that needs one validates it by name
+OPTIONAL = ("test_rerun", "model_watch", "test_step")   # --check skips these when absent; a consumer that needs one validates it by name
 
 def validate(*only):
     """Problems with the settings file, as a list of strings (empty = valid). With names: only those sections (a consumer checks

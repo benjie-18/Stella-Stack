@@ -1118,7 +1118,7 @@ def rule_presets(c):
                             miss = judged(r, last, prov, l["model"])
                             if miss:
                                 P(rid, Coded(CHAIN_FAILS, f"{w}: role {idn(r, True)}: {f}[{i}] fails the role's requirements ({'; '.join(miss)})"))
-                bare = {r for r in roles - exempt if not table["roles"][r].get("optional") and not linked(r)}   # an optional role fails when asked for, not here
+                bare = {r for r in roles - exempt if (r in need or not table["roles"][r].get("optional")) and not linked(r)}   # an optional role fails when asked for, not here; a required one is never optional
                 for code, rs, why in ((OFF_REQUIRED, bare & need, ", which the workflow requires (routing data, workflow.required_roles)"), (CHAIN_FAILS, bare - need, "")):
                     if rs:
                         P(rid, Coded(code, f"{w} gives no link to {', '.join(idn(r, True) for r in sorted(rs))}{why}: active, and no pin, fallback or "

@@ -239,5 +239,7 @@ ok '[ "$(n "automatic test run failed")" = 1 ] && grep -q "nothing was tested" "
 reset; gw 'del(.test_step)'; $W >/dev/null 2>&1
 ok '[ "$(n "automatic test run failed")" = 1 ] && grep -q "nothing was tested" "$T/sup/sends"' "S4: a settings file with no test_step is a failed test step, not a silent pass"
 jq "del(.test_step)" $SET > "$T/nots.json"
-ok '! WATCHDOG_SETTINGS="$T/nots.json" python3 -I $WS --check >/dev/null 2>&1' "S4: --check refuses settings without test_step.npm_script"
+ok 'WATCHDOG_SETTINGS="$T/nots.json" python3 -I $WS --check >/dev/null 2>&1' "S4: --check passes settings without test_step (optional; the test step fails clearly when it runs, above)"
+jq ".test_step.npm_script = \"\"" $SET > "$T/nots.json"
+ok '! WATCHDOG_SETTINGS="$T/nots.json" python3 -I $WS --check >/dev/null 2>&1' "S4: --check refuses a test_step that is present with an empty npm_script"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

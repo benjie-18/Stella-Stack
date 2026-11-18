@@ -167,8 +167,12 @@ mk v3 v2; ed v3 connections.json "$(VOID 1)"
 ok 'passes v3' "4z-b control: one model of the class that meets every role's requirements, and the preset is valid"
 ed v3 connections.json '(.entries[] | select(.id == "qa-pin")).enabled = false'
 ok 'refuses v3 && grep -q "qa-bare.*gives no link" "$T/o"' "4z-c a link of the class is judged as a pin is: its connection switched off, and the roles have no link again"
-mk v4 v1; f="$T/v4/docs/hermes-local/roles.json"; jq '.roles |= map_values(.optional = true)' "$f" >"$f.n" && mv "$f.n" "$f"
-ok 'passes v4' "4z-d W1-RT-10: every role optional, so a preset no link can serve passes (it fails when the role is asked for); shipped data passes with look optional"
+# v3 serves every role but look (vision; no model of the fixture has it), which the shipped table marks optional
+f="$T/v3/docs/hermes-local/roles.json"; ok '[ "$(jq -r .roles.look.optional "$f")" = true ]' "4z-d W1-RT-10 setup: look is optional in the shipped table"
+mk v4 v3; f="$T/v4/docs/hermes-local/roles.json"; jq 'del(.roles.look.optional)' "$f" >"$f.n" && mv "$f.n" "$f"
+ok 'refuses v4 && grep -q "^$C_CHAIN .*qa-bare.*gives no link to .*look" "$T/o"' "4z-d the same data with look required is refused: the optional flag alone lets the preset pass (and it fails when look is asked for)"
+mk v5 v3; ed v5 routing.json '.workflow.required_roles += [{role: "look", when: "always"}]'
+ok 'refuses v5 && grep -q "^$C_OFF .*qa-bare.*gives no link to .*look" "$T/o"' "4z-e a role the workflow requires keeps its $C_OFF refusal although look is marked optional (optional never overrides workflow.required_roles)"
 
 # ---- unknown ids fail closed, the value never printed ----
 u() {  # <root> <file> <jq filter> <text>
