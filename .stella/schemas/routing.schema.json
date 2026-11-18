@@ -253,6 +253,44 @@
       "required": ["approval_class", "ttl_s", "alert_code_queue", "alert_code_notice"],
       "additionalProperties": false
     },
+    "builder_roles": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true,
+      "description": "The card roles that build (the QA loop's builder escalation applies to them only): each built-in preset ships an escalation_chain for every one. `check` refuses a role that is not a card role (card_roles)."
+    },
+    "effort": {
+      "type": "object",
+      "properties": {
+        "levels": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/id"},
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "The effort ids (a reasoning effort or thinking setting), lowest first: the only ids a link's parameters.effort and by_role may name (`check` refuses any other, here and in every link of the role assignments)."
+        },
+        "by_role": {
+          "type": "object",
+          "additionalProperties": {
+            "type": ["string", "object"],
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+            "properties": {
+              "default": {"$ref": "#/$defs/id"},
+              "tiers": {
+                "type": "object",
+                "additionalProperties": {"$ref": "#/$defs/id"},
+                "description": "Per task tier (task_tiers[]): the role's effort at that tier."
+              }
+            },
+            "additionalProperties": false
+          },
+          "description": "Per role of the role table: an effort id (the role's default), or {default, tiers}: its effort by task tier, else its default (the id form keeps a table of many roles a reference to the role table, not a copy of it, for the one-owner lint). `check` refuses a role, a tier or an effort id the data does not define."
+        }
+      },
+      "required": ["levels", "by_role"],
+      "additionalProperties": false,
+      "description": "Effort as data (F2b B3): every link the resolver answers carries `effort`: its parameters.effort when set, else by_role[role].tiers[tier], else by_role[role].default, else null. Absent: no effort id exists, so a link that names one is refused."
+    },
     "card_facts": {
       "type": "object",
       "properties": {

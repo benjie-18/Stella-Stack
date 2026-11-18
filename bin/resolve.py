@@ -4,7 +4,7 @@ role may use right now, and why. Read-only: no network, no write to any data fil
 routing_state; absent = no cooldown, no history) and the card facts store (index key card_facts) and creates neither. No role,
 preset, link class, tier, driver, provider or model is named in this file: every id comes from the data, and every rule is the
 one function of bin/stella_data.py (reach, policy_allows, route_problems, grant_in_force, link_class, unmet).
-CLI: resolve.py resolve --role R --project P [--card C] [--tier T] [--driver D] [--task ID] [--json]   (JSON is the only output)
+CLI: resolve.py resolve --role R --project P [--card C] [--tier T] [--driver D] [--task ID] [--rung N] [--json]   (JSON is the only output)
 Import: resolve(ctx) -> the same dict (ctx: {role, project, card, tier, driver, task}); link_key(link) -> "<connection>/<model>",
 the state file's key; role_view(role, project, card=None) -> what routing gives the role before any link is judged (its
 docstring has the keys), the one copy of that rule: resolve() reads it there. Both write nothing and alert nothing: a
@@ -14,7 +14,17 @@ does not list follows the default), local_only, tier, driver, chain[], decision 
 from the state file), stubs[] (features ids the answer rests on), apps[] {app, status, code, reason} (the card's apps),
 code, reason (null when a link is usable and no app is refused)}. A chain entry: {connection, model, parameters, link_class,
 source: pin:card|pin:project|pin:global|preset|fallback|last_resort, status: usable|needs_grant|cooldown|excluded, code,
-reason, grant: null or {kind: privacy, data_class} or {kind: crossing, to_class}, mid_task, cooldown_until}.
+reason, grant: null or {kind: privacy, data_class} or {kind: crossing, to_class}, mid_task, cooldown_until, effort: its
+parameters.effort, else routing effort.by_role[role].tiers[tier], else .default, else null}.
+Rung walk (F2b item D; --rung N >= 1, ctx["rung"]; 0 is the answer without it): rungs N.. of the role's escalation_chain in the
+active preset are judged alone in order by the rules below (rule 5's class order widened to the preset's needs class and last
+resort; the last resort outside the order still needs a crossing grant; an exempt role keeps its own order); an excluded or
+waiting (needs_grant) rung is skipped, the first other one served (a rung in cooldown is answered as itself, STL-MDL-724). The
+answer adds rung {requested, served, last, link, skipped[] {rung, connection, model, link_class, status, code, reason}} and its
+chain is [link] or []; none served: STL-MDL-731 (escalate to the owner), exit 1. The CLI alone writes the walk to the event log:
+one routing.rung-skipped line (STL-MDL-732) per skip, one routing.rung-exhausted line (731) when none is served; a line that cannot
+be written withdraws a served rung (the log's code) or, exhausted, names it in rung.log_code. --rung in a worker environment
+fails closed (STL-CFG-312) before anything is judged. A role the preset turns off answers as without --rung (NO_LINK, no rung key).
 Exit: 0 one usable link or more and no app refused; 1 no usable link (NO_LINK, the same JSON) or a refused card app (its
 code, the same JSON), or fail closed with one catalog line, one alert line and no JSON: an unknown role, tier, driver, card
 id, preset or link class, a role that works a card called with no card, a project id that is a listed one but for case or
@@ -38,7 +48,7 @@ Every link is judged by all the rules, in this order; the first that fails names
 Chain order: the owner's pins (card, project, global assignment rows), the preset's pins for the role, the catalog's links
 of each class of the order (a list item of the order is a group: best(), the one ranking), the preset's fallbacks, the
 last-resort class. A link listed twice keeps its first place."""
-import argparse, datetime, json, os, sys, types
+import argparse, datetime, json, os, re, sys, types
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -47,6 +57,7 @@ import stella_data as sd
 # spelled out: the alert selftest counts a code as used only when a script holds it as a literal
 NO_LINK, UNKNOWN, TERMS, AGGREGATOR, HARD = "STL-MDL-710", "STL-MDL-711", "STL-MDL-712", "STL-MDL-713", "STL-MDL-714"
 UNMET, POLICY, PRIVACY, CROSSING, COOLDOWN = "STL-MDL-715", "STL-MDL-716", "STL-MDL-717", "STL-MDL-718", "STL-MDL-724"
+EXHAUSTED, RUNG_SKIPPED, WORKER, LOG_FAILED = "STL-MDL-731", "STL-MDL-732", "STL-CFG-312", "STL-CFG-318"   # the rung walk (F2b item D)
 READS = ("role-assignments", "routing", "connections", "data-policy", "grants", "features")   # the schemas a resolve reads
 STUBS = ("routing-advertised-capabilities", "routing-advertised-context", "routing-observed-quota")   # features ids every answer rests on
 STUB_SCORES = "routing-advertised-scores"   # and this one when a group was ranked
@@ -158,7 +169,8 @@ def role_view(role, project, card=None, d=None):
      needs_class: the class resolve() puts first for a listed task tier or when no link of the order meets the role's
        requirements (null: none, always so for an exempt role and under Local only),
      last_resort (null for an exempt role and under Local only),
-     pins[] {scope: card|project|global, chain[]}: the owner's, in chain order, preset_pins[], fallbacks[]: the preset's for the role}"""
+     pins[] {scope: card|project|global, chain[]}: the owner's, in chain order, preset_pins[], fallbacks[]: the preset's for the role,
+     escalation_chain[]: the preset's rungs for the role (rung N is entry N-1)}"""
     d = d or _data(project)
     ra, rt = d.ra, d.rt
     known("role", role, set(d.table["roles"]) - {d.table["fallback_role"]})
@@ -186,11 +198,15 @@ def role_view(role, project, card=None, d=None):
     return {"role": role, "project": project, "card": card, "preset": {"id": preset, "source": source}, "local_only": d.local_only, "exempt": bool(exempt),
             "active": rp["active"], "class_order": order, "order_source": src, "needs_class": needs, "last_resort": last,
             "pins": [{"scope": lvl, "chain": a["chain"]} for lvl, a in scoped], "preset_pins": rp.get("pins", []),
-            "fallbacks": rp.get("fallbacks", []) if not exempt or exempt["in_fallback_chain"] else []}
+            "fallbacks": rp.get("fallbacks", []) if not exempt or exempt["in_fallback_chain"] else [], "escalation_chain": rp.get("escalation_chain", [])}
 
 
 def resolve(ctx):
-    role, project, card, tier, driver, task = (ctx.get(k) for k in ("role", "project", "card", "tier", "driver", "task"))
+    """The answer (module docstring). ctx["rung"] N >= 1 walks the role's escalation chain instead (0 or None: the chain). Pure:
+    no event line is written for a skipped or exhausted walk on this path; only the CLI (main) logs the walk."""
+    role, project, card, tier, driver, task, rung = (ctx.get(k) for k in ("role", "project", "card", "tier", "driver", "task", "rung"))
+    if rung is not None and (type(rung) is not int or rung < 0):
+        raise Refusal(UNKNOWN, "the rung is not a non-negative integer")
     now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     d = _data(project)
     idx, by, docs, ra, rt, table, conn, pols, alias, pid, policies, local_only = (
@@ -267,6 +283,9 @@ def resolve(ctx):
         known("link class", k, classes)
 
     req = table["roles"][role].get("requirements", {})
+    eff = rt.get("effort", {}).get("by_role", {}).get(role, {})
+    eff = {"default": eff} if isinstance(eff, str) else eff   # an id alone is the role's default
+    effort = lambda params: params["effort"] if params.get("effort") is not None else eff.get("tiers", {}).get(tier, eff.get("default"))
     need = req.get("allowed_data_classes", [])
     providers = [p for p in conn.values() if p["kind"] == "provider"]
     models = {(p["id"], m["id"]): m for p in providers for m in p["models"]}
@@ -310,8 +329,9 @@ def resolve(ctx):
                                                                          else "no link of the class order meets the role's requirements"))
     inorder = flat(order)
 
-    def judge(prov, model):
-        """(status, code, reason, grant, cooldown_until) of one link: the first rule that fails names it."""
+    def judge(prov, model, rung=False):
+        """(status, code, reason, grant, cooldown_until) of one link: the first rule that fails names it. A rung's class may also
+        be the preset's needs class or its last resort (rule 5 only); the last resort outside the order still needs a crossing grant."""
         cls, reach, no = sd.link_class(prov, model, rt), sd.reach(prov), early(prov, model)
         if no:
             return no
@@ -319,13 +339,13 @@ def resolve(ctx):
             return X(POLICY, "the link has no link class (its connection names none), so it is not routable")
         if not (exempt or local_only) and reach not in mode["allowed_localities"] and cls != last:   # Local only overrides the preset's localities
             return X(POLICY, f"preset {sd.idn(preset, True)} allows no link that is {reach} for routing")
-        if cls not in inorder and (exempt or cls != last):
+        if cls not in inorder and (exempt or cls not in ({last, needs} if rung else {last})):
             return X(POLICY, f"link class {sd.idn(cls, True)} is not in the class order of " + (
                 "this exempt role" if exempt else "the Local only policy" if local_only else f"preset {sd.idn(preset, True)} for this role"))
         probs = {m["kind"]: m for m in reversed(sd.route_problems(pols, need, prov, now, pid))}   # the first problem of each kind
         if "never" in probs:   # a class that never reaches a hosted link refuses before any grant is offered, a crossing grant too (DC-08)
             return X(POLICY, f"the connection {probs['never']['text']}")
-        if cls not in inorder and not any(g["preset"] == preset and g["to_class"] == cls and sd.grant_in_force(g, pid, now) for g in crossing):
+        if cls == last and cls not in inorder and not any(g["preset"] == preset and g["to_class"] == cls and sd.grant_in_force(g, pid, now) for g in crossing):
             return ("needs_grant", CROSSING, f"link class {sd.idn(cls, True)} is the last resort of preset {sd.idn(preset, True)}, and no crossing grant is in force here",
                     {"kind": "crossing", "to_class": cls}, None)
         if "grant" in probs:
@@ -338,15 +358,18 @@ def resolve(ctx):
     # ---- the chain
     seen = set()
 
+    def judged(prov, model, params, source, rung=False):
+        status, code, why, grant, until = judge(prov, model, rung)
+        return {"connection": prov["id"], "model": model, "parameters": params, "effort": effort(params), "link_class": sd.link_class(prov, model, rt), "source": source,
+                "status": status, "code": code, "reason": why, "grant": grant, "mid_task": False, "cooldown_until": until}
+
     def links(pairs, source):
         got = []
         for prov, model, params in pairs:
             if prov is None or prov["kind"] != "provider" or (prov["id"], model) in seen:
                 continue   # a pin that names no provider is refused by `check`; a link keeps its first place
             seen.add((prov["id"], model))
-            status, code, why, grant, until = judge(prov, model)
-            got.append({"connection": prov["id"], "model": model, "parameters": params, "link_class": sd.link_class(prov, model, rt), "source": source,
-                        "status": status, "code": code, "reason": why, "grant": grant, "mid_task": False, "cooldown_until": until})
+            got.append(judged(prov, model, params, source))
         return got
     pinned = lambda ls: [(sd.entry(conn, l["connection"]), l["model"], l["parameters"]) for l in ls]
     pins = [(pinned(p["chain"]), f"pin:{p['scope']}") for p in view["pins"]] + [(pinned(view["preset_pins"]), "preset")]
@@ -363,13 +386,40 @@ def resolve(ctx):
     if last is not None and last not in inorder:
         chain += links([(p, m, {}) for p, m in catalog([last])], "last_resort")
     drv, named = drivers.get(driver), {(p["id"], m) for ls, _ in pins for p, m, _ in ls if p}
-    for e in chain:   # mid-task only under a driver that allows it, never on a CLI login, on an aggregator only for the role pinned to that link
+
+    def mid(e):   # mid-task only under a driver that allows it, never on a CLI login, on an aggregator only for the role pinned to that link
         p = conn[e["connection"]]
         e["mid_task"] = bool(drv and drv["mid_task"]) and p["type"] != "cli-login" and (not p.get("aggregator") or (p["id"], e["model"]) in named)
+    for e in chain:
+        mid(e)
     out["chain"], out["decision"] = chain, {"rule": "best_suited" if ranked else "class_order", "reason": "; ".join(notes)}
     if ranked and sd.phases(feats.get(STUB_SCORES, {})):
         out["stubs"].append(STUB_SCORES)
     bad = next((a for a in apps if a["code"]), None)
+    if rung:   # the escalation chain: rungs N.. judged alone, in order; an excluded or waiting rung is skipped, the first other one served
+        rungs, skipped, link = view["escalation_chain"], [], None
+        for n in range(rung, len(rungs) + 1):
+            l, prov = rungs[n - 1], sd.entry(conn, rungs[n - 1]["connection"])
+            e = judged(prov, l["model"], l["parameters"], "rung", True) if prov and prov["kind"] == "provider" else {
+                "connection": l["connection"], "model": l["model"], "link_class": None, "status": "excluded", "code": UNKNOWN,
+                "reason": "the rung's connection is not a provider of the connections catalog"}   # skipped, never dropped: rung numbers stay
+            if e["status"] in ("usable", "cooldown"):   # a rung in cooldown is answered as itself: failover, not the walk, waits it out
+                mid(e)
+                link = (n, e)
+                break
+            skipped.append({"rung": n, **{k: e[k] for k in ("connection", "model", "link_class", "status", "code", "reason")}})
+        out["rung"] = {"requested": rung, "served": link and link[0], "last": len(rungs), "link": link and link[1], "skipped": skipped}
+        out["chain"] = [link[1]] if link else []
+        head = f"role {sd.idn(role, True)} under preset {sd.idn(preset, True)}: "
+        if link is None:
+            out["code"], out["reason"] = EXHAUSTED, head + (f"no rung from {rung} on is usable ({len(skipped)} skipped)" if skipped else
+                                                            f"its escalation chain has {len(rungs)} rung(s), none from {rung} on")
+        elif link[1]["status"] == "cooldown":
+            out["code"], out["reason"] = COOLDOWN, head + f"rung {link[0]}: {link[1]['reason']}"
+        elif bad:
+            out["code"], out["reason"] = bad["code"], f"card app {sd.idn(bad['app'], True)}: {bad['reason']}"
+        out["decision"] = {"rule": "rung", "reason": head + (f"rung {link[0]} of {len(rungs)} served" if link else "no rung served") + f", {len(skipped)} skipped"}
+        return out
     if not any(e["status"] == "usable" for e in chain):
         count = {s: sum(e["status"] == s for e in chain) for s in ("excluded", "needs_grant", "cooldown")}
         out["code"], out["reason"] = NO_LINK, (f"role {sd.idn(role, True)} under preset {sd.idn(preset, True)}: none of the {len(chain)} links of its chain is usable "
@@ -384,12 +434,52 @@ def main(argv):
     p.add_argument("command", choices=["resolve"])
     for flag, required in (("role", True), ("project", True), ("card", False), ("tier", False), ("driver", False), ("task", False)):
         p.add_argument(f"--{flag}", required=required)
+    p.add_argument("--rung", type=rung_arg, help="walk the role's escalation chain from rung N (0: the chain itself)")
     p.add_argument("--json", action="store_true", help="accepted: JSON is the only output")
-    out = resolve(vars(p.parse_args(argv)))   # a usage error exits 2 with a usage line (argparse)
+    a = vars(p.parse_args(argv))   # a usage error exits 2 with a usage line (argparse)
+    if a["rung"]:   # DC-01: the rung number comes from a host-side caller; a worker never asks, before anything is judged
+        import worker_env
+        w = worker_env.reason()
+        if w:
+            raise Refusal(WORKER, f"resolve --rung is asked from a worker environment ({w}); only a host-side caller walks the escalation chain")
+    out = resolve(a)
+    log = out.get("rung") and walked(out)
     print(json.dumps(out, indent=2, ensure_ascii=False))
     if out["code"]:
         sd.say(out["code"], out["reason"])
+    if log:
+        sd.say(log[0], log[1])
     return 1 if out["code"] else 0
+
+
+def rung_arg(v):
+    if not re.fullmatch(r"[0-9]+", v):
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return int(v)
+
+
+def walked(out):
+    """One trusted event line per skipped rung and one when no rung is served (the CLI's only writes). A line that cannot be
+    written: a served rung is withdrawn (the log's code); an exhausted walk keeps its code and names the log's in rung.log_code.
+    Returns None, or (the log's code, its problem)."""
+    import event_log as el
+    r, role, preset = out["rung"], out["role"], out["preset"]["id"]
+    try:
+        for x in r["skipped"]:
+            el.append(el.build("routing.rung-skipped", f"rung {x['rung']} of role {role}", code=RUNG_SKIPPED, who={"role": role},
+                               detail=f"role {role}, preset {preset}, rung {x['rung']}, link {link_key(x)}, status {x['status']}, code {x['code']}"))
+        if r["served"] is None:
+            el.append(el.build("routing.rung-exhausted", f"rung {r['requested']} of role {role}", code=EXHAUSTED, who={"role": role},
+                               detail=f"role {role}, preset {preset}, rung {r['requested']}, last {r['last']}, skipped {len(r['skipped'])}"))
+    except Exception as e:   # fail closed: an unlogged skip is never silent
+        code, why = (e.code, e.problem) if isinstance(e, el.EventError) else (LOG_FAILED, f"{type(e).__name__} while writing the walk's event line")
+        if r["served"] is not None:
+            r["served"] = r["link"] = None
+            out["chain"], out["code"], out["reason"] = [], code, f"the walk's event line could not be written ({why}), so no rung is served"
+            return None
+        r["log_code"] = code
+        return code, why
+    return None
 
 
 if __name__ == "__main__":

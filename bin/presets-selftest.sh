@@ -205,6 +205,26 @@ mk dup five; ed dup routing.json '.link_classes += [.link_classes[0]]'
 ok 'refuses dup && grep -q "link_classes: an id is listed twice" "$T/o"' "5v a link class listed twice is refused"
 mk cool five; ed cool routing.json '.failover.triggers |= with_entries(.value.cooldown_s = .value.max_cooldown_s + 1)'
 ok 'refuses cool && grep -q "cooldown_s is above max_cooldown_s" "$T/o"' "5w a cooldown above its cap is refused"
+u u21 routing.json '.effort.by_role[$p] = $x' "5x an unknown effort id in the routing data's effort table is refused (a role's id alone)"
+u u21b routing.json '.effort.by_role[$p] = {default: $x}' "5x2 and as a role's default"
+u u22 routing.json '.effort.by_role[$x] = {default: .effort.levels[0]}' "5y an unknown role in the effort table is refused"
+u u23 routing.json '.effort.by_role[$p] = {tiers: {($x): .effort.levels[0]}}' "5z an unknown task tier in the effort table is refused"
+u u24 role-assignments.json "$F.roles[\$p].escalation_chain[0].parameters.effort = \$x" "5za an unknown effort id in a rung's parameters is refused"
+u u25 role-assignments.json "$F.roles[\$p].pins[0].parameters.effort = \$x" "5zb an unknown effort id in a pin's parameters is refused"
+u u26 role-assignments.json '.assignments[0].chain[0].parameters.effort = $x' "5zc an unknown effort id in an assignment's chain is refused"
+u u27 routing.json '.builder_roles += [$x]' "5ze a building role that is not a card role is refused"
+mk edup five; ed edup routing.json '.effort.levels += [.effort.levels[0]]'
+ok 'refuses edup' "5zd an effort level listed twice is refused"
+
+# ---- the escalation chain (F2b item D): judged like a pin; built-ins ship a chain for each building role; effort levels are data ----
+mk ec five; ed ec role-assignments.json --arg p "$PINROLE" --argjson l "$(link qa-notools)" "$F.roles[\$p].escalation_chain = [\$l]"
+ok 'refuses ec && grep -q "^$C_CHAIN .*escalation_chain\[0\]" "$T/o"' "6x a rung that fails the role's requirements is refused with $C_CHAIN, naming escalation_chain[0]"
+BUILDERS=$(jq -c '.builder_roles // []' "$RT")   # the building roles: routing data, not named
+ok '[ "$(jq length <<<"$BUILDERS")" -gt 0 ] && jq -e --argjson b "$BUILDERS" --slurpfile rt "$RT" "[.effort_modes[] | select(.builtin)] as \$m | (\$m | length) > 0 and all(\$m[]; . as \$p | all(\$b[];
+  (\$p.roles[.].escalation_chain | length) > 0 and all(\$p.roles[.].escalation_chain[]; (.parameters.effort // null) as \$e | \$e == null or (\$rt[0].effort.levels | index(\$e)) != null)))" "$RA" >/dev/null' \
+  "6y every built-in preset ships an escalation chain for each building role, with known effort ids (and check accepts it: case 1)"
+mk enew five; ed enew routing.json '.effort.levels += ["qa-new-level"]'; ed enew role-assignments.json --arg p "$PINROLE" "$F.roles[\$p].escalation_chain[0].parameters.effort = \"qa-new-level\""
+ok 'passes enew' "6z a new effort level added as data only is valid in a rung's parameters"
 
 # ---- a fake link class and a fake tier, as data only ----
 mk cls five

@@ -42,6 +42,22 @@
       "mid_task": false
     }
   ],
+  "effort": {
+    "levels": ["low", "medium", "high", "max"],
+    "by_role": {
+      "dispatcher": "low",
+      "router": "low",
+      "voice": "low",
+      "look": "low",
+      "builder": {"default": "medium", "tiers": {"light": "low"}},
+      "reviewer": "medium",
+      "tester": "medium",
+      "validator": "medium",
+      "proposer": "high",
+      "verifier": "high",
+      "red-team": "high"
+    }
+  },
   "exempt_roles": [
     {
       "role": "router",
@@ -55,6 +71,7 @@
     }
   ],
   "card_roles": ["builder", "reviewer", "tester", "validator", "verifier", "red-team"],
+  "builder_roles": ["builder"],
   "workflow": {
     "required_roles": [
       {

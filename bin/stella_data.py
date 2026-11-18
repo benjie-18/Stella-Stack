@@ -821,6 +821,15 @@ def unmet(req, caps):
         (["min_context_tokens"] if req.get("min_context_tokens", 0) > (caps.get("context_tokens") or 0) else [])
 
 
+def model_problems(table, role, prov, model):
+    """The link itself, whatever the catalog's switches say: its model listed for its connection and meeting the role's
+    requirements by its advertised capabilities (unmet). Part of link_problems(); alone, the judge of a built-in preset's rung."""
+    req, mod = table["roles"].get(role, {}).get("requirements", {}), next((m for m in prov["models"] if m["id"] == model), None)
+    if mod is None:
+        return [f"its model ({desc(model)}) is not listed for {idn(prov['id'])}"]
+    miss = unmet(req, mod["capabilities"])
+    return [f"its model does not meet the role's requirements by its advertised capabilities ({', '.join(miss)})"] if miss else []
+
 def link_problems(table, role, prov, model, localities=None, mode=None, policies=(), where=None, pols=(), now=None, project=None):
     """Why the link (provider prov, model) may not be listed for `role`, as texts that follow the link's place: the one judge of
     an assignment's chain and of a preset's pins and fallbacks (W1-RT-01; the resolver excludes the same links at run time).
@@ -830,13 +839,8 @@ def link_problems(table, role, prov, model, localities=None, mode=None, policies
     that has one (an assignment; a preset has none, the resolver judges it per project): its policies (project_policies,
     named `where`) and, with the data policies `pols`, the hosted rule of each data class for its project (route_problems)."""
     req, pn = table["roles"].get(role, {}).get("requirements", {}), idn(prov["id"])
-    need, mod = req.get("allowed_data_classes", []), next((m for m in prov["models"] if m["id"] == model), None)
-    out = [] if prov["enabled"] else [f"{pn} is switched off"]
-    miss = unmet(req, mod["capabilities"]) if mod else []
-    if mod is None:
-        out.append(f"its model ({desc(model)}) is not listed for {pn}")
-    elif miss:
-        out.append(f"its model does not meet the role's requirements by its advertised capabilities ({', '.join(miss)})")
+    need = req.get("allowed_data_classes", [])
+    out = ([] if prov["enabled"] else [f"{pn} is switched off"]) + model_problems(table, role, prov, model)
     if localities is not None and reach(prov) not in localities:
         out.append(f"{pn} is {reach(prov)} for routing, which effort mode {idn(mode)} forbids")
     if not all(policy_allows(p, prov) for p in policies):
@@ -1059,8 +1063,9 @@ def inside_state(rel, idx):
 def rule_presets(c):
     """The presets (effort modes) against the routing data, the catalog and the role table (F2 D1.9): every class, preset and
     role a preset names exists; no preset turns off a role the workflow requires (always, or under a trigger that can fire:
-    OFF_REQUIRED) or an exempt role (it stays on under every preset); no active role keeps a pin or a fallback that
-    link_problems() refuses (CHAIN_FAILS; an inactive role's links are not judged); no active role is left with no link that
+    OFF_REQUIRED) or an exempt role (it stays on under every preset); no active role keeps a pin, a fallback or a rung that
+    link_problems() refuses (CHAIN_FAILS; an inactive role's links are not judged; a built-in preset's rung only by
+    model_problems(), as the owner cannot edit it); every link's parameters.effort is an effort id of the routing data; no active role is left with no link that
     can serve it (W1-RT-02, W1-RT-10: off in effect; OFF_REQUIRED for a role the workflow requires, else CHAIN_FAILS): of its
     pins, its fallbacks and the catalog's links of its class order, needs class and last resort, one at least passes
     link_problems() (the owner's global assignment for the role counts: the assignment rule judges its chain). A role whose role-table row
@@ -1071,10 +1076,18 @@ def rule_presets(c):
     for _, rt in c["whole"].get("routing", []):
         classes, wf, exempt = {x["id"] for x in rt["link_classes"]}, rt["workflow"], {x["role"] for x in rt["exempt_roles"]}
         need = {x["role"] for x in wf["required_roles"] if x["when"] == "always" or wf["triggers"].get(x["when"], {}).get("can_fire")}
+        levels = set(rt.get("effort", {}).get("levels", []))
         for rid, ra in c["whole"].get("role-assignments", []):
             for a in ra["assignments"]:
                 for m in order_problems(a.get("class_order", []), classes, f"{idn(a['id'])}: class_order"):
                     P(rid, m)
+            # effort ids are data (routing effort.levels): every link of every assignment and preset names a known one or none
+            links = [(f"{idn(a['id'])}: chain[{i}]", l) for a in ra["assignments"] for i, l in enumerate(a["chain"])] + \
+                [(f"preset {kname(pid)}: role {nm(r, table['roles'], 'a key')}: {f}[{i}]", l) for pid, mode in ra["effort_modes"].items()
+                 for r, x in mode.get("roles", {}).items() for f in ("pins", "fallbacks", "escalation_chain") for i, l in enumerate(x.get(f, []))]
+            for at, l in links:
+                if "effort" in l["parameters"] and l["parameters"]["effort"] not in levels:
+                    P(rid, f"{at}: parameters.effort ({desc(l['parameters']['effort'])}) is not an effort id of the routing data (effort.levels)")
             owned = {(a["role"], a["effort_mode"]) for a in ra["assignments"] if a["scope"]["level"] == "global"}   # the owner's pins, in every project
             for pid, mode in ra["effort_modes"].items():
                 w = f"preset {kname(pid)}"
@@ -1110,12 +1123,13 @@ def rule_presets(c):
                             P(rid, f"{w} turns off role {idn(r, True)}, which is exempt from the presets and stays on under every one (routing data, exempt_roles)")
                         continue
                     last = x["last_resort"] if "last_resort" in x else mode.get("last_resort")
-                    for f in ("pins", "fallbacks"):
+                    for f in ("pins", "fallbacks", "escalation_chain"):   # a rung is judged as a pin (DC-06)
                         for i, l in enumerate(x.get(f, [])):
                             prov = entry(conn, l["connection"])
                             if prov is None or prov["kind"] != "provider":
                                 continue   # its x-ref (connections, kind provider) refuses it, naming the field
-                            miss = judged(r, last, prov, l["model"])
+                            # a built-in rung: the owner cannot edit it, so a catalog switch never makes the data invalid; the resolver skips it at run time
+                            miss = model_problems(table, r, prov, l["model"]) if f == "escalation_chain" and mode.get("builtin") else judged(r, last, prov, l["model"])
                             if miss:
                                 P(rid, Coded(CHAIN_FAILS, f"{w}: role {idn(r, True)}: {f}[{i}] fails the role's requirements ({'; '.join(miss)})"))
                 bare = {r for r in roles - exempt if (r in need or not table["roles"][r].get("optional")) and not linked(r)}   # an optional role fails when asked for, not here; a required one is never optional
@@ -1129,7 +1143,7 @@ def rule_routing(c):
     """The routing data against itself, the role table, the alert catalog and the index: ids listed once, an exempt role too; a
     hosted class less private than every class that is not hosted (W1-RT-06); every role it names is assignable; an exempt
     role's class order names known classes, none of them hosted (W1-RT-09); a required role's `when` is always or a trigger;
-    a cooldown is not above its cap; consent names an approval class and alert codes that exist; the credentials backend in
+    a cooldown is not above its cap; a building role is a card role; the effort table names known roles, tiers and effort ids; consent names an approval class and alert codes that exist; the credentials backend in
     use is defined, and a dir backend lies inside a protected state path (DC-05: no role may read the keys)."""
     P, table = c["P"], c["table"]
     roles = set(table["roles"]) - {table["fallback_role"]}
@@ -1154,6 +1168,21 @@ def rule_routing(c):
                 P(rid, m)
             if hosted & {k for it in x["class_order"] for k in (it if isinstance(it, list) else [it])}:   # W1-RT-09: no preset's localities bind an exempt role
                 P(rid, f"exempt_roles[{i}].class_order names a hosted link class: an exempt role stays on links that do not leave the machine under every preset")
+        for i, r in enumerate(rt.get("builder_roles", [])):
+            if r not in rt["card_roles"]:
+                P(rid, f"builder_roles[{i}]: {nm(r, rt['card_roles'], 'it')} is not a card role (card_roles)")
+        ef = rt.get("effort", {"levels": [], "by_role": {}})
+        tiers = {x["id"] for x in rt["task_tiers"]}
+        for r, x in ef["by_role"].items():
+            x = {"default": x} if isinstance(x, str) else x   # an id alone is the role's default
+            at = f"effort.by_role: {nm(r, table['roles'], 'a key')}"
+            if r not in roles:
+                P(rid, f"{at} is not an assignable role in the role table")
+            for t in x.get("tiers", {}).keys() - tiers:
+                P(rid, f"{at}: tiers: {nm(t, tiers, 'a key')} is not a task tier (task_tiers)")
+            for k, v in [("default", x.get("default"))] + [(f"tiers[{kname(t)}]", v) for t, v in x.get("tiers", {}).items() if t in tiers]:
+                if v is not None and v not in ef["levels"]:
+                    P(rid, f"{at}: {k} ({desc(v)}) is not an effort id of effort.levels")
         for i, x in enumerate(wf["required_roles"]):
             if x["when"] != "always" and x["when"] not in wf["triggers"]:
                 P(rid, f"workflow.required_roles[{i}].when ({desc(x['when'])}) is neither always nor a trigger of workflow.triggers")

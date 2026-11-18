@@ -24,6 +24,27 @@
       },
       "needs_class": "frontier",
       "last_resort": null,
+      "roles": {
+        "builder": {
+          "active": true,
+          "escalation_chain": [
+          {
+            "connection": "local-model-server",
+            "model": "qwen3.5:9b-64k",
+            "parameters": {
+              "effort": "high"
+            }
+          },
+          {
+            "connection": "local-model-server",
+            "model": "qwen3.5:9b-64k",
+            "parameters": {
+              "effort": "max"
+            }
+          }
+          ]
+        }
+      },
       "verification_depth": 1,
       "changelog": []
     },
@@ -42,6 +63,27 @@
       ],
       "needs_class": null,
       "last_resort": "frontier",
+      "roles": {
+        "builder": {
+          "active": true,
+          "escalation_chain": [
+          {
+            "connection": "local-model-server",
+            "model": "qwen3.5:9b-64k",
+            "parameters": {
+              "effort": "high"
+            }
+          },
+          {
+            "connection": "local-model-server",
+            "model": "qwen3.5:9b-64k",
+            "parameters": {
+              "effort": "max"
+            }
+          }
+          ]
+        }
+      },
       "verification_depth": 1,
       "changelog": []
     },
@@ -59,6 +101,27 @@
       ],
       "needs_class": null,
       "last_resort": "local",
+      "roles": {
+        "builder": {
+          "active": true,
+          "escalation_chain": [
+          {
+            "connection": "local-model-server",
+            "model": "qwen3.5:9b-64k",
+            "parameters": {
+              "effort": "high"
+            }
+          },
+          {
+            "connection": "local-model-server",
+            "model": "qwen3.5:9b-64k",
+            "parameters": {
+              "effort": "max"
+            }
+          }
+          ]
+        }
+      },
       "verification_depth": 1,
       "changelog": []
     },
@@ -75,6 +138,27 @@
       ],
       "needs_class": null,
       "last_resort": null,
+      "roles": {
+        "builder": {
+          "active": true,
+          "escalation_chain": [
+          {
+            "connection": "local-model-server",
+            "model": "qwen3.5:9b-64k",
+            "parameters": {
+              "effort": "high"
+            }
+          },
+          {
+            "connection": "local-model-server",
+            "model": "qwen3.5:9b-64k",
+            "parameters": {
+              "effort": "max"
+            }
+          }
+          ]
+        }
+      },
       "verification_depth": 1,
       "changelog": []
     }

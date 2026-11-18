@@ -130,7 +130,7 @@
                 },
                 "escalation_chain": {
                   "$ref": "#/$defs/links",
-                  "description": "The stronger rungs a card's builder climbs to (stored only; the walk is F2b)."
+                  "description": "The stronger rungs a card's builder climbs to, in order: `resolve --rung N` answers entry N-1 (rung 0 is the normal chain), judged by the rules of the chain (rule 5's class order widened to the effective order, the preset's needs_class and its last resort; the last resort needs a crossing grant); a rung that is excluded or waits for a grant is skipped, past the last rung the answer is STL-MDL-731 (escalate to the owner). A rung may be an earlier link with a higher parameters.effort. `check` judges each link as it judges a pin."
                 }
               },
               "required": [
@@ -274,7 +274,8 @@
           "type": "string"
         },
         "parameters": {
-          "type": "object"
+          "type": "object",
+          "description": "The link's call settings. effort: an id of routing.json effort.levels (`check` refuses any other); it beats the routing data's effort for the role and tier."
         }
       },
       "required": [

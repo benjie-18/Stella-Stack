@@ -962,6 +962,30 @@
       "resolvable": false
     },
     {
+      "code": "STL-MDL-731",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "no higher rung: escalate to the owner",
+      "message": "The escalation chain has no usable rung for this request: {problem}. Nothing climbs further; the work goes to you.",
+      "action": "read the answer's rung.skipped (each skipped rung with its code and reason): grant the crossing, fix the first cause, or add a rung to the role's escalation_chain in a custom preset; else decide on the card yourself. See STL-MDL-731 in docs/alert-codes.md.",
+      "cause": "resolve --rung N asked past the last rung, the role has no escalation_chain under the active preset, or every rung from N on is excluded or waits for a grant.",
+      "check": "the resolver's JSON answer (rung: requested, last, skipped[]); the event log (routing.rung-skipped, routing.rung-exhausted lines).",
+      "related": "F2b item D (design-D.md); .stella/role-assignments.json effort_modes roles escalation_chain",
+      "resolvable": false
+    },
+    {
+      "code": "STL-MDL-732",
+      "area": "MDL",
+      "severity": "info",
+      "title": "a rung of the escalation chain was skipped",
+      "message": "A rung of the escalation chain was skipped because the preset's boundary or the data policy forbids it, or it waits for a grant: {problem}. The walk went on to the next rung.",
+      "action": "nothing if that is intended. To allow the rung, give the grant it waits for, or change the policy that excludes it. See STL-MDL-732 in docs/alert-codes.md.",
+      "cause": "The rung's link fails a rule of the chain (hard exclusion, data policy, Local only, the connection, the role's requirements, the preset's classes and localities) or needs a crossing or privacy grant that is not in force.",
+      "check": "the event log (routing.rung-skipped lines: role, preset, rung, link, status, code); the resolver's JSON answer (rung.skipped[]).",
+      "related": "F2b item D (design-D.md); bin/resolve.py",
+      "resolvable": false
+    },
+    {
       "code": "STL-OWN-801",
       "area": "OWN",
       "severity": "warning",
