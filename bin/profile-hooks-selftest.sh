@@ -185,7 +185,8 @@ done
 # GIT_TEST_ASSUME_DIFFERENT_OWNER=1 makes git treat every repo as foreign-owned, as a root-owned project checkout would be.
 ok '[ "$(GIT_TEST_ASSUME_DIFFERENT_OWNER=1 hterm $T/plant-g $G "git diff --output=$GR/wt/x")" = 2 ] && [ "$(GIT_TEST_ASSUME_DIFFERENT_OWNER=1 hterm $T/plant-g $G "git diff --output=$T/nonrepo-out")" = 0 ]' "RT-RTA-01: a repo git calls dubious ownership: --output into it is refused, an output outside any repo is still allowed"
 
-# F14 model guard: builders run Claude Code only as Sonnet; Opus and Haiku go through bin/escalate.sh. A bare claude -p
+# F14 model guard: builders run Claude Code only as Sonnet; other models go only through bin/escalate.sh, which the guard refuses
+# to every profile it runs for (owner decision 2026-11-17: only the supervisor runs it). A bare claude -p
 # is refused too: the builder's default model is not Sonnet (~/.claude/settings.json "model": "opus").
 M=$D/builder/model-guard.py
 # F2 W7b: the worker model is the resolver's answer, not a mark in the catalog. The fixture root is the shipped data with what the
@@ -212,12 +213,13 @@ for c in "claude -p --model opus x" "claude -p --model=haiku x" "claude -p --mod
          "opencode run --standalone --auto 'run claude -p --model opus to plan'" \
          "/workspace/bin/escalate.sh t_aaaaaaaa sonnet review why -- --dangerously-skip-permissions" \
          "ESCALATE_SUP_DIR=/tmp/x /workspace/bin/escalate.sh t_aaaaaaaa opus plan why" "export ESCALATE_SUP_DIR=/tmp/x" \
-         "ESCALATE_REPLAY=q_1 bin/escalate.sh t_aaaaaaaa haiku judge why" "npx @anthropic-ai/claude-code -p --model opus x" "timeout 900 claude 'fix it'"; do
+         "ESCALATE_REPLAY=q_1 bin/escalate.sh t_aaaaaaaa haiku judge why" "npx @anthropic-ai/claude-code -p --model opus x" "timeout 900 claude 'fix it'" \
+         "/workspace/bin/escalate.sh t_aaaaaaaa opus plan 'why' < prompt.txt" "bin/escalate.sh t_aaaaaaaa haiku judge why"; do
   ok '[ "$(term $M "$c")" = 2 ] && grep -q "model guard" "$T/out"' "builder terminal refused: $c"
 done
 for c in "claude -p --model sonnet 'fix the test'" "claude --model=sonnet -p x" "claude -p --model claude-sonnet-5-5 x" \
          "cd /workspace/.worktrees/t_aaaaaaaa && timeout 900 claude -p --model sonnet --output-format json 'x'" "claude --version" \
-         "claude mcp list" "/workspace/bin/escalate.sh t_aaaaaaaa opus plan 'why' < prompt.txt" "bin/escalate.sh t_aaaaaaaa haiku judge why" \
+         "claude mcp list" \
          "npm test" "git status" "ls -la" "which claude" "command -v claude" "grep -rn claude docs" "git log --grep claude"; do
   ok '[ "$(term $M "$c")" = 0 ]' "builder terminal allowed: $c"
 done
