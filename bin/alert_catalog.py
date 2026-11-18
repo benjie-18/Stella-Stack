@@ -7,7 +7,7 @@ CLI: alert_catalog.py render <CODE> [key=value ...]   the #alerts body on stdout
      alert_catalog.py streak < card.json                K3: "<code> <n>", the card's run of same-code guard refusals
      alert_catalog.py field <CODE> <field>              one catalog field (for example the action)
 Keys: since=/now= are times (UTC ISO 8601 or epoch seconds), shown as HH:MM in the owner's zone; error=<raw> becomes
-{what}, a plain phrase; resolved=1 renders the recovery form. Every key goes to the log, only placeholders reach Discord.
+{what}, a plain phrase; resolved=1 renders the recovery form. Every key goes to the log, only placeholders reach the chat.
 An unknown code renders STL-GEN-000; render never exits non-zero (bin/alert.sh still has a last-resort text)."""
 import calendar, json, os, re, sys, time
 from datetime import datetime, timezone
@@ -19,14 +19,14 @@ FIELDS = ("code", "area", "severity", "title", "message", "action", "cause", "ch
 UTC_NAMES = {"UTC", "Etc/UTC", "Etc/GMT", "GMT", "Etc/Zulu", "Zulu", "Universal", "Etc/Universal"}
 # raw error -> plain phrase; first match wins (an SSL error also says "urlopen error")
 CLASSES = (
-    (r"SSL|TLS|handshake|UNEXPECTED_EOF|EOF occurred", "a network problem: the secure connection to Discord dropped"),
-    (r"(error|status|HTTP)\D{0,6}429\b|rate.?limit|Too Many Requests", "Discord is rate-limiting Stella"),
+    (r"SSL|TLS|handshake|UNEXPECTED_EOF|EOF occurred", "a network problem: the secure connection to the chat platform dropped"),
+    (r"(error|status|HTTP)\D{0,6}429\b|rate.?limit|Too Many Requests", "the chat platform is rate-limiting Stella"),
     (r"(error|status|HTTP)\D{0,6}40[134]\b|Missing Access|Missing Permissions|Unknown (Channel|Message)|Forbidden|Unauthorized",
-     "Discord refused the request: missing permission or a missing channel"),
+     "the chat platform refused the request: missing permission or a missing channel"),
     (r"(error|status|HTTP)\D{0,6}5\d\d\b|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout",
-     "Discord had a server error"),
+     "the chat platform had a server error"),
     (r"urlopen error|Name or service not known|name resolution|getaddrinfo|Connection (refused|reset|aborted)|timed? ?out|"
-     r"Network is unreachable|No route to host|ConnectionError|ClientConnector|Cannot connect", "a network or DNS problem reaching Discord"),
+     r"Network is unreachable|No route to host|ConnectionError|ClientConnector|Cannot connect", "a network or DNS problem reaching the chat platform"),
     (r"No space left|Permission denied|Read-only file system|Disk quota", "a disk or permissions problem"),
     (r"exit \d+|exit code|command not found|failed|non-zero", "a local command failed"),
 )

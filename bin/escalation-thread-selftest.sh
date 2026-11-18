@@ -148,7 +148,7 @@ ok '[ "$(grep -c "^--to discord:100:556 --quiet Card t_0000000d" "$T/sup/sends")
 FAKE_CREATE_FAIL=1 $E t_0000000e "$LONG" "Decision needed: pick (A) or (B)." >/dev/null 2>&1; rc=$?
 FAKE_CREATE_FAIL=1 $E t_0000000e "$LONG" "Decision needed: pick (A) or (B)." >/dev/null 2>&1
 ok '[ "$rc" = 1 ] && [ "$(jq -r "select(.card == \"t_0000000e\") | .event" "$T/sup/escalations.log" | sort | uniq -c | tr -s " ")" = " 2 THREAD_FAIL" ]' "F1: create_thread failure: THREAD_FAIL, exit 1"
-ok '[ "$(amsg STL-ESC-220 t_0000000e)" = 1 ] && grep -qF "Card t_0000000e (\"${LONG:0:80}\") needs a decision from you, but Stella could not post it in #escalations (Discord had a server error)" "$T/sup/sends" && grep -q "^STL-ESC-220 .*card=.t_0000000e.*create_thread failed.*503" "$T/sup/logs/alerts.log"' "F1: one #alerts line per card an hour: card, title cut to 80, error"
+ok '[ "$(amsg STL-ESC-220 t_0000000e)" = 1 ] && grep -qF "Card t_0000000e (\"${LONG:0:80}\") needs a decision from you, but Stella could not post it in #escalations (the chat platform had a server error)" "$T/sup/sends" && grep -q "^STL-ESC-220 .*card=.t_0000000e.*create_thread failed.*503" "$T/sup/logs/alerts.log"' "F1: one #alerts line per card an hour: card, title cut to 80, error"
 
 # F5: the #supervisor link is the only notice outside #escalations; a failed post is LINK_FAIL plus one #alerts line.
 : > "$T/sup/sends"
