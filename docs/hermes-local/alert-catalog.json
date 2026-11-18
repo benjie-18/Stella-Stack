@@ -279,10 +279,11 @@
       "code": "STL-LIM-404",
       "area": "LIM",
       "severity": "info",
+      "status": "retired",
       "title": "a Claude request was answered by a fallback model",
       "message": "Claude has no usage left right now, so a {model} request for card {card} was answered by a different, free model ({served}) through the OmniRoute gateway. The answer is labelled as a fallback; it is not a Claude answer.",
       "action": "nothing, unless the card is important: check the fallback answer before relying on it, and send the request to Claude later if it matters (see STL-LIM-404 in docs/alert-codes.md).",
-      "cause": "The Claude subscription's limit was reached (STL-LIM-402) on a low-risk card and the fallback is switched on (`enabled: true` in docs/hermes-local/fallback-routing.json). High-risk cards are never rerouted.",
+      "cause": "The Claude subscription's limit was reached (STL-LIM-402) on a low-risk card and the fallback is switched on (`enabled: true` in docs/hermes-local/fallback-routing.json). High-risk cards are never rerouted. Retired in F2b item E: an escalation rung is never rerouted to the fallback runner (E-DC-07), it is queued (STL-LIM-402).",
       "check": ".supervisor/escalations.log (POOL_EXHAUSTED then FALLBACK, with the serving model); the card's comments; the OmniRoute gateway on loopback.",
       "related": "D77; bin/escalate.sh (T15); bin/omniroute-run.sh",
       "resolvable": false
@@ -1019,6 +1020,30 @@
       "cause": "The model list or the probe's calls got no answer, or an answer that is not JSON that meets the schema, even after the one repair retry.",
       "check": "the command's output; `python3 bin/probe.py show --json`.",
       "related": "F2b item B (design-B.md); bin/probe.py, .stella/probes.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-MDL-746",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "an escalation rung is not on this script's CLI",
+      "message": "An escalation call was refused because the rung the resolver served runs on a connection that is not the coding tool the escalation script drives: {problem}. Nothing was run or queued, and no other rung was tried.",
+      "action": "make that rung of the role's escalation_chain a link of the connection whose `cli` is the script's CLI, in a custom preset, or decide on the card yourself. See STL-MDL-746 in docs/alert-codes.md.",
+      "cause": "The role's escalation chain (the active preset) holds, at the card's current rung, a link of another connection: escalate.sh runs one CLI only and never climbs past a served rung by itself.",
+      "check": ".supervisor/escalations.log (event NOT_THIS_CLI); `bin/resolve.py resolve --role <role> --project <project> --card <card> --rung <rung> --json` (rung.link.connection).",
+      "related": "F2b item E (design-E.md, E-DC-02); bin/escalate.sh",
+      "resolvable": false
+    },
+    {
+      "code": "STL-MDL-747",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "an escalation call names no known purpose or rung",
+      "message": "An escalation call was refused before any model was asked: {problem}. Nothing was run or queued.",
+      "action": "call the escalation script with a card, a purpose of routing.json escalation.purposes and a reason (the caller names no model), or fix state/rungs.json (per card and role, a whole number from 1). See STL-MDL-747 in docs/alert-codes.md.",
+      "cause": "The purpose has no row in the routing data's escalation.purposes (a caller still naming a model gets its model read as the purpose), or the host-side rung state of the card cannot be read or holds no whole number from 1.",
+      "check": ".supervisor/escalations.log (event USAGE or RUNG_STATE); `python3 bin/stella_data.py get --json routing` (escalation.purposes).",
+      "related": "F2b item E (design-E.md, owner decision 2026-11-18: the purpose picks the role); bin/escalate.sh",
       "resolvable": false
     },
     {

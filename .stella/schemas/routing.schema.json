@@ -259,6 +259,20 @@
       "uniqueItems": true,
       "description": "The card roles that build (the QA loop's builder escalation applies to them only): each built-in preset ships an escalation_chain for every one. `check` refuses a role that is not a card role (card_roles)."
     },
+    "escalation": {
+      "type": "object",
+      "properties": {
+        "purposes": {
+          "type": "object",
+          "propertyNames": {"$ref": "#/$defs/id"},
+          "additionalProperties": {"type": "string", "minLength": 1},
+          "description": "{purpose: role} (owner decision 2026-11-18, F2b item E): whose escalation chain bin/escalate.sh walks for a call of that purpose (the card's current rung of that role, state/rungs.json, default 1). A purpose with no row is refused (STL-MDL-747). `check` refuses a role that is not an assignable role of the role table."
+        }
+      },
+      "required": ["purposes"],
+      "additionalProperties": false,
+      "description": "The escalation calls of bin/escalate.sh. Absent: no purpose has a row, so every call is refused."
+    },
     "effort": {
       "type": "object",
       "properties": {

@@ -1,27 +1,34 @@
 #!/usr/bin/env bash
 # The only sanctioned way to run an escalation model on the coding CLI this script drives: card-scoped, logged, rate-limited.
-# usage: escalate.sh <card-id> <model> <purpose> <reason...> [--]
+# usage: escalate.sh <card-id> <purpose> <reason...> [--]
 #   prompt on stdin. Anything after -- is refused (exit 2): no caller passes an extra arg. A reason over 8192 characters is refused (exit 2; not on a replay).
-#   <model> is the model the caller asks for: an id the connections catalog lists on a connection whose `cli` is this script's CLI
-#   (no model is named here). That the caller names it is a stub (features `escalate-caller-names-model`, due F2b: the walk of
-#   the role's escalation chain). The call runs only when the resolver (bin/resolve.py, read-only), asked for the role of the
-#   card's assignee, the card and its project, lists exactly that link `usable`; no other link is tried.
-#   A call from a worker run names that run's own proven card, or is refused (STL-GRD-604, exit 3, not queued).
+#   The caller names neither a model nor a rung (F2b item E). The purpose picks the role (routing data escalation.purposes
+#   {purpose: role}; no row: STL-MDL-747, exit 2); the rung is the card's current rung for that role (state/rungs.json
+#   {card: {role: rung}}, 1 when absent; nothing here raises it). The resolver (bin/resolve.py resolve --rung, the CLI: it logs the
+#   skipped rungs) answers the rung for that role, the card and its project; the call runs only on its exit 0 with a usable served
+#   rung, and only when that link's connection has this script's CLI (else STL-MDL-746) and its model's limits.purposes holds the
+#   purpose; no other rung is ever asked. One trusted event line per served rung (event_log.py); if it cannot be written, nothing runs.
+#   Only the supervisor runs this script: a call from a worker run is refused (STL-GRD-604, exit 3, not queued).
 #   The model's limits are its catalog `limits` object: `purposes` (the only purposes it runs for), `max_concurrent` (slots),
 #   `per_day` (calls per UTC day), each a value or the name of the limits.env key that holds it, and `purpose_models`
 #   {purpose: the model name the CLI gets for that purpose instead of the id}.
-# Exit: 0 ok, 2 usage or a refusal (a setting's registry default or the catalog unreadable: STL-CFG-310; the log or a state file of the call is a link; nothing run), 3 over a limit, a model the catalog does not list for this CLI (STL-MDL-711) or a link the resolver does not list usable (its code) (never retried), 75 pool exhausted, else the CLI's exit code.
-# Queue (F15, F28, F29): a call refused by a zeroed or exceeded limit (slots, per day) or by the resolver, and every pool-exhausted
-# call is recorded in state/queue.jsonl with its prompt file, and raises one #alerts line; the caller still gets 3 or 75.
+# Exit: 0 ok, 2 usage or a refusal (a setting's registry default, the catalog or the routing data unreadable: STL-CFG-310; no
+# purpose row or bad rung state: STL-MDL-747; the resolver refused the environment or its data, gave no answer it can read, or the
+# event line failed; the log or a state file of the call is a link; nothing run), 3 over a limit or a rung the resolver does not
+# serve usable (its code), not on this CLI (STL-MDL-746) or not for this purpose (never retried), 4 no rung left (STL-MDL-731:
+# escalate to the owner), 75 pool exhausted, else the CLI's exit code.
+# Queue (F15, F28, F29): a call refused by a zeroed or exceeded limit (slots, per day) or a rung in cooldown (STL-MDL-724), and every
+# pool-exhausted call is recorded in state/queue.jsonl (card, purpose, role, rung asked) with its prompt file, and raises one #alerts
+# line; the caller still gets 3 or 75. No rung left: recorded in state `owner` (never replayed or staled; only --drop removes it)
+# with one owner line instead. Every other refusal is not queued and its prompt file is removed.
 # A queue file that cannot be read, parsed or written is never read as empty and never reported as written: the call is not queued,
 # the caller still gets 3 or 75, the stderr line, the card note and a NOT_QUEUED log line say it was lost, and STL-LIM-405 tells the
 # owner (one alert an hour: the file stays broken until it is fixed). An unreadable settings registry is checked after the
 # usage checks and refuses the call (STL-CFG-310, one alert an hour). Nothing retries a call: bin/escalate-drain.sh (manual)
 # replays a queued one. Beyond QUEUE_MAX queued entries the call is refused unqueued (NOT_QUEUED, one #alerts line an hour).
 # ESCALATE_REPLAY=<id> (set by the drain) never queues or alerts again.
-# Test hook (Stage 6 T15): ESCALATE_FORCE_POOL_EXHAUSTED=1 skips claude and takes the fallback path. The fallback config
-# (FALLBACK_CONFIG, default docs/hermes-local/fallback-routing.json) says whether a low-risk call is served by a fallback runner
-# when the pool is exhausted and which models it tries; disabled or missing = NO_REROUTE and queue.
+# Test hook (Stage 6 T15): ESCALATE_FORCE_POOL_EXHAUSTED=1 skips claude and takes the pool-exhausted path. An escalation rung is
+# never rerouted to the pool-exhausted fallback runner (E-DC-07: it is not judged by the resolver): it queues.
 jq() { env -u HOME jq "$@"; }  # RT-RTA-02: ~/.jq is worker-writable and jq has no flag to skip it
 set -uo pipefail
 # cron/hook callers start with a minimal PATH; append so test stubs earlier in PATH still win.
@@ -30,7 +37,6 @@ export LC_ALL=C.UTF-8   # F19: the inherited en_US.UTF-8 is not installed, so ba
 
 CLI=claude-code   # the catalog id (a connection's `cli`) of the coding CLI this script drives: the `claude` command below
 SUP="${ESCALATE_SUP_DIR:-/workspace/.supervisor}"
-FALLBACK_CONFIG="${FALLBACK_CONFIG:-/workspace/docs/hermes-local/fallback-routing.json}"
 LOG="$SUP/escalations.log"
 STATE="$SUP/state"
 mkdir -p "$STATE"
@@ -43,18 +49,18 @@ mkdir -p "$STATE"
 POOL_PATTERNS=("You've hit your" "You've reached your" "You're out of usage credits" "You're out of extra usage"
   "Your org is out of usage" "usage limit reached" "rate_limit_error" "Rate limit exceeded")
 
-card="${1:-}" model="${2:-}" purpose="${3:-}"
-shift $(( $# < 3 ? $# : 3 ))
+card="${1:-}" purpose="${2:-}" model="" role="" rung=""   # model, role, rung: set once the data and the resolver answer them
+shift $(( $# < 2 ? $# : 2 ))
 reason=""
 while [ $# -gt 0 ] && [ "$1" != "--" ]; do reason="${reason:+$reason }$1"; shift; done
 [ "${1:-}" = "--" ] && shift
 
 log() {  # log <event> <exit_code|null> [model_used] [fallback] [cost] [detail]
-  jq -nc --arg time "$(date -u +%FT%TZ)" --arg card "$card" --arg model "$model" --arg purpose "$purpose" \
-    --arg reason "$reason" --arg event "$1" --argjson exit_code "${2:-null}" --arg model_used "${3:-}" \
+  jq -nc --arg time "$(date -u +%FT%TZ)" --arg card "$card" --arg model "$model" --arg purpose "$purpose" --arg role "$role" \
+    --arg rung "$rung" --arg reason "$reason" --arg event "$1" --argjson exit_code "${2:-null}" --arg model_used "${3:-}" \
     --argjson fallback "${4:-false}" --argjson cost_usd "${5:-null}" --arg detail "${6:-}" \
-    '{time: $time, card: $card, model: $model, purpose: $purpose, reason: $reason, event: $event,
-      exit_code: $exit_code, model_used: $model_used, fallback: $fallback, cost_usd: $cost_usd, detail: $detail}' >>"$LOG"
+    '{time: $time, card: $card, model: $model, purpose: $purpose, role: $role, rung: ($rung | tonumber? // null), reason: $reason,
+      event: $event, exit_code: $exit_code, model_used: $model_used, fallback: $fallback, cost_usd: $cost_usd, detail: $detail}' >>"$LOG"
 }
 refuse() { log "$1" "$2" "" false null "$3"; echo "escalate.sh: $1: $3" >&2; exit "$2"; }
 registry() {  # registry <KEY>: sets reg_def reg_min reg_max from the settings registry; unreadable = refuse (exit 2, STL-CFG-310)
@@ -69,7 +75,7 @@ unreadable() {  # unreadable <problem> <what that rules out>: data this call res
   # Nothing is queued (the queue bound is what could not be read) and the prompt is not read: the caller keeps it. The owner is told
   # on the alerts channel once an hour (a standing condition), never for a replay; each refused call has its own log line.
   if [ -z "${ESCALATE_REPLAY:-}" ] && once_per_hour registry-unreadable; then
-    hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-CFG-310 problem="$p; escalate.sh refused the call for card $card ($model $purpose): it was not run and not queued, the caller still holds the prompt; later calls are refused the same way until it is fixed (each in escalations.log, SETTING_UNREADABLE)")" >/dev/null 2>&1
+    hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-CFG-310 problem="$p; escalate.sh refused the call for card $card ($purpose): it was not run and not queued, the caller still holds the prompt; later calls are refused the same way until it is fixed (each in escalations.log, SETTING_UNREADABLE)")" >/dev/null 2>&1
   fi
   refuse SETTING_UNREADABLE 2 "$p; $2"
 }
@@ -97,9 +103,10 @@ queue_failed() {  # queue_failed <what>: the call is not in the queue, and every
   log NOT_QUEUED null none false null "$1; the call is lost"   # every lost call has its own line; the alert below is once an hour
   once_per_hour queue-unusable && hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-LIM-405 card="$card" model="${model^}" problem="$1" since="$(date -u +%FT%TZ)")" >/dev/null 2>&1
 }
-queue() {  # queue <LIMIT|POOL_EXHAUSTED> <what happened>: one entry and one #alerts line; sets qid ("" if not queued), qnote
+queue() {  # queue <LIMIT|POOL_EXHAUSTED|OWNER> <what happened>: one entry and one #alerts line (OWNER: state owner, the caller sends
+  # the owner line); sets qid ("" if not queued), qnote
   qid="" qnote="not queued"
-  [ -z "${ESCALATE_REPLAY:-}" ] || { qnote="left in the queue as $ESCALATE_REPLAY"; rm -f "$prompt"; return 0; }
+  [ -z "${ESCALATE_REPLAY:-}" ] || { qnote="left in the queue as $ESCALATE_REPLAY"; [ "$1" != OWNER ] || qnote="the drain keeps $ESCALATE_REPLAY for the owner (state owner)"; rm -f "$prompt"; return 0; }
   nolink "$STATE/queue.lock" || { queue_failed "the queue lock state/queue.lock is a link"; return 0; }
   exec 6>>"$STATE/queue.lock"; flock 6
   nolink "$QUEUE" || { queue_failed "the queue file state/queue.jsonl is a link"; return 0; }
@@ -115,16 +122,18 @@ queue() {  # queue <LIMIT|POOL_EXHAUSTED> <what happened>: one entry and one #al
     return 0
   fi
   qid="q_$(date -u +%Y%m%dT%H%M%SZ)_${card}_$$"
-  entry=$(jq -nc --arg id "$qid" --arg card "$card" --arg model "$model" --arg purpose "$purpose" --arg call_reason "$reason" \
+  entry=$(jq -nc --arg id "$qid" --arg card "$card" --arg purpose "$purpose" --arg role "$role" --argjson rung "$rung" --arg call_reason "$reason" \
     --argjson claude_args "$(if [ ${#extra_args[@]} -gt 0 ]; then printf '%s\n' "${extra_args[@]}" | jq -Rsc 'split("\n")[:-1]'; else echo '[]'; fi)" \
     --arg why "$1" --arg detail "$2" --arg created "$(date -u +%FT%TZ)" --arg prompt_file "$prompt" \
-    '{id: $id, card: $card, model: $model, purpose: $purpose, call_reason: $call_reason, claude_args: $claude_args,
-      reason: $why, detail: $detail, created: $created, state: "queued", prompt_file: $prompt_file}')
+    --arg state "$([ "$1" = OWNER ] && echo owner || echo queued)" \
+    '{id: $id, card: $card, purpose: $purpose, role: $role, rung: $rung, call_reason: $call_reason, claude_args: $claude_args,
+      reason: $why, detail: $detail, created: $created, state: $state, prompt_file: $prompt_file}')   # what was asked, never a model
   # a cut last line (no newline) would swallow this entry: end it first; a write that fails is not a queued call
   { [ ! -s "$QUEUE" ] || [ -z "$(tail -c1 "$QUEUE")" ] || echo >>"$QUEUE"; } && printf '%s\n' "$entry" >>"$QUEUE" \
     || { queue_failed "the queue file state/queue.jsonl cannot be written"; return 0; }
   flock -u 6
   qnote="recorded in the queue as $qid; run bin/escalate-drain.sh"
+  [ "$1" != OWNER ] || { qnote="recorded for the owner as $qid (state owner: never replayed; bin/escalate-drain.sh --drop $qid removes it)"; log QUEUED null none false null "$1; $qid"; return 0; }
   log QUEUED null none "$([ "$1" = POOL_EXHAUSTED ] && echo true || echo false)" null "$1; $qid"
   [ "$1" = POOL_EXHAUSTED ] && acode=STL-LIM-402 || acode=STL-LIM-401
   hermes send --to "$ALERT_TARGET" --quiet "$(alert_text "$acode" card="$card" model="${model^}" purpose="$purpose" queue_id="$qid" detail="$2" since="$(date -u +%FT%TZ)")" >/dev/null 2>&1
@@ -143,23 +152,33 @@ extra_args=("$@")   # always empty past the next line; kept with a queue entry
 [[ "$card" =~ ^t_[0-9a-f]{8}$ ]] || refuse USAGE 2 "card id required (t_xxxxxxxx), got '${card}'"
 [ -n "$reason" ] || refuse USAGE 2 "reason required"
 card_json=$(kanban show "$card" --json 2>/dev/null) || refuse USAGE 2 "card $card not found on the board"
-# A worker run escalates its own card only (W7b-VAL-01): the card decides the role, the project and the facts the resolver judges,
-# so a run on a secrets card must not name a clean one. own = the card the guards' proof names for this call (roles.prove_card: the
-# board and the kernel, never the caller's word); "?" when a worker marker of the role table is set but no card is proven, or when
-# it cannot be told (the board or the table unreadable); empty when the call belongs to no worker run (the supervisor path: the card
-# as named). Not queued: the drain would replay the call as the supervisor.
+# Only the supervisor runs this script (E-DC-04, owner decision 2026-11-17): a worker run is refused before any resolver call, its
+# own card or not. own = the card the guards' proof names for this call (roles.prove_card: the board and the kernel, never the
+# caller's word); "?" when a worker marker of the role table is set but no card is proven, or when it cannot be told (the board or
+# the table unreadable); empty when the call belongs to no worker run. Not queued: the drain would replay the call as the supervisor.
 own=$(python3 -I -c 'import os, sys; sys.path.insert(0, "/workspace/bin"); import roles
 j, why = roles.prove_card()
 if not why: print(j["task"]["id"])
 elif why.startswith("the board cannot be read") or any(os.environ.get(m) for m in roles.worker_markers(roles.load())): print("?")' 2>/dev/null) || own="?"
-[ -z "$own" ] || [ "$own" = "$card" ] || refuse NOT_OWN_CARD 3 "STL-GRD-604 this call comes from a worker run, and card $card is not the card that run is proven on (${own/#\?/none proven}): a worker run escalates its own card only"
-# The model is data: an id the catalog lists on a connection whose `cli` is this script's. link = {connection, limits}.
+[ -z "$own" ] || refuse WORKER_RUN 3 "STL-GRD-604 this call comes from a worker run (proven on ${own/#\?/no card}): only the supervisor runs bin/escalate.sh"
+# The purpose picks the role (routing data escalation.purposes, owner decision 2026-11-18); the card's current rung for that role is
+# host-side state (state/rungs.json {card: {role: rung}}, 1 when absent; the QA loop raises it, never this script).
+routing=$(python3 -I /workspace/bin/stella_data.py get --json routing 2>/dev/null) || unreadable "the routing data cannot be read" "no purpose is known"
+role=$(jq -r --arg p "$purpose" '.escalation.purposes[$p]? | strings' <<<"$routing" 2>/dev/null)
+[ -n "$role" ] || refuse USAGE 2 "STL-MDL-747 purpose $(printf %q "${purpose:0:64}") has no row in the routing data's escalation.purposes (usage: escalate.sh <card-id> <purpose> <reason...>; the caller names no model)"
+driver=$(jq -r '[.drivers[]? | select(.mid_task == false) | .id][0] // empty' <<<"$routing" 2>/dev/null)   # the worker-CLI driver: the one that never switches mid-task
+RUNGS="$STATE/rungs.json"
+nolink "$RUNGS" || refuse RUNG_STATE 2 "STL-MDL-747 state/rungs.json is a link: not read"
+rung=1; if [ -e "$RUNGS" ]; then   # a file that is there but unreadable, or a value that is no whole number from 1, is never read as rung 1
+  rung=$(jq -er --arg c "$card" --arg r "$role" 'if type == "object" and ((.[$c] // {}) | type == "object") then .[$c][$r] // 1 else error end
+    | select(type == "number" and . == floor and . >= 1 and . <= 999)' "$RUNGS" 2>/dev/null) \
+    || { rung=""; refuse RUNG_STATE 2 "STL-MDL-747 state/rungs.json cannot be read or holds no whole number from 1 to 999 for card $card, role $role"; }
+fi
+# The project is the card's (the board's field, else the folder part of its branch). A card that names no project is refused: an
+# empty project would be judged by the default policy only.
+project=$(jq -r '.task | (.project | strings) // ((.branch_name // .branch // "") | strings | select(contains("/")) | split("/")[0])' <<<"$card_json" 2>/dev/null)
+[ -n "$project" ] || refuse NO_PROJECT 3 "STL-MDL-711 card $card names no project on the board: no rung is asked, nothing is queued"
 catalog=$(python3 -I /workspace/bin/stella_data.py get --json connections 2>/dev/null) || unreadable "the connections catalog cannot be read" "no model is known"
-link=$(jq -c --arg cli "$CLI" --arg m "$model" '[.entries[] | select(.kind == "provider" and .cli == $cli) | {connection: .id, limits: (.models[] | select(.id == $m) | .limits // {})}][0] // empty' <<<"$catalog" 2>/dev/null)
-[ -n "$link" ] || refuse UNKNOWN_MODEL 3 "STL-MDL-711 model $(printf %q "${model:0:64}") is not a model the connections catalog lists for this script's CLI"
-conn=$(jq -r .connection <<<"$link")
-if lim purposes; then [[ " $L " == *" $purpose "* ]] || refuse LIMIT 3 "$model is allowed only for: $L"; fi
-cli_model=$(jq -r --arg p "$purpose" --arg m "$model" '(.limits.purpose_models[$p]? | strings) // $m' <<<"$link")
 # The settings registry is read after the usage checks: a bad call is refused for what it is, before any alert.
 # A limit that is set but outside the registry's type and range is treated like a bad timeout: one warning, then the registry
 # default (`timeout 0` means no timeout; a non-number makes `[ -ge ]` fail, which would queue without bound).
@@ -182,28 +201,56 @@ prompt="$STATE/prompt-$(date -u +%Y%m%dT%H%M%SZ)-$card-$$.txt"
 cat >"$prompt"
 [ -s "$prompt" ] || { rm -f "$prompt"; refuse USAGE 2 "prompt required on stdin"; }
 
-# The resolver decides (F2 B1): the call runs only when the chain it answers for the caller's role lists exactly this link usable.
-# The caller is the card's assignee (its role from the role tool); the project is the card's (the board's field, else the folder
-# part of its branch). A card that names no project is refused: an empty project would be judged by the default policy only.
-profile=$(jq -r '.task.assignee | strings' <<<"$card_json" 2>/dev/null)
-project=$(jq -r '.task | (.project | strings) // ((.branch_name // .branch // "") | strings | select(contains("/")) | split("/")[0])' <<<"$card_json" 2>/dev/null)
-role=$(python3 -I -c 'import sys; sys.path.insert(0, "/workspace/bin"); import roles; print(roles.role_of(roles.load(), sys.argv[1])[0])' "$profile" 2>/dev/null)
-driver=$(python3 -I /workspace/bin/stella_data.py get --json routing 2>/dev/null | jq -r '[.drivers[]? | select(.mid_task == false) | .id][0] // empty' 2>/dev/null)   # the worker-CLI driver: the one that never switches mid-task
-if [ -z "$project" ]; then rcode=STL-MDL-711 rwhy="card $card names no project on the board"
-else
-  res=$(python3 -I /workspace/bin/resolve.py resolve --role "$role" --project "$project" --card "$card" ${driver:+--driver "$driver"} --json 2>"$prompt.err")
-  # the link's own status; a chain without it (under a Local only project the resolver lists no hosted link: the data-policy code
-  # says so, W3P-F-3), an answer the resolver refuses for another reason (a card app), or no chain at all (fail closed: the coded
-  # line is on stderr) is a refusal too
-  IFS=$'\t' read -r rcode rwhy < <(jq -r --arg c "$conn" --arg m "$model" '([.chain[] | select(.connection == $c and .model == $m)][0]) as $e
-    | if $e == null and .local_only == true then ["STL-MDL-716", "the project is Local only (data policy): the resolver lists local links only, and this link leaves the machine"]
-      elif $e == null then [.code // "STL-MDL-710", "the chain the resolver answers does not hold this link" + (if .reason then ": " + .reason else "" end)]
-      elif $e.status != "usable" then [$e.code // "STL-MDL-710", $e.reason // $e.status]
-      elif .code != null then [.code, .reason // "the resolver refused the request"] else ["usable", "-"] end | @tsv' <<<"$res" 2>/dev/null) \
-    || { rcode=$(grep -om1 'STL-[A-Z]*-[0-9]*' "$prompt.err"); rcode=${rcode:-STL-MDL-710}; rwhy="the resolver gave no chain: $(grep -m1 "$rcode" "$prompt.err" | head -c 300)"; }
-  rm -f "$prompt.err"
-fi
-[ "$rcode" = usable ] || limit "$rcode the resolver does not list $conn/$model usable for role ${role:-unknown}: $rwhy (the caller names the model: no other link is tried)"
+# The resolver serves the rung (F2b item D; the CLI logs the skipped rungs). It runs only on exit 0 with a usable served rung and no
+# code (E-DC-06); no other rung is ever asked (E-DC-02). A cooldown queues; no rung left goes to the owner; a refusal of the
+# environment or the data, an answer this script cannot read, or an event-log code is exit 2; every other refusal is exit 3. Only the
+# cooldown and the owner keep the prompt.
+gone() { rm -f "$prompt"; refuse "$@"; }
+res=$(python3 -I /workspace/bin/resolve.py resolve --role "$role" --project "$project" --card "$card" ${driver:+--driver "$driver"} --rung "$rung" --json 2>"$prompt.err"); rrc=$?
+rerr=$(head -c 4000 "$prompt.err"); rm -f "$prompt.err"
+IFS=$'\t' read -r rcode served status conn model rwhy < <(jq -r 'select(type == "object") | [.code // "-", (.rung.served // "-" | tostring),
+  (.rung.link.status // "-"), (.rung.link.connection // "-"), (.rung.link.model // "-"), ((.reason // "-") | tostring | gsub("[\t\n]"; " ") | .[:300])] | @tsv' <<<"$res" 2>/dev/null)
+skipped=$(jq -r '[.rung.skipped[]? | "rung \(.rung) \(.connection)/\(.model) \(.status) \(.code // "-")"] | join("; ")' <<<"$res" 2>/dev/null)
+[ "$conn" != - ] || conn=""; [ "$model" != - ] || model=""
+case "${rcode:-}" in
+  "") c=$(grep -om1 'STL-[A-Z]*-[0-9]*' <<<"$rerr"); gone RESOLVER 2 "${c:-STL-MDL-710} the resolver gave no answer this script can read (exit $rrc): $(grep -m1 -- "${c:-STL-}" <<<"$rerr" | head -c 300)" ;;
+  -) [ "$rrc" = 0 ] && [ "$served" != - ] && [ "$status" = usable ] && [ -n "$conn" ] && [ -n "$model" ] \
+       || gone RESOLVER 2 "STL-MDL-710 the resolver's answer (exit $rrc) serves no usable rung $rung of role $role and names no code" ;;
+  STL-MDL-731)
+    queue OWNER "STL-MDL-731 rung $rung of role $role: $rwhy"
+    why="STL-MDL-731 no rung left for card $card ($purpose, role $role, rung $rung): $rwhy${skipped:+; skipped: $skipped}${qnote:+; $qnote}"
+    log OWNER 4 none false null "$why"
+    hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-MDL-731 problem="card $card, purpose $purpose, role $role, rung $rung: $rwhy; $qnote")" >/dev/null 2>&1
+    note "escalate.sh OWNER: $why. Escalate to the owner: nothing was run."
+    echo "escalate.sh: OWNER: $why" >&2
+    exit 4 ;;
+  STL-MDL-724) limit "STL-MDL-724 rung $served of role $role ($conn/$model) is in cooldown: $rwhy (no other rung is tried)" ;;
+  STL-CFG-*|STL-EVT-*) gone RESOLVER 2 "$rcode the resolver refused rung $rung of role $role: $rwhy" ;;
+  *) gone NO_RUNG 3 "$rcode the resolver serves no usable rung $rung of role $role for card $card: $rwhy${skipped:+; skipped: $skipped} (not queued, no other rung is tried)" ;;
+esac
+log RUNG null "" false null "rung asked $rung, served $served: $conn/$model${skipped:+; skipped: $skipped}"
+# The served link is data: its connection must have this script's CLI (E-DC-02, its own code); its model's limits are the catalog's.
+link=$(jq -c --arg c "$conn" --arg m "$model" '[.entries[] | select(.kind == "provider" and .id == $c) | {cli, limits: ([.models[]? | select(.id == $m) | .limits][0] // {})}][0] // empty' <<<"$catalog" 2>/dev/null)
+cli=$(jq -r '.cli | strings' <<<"$link" 2>/dev/null)
+[ "$cli" = "$CLI" ] || gone NOT_THIS_CLI 3 "STL-MDL-746 rung $served of role $role is $conn/$model, whose connection runs on ${cli:-no CLI}, not on this script's ($CLI): not run, not queued, no other rung is tried"
+if lim purposes; then [[ " $L " == *" $purpose "* ]] || gone LIMIT 3 "$model (rung $served of role $role) is allowed only for: $L (not queued, no other rung is tried)"; fi
+cli_model=$(jq -r --arg p "$purpose" --arg m "$model" '(.limits.purpose_models[$p]? | strings) // $m' <<<"$link")
+# One trusted event line per served rung (E-DC-05): card, purpose, role, rung, from (the role's rung-0 head, asked through the
+# import, which writes no log) and to; finding ids are the QA loop's (3c). A line that cannot be written: nothing runs.
+evcode=$(python3 -I -c 'import sys; sys.path.insert(0, "/workspace/bin"); import resolve, event_log as el
+card, purpose, role, rung, served, conn, model, project, driver, reason, skipped = sys.argv[1:]
+try:
+    ch = resolve.resolve({"role": role, "project": project, "card": card, "driver": driver or None})["chain"]
+    head = "%s/%s" % (ch[0]["connection"], ch[0]["model"]) if ch else "none"
+except Exception:
+    head = "unknown"
+try:
+    el.append(el.build("escalate.rung-served", f"card {card} rung {served} of role {role}", who={"role": role}, detail=el.scrub(
+        f"card {card}, purpose {purpose}, role {role}, rung asked {rung}, rung served {served}, from {head}, to {conn}/{model}, skipped [{skipped}], reason {reason}")))
+except Exception as e:
+    print(getattr(e, "code", "STL-CFG-318"), type(e).__name__)
+    sys.exit(1)' "$card" "$purpose" "$role" "$rung" "$served" "$conn" "$model" "$project" "$driver" "${reason:0:300}" "$skipped" 2>/dev/null) \
+  || gone EVENT_LOG 2 "${evcode:-STL-CFG-318} the trusted event line of rung $served of role $role could not be written: the model is not run, nothing is queued"
 
 mkey=${model//[^A-Za-z0-9._-]/_}   # the model id as a file name of the state folder
 if lim max_concurrent; then
@@ -239,47 +286,10 @@ fi
 for p in "${POOL_PATTERNS[@]}"; do
   [[ "$out$err" == *"$p"* ]] || continue
   alert_rc=none
-  log POOL_EXHAUSTED "$rc" none true null "matched '$p'"
-  # High risk fails closed: the word "high" within 40 characters of "risk", in either order and any spelling, counts (zero-width
-  # characters removed, other unicode spaces made spaces), and so does a card whose JSON cannot be read. A false alarm only queues.
-  jq -e '(.task.body // "") | gsub("[\u00ad\u180e\u200b-\u200f\u2060-\u2064\ufeff]"; "") | gsub("[\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]"; " ") | test("risk.{0,40}high|high.{0,40}risk"; "is")' <<<"$card_json" >/dev/null 2>&1; jrc=$?
-  case $jrc in 1) high="" ;; *) high=1 ;; esac   # 0 match = high, 1 no match = low, anything else (unreadable card) = high
-  # T15: a low-risk call is served by the fallback runner (bin/omniroute-run.sh via the OmniRoute gateway) when the fallback config
-  # (docs/hermes-local/fallback-routing.json) is enabled; the runner gets the call's purpose as its role. High-risk calls queue, never reroute; a replay stays a queued Claude call. The result is labelled
-  # fallback with the model that served it and carries none of Claude's fields; a runner that names Claude or the
-  # requested model family is refused, so a fallback cannot pass for a Claude result.
-  FALLBACK_RUNNER=""
-  if [ -z "$high" ] && [ -z "${ESCALATE_REPLAY:-}" ] && jq -e '.enabled == true' "$FALLBACK_CONFIG" >/dev/null 2>&1; then
-    FALLBACK_RUNNER=$(jq -r '.runner // empty' "$FALLBACK_CONFIG"); [[ "$FALLBACK_RUNNER" == /* ]] || FALLBACK_RUNNER=/workspace/$FALLBACK_RUNNER
-  fi
-  skip_reason=""   # S6D-05: a prompt that looks like it holds a secret never leaves the machine (patterns are config data; the match is never logged)
-  if [ -x "$FALLBACK_RUNNER" ]; then
-    pi=0; while IFS= read -r pat; do pi=$((pi+1)); grep -Eq -- "$pat" "$prompt" 2>/dev/null && { skip_reason="the prompt matches blocked pattern #$pi (prompt_block_patterns)"; break; }; done < <(jq -r '.prompt_block_patterns[]? | strings' "$FALLBACK_CONFIG")
-    [ -z "$skip_reason" ] || { log FALLBACK_SKIPPED null none true null "$skip_reason; queued instead"; FALLBACK_RUNNER=""; }
-  fi
-  if [ -x "$FALLBACK_RUNNER" ]; then
-    fb=$(timeout "$CALL_TIMEOUT" "$FALLBACK_RUNNER" --role "$purpose" <"$prompt" 2>/dev/null); frc=$?
-    served=""; jq -s -e 'length == 1 and (.[0] | type == "object" and (.model_used | type == "string") and (.text | type == "string"))' <<<"$fb" >/dev/null 2>&1 \
-      && served=$(jq -r '.model_used' <<<"$fb"); sl=${served,,}
-    if [ "$frc" = 0 ] && [[ "$served" =~ ^[A-Za-z0-9._:/+@-]{1,128}$ ]] && [[ "$sl" != *claude* && "$sl" != *"$model"* ]]; then
-      log FALLBACK 0 "$served" true null "rerouted after POOL_EXHAUSTED (matched '$p')"
-      hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-LIM-404 card="$card" model="${model^}" served="$served" since="$(date -u +%FT%TZ)")" >/dev/null 2>&1; alert_rc=$?
-      note "escalate.sh FALLBACK: $model ($purpose) for '$reason' was answered by a fallback model, not Claude. model_used: $served, fallback: true. Alert to $ALERT_TARGET exit $alert_rc."
-      rm -f "$prompt"
-      jq -c --arg m "$served" '{type: "result", is_error: false, fallback: true, model_used: $m, text: (.text // "")}' <<<"$fb"
-      exit 0
-    fi
-    log FALLBACK_FAILED "$frc" "${served:-none}" true null "runner rc $frc, model '${served:-}': not usable; queued instead"
-  fi
+  log POOL_EXHAUSTED "$rc" none false null "matched '$p'; not rerouted (an escalation rung never goes to the fallback runner)"
   queue POOL_EXHAUSTED "pool exhausted at $(date -u +%FT%TZ) (matched '$p')"   # the one #alerts line for this call
-  if [ -n "$high" ]; then
-    disposition="high-risk card; $qnote"
-  else
-    log NO_REROUTE "$rc" none true null "low-risk card; no usable fallback runner; $qnote"
-    disposition="low-risk card, no usable fallback runner (NO_REROUTE); $qnote"
-  fi
-  note "escalate.sh POOL_EXHAUSTED: $model ($purpose) for '$reason'. No result. model_used: none, fallback: true. $disposition. Alert to $ALERT_TARGET exit $alert_rc."
-  echo "escalate.sh: POOL_EXHAUSTED ($p); $disposition" >&2
+  note "escalate.sh POOL_EXHAUSTED: $model ($purpose) for '$reason'. No result. model_used: none, fallback: false. Not rerouted (an escalation rung never is); $qnote. Alert to $ALERT_TARGET exit $alert_rc."
+  echo "escalate.sh: POOL_EXHAUSTED ($p); not rerouted; $qnote" >&2
   exit 75
 done
 

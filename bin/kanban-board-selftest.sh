@@ -43,7 +43,7 @@ printf '556\tt_bbbbbbbb\t2026\tDone card\n' >> "$T/sup/state/escalation-threads.
 $B/escalation-complete.sh t_bbbbbbbb >/dev/null 2>&1
 echo '{"extra": {"task_id": "t_cccccccc", "reason": "x"}}' | $B/escalation-on-block.sh >/dev/null 2>&1
 $B/escalations-status.sh >/dev/null 2>&1
-echo hi | $B/escalate.sh t_12345678 sonnet review why >/dev/null 2>&1
+echo hi | $B/escalate.sh t_12345678 review why >/dev/null 2>&1
 for _ in $(seq 1 50); do grep -q "show t_cccccccc" "$T/sup/hermes_calls" 2>/dev/null && break; sleep 0.1; done   # on-block runs detached
 k=$(grep -c '^kanban ' "$T/sup/hermes_calls")
 ok '[ "$k" -ge 8 ]' "the scripts made kanban calls ($k)"

@@ -413,17 +413,6 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
-      "id": "escalate-caller-names-model",
-      "owner_phase": "F2",
-      "status": "on",
-      "depends_on": [],
-      "flag": null,
-      "due_phase": "F2b",
-      "replaced_by": "the escalation-chain walk (F2b: bin/escalate.sh takes the next rung of the role's escalation chain from the resolver instead of a model named by its caller); until then the caller names the model, the name must be a model the catalog lists for the script's CLI, the resolver must list exactly that link usable, and no other link is tried",
-      "global_id": "9dae5c53-5ab1-4c9f-9983-13d25725ea8b",
-      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
-    },
-    {
       "id": "routing-observed-quota",
       "owner_phase": "F2",
       "status": "on",

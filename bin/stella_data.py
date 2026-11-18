@@ -1143,7 +1143,7 @@ def rule_routing(c):
     """The routing data against itself, the role table, the alert catalog and the index: ids listed once, an exempt role too; a
     hosted class less private than every class that is not hosted (W1-RT-06); every role it names is assignable; an exempt
     role's class order names known classes, none of them hosted (W1-RT-09); a required role's `when` is always or a trigger;
-    a cooldown is not above its cap; a building role is a card role; the effort table names known roles, tiers and effort ids; consent names an approval class and alert codes that exist; the credentials backend in
+    a cooldown is not above its cap; a building role is a card role; the effort table names known roles, tiers and effort ids; every escalation purpose names an assignable role; consent names an approval class and alert codes that exist; the credentials backend in
     use is defined, and a dir backend lies inside a protected state path (DC-05: no role may read the keys)."""
     P, table = c["P"], c["table"]
     roles = set(table["roles"]) - {table["fallback_role"]}
@@ -1183,6 +1183,9 @@ def rule_routing(c):
             for k, v in [("default", x.get("default"))] + [(f"tiers[{kname(t)}]", v) for t, v in x.get("tiers", {}).items() if t in tiers]:
                 if v is not None and v not in ef["levels"]:
                     P(rid, f"{at}: {k} ({desc(v)}) is not an effort id of effort.levels")
+        for pu, r in rt.get("escalation", {}).get("purposes", {}).items():   # F2b item E: the purpose picks the role whose chain is walked
+            if r not in roles:
+                P(rid, f"escalation.purposes[{kname(pu)}]: {nm(r, table['roles'], 'it')} is not an assignable role in the role table")
         for i, x in enumerate(wf["required_roles"]):
             if x["when"] != "always" and x["when"] not in wf["triggers"]:
                 P(rid, f"workflow.required_roles[{i}].when ({desc(x['when'])}) is neither always nor a trigger of workflow.triggers")
