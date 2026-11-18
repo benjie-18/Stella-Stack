@@ -123,6 +123,9 @@
     "role-guard": {
       "mark": "hermetic"
     },
+    "register-toolsets": {
+      "mark": "hermetic"
+    },
     "roles": {
       "mark": "shared",
       "why": "its role-guard cases (the g function, roles-selftest.sh:57) run without the hermes stub on PATH, so roles.py kanban() runs `hermes` with the passwd home through the runner's wrapper, which passes it to the real one and the live board (A05 saw it); roles.hooks_for/role_tools import toolsets from the installed hermes-agent (roles.py:893, 960-967)"
@@ -784,6 +787,156 @@
       ],
       "targets": [
         "roles-complete"
+      ]
+    },
+    {
+      "globs": [
+        "bin/register-toolsets-selftest.sh",
+        ".claude/settings.json",
+        ".stella/data-files.json",
+        ".stella/protocols.json",
+        ".stella/schemas/event.schema.json",
+        ".stella/settings.json",
+        ".supervisor/limits.env",
+        "SUPERVISOR.md",
+        "bin/alert-catalog.sh",
+        "bin/alert.sh",
+        "bin/alert_catalog.py",
+        "bin/apply-hermes-local.sh",
+        "bin/approvals.py",
+        "bin/consent.py",
+        "bin/credentials.py",
+        "bin/devices.py",
+        "bin/escalation-complete.sh",
+        "bin/escalation-discord.sh",
+        "bin/escalation-on-block.sh",
+        "bin/escalation-on-claim.sh",
+        "bin/escalation-on-complete.sh",
+        "bin/escalation-thread.sh",
+        "bin/event_log.py",
+        "bin/event_untrusted.py",
+        "bin/kanban-board.sh",
+        "bin/kanban-guard.sh",
+        "bin/owner-config.sh",
+        "bin/owner_auth.py",
+        "bin/owner_config.py",
+        "bin/register-escalation-hook.sh",
+        "bin/register-toolsets.sh",
+        "bin/resolve.py",
+        "bin/role-guard.py",
+        "bin/roles.py",
+        "bin/route.py",
+        "bin/settings.py",
+        "bin/stella-apply.py",
+        "bin/stella_data.py",
+        "bin/worker_env.py",
+        "docs/alert-codes.md",
+        "docs/hermes-local/alert-catalog.json",
+        "docs/hermes-local/board.md",
+        "docs/hermes-local/roles.json"
+      ],
+      "targets": [
+        "register-toolsets"
+      ]
+    },
+    {
+      "globs": [
+        ".claude/settings.json",
+        ".stella/settings.json"
+      ],
+      "targets": [
+        "commit-guard",
+        "escalation-reply-poll",
+        "kanban-guard",
+        "loopback",
+        "matcher-audit",
+        "mock-provider",
+        "model-watch",
+        "owner-auth",
+        "owner-config",
+        "owner-settings",
+        "presets",
+        "roles-complete",
+        "secret-read"
+      ]
+    },
+    {
+      "globs": [
+        ".stella/data-files.json"
+      ],
+      "targets": [
+        "matcher-audit",
+        "owner-config",
+        "roles-complete",
+        "secret-read"
+      ]
+    },
+    {
+      "globs": [
+        ".stella/protocols.json"
+      ],
+      "targets": [
+        "commit-guard",
+        "escalation-reply-poll",
+        "event-log",
+        "kanban-guard",
+        "loopback",
+        "matcher-audit",
+        "model-watch",
+        "owner-auth",
+        "owner-config",
+        "owner-settings",
+        "presets",
+        "role-guard",
+        "roles-complete",
+        "secret-read"
+      ]
+    },
+    {
+      "globs": [
+        ".stella/schemas/event.schema.json",
+        "bin/devices.py",
+        "bin/event_log.py",
+        "bin/event_untrusted.py",
+        "bin/owner_auth.py",
+        "bin/stella-apply.py",
+        "bin/stella_data.py",
+        "bin/worker_env.py"
+      ],
+      "targets": [
+        "commit-guard",
+        "matcher-audit",
+        "owner-config",
+        "owner-settings",
+        "roles-complete",
+        "secret-read"
+      ]
+    },
+    {
+      "globs": [
+        "bin/approvals.py",
+        "bin/consent.py",
+        "bin/credentials.py",
+        "bin/resolve.py",
+        "bin/route.py",
+        "bin/settings.py"
+      ],
+      "targets": [
+        "commit-guard",
+        "escalation-reply-poll",
+        "event-log",
+        "kanban-guard",
+        "loopback",
+        "matcher-audit",
+        "mock-provider",
+        "model-watch",
+        "owner-auth",
+        "owner-config",
+        "owner-settings",
+        "presets",
+        "role-guard",
+        "roles-complete",
+        "secret-read"
       ]
     },
     {
