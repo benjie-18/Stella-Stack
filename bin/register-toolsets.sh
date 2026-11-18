@@ -88,8 +88,8 @@ for prof in $(jq -r 'keys[]' "$T"); do
     why=$(jq -r '"\(.code // "STL-MDL-710") \(.reason // "the chain holds no usable link")"' <<<"$res" 2>/dev/null || true)
     echo "$prof: model.default left unchanged: ${why:-$(grep -m1 'STL-[A-Z]*-[0-9]' <<<"$res" | head -c 300)}"; rc=1
   else
-    have=$(h config get model.default | head -1 || true)
-    if [ "$have" = "$want" ]; then echo "$prof: model.default $want (in sync)"
+    if ! have=$(h config get model.default); then echo "$prof: could not read model.default (hermes config get failed), nothing changed"; rc=1   # S4: as skills.disabled
+    elif have=$(head -1 <<<"$have"); [ "$have" = "$want" ]; then echo "$prof: model.default $want (in sync)"
     elif [ "$mode" = --check ]; then echo "$prof: model.default is ${have:-unset or unreadable}, expected $want"; rc=1
     else backup
       if h config set model.default "$want" >/dev/null; then echo "$prof: model.default set to $want"
