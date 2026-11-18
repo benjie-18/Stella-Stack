@@ -1,5 +1,6 @@
 {
   "about": "Stella's owner-facing alert codes (D44). bin/alert.sh renders #alerts messages from this file; bin/alert-catalog.sh --docs writes docs/alert-codes.md from it. A code is never reused or renumbered: retire one with \"status\": \"retired\". Placeholders: {name}, filled from the caller's key=value pairs; {since} and {now} are times, shown in the owner's time zone; {what} is the plain phrase for the caller's error=.",
+  "limits": {"max_chars": 1800, "page_interval_s": 3600},
   "alerts": [
     {
       "code": "STL-WDG-101",

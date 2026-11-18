@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 BIN = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(BIN)
 ICON = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨"}
-MAX = 1800
 FIELDS = ("code", "area", "severity", "title", "message", "action", "cause", "check", "related", "resolvable")
 UTC_NAMES = {"UTC", "Etc/UTC", "Etc/GMT", "GMT", "Etc/Zulu", "Zulu", "Universal", "Etc/Universal"}
 # raw error -> plain phrase; first match wins (an SSL error also says "urlopen error")
@@ -51,6 +50,19 @@ def classify(raw):
 def catalog():
     with open(os.environ.get("ALERT_CATALOG") or f"{ROOT}/docs/hermes-local/alert-catalog.json", encoding="utf-8") as f:
         return {a["code"]: a for a in json.load(f)["alerts"]}
+
+
+def limits():
+    """The catalog's "limits" block (max_chars, page_interval_s); a catalog without it uses the shipped one's. {} if neither reads."""
+    for p in (os.environ.get("ALERT_CATALOG"), f"{ROOT}/docs/hermes-local/alert-catalog.json"):
+        try:
+            with open(p, encoding="utf-8") as f:
+                lim = json.load(f).get("limits")
+            if isinstance(lim, dict):
+                return lim
+        except Exception:
+            pass
+    return {}
 
 
 def zone():
@@ -133,7 +145,8 @@ def render(code, kv, sample=False):
         if kv.get("since"):
             lines.append(f"First seen {vals['since']}")
     body = "\n".join(lines)
-    return (body if len(body) <= MAX else body[:MAX - 1] + "…"), tag, kv
+    mx = limits().get("max_chars", len(body))
+    return (body if len(body) <= mx else body[:mx - 1] + "…"), tag, kv
 
 
 def log(tag, kv):
@@ -212,7 +225,7 @@ def page_due(code, key, streak=""):
     if policy == "card_streak":
         return old != streak, f
     if policy == "hourly":
-        return age is None or age >= 3600, f
+        return age is None or age >= limits().get("page_interval_s", float("inf")), f
     return False, f
 
 
@@ -260,6 +273,10 @@ def validate():
     except Exception as e:
         return [f"{path}: {type(e).__name__}: {e}"]
     errs, seen = [], set()
+    lim = json.load(open(path, encoding="utf-8")).get("limits")
+    for k in ("max_chars", "page_interval_s"):
+        if not (isinstance(lim, dict) and isinstance(lim.get(k), int) and not isinstance(lim[k], bool) and lim[k] > 0):
+            errs.append(f"limits.{k}: a positive whole number is required")
     for a in alerts:
         c = a.get("code", "?")
         errs += [f"{c}: missing {k}" for k in FIELDS if k not in a]

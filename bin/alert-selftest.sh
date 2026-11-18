@@ -145,6 +145,10 @@ ok 'grep -qF "\"allowed_mentions\": {\"parse\": []}" "$B/escalation-discord.sh" 
 ok 'grep -qF "send() { hermes send --to \"\$ALERT_TARGET\" --quiet \"\$1\" >>\"\$LOG\" 2>&1 || { sleep 3; hermes send --to \"\$ALERT_TARGET\" --quiet \"\$1\" >>\"\$LOG\" 2>&1; }; }" "$B/watchdog.sh" && grep -qF "hermes send --to \"\$ALERT_TARGET\" --quiet \"\$(alert_text STL-LIM-40" "$B/escalate.sh" && grep -qF "hermes send --to \"\${ALERT_TARGET:-discord:#alerts}\" --quiet \"\$(alert_text STL-CFG-301" "$B/owner-config.sh"' "transports: watchdog send() with its retry, escalate.sh and owner-config.sh hermes send lines kept"
 
 # Generated docs and the terminal explainer.
+jq '.limits={max_chars:50,page_interval_s:7}' /workspace/docs/hermes-local/alert-catalog.json > "$T/lim.json"
+jq 'del(.limits)' "$T/lim.json" > "$T/nolim.json"
+pi() { ALERT_CATALOG="$T/lim.json" python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import alert_catalog as c; print(c.limits()["page_interval_s"])' "$B"; }
+ok '[ "$(ALERT_CATALOG="$T/lim.json" alert_text STL-WDG-101 commit=abc1234 check=build | wc -m)" -le 51 ] && [ "$(pi)" = 7 ] && ALERT_CATALOG="$T/nolim.json" $C validate | grep -q "limits.max_chars"' "limits block: a catalog copy with another max length and page interval is honoured; validate requires both"
 ok '"$B/alert-catalog.sh" --check >/dev/null 2>&1' "docs/alert-codes.md is generated from the catalog and up to date"
 ok '"$B/alert-explain.sh" STL-ESC-210 | grep -q "^Means    Stella tried {count} times" && ! "$B/alert-explain.sh" "STL-ZZZ-""999" >/dev/null && ! "$B/alert-explain.sh" "x; ls" >/dev/null 2>&1' "alert-explain.sh prints an entry; an unknown code or other text fails"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
