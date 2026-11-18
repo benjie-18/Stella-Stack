@@ -291,11 +291,20 @@ lists `usable` on a local connection for the role that runs that tool (the role 
 asked at container start about a card with no facts record and no project; no such link, or no answer, leaves a config that
 names no model, and the step fails with the resolver's code. The engine model of each Hermes profile is set outside the repo,
 by hand (stub `profile-engine-model-host-step`, due F2b). No script names a model, a model's limit or a per-model settings key.
-The callers of a coding CLI (`bin/escalate.sh`, the builder model guard) take the model from the resolver: the escalation
-script runs the model its caller names only when the resolver lists that link `usable` (stub `escalate-caller-names-model`,
-due F2b), and the guard allows the model of the first usable link on a connection whose `cli` is its CLI; the F1b mark
-`worker_run` is gone. A call of `bin/escalate.sh` from a worker run (a card proven for the call by `roles.py prove`, or a
-worker marker of the role table set) names that run's own proven card or is refused (`STL-GRD-604`, exit 3, not queued).
+The callers of a coding CLI (`bin/escalate.sh`, the builder model guard) take the model from the resolver; the F1b mark
+`worker_run` is gone. The guard allows the model of the first usable link on a connection whose `cli` is its CLI. The
+escalation script (F2b item E) is called `escalate.sh <card-id> <purpose> <reason...>`: the caller names neither a model nor
+a rung. The purpose picks the role (routing `escalation.purposes`; no row: STL-MDL-747, exit 2), the card's current rung of
+that role is host-side state (`state/rungs.json` {card: {role: rung}}, 1 when absent; nothing in the script raises it), and
+`resolve.py resolve --role <role> --project <the card's project> --card <card> --rung <rung>` serves the link. It runs only on
+exit 0 with a usable served rung whose connection has the script's CLI (else STL-MDL-746, not queued) and whose model's
+`limits.purposes` holds the purpose (else exit 3, not queued); no other rung is ever asked. A rung in cooldown (724) queues;
+no rung left (731) is exit 4, one owner line, an entry in state `owner` that the drain never replays or stales; every other
+refusal is not queued. One trusted `escalate.rung-served` event line per served rung (card, purpose, role, rung asked and
+served, from the role's rung-0 head, to the served link); if it cannot be written nothing runs. A rung is never rerouted to
+the pool-exhausted fallback runner. A queue entry of the old form (a `model`, no `role`) gets state `legacy`: never replayed,
+listed, removed only by `--drop`. Only the supervisor runs the script: a call from a worker run (a card proven for the call by
+`roles.py prove`, or a worker marker of the role table set) is refused, its own card too (`STL-GRD-604`, exit 3, not queued).
 
 ### `.stella/data-policy.json`
 `data_classes[]`, `local_hosts[]` (the host names that count as local; a provider declared local may list only these), a `default` and `projects{}`; each has `mode` (`open`, `local_only`, `allowed_providers`) and
@@ -384,7 +393,9 @@ one present: the schema pins the set), `same_connection_first`, `max_switches_pe
 the card facts the resolver judges, each `true`: a fact that is not recorded counts as holding, so hosted links are excluded;
 `carries_secrets` and `vault_content` are required, `false` is refused, a new fact is added as a key}; `credentials` {`backend`,
 `backends{}` by id {`kind` none or dir, `path`}} (ships kind none: every read is refused until the secrets broker);
-`builder_roles[]` (the card roles that build: the builder escalation applies to them); `effort` {`levels[]` (the effort ids,
+`builder_roles[]` (the card roles that build: the builder escalation applies to them); `escalation` {`purposes{}`: per
+escalation purpose the role whose chain `bin/escalate.sh` walks (owner decision 2026-11-18; `check` refuses a role that is
+not assignable)} (optional: absent, every escalation call is refused); `effort` {`levels[]` (the effort ids,
 lowest first), `by_role{}`: per role an effort id (its default) or {`default`, `tiers{}` by task tier}} (optional: a resolved link's `effort` is its
 `parameters.effort`, else the role's tier value, else its default, else null; absent, no effort id exists).
 *To add a link class, tier or driver:* add the entry; no code names one. A hosted class takes a `privacy_rank` above every
