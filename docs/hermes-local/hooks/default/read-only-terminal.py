@@ -313,7 +313,8 @@ def _git_dir_why(here):
     .git (a short 8.3 or odd spelling of the path does not matter) is the stack's folder or the main checkout of a bound project, and its .git is a folder
     (a linked worktree has a file). Anything else, or a table that cannot be read, refuses."""
     try:
-        siblings = {x.casefold() for x in _roles.sandbox(_roles.load())["sibling_dirs"]}
+        sb = _roles.sandbox(_roles.load())   # no sandbox block: nothing is boxed, so no card worktree folders exist to refuse
+        siblings = {x.casefold() for x in (sb["sibling_dirs"] if sb else [])}
     except Exception:
         return "the sandbox table cannot be read, so git is not run in a card folder"
     rp = os.path.realpath(here)
