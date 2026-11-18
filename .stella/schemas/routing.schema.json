@@ -253,6 +253,37 @@
       "required": ["approval_class", "ttl_s", "alert_code_queue", "alert_code_notice"],
       "additionalProperties": false
     },
+    "effort": {
+      "type": "object",
+      "properties": {
+        "levels": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/id"},
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "The effort ids (a reasoning effort or thinking setting), lowest first: the only ids a link's parameters.effort and by_role may name (`check` refuses any other, here and in every link of the role assignments)."
+        },
+        "by_role": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "default": {"$ref": "#/$defs/id"},
+              "tiers": {
+                "type": "object",
+                "additionalProperties": {"$ref": "#/$defs/id"},
+                "description": "Per task tier (task_tiers[]): the role's effort at that tier."
+              }
+            },
+            "additionalProperties": false
+          },
+          "description": "Per role of the role table: its effort by task tier, else its default. `check` refuses a role, a tier or an effort id the data does not define."
+        }
+      },
+      "required": ["levels", "by_role"],
+      "additionalProperties": false,
+      "description": "Effort as data (F2b B3): every link the resolver answers carries `effort`: its parameters.effort when set, else by_role[role].tiers[tier], else by_role[role].default, else null. Absent: no effort id exists, so a link that names one is refused."
+    },
     "card_facts": {
       "type": "object",
       "properties": {

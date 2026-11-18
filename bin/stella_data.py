@@ -1071,10 +1071,18 @@ def rule_presets(c):
     for _, rt in c["whole"].get("routing", []):
         classes, wf, exempt = {x["id"] for x in rt["link_classes"]}, rt["workflow"], {x["role"] for x in rt["exempt_roles"]}
         need = {x["role"] for x in wf["required_roles"] if x["when"] == "always" or wf["triggers"].get(x["when"], {}).get("can_fire")}
+        levels = set(rt.get("effort", {}).get("levels", []))
         for rid, ra in c["whole"].get("role-assignments", []):
             for a in ra["assignments"]:
                 for m in order_problems(a.get("class_order", []), classes, f"{idn(a['id'])}: class_order"):
                     P(rid, m)
+            # effort ids are data (routing effort.levels): every link of every assignment and preset names a known one or none
+            links = [(f"{idn(a['id'])}: chain[{i}]", l) for a in ra["assignments"] for i, l in enumerate(a["chain"])] + \
+                [(f"preset {kname(pid)}: role {nm(r, table['roles'], 'a key')}: {f}[{i}]", l) for pid, mode in ra["effort_modes"].items()
+                 for r, x in mode.get("roles", {}).items() for f in ("pins", "fallbacks", "escalation_chain") for i, l in enumerate(x.get(f, []))]
+            for at, l in links:
+                if "effort" in l["parameters"] and l["parameters"]["effort"] not in levels:
+                    P(rid, f"{at}: parameters.effort ({desc(l['parameters']['effort'])}) is not an effort id of the routing data (effort.levels)")
             owned = {(a["role"], a["effort_mode"]) for a in ra["assignments"] if a["scope"]["level"] == "global"}   # the owner's pins, in every project
             for pid, mode in ra["effort_modes"].items():
                 w = f"preset {kname(pid)}"
@@ -1110,7 +1118,7 @@ def rule_presets(c):
                             P(rid, f"{w} turns off role {idn(r, True)}, which is exempt from the presets and stays on under every one (routing data, exempt_roles)")
                         continue
                     last = x["last_resort"] if "last_resort" in x else mode.get("last_resort")
-                    for f in ("pins", "fallbacks"):
+                    for f in ("pins", "fallbacks", "escalation_chain"):   # a rung is judged as a pin (DC-06)
                         for i, l in enumerate(x.get(f, [])):
                             prov = entry(conn, l["connection"])
                             if prov is None or prov["kind"] != "provider":
@@ -1154,6 +1162,17 @@ def rule_routing(c):
                 P(rid, m)
             if hosted & {k for it in x["class_order"] for k in (it if isinstance(it, list) else [it])}:   # W1-RT-09: no preset's localities bind an exempt role
                 P(rid, f"exempt_roles[{i}].class_order names a hosted link class: an exempt role stays on links that do not leave the machine under every preset")
+        ef = rt.get("effort", {"levels": [], "by_role": {}})
+        tiers = {x["id"] for x in rt["task_tiers"]}
+        for r, x in ef["by_role"].items():
+            at = f"effort.by_role: {nm(r, table['roles'], 'a key')}"
+            if r not in roles:
+                P(rid, f"{at} is not an assignable role in the role table")
+            for t in x.get("tiers", {}).keys() - tiers:
+                P(rid, f"{at}: tiers: {nm(t, tiers, 'a key')} is not a task tier (task_tiers)")
+            for k, v in [("default", x.get("default"))] + [(f"tiers[{kname(t)}]", v) for t, v in x.get("tiers", {}).items() if t in tiers]:
+                if v is not None and v not in ef["levels"]:
+                    P(rid, f"{at}: {k} ({desc(v)}) is not an effort id of effort.levels")
         for i, x in enumerate(wf["required_roles"]):
             if x["when"] != "always" and x["when"] not in wf["triggers"]:
                 P(rid, f"workflow.required_roles[{i}].when ({desc(x['when'])}) is neither always nor a trigger of workflow.triggers")
