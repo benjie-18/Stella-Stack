@@ -10,7 +10,8 @@
     "F2c",
     "E1",
     "E2",
-    "E3"
+    "E3",
+    "B1"
   ],
   "entries": [
     {
@@ -154,6 +155,8 @@
       "status": "on",
       "depends_on": [],
       "flag": null,
+      "due_phase": "B1",
+      "replaced_by": "the secrets broker (feature broker, phase B1)",
       "global_id": "f43ed7e3-fdad-4a36-ae71-88728f099309",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -304,6 +307,8 @@
         "event-log"
       ],
       "flag": null,
+      "due_phase": "B1",
+      "replaced_by": "the secrets broker built in phase B1",
       "global_id": "9bf5e451-243d-44e4-a4d1-6b295a3efabc",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
