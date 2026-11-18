@@ -24,7 +24,7 @@ answer adds rung {requested, served, last, link, skipped[] {rung, connection, mo
 chain is [link] or []; none served: STL-MDL-731 (escalate to the owner), exit 1. The CLI alone writes the walk to the event log:
 one routing.rung-skipped line (STL-MDL-732) per skip, one routing.rung-exhausted line (731) when none is served; a line that cannot
 be written withdraws a served rung (the log's code) or, exhausted, names it in rung.log_code. --rung in a worker environment
-fails closed (STL-CFG-312) before anything is judged.
+fails closed (STL-CFG-312) before anything is judged. A role the preset turns off answers as without --rung (NO_LINK, no rung key).
 Exit: 0 one usable link or more and no app refused; 1 no usable link (NO_LINK, the same JSON) or a refused card app (its
 code, the same JSON), or fail closed with one catalog line, one alert line and no JSON: an unknown role, tier, driver, card
 id, preset or link class, a role that works a card called with no card, a project id that is a listed one but for case or
