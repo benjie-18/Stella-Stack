@@ -253,6 +253,12 @@
       "required": ["approval_class", "ttl_s", "alert_code_queue", "alert_code_notice"],
       "additionalProperties": false
     },
+    "builder_roles": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true,
+      "description": "The card roles that build (the QA loop's builder escalation applies to them only): each built-in preset ships an escalation_chain for every one. `check` refuses a role that is not a card role (card_roles)."
+    },
     "effort": {
       "type": "object",
       "properties": {

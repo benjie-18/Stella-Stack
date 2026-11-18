@@ -821,6 +821,15 @@ def unmet(req, caps):
         (["min_context_tokens"] if req.get("min_context_tokens", 0) > (caps.get("context_tokens") or 0) else [])
 
 
+def model_problems(table, role, prov, model):
+    """The link itself, whatever the catalog's switches say: its model listed for its connection and meeting the role's
+    requirements by its advertised capabilities (unmet). Part of link_problems(); alone, the judge of a built-in preset's rung."""
+    req, mod = table["roles"].get(role, {}).get("requirements", {}), next((m for m in prov["models"] if m["id"] == model), None)
+    if mod is None:
+        return [f"its model ({desc(model)}) is not listed for {idn(prov['id'])}"]
+    miss = unmet(req, mod["capabilities"])
+    return [f"its model does not meet the role's requirements by its advertised capabilities ({', '.join(miss)})"] if miss else []
+
 def link_problems(table, role, prov, model, localities=None, mode=None, policies=(), where=None, pols=(), now=None, project=None):
     """Why the link (provider prov, model) may not be listed for `role`, as texts that follow the link's place: the one judge of
     an assignment's chain and of a preset's pins and fallbacks (W1-RT-01; the resolver excludes the same links at run time).
@@ -830,13 +839,8 @@ def link_problems(table, role, prov, model, localities=None, mode=None, policies
     that has one (an assignment; a preset has none, the resolver judges it per project): its policies (project_policies,
     named `where`) and, with the data policies `pols`, the hosted rule of each data class for its project (route_problems)."""
     req, pn = table["roles"].get(role, {}).get("requirements", {}), idn(prov["id"])
-    need, mod = req.get("allowed_data_classes", []), next((m for m in prov["models"] if m["id"] == model), None)
-    out = [] if prov["enabled"] else [f"{pn} is switched off"]
-    miss = unmet(req, mod["capabilities"]) if mod else []
-    if mod is None:
-        out.append(f"its model ({desc(model)}) is not listed for {pn}")
-    elif miss:
-        out.append(f"its model does not meet the role's requirements by its advertised capabilities ({', '.join(miss)})")
+    need = req.get("allowed_data_classes", [])
+    out = ([] if prov["enabled"] else [f"{pn} is switched off"]) + model_problems(table, role, prov, model)
     if localities is not None and reach(prov) not in localities:
         out.append(f"{pn} is {reach(prov)} for routing, which effort mode {idn(mode)} forbids")
     if not all(policy_allows(p, prov) for p in policies):
@@ -1123,7 +1127,8 @@ def rule_presets(c):
                             prov = entry(conn, l["connection"])
                             if prov is None or prov["kind"] != "provider":
                                 continue   # its x-ref (connections, kind provider) refuses it, naming the field
-                            miss = judged(r, last, prov, l["model"])
+                            # a built-in rung: the owner cannot edit it, so a catalog switch never makes the data invalid; the resolver skips it at run time
+                            miss = model_problems(table, r, prov, l["model"]) if f == "escalation_chain" and mode.get("builtin") else judged(r, last, prov, l["model"])
                             if miss:
                                 P(rid, Coded(CHAIN_FAILS, f"{w}: role {idn(r, True)}: {f}[{i}] fails the role's requirements ({'; '.join(miss)})"))
                 bare = {r for r in roles - exempt if (r in need or not table["roles"][r].get("optional")) and not linked(r)}   # an optional role fails when asked for, not here; a required one is never optional
@@ -1162,6 +1167,9 @@ def rule_routing(c):
                 P(rid, m)
             if hosted & {k for it in x["class_order"] for k in (it if isinstance(it, list) else [it])}:   # W1-RT-09: no preset's localities bind an exempt role
                 P(rid, f"exempt_roles[{i}].class_order names a hosted link class: an exempt role stays on links that do not leave the machine under every preset")
+        for i, r in enumerate(rt.get("builder_roles", [])):
+            if r not in rt["card_roles"]:
+                P(rid, f"builder_roles[{i}]: {nm(r, rt['card_roles'], 'it')} is not a card role (card_roles)")
         ef = rt.get("effort", {"levels": [], "by_role": {}})
         tiers = {x["id"] for x in rt["task_tiers"]}
         for r, x in ef["by_role"].items():

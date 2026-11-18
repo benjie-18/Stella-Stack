@@ -211,14 +211,14 @@ u u23 routing.json '.effort.by_role[$p] = {tiers: {($x): .effort.levels[0]}}' "5
 u u24 role-assignments.json "$F.roles[\$p].escalation_chain[0].parameters.effort = \$x" "5za an unknown effort id in a rung's parameters is refused"
 u u25 role-assignments.json "$F.roles[\$p].pins[0].parameters.effort = \$x" "5zb an unknown effort id in a pin's parameters is refused"
 u u26 role-assignments.json '.assignments[0].chain[0].parameters.effort = $x' "5zc an unknown effort id in an assignment's chain is refused"
+u u27 routing.json '.builder_roles += [$x]' "5ze a building role that is not a card role is refused"
 mk edup five; ed edup routing.json '.effort.levels += [.effort.levels[0]]'
 ok 'refuses edup' "5zd an effort level listed twice is refused"
 
 # ---- the escalation chain (F2b item D): judged like a pin; built-ins ship a chain for each building role; effort levels are data ----
 mk ec five; ed ec role-assignments.json --arg p "$PINROLE" --argjson l "$(link qa-notools)" "$F.roles[\$p].escalation_chain = [\$l]"
 ok 'refuses ec && grep -q "^$C_CHAIN .*escalation_chain\[0\]" "$T/o"' "6x a rung that fails the role's requirements is refused with $C_CHAIN, naming escalation_chain[0]"
-# the building roles: the card roles whose role-table row works in a git worktree of its own (read from the data, not named)
-BUILDERS=$(jq -c --slurpfile t "$RJ" '[.card_roles[] | select($t[0].roles[.].workspace == "git-worktree")]' "$RT")
+BUILDERS=$(jq -c '.builder_roles // []' "$RT")   # the building roles: routing data, not named
 ok '[ "$(jq length <<<"$BUILDERS")" -gt 0 ] && jq -e --argjson b "$BUILDERS" --slurpfile rt "$RT" "[.effort_modes[] | select(.builtin)] as \$m | (\$m | length) > 0 and all(\$m[]; . as \$p | all(\$b[];
   (\$p.roles[.].escalation_chain | length) > 0 and all(\$p.roles[.].escalation_chain[]; (.parameters.effort // null) as \$e | \$e == null or (\$rt[0].effort.levels | index(\$e)) != null)))" "$RA" >/dev/null' \
   "6y every built-in preset ships an escalation chain for each building role, with known effort ids (and check accepts it: case 1)"

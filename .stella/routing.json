@@ -71,6 +71,7 @@
     }
   ],
   "card_roles": ["builder", "reviewer", "tester", "validator", "verifier", "red-team"],
+  "builder_roles": ["builder"],
   "workflow": {
     "required_roles": [
       {

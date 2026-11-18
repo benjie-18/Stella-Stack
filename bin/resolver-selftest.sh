@@ -415,7 +415,7 @@ EVREL=$(j .event_log "$IX"); evn() { local f="$T/$1/$EVREL"; if [ -f "$f" ]; the
 L() { echo "{\"connection\":\"$1\",\"model\":\"$1-$2\",\"parameters\":${3:-{\}}}"; }   # <connection> <m1|m2> [<parameters JSON>]
 mk rg base; mkdir -p "$T/rg/.supervisor/logs" "$T/rg/.supervisor/state"; edt rg '.worker_markers = ["STUB_WORKER_MARK"]'
 # fake effort levels and a per-role/tier table (data only); an Eco-shaped preset: local and the aggregator class in order, the frontier class last resort
-ed rg routing --arg r "$NR" --arg t "$TIER" '.effort = {levels: ["qa-lo", "qa-mid", "qa-hi"], by_role: {($r): {default: "qa-lo", tiers: {($t): "qa-mid"}}}}'
+ed rg routing --arg r "$NR" --arg r2 "$NR2" --arg t "$TIER" '.effort.levels += ["qa-lo", "qa-mid", "qa-hi"] | .effort.by_role[$r] = {default: "qa-lo", tiers: {($t): "qa-mid"}} | del(.effort.by_role[$r2])'
 preset rg qa-rung '{class_order: [$l, $f], last_resort: $x}'
 ed rg role-assignments --arg r "$NR" --arg e "$ER" --argjson ch "[$(L qa-local m1 '{"effort":"qa-hi"}'), $(L qa-free m2), $(L qa-front m1), $(L qa-local m2)]" \
   --argjson ex "[$(L qa-free m1), $(L qa-local m2)]" '.effort_modes["qa-rung"].roles = {($r): {active: true, escalation_chain: $ch}, ($e): {active: true, escalation_chain: $ex}}'
@@ -423,18 +423,18 @@ rs rg h0 --role "$NR" --project qa-proj; rs rg ht --role "$NR" --project qa-proj
 rs rg h2 --role "$NR2" --project qa-proj; rs rg r1 --role "$NR" --project qa-proj --rung 1 --tier "$TIER"
 ok 'passes rg && [ "$(rc h0)" = 0 ] && J h0 "all(.chain[]; .effort == \"qa-lo\") and (has(\"rung\") | not)" && J ht "all(.chain[]; .effort == \"qa-mid\")" && J h2 "all(.chain[]; .effort == null)" && cmp -s "$T/o/h0.json" "$T/o/hz.json"' \
   "14 effort is data: the role's tier entry, else its default, else null, on every chain entry; --rung 0 is the answer without --rung, byte for byte, with no rung key"
-ok '[ "$(rc r1)" = 0 ] && J r1 --slurpfile h "$T/o/ht.json" ".rung.requested == 1 and .rung.served == 1 and .rung.last == 4 and .rung.skipped == [] and .code == null and .chain == [.rung.link]
-  and .rung.link.connection == \$h[0].chain[0].connection and .rung.link.model == \$h[0].chain[0].model and .rung.link.effort == \"qa-hi\" and .rung.link.status == \"usable\""' \
-  "14a rung 1 keeps the chain head's model and raises its effort (the link's parameters beat the role's tier entry)"
+ok '[ "$(rc r1)" = 0 ] && J r1 --slurpfile h "$T/o/ht.json" "([\$h[0].chain[] | select(.status == \"usable\")][0]) as \$u | .rung.requested == 1 and .rung.served == 1 and .rung.last == 4 and .rung.skipped == [] and .code == null and .chain == [.rung.link]
+  and .rung.link.connection == \$u.connection and .rung.link.model == \$u.model and \$u.effort == \"qa-mid\" and .rung.link.effort == \"qa-hi\" and .rung.link.status == \"usable\""' \
+  "14a rung 1 keeps the first usable link's model and raises its effort (the link's parameters beat the role's tier entry)"
 n0=$(evn rg "true"); rs rg r3 --role "$NR" --project qa-proj --rung 3; n1=$(evn rg "true")
 ok '[ "$(rc r3)" = 0 ] && J r3 ".rung.served == 4 and [.rung.skipped[] | [.rung, .connection, .status, .code]] == [[3, \"qa-front\", \"needs_grant\", \"$C_CROSS\"]]" &&
   [ $((n1 - n0)) = 1 ] && [ "$(evn rg ".type == \"routing.rung-skipped\" and .code == \"$C_SKIP\"")" = 1 ]' \
   "14b a last-resort rung with no crossing grant is skipped (needs_grant $C_CROSS) and the next rung served; one trusted $C_SKIP line"
 mk rgg rg; cgrant rgg qa-cg qa-rung "$FRONT" '{"level":"global"}'; rs rgg g3 --role "$NR" --project qa-proj --rung 3
 ok 'passes rgg && [ "$(rc g3)" = 0 ] && J g3 ".rung.served == 3 and .rung.skipped == [] and .rung.link.connection == \"qa-front\""' "14c with a crossing grant in force the same rung is served"
-mk rgl rg; ed rgl data-policy '.default.mode = "local_only"'; rs rgl l2 --role "$NR" --project qa-proj --rung 2
+mk rgl rg; ed rgl data-policy '.default.mode = "local_only"'; n0=$(evn rgl ".type == \"routing.rung-skipped\""); rs rgl l2 --role "$NR" --project qa-proj --rung 2
 ok 'passes rgl && [ "$(rc l2)" = 0 ] && J l2 ".local_only and .rung.served == 4 and [.rung.skipped[] | [.rung, .status, .code]] == [[2, \"excluded\", \"$C_POLICY\"], [3, \"excluded\", \"$C_POLICY\"]]" &&
-  [ "$(evn rgl ".type == \"routing.rung-skipped\"")" = 2 ]' \
+  [ $(( $(evn rgl ".type == \"routing.rung-skipped\"") - n0 )) = 2 ]' \
   "14d Local only: both cloud rungs are skipped (excluded $C_POLICY, in rung order, one line each), the local rung served"
 m0=$(evn rg ".type == \"routing.rung-exhausted\""); rs rg x5 --role "$NR" --project qa-proj --rung 5; rs rg nc --role "$NR2" --project qa-proj --rung 1
 ok '[ "$(rc x5)" = 1 ] && J x5 ".code == \"$C_EXH\" and .rung.served == null and .rung.link == null and .chain == []" && grep -q "^$C_EXH " "$T/o/x5.err" &&
