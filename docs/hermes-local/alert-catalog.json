@@ -1,6 +1,9 @@
 {
   "about": "Stella's owner-facing alert codes (D44). bin/alert.sh renders #alerts messages from this file; bin/alert-catalog.sh --docs writes docs/alert-codes.md from it. A code is never reused or renumbered: retire one with \"status\": \"retired\". Placeholders: {name}, filled from the caller's key=value pairs; {since} and {now} are times, shown in the owner's time zone; {what} is the plain phrase for the caller's error=.",
-  "limits": {"max_chars": 1800, "page_interval_s": 3600},
+  "limits": {
+    "max_chars": 1800,
+    "page_interval_s": 3600
+  },
   "alerts": [
     {
       "code": "STL-WDG-101",
@@ -775,10 +778,10 @@
       "severity": "warning",
       "title": "a model does not meet the role's requirements",
       "message": "A model link was left out because its model does not meet what the role requires: {problem}.",
-      "action": "use a model that meets them, or record the model's advertised capabilities in the catalog if they are missing (a null capability meets no requirement). See STL-MDL-715 in docs/alert-codes.md.",
-      "cause": "The role's requirements (tool calling, vision, smallest context size) against the catalog's advertised capabilities of the model; until the capability probe (F2b) these are advertised values.",
-      "check": "`python3 bin/roles.py requirements <role>`; `python3 bin/stella_data.py get connections <id>` (models[].capabilities).",
-      "related": "F2 B2; features stubs routing-advertised-capabilities, routing-advertised-context; bin/stella_data.py unmet",
+      "action": "probe the link (`python3 bin/probe.py due`, then `probe.py run`) if it has no record, or use a link whose record meets them (a null capability meets no requirement). See STL-MDL-715 in docs/alert-codes.md.",
+      "cause": "The role's requirements (tool calling, vision, smallest context size) against the link's capability probe record (F2b): a link with no record meets none, and the context size is the probed effective context; with resolve --tokens N, a link whose effective context is below N (or not probed) is left out too.",
+      "check": "`python3 bin/roles.py requirements <role>`; `python3 bin/probe.py show --connection <id> --model <model> --json`.",
+      "related": "F2 B2, F2b B2 and item C; bin/stella_data.py probed, unmet",
       "resolvable": false
     },
     {
@@ -896,7 +899,7 @@
       "title": "a preset turns off a role the workflow requires",
       "message": "A routing preset turns off a role that the workflow requires: {problem}. The data is treated as not valid until it is fixed.",
       "action": "set the role active again in that preset (role-assignments.json effort_modes, roles), or give it a class order, then run the check again. See STL-MDL-725 in docs/alert-codes.md.",
-      "cause": "The preset sets active false for a role that routing.json workflow.required_roles lists as always, or under a trigger that can fire; or it leaves such a role active with nothing to resolve from (no pin, class order, needs class, fallback or last resort).",
+      "cause": "The preset sets active false for a role that routing.json workflow.required_roles lists as always, or under a trigger that can fire; or it leaves such a role active with no link that can serve it (the connection, model and role rules; or, resting on probe data, every such link has a probe record that fails the role's requirements: that line writes one alert and never stops a read).",
       "check": "`python3 bin/stella_data.py check`; `python3 bin/stella_data.py get routing` (workflow).",
       "related": "F2 B3, A9, A10, design D1.9; .stella/routing.json workflow",
       "resolvable": false
@@ -907,10 +910,10 @@
       "severity": "warning",
       "title": "a preset link fails the role's requirements",
       "message": "A pin or a fallback that a routing preset gives an active role does not meet the role's requirements: {problem}. The data is treated as not valid until it is fixed.",
-      "action": "name a model that meets the role's requirements, or record the model's advertised capabilities in the catalog (a null capability meets no requirement), then run the check again. See STL-MDL-726 in docs/alert-codes.md.",
-      "cause": "The model is not listed for its connection, or its advertised tool calling, vision or context size is below what the role needs; or the link's connection is switched off, does not list the role, does not allow every data class the role handles, or lies outside the localities the preset allows; or the preset leaves an active role with nothing to resolve from.",
-      "check": "`python3 bin/stella_data.py check`; `python3 bin/roles.py requirements <role>`; `python3 bin/stella_data.py get connections <id>` (models[].capabilities).",
-      "related": "F2 B3, A9, design D1.9; bin/stella_data.py unmet",
+      "action": "name a model that is listed for its connection and that the preset, connection and role rules allow, then run the check again. See STL-MDL-726 in docs/alert-codes.md.",
+      "cause": "The model is not listed for its connection; or the link's connection is switched off, does not list the role, does not allow every data class the role handles, or lies outside the localities the preset allows; or the preset leaves an active role with no link that these rules allow. Or the link's capability probe record fails the role's requirements (tool calling, vision, effective context), or every link these rules allow has such a record: a line that rests on probe data writes one alert and never stops a read (a link with no record is not refused here).",
+      "check": "`python3 bin/stella_data.py check`; `python3 bin/roles.py requirements <role>`; `python3 bin/stella_data.py get connections <id>`; `python3 bin/probe.py show --json`.",
+      "related": "F2 B3, A9, design D1.9; bin/stella_data.py link_problems",
       "resolvable": false
     },
     {
@@ -1020,6 +1023,18 @@
       "cause": "The model list or the probe's calls got no answer, or an answer that is not JSON that meets the schema, even after the one repair retry.",
       "check": "the command's output; `python3 bin/probe.py show --json`.",
       "related": "F2b item B (design-B.md); bin/probe.py, .stella/probes.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-MDL-737",
+      "area": "MDL",
+      "severity": "info",
+      "title": "cross-family review was waived for a reviewer",
+      "message": "A review role was answered without a link of another model family than the card's builder (cross-family review waived): {problem}.",
+      "action": "nothing if that is intended. For cross-family review, set cross_family_review true on the preset, probe the links (`python3 bin/probe.py due`), or make a link of another family reachable in the reviewer's class order. See STL-MDL-737 in docs/alert-codes.md.",
+      "cause": "The preset does not ask for cross-family review, the builder's family is not known (no probe record), or no usable link of the reviewer has another family where the chain may be reordered (inside one class-order item, never past a more private link).",
+      "check": "the event log (routing.cross-family-waiver lines: card, role, preset, families, reason); the resolver's JSON answer (cross_family).",
+      "related": "F2b B2, A4 and item C (design-C.md); bin/resolve.py crossed, bin/route.py",
       "resolvable": false
     },
     {
