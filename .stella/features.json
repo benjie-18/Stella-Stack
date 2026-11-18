@@ -386,6 +386,17 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
+      "id": "preset-check-unserved-role",
+      "owner_phase": "F2",
+      "status": "on",
+      "depends_on": [],
+      "flag": null,
+      "due_phase": "F2b",
+      "replaced_by": "the check rule that refuses a preset leaving an active role with no link able to serve it (built on branch f2/W1-rt10-held, finding W1-RT-10); it waits for the capability probe (F2b) because no shipped model advertises vision yet; until then the check judges only an explicit chain and that the class order is not empty",
+      "global_id": "aae349f5-1604-4b83-81fd-41c0991aa651",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
       "id": "routing-advertised-context",
       "owner_phase": "F2",
       "status": "on",
