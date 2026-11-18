@@ -114,6 +114,9 @@ SET=/workspace/docs/hermes-local/watchdog-settings.json
 ok 'WATCHDOG_SETTINGS=$SET python3 -I /workspace/bin/watchdog_settings.py --check >/dev/null' "D47: the shipped settings file passes --check"
 jq 'del(.gateway.process_match)' $SET > "$T/bad1.json"; jq '.schema_version = 2' $SET > "$T/bad2.json"; jq '.gateway.connected_marker = "("' $SET > "$T/bad3.json"; jq '.test_rerun.rerun_command = "x"' $SET > "$T/bad4.json"
 ok '( for f in bad1 bad2 bad3 bad4; do WATCHDOG_SETTINGS="$T/$f.json" python3 -I /workspace/bin/watchdog_settings.py --check >/dev/null 2>&1 && exit 1; done; exit 0 )' "D47: --check refuses a missing key, a wrong schema_version, a bad regex and a rerun command without {check}"
+# Absent optional sections (test_rerun, model_watch) never block the gateway verdict or --check; each fails only when its feature runs, naming the section.
+reset; gw 'del(.test_rerun, .model_watch)'; logw gateway.log "$UP"; $W >/dev/null 2>&1
+ok '[ "$(hg)" = quiet ] && [ ! -s "$T/sup/sends" ] && WATCHDOG_SETTINGS="$T/settings.json" python3 -I /workspace/bin/watchdog_settings.py --check >/dev/null && WATCHDOG_SETTINGS="$T/settings.json" python3 -I /workspace/bin/watchdog_settings.py failures /dev/null 2>&1 | grep -q "test_rerun: missing" && WATCHDOG_SETTINGS="$T/settings.json" python3 -I -c "import sys; sys.path.insert(0, \"/workspace/bin\"); import model_watch; model_watch.settings()" 2>&1 | grep -q "model_watch: missing"' "D47: settings without the optional sections: gateway verdict still works, --check passes, and the missing section fails only when its feature runs, naming it"
 # K10: a quiet gateway must still refresh its own status file (state_file, every ~60 s); a stale one is "can't tell", not "down".
 WS=/workspace/bin/watchdog_settings.py
 st() { printf '{"gateway_state":"running","updated_at":"%s"}\n' "$(date -u -d "-$1 min" +%FT%T.000000+00:00)" > "$T/gateway_state.json"; }   # updated_at as Hermes writes it

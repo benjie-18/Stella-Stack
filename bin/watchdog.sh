@@ -4,7 +4,7 @@
 # discord:#alerts when it starts and one when it clears (S11, S5); a failed send is retried once. Wording and codes
 # (STL-WDG-101/102, STL-ESC-201, STL-GW-101/102/103) come from the alert catalog (D44).
 # Runs from container cron, not hermes cron: the hermes cron ticker lives in the gateway, so it could not report gateway
-# death. Checks: a step over WATCHDOG_STEP_TIMEOUT (600 s) is killed and recorded as hung (S10); the poller heartbeat
+# death. Checks: a step over WATCHDOG_STEP_TIMEOUT (run.step_timeout_s) is killed and recorded as hung (S10); the poller heartbeat
 # (state/reply-poll.heartbeat) older than 5 minutes; a gateway that is down (no process, or the newest connection line in
 # its logs is a disconnect) or unknown (the check cannot tell), while Hermes is not paused. A quiet log alone is not an
 # alert (D47): bin/watchdog_settings.py decides from the settings file docs/hermes-local/watchdog-settings.json. A failed
@@ -21,11 +21,14 @@ ROOT="${WATCHDOG_ROOT:-/workspace}"
 SUP="${ESCALATE_SUP_DIR:-$ROOT/.supervisor}"
 STATUS="$SUP/status.json"
 LOG="$SUP/logs/watchdog.log"
-ALERT_TARGET="${WATCHDOG_ALERT_TARGET:-discord:#alerts}"
-STEP_TIMEOUT="${WATCHDOG_STEP_TIMEOUT:-600}"
-MW_FAILS_N="${WATCHDOG_MODEL_WATCH_FAILS_N:-2}"   # B2V-12: runs in a row the model watch could not check before STL-MDL-702 (2 = 30 min)
 OPEN="$SUP/state/watchdog-open"   # one file per open problem (its start time); removed when it clears
 mkdir -p "$SUP/logs" "$OPEN"
+# rv <key>: a value of the settings file's run section; empty and logged when unreadable (the gateway verdict then still says "unknown")
+rv() { python3 -I "$BIN/watchdog_settings.py" get "run.$1" 2>/dev/null || echo "$(date -u +%FT%TZ) watchdog settings: run.$1 is missing or unreadable" >>"$LOG"; }
+ALERT_TARGET="${WATCHDOG_ALERT_TARGET:-$(rv alert_target)}"
+STEP_TIMEOUT="${WATCHDOG_STEP_TIMEOUT:-$(rv step_timeout_s)}"
+MW_FAILS_N="${WATCHDOG_MODEL_WATCH_FAILS_N:-$(rv model_watch_fails_n)}"   # B2V-12: runs in a row the model watch could not check before STL-MDL-702
+HB_MAX_AGE=$(rv poller_heartbeat_max_age_s); SEND_RETRY_SLEEP=$(rv send_retry_sleep_s)
 . "${BASH_SOURCE[0]%/*}/alert.sh"   # alert_text: the #alerts wording from the catalog (D44)
 cd "$ROOT" || exit 1
 
@@ -33,7 +36,7 @@ cd "$ROOT" || exit 1
 exec 9>"$SUP/logs/watchdog.lock"
 flock -n 9 || { echo "$(date -u +%FT%TZ) skipped: previous run still active" >>"$LOG"; exit 0; }
 
-send() { hermes send --to "$ALERT_TARGET" --quiet "$1" >>"$LOG" 2>&1 || { sleep 3; hermes send --to "$ALERT_TARGET" --quiet "$1" >>"$LOG" 2>&1; }; }
+send() { hermes send --to "$ALERT_TARGET" --quiet "$1" >>"$LOG" 2>&1 || { sleep "$SEND_RETRY_SLEEP"; hermes send --to "$ALERT_TARGET" --quiet "$1" >>"$LOG" 2>&1; }; }
 # problem <key> <CODE> [key=value ...]: alert once when a problem starts. Marked open (start time, then code) only once
 # the alert went out, so an undelivered alert is tried again on the next run.
 problem() {
@@ -105,7 +108,7 @@ fi
 # Reply poller liveness: every pass writes its heartbeat, also while Hermes is paused.
 hb=$(cat "$SUP/state/reply-poll.heartbeat" 2>/dev/null)
 age=$(( $(date +%s) - ${hb:-0} ))
-if [ "$age" -gt 300 ]; then
+if [ "$age" -gt "$HB_MAX_AGE" ]; then
   poller="stale ${age}s"
   [ -n "$hb" ] && mins=$((age / 60)) || mins="an unknown number of"   # K10: no heartbeat file yet is not 29 million minutes
   problem poller STL-ESC-201 minutes="$mins" heartbeat_age_s="${hb:+$age}"

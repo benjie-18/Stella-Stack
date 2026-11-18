@@ -14,7 +14,16 @@
     "log_time_format": "%Y-%m-%d %H:%M:%S",
     "log_timezone": "owner",
     "state_file": "~/.hermes/gateway_state.json",
-    "state_max_age_minutes": 10
+    "state_max_age_minutes": 10,
+    "process_check_timeout_s": 30
+  },
+  "run": {
+    "_comment": "bin/watchdog.sh itself: alert_target (a hermes send target), step_timeout_s kills a hung step, model_watch_fails_n runs in a row the model watch could not check before it pages, poller_heartbeat_max_age_s is when the reply poller counts as stale, send_retry_sleep_s waits before the one resend. Env WATCHDOG_ALERT_TARGET, WATCHDOG_STEP_TIMEOUT, WATCHDOG_MODEL_WATCH_FAILS_N override the first three.",
+    "alert_target": "discord:#alerts",
+    "step_timeout_s": 600,
+    "model_watch_fails_n": 2,
+    "poller_heartbeat_max_age_s": 300,
+    "send_retry_sleep_s": 3
   },
   "test_rerun": {
     "failed_check_line": "^FAIL ([A-Za-z0-9._-]+)$",
@@ -33,6 +42,9 @@
     "progress_line": "agent\\.tool_executor: tool \\S+ completed",
     "log_time_format": "%Y-%m-%d %H:%M:%S",
     "log_timezone": "owner",
-    "loaded_models_path": "/api/ps"
+    "loaded_models_path": "/api/ps",
+    "log_tail_bytes": 8388608,
+    "config_timeout_s": 30,
+    "server_timeout_s": 5
   }
 }

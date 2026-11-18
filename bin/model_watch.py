@@ -17,10 +17,9 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import roles, watchdog_settings   # noqa: E402
 
-TAIL = 8 << 20   # read at most the last 8 MiB of an agent log
-
-
 def settings():
+    if errs := watchdog_settings.validate("model_watch"):
+        raise ValueError("; ".join(errs))   # an absent or broken model_watch section fails here, naming it, not the whole watchdog
     return watchdog_settings.load()["model_watch"]
 
 
@@ -31,9 +30,9 @@ def model_answer(text):
     return c.get("default", "").strip("'\""), c.get("base_url", "").strip("'\"")
 
 
-def model_config(profile_home):
+def model_config(profile_home, timeout):
     """(model, base_url) from `hermes config get model` in the profile's own home; ("", "") when the call fails."""
-    r = subprocess.run(["hermes", "config", "get", "model"], capture_output=True, text=True, timeout=30,
+    r = subprocess.run(["hermes", "config", "get", "model"], capture_output=True, text=True, timeout=timeout,
                        env=dict(os.environ, HERMES_HOME=profile_home))
     return model_answer(r.stdout) if r.returncode == 0 else ("", "")
 
@@ -45,7 +44,7 @@ def server_cause(cfg, s):
         return "unknown", "the profile's model or base_url is not configured"
     root = re.sub(r"/v1/?$", "", base.rstrip("/"))
     try:
-        with urllib.request.urlopen(root + s["loaded_models_path"], timeout=5) as r:
+        with urllib.request.urlopen(root + s["loaded_models_path"], timeout=s["server_timeout_s"]) as r:
             loaded = [m.get("name") or m.get("model") for m in json.load(r).get("models", [])]
     except Exception as e:
         return "unreachable", f"{root}: {type(e).__name__}"
@@ -58,7 +57,7 @@ def session_lines(log, session, since, s, tz):
     """[(epoch, line)] of one session's lines in log, newer than since."""
     try:
         with open(os.path.expanduser(log), "rb") as f:
-            f.seek(max(0, os.path.getsize(f.name) - TAIL))
+            f.seek(max(0, os.path.getsize(f.name) - s["log_tail_bytes"]))
             text = f.read().decode("utf-8", "replace")
     except OSError:
         return []
@@ -93,7 +92,7 @@ def check():
             errors = sum(1 for _, l in lines if re.search(s["error_line"], l))
             progress = any(re.search(s["progress_line"], l) for _, l in lines)
             if errors >= s["min_errors"] and not progress:
-                cause, detail = server_cause(model_config(pdir), s)
+                cause, detail = server_cause(model_config(pdir, s["config_timeout_s"]), s)
                 problems.append({"card": card, "profile": profile, "errors": errors, "minutes": s["window_minutes"],
                                  "cause": cause, "detail": detail})
         except StopIteration:
