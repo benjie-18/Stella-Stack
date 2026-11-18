@@ -986,6 +986,42 @@
       "resolvable": false
     },
     {
+      "code": "STL-MDL-734",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "the probe was asked about a link the catalog lacks",
+      "message": "The capability probe refused a link that is not in the connections catalog, or whose model the connection's model list does not show: {problem}. Nothing was probed or recorded.",
+      "action": "check the connection and model ids (`python3 bin/stella_data.py get connections`), or add the model to the catalog first. See STL-MDL-734 in docs/alert-codes.md.",
+      "cause": "probe.py run named a connection or a model that is not there (or not listed by the connection), and a probe is never made for a link the catalog does not hold.",
+      "check": "`python3 bin/stella_data.py get connections`; `python3 bin/probe.py due --json`.",
+      "related": "F2b item B (design-B.md); bin/probe.py, .stella/probes.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-MDL-735",
+      "area": "MDL",
+      "severity": "info",
+      "title": "this model version was already probed",
+      "message": "The capability probe refused to probe a model version it already holds a record for: {problem}. Nothing was called and nothing was changed.",
+      "action": "nothing if the record is current. To probe the same version again, run probe.py run with --again. See STL-MDL-735 in docs/alert-codes.md.",
+      "cause": "A record for this connection, model and version exists, and a probe runs once per model version.",
+      "check": "`python3 bin/probe.py show --json`.",
+      "related": "F2b item B (design-B.md); bin/probe.py, .stella/probes.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-MDL-736",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "a link gave no answer a probe or call could use",
+      "message": "A link could not be probed, or a structured-output call got no valid answer from it after its repair retry: {problem}. Nothing was recorded, and no guessed value was used.",
+      "action": "check that the connection is reachable and its key is in place, then run the probe again; for a structured call, the link may not follow the schema (try another link). See STL-MDL-736 in docs/alert-codes.md.",
+      "cause": "The model list or the probe's calls got no answer, or an answer that is not JSON that meets the schema, even after the one repair retry.",
+      "check": "the command's output; `python3 bin/probe.py show --json`.",
+      "related": "F2b item B (design-B.md); bin/probe.py, .stella/probes.json",
+      "resolvable": false
+    },
+    {
       "code": "STL-OWN-801",
       "area": "OWN",
       "severity": "warning",

@@ -3,7 +3,7 @@
 path prefix /<shape id>, and a model list per shape. Nothing here names a shape, a model or a trigger beyond the fault ids.
 First stdout line: {"port": N, "control": URL}. POST the control document to that URL (it replaces models and faults; call counts stay):
   {"models": {shape: [model ids]}, "faults": [{"shape", "model", "fault", "calls"?, "seconds"?, "tokens"?}]}
-traits (control key "traits": [{"shape","model", answers, seed, logprob, recall_tokens, needle, grammar, family, version}]): answers = texts the model gives (first, or one per call by a generator seeded with seed); logprob = per-token items at the shape's response.logprobs, the label token carrying it; recall_tokens = needles in the prompt found only below that many tokens; grammar = a request with a schema at a request.output_shape pointer never gets the non_json fault; family, version = shown in the model list.
+traits (control key "traits": [{"shape","model", answers, seed, logprob, recall_tokens, needle, grammar, tool_calls, family, version}]): answers = texts the model gives (first, or one per call by a generator seeded with seed); logprob = per-token items at the shape's response.logprobs, the label token carrying it; recall_tokens = needles in the prompt found only below that many tokens; grammar = a request with a schema at a request.output_shape pointer never gets the non_json fault; tool_calls = N well-formed tool calls (arguments {}) in every answer; family, version = shown in the model list.
 faults: non_json (200 with text that is not JSON) rate_limit daily_cap server_error model_gone context_too_small (the shape's own error row for that trigger),
 timeout (no answer for `seconds`), malformed_tool_call (200 with a tool call whose arguments do not parse).
 A fault with "calls" fires that many times, without it until a new document. GET /_calls: {"counts": {"shape/model": n},
@@ -244,6 +244,10 @@ class H(http.server.BaseHTTPRequestHandler):
         setptr(doc, r["model"], model)
         k = r.get("usage_keys") or ["input_tokens", "output_tokens"]
         setptr(doc, r["usage"], {k[0]: 1, k[1]: 1})
+        if tr.get("tool_calls") and fault is None:   # that many well-formed calls in one answer (arguments {}), whatever the prompt
+            sample = json.dumps(r.get("tool_calls_sample", {"arguments": "{arguments}"})).replace("{arguments}", "{}")
+            sample = json.loads(sample)
+            setptr(doc, r["tool_calls"], sample * int(tr["tool_calls"]) if isinstance(sample, list) else sample)   # a pointer that holds one call (a dict sample) gets one
         if fault == "malformed_tool_call":
             sample = json.dumps(r.get("tool_calls_sample", {"arguments": "{arguments}"}))
             setptr(doc, r["tool_calls"], json.loads(sample.replace("{arguments}", "{not json")))

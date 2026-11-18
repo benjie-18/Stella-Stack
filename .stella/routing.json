@@ -150,5 +150,14 @@
         "kind": "none"
       }
     }
+  },
+  "probe": {
+    "lengths": [1000, 4000, 16000, 32000, 64000],
+    "needles": 3,
+    "hops": 2,
+    "tolerance": 0.2,
+    "output_shapes": ["strict_schema", "grammar", "json_mode", "none"],
+    "shape_trials": 3,
+    "repair_retries": 1
   }
 }

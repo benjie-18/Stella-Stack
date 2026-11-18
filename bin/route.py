@@ -3,10 +3,13 @@
 bin/resolve.py gives it (resolve(ctx) -> the chain document, link_key(link)): no routing rule lives here, and a provider's answer can
 only move a task along that chain. Nothing here names a model, a provider, a host, a role, a preset or a link class: all are data.
 CLI (host only: every command refuses in a worker environment, STL-CFG-312; the output is always JSON):
-  route.py call --role R --project P [--card C] [--tier T] [--driver D] [--pending-tool-call] --task ID [--json]   (prompt on stdin)
+  route.py call --role R --project P [--card C] [--tier T] [--driver D] [--pending-tool-call] --task ID [--schema FILE] [--json]   (prompt on stdin)
       the engine loop's driver: calls the first link the task may use through its connection's wire shape (.stella/protocols.json),
       and on a failure moves on until a link answers. Output: {task, link {connection, model}, link_class, text, tool_calls, usage,
       model, switches, failure_history, refused, stubs}.
+      --schema FILE (F2b B): the answer must be JSON that meets the object schema in FILE, which gets a short `reasoning` string as its first
+      property. The link's newest probe record (bin/probe.py) names the output shape: the schema goes at that wire-shape pointer; with none
+      (or no record) it goes in the prompt. A wrong answer gets routing probe.repair_retries repair retries, then STL-MDL-736: never a guessed value.
   route.py attempt --role R --project P [--card C] [--tier T] [--driver D] --task ID [--json]
       for a worker CLI's launcher: ONE link (the next the task may use) and the task's failure_history; it calls no model and
       never switches inside an attempt.
@@ -83,6 +86,7 @@ if os.path.isfile(os.path.join(BIN, "consent.py")):   # this tool's own folder o
 
 # the alert selftest counts a code as used only when a script holds it as a literal: the notice's code is data (consent.alert_code_notice), shipped as STL-MDL-729
 NO_LINK, UNKNOWN, WAITING, SWITCH, MID_REFUSED, STOPPED = "STL-MDL-710", "STL-MDL-711", "STL-MDL-719", "STL-MDL-721", "STL-MDL-722", "STL-MDL-723"
+PROBE_FAILED = "STL-MDL-736"   # a structured-output call that got no valid answer (bin/probe.py holds the same code for a probe)
 UNEXPECTED = "STL-CFG-310"   # an error this tool did not foresee: one coded line with the error's type, never its text
 TIMEOUT_KEY = "CALL_TIMEOUT"   # the settings registry key: the seconds one model call may take
 TIMED_OUT, DOWN, MALFORMED = "timeout", "server_error", "malformed_tool_call"   # triggers no errors row of a wire shape can say
@@ -420,22 +424,42 @@ def fetch(req, timeout):
     return got[0]
 
 
-def send(prov, proto, link, prompt, key, timeout, local):
-    """One request to the link: (answer, None, status) or (None, trigger, status); trigger None with no answer: no row maps the error.
-    No text of an exception or of an error answer leaves here (either could repeat the key)."""
-    h, rq, rs = next(iter(prov["hosts"]), None), proto["request"], proto["response"]   # shortcut: the entry's first host is its API endpoint, upgrade when hosts carry a purpose id
-    vals = {"model": link["model"], "prompt": prompt}
-    path = render(rq["path"], dict(vals, model=urllib.parse.quote(link["model"], safe="")))
+def url_of(prov, link, local, path):
+    """The URL of a path on the connection's endpoint (also the probe's model list); Stop when the connection has no plain host."""
+    h = next(iter(prov["hosts"]), None)   # shortcut: the entry's first host is its API endpoint, upgrade when hosts carry a purpose id
     if h is None or not HOST.fullmatch(h["host"]) or not path.startswith("/"):
         raise Stop(NO_LINK, f"link {resolve.link_key(link)}: its connection has no host that is a plain host name, or its request path does not start with /")
     try:
         plain = h["host"] in local or ipaddress.ip_address(h["host"]).is_loopback
     except ValueError:
         plain = False   # TLS to every host but a model server on this machine (a local host of the data policy, a loopback address)
+    return f"{'http' if plain else 'https'}://{h['host']}:{h['port']}{path}"
+
+
+def headers_of(rq, key):
+    return {"Content-Type": "application/json", **{k: render(v, {"key": key or ""}) for k, v in rq["headers"].items() if key or "{key}" not in v}}
+
+
+def put(doc, p, v):
+    """Set the value at an RFC 6901 pointer, making objects on the way."""
+    *path, last = [x.replace("~1", "/").replace("~0", "~") for x in p.split("/")[1:]]
+    for x in path:
+        doc = doc[int(x)] if isinstance(doc, list) else doc.setdefault(x, {})
+    doc[int(last) if isinstance(doc, list) else last] = v
+
+
+def send(prov, proto, link, prompt, key, timeout, local, edit=None):
+    """One request to the link: (answer, None, status) or (None, trigger, status); trigger None with no answer: no row maps the error.
+    edit: a function that changes the rendered body (the structured-output schema, the probe's tests) before it is sent.
+    No text of an exception or of an error answer leaves here (either could repeat the key)."""
+    rq, rs = proto["request"], proto["response"]
+    vals = {"model": link["model"], "prompt": prompt}
     mt = (link.get("parameters") or {}).get("max_tokens")
-    body = json.dumps(render(rq["body"], vals, mt if type(mt) is int else None)).encode()
-    headers = {"Content-Type": "application/json", **{k: render(v, dict(vals, key=key or "")) for k, v in rq["headers"].items() if key or "{key}" not in v}}
-    req = urllib.request.Request(f"{'http' if plain else 'https'}://{h['host']}:{h['port']}{path}", data=body, headers=headers, method=rq.get("method", "POST"))
+    b = render(rq["body"], vals, mt if type(mt) is int else None)
+    if edit:
+        edit(b)
+    req = urllib.request.Request(url_of(prov, link, local, render(rq["path"], dict(vals, model=urllib.parse.quote(link["model"], safe="")))),
+                                 data=json.dumps(b).encode(), headers=headers_of(rq, key), method=rq.get("method", "POST"))
     try:
         status, raw = fetch(req, timeout)   # one deadline for the whole call: a server that drips bytes, in the head or the body, holds no task
     except (OSError, http.client.HTTPException, ValueError) as e:
@@ -479,14 +503,41 @@ def out(a, link, hist, refused, stubs, **more):
     print(el.scrub(line))
 
 
-def cmd_call(a):
-    prompt = sys.stdin.buffer.read().decode("utf-8", "replace")   # bytes that are not UTF-8 (a tool's binary output) are replaced, whatever the locale
-    rt, cat, protos, local = data()
-    doc = resolved(a, rt, True)
+def timeout_of():
+    """The seconds one model call may take (the settings registry's CALL_TIMEOUT); Stop when the stored value is rejected."""
     e = settings.entry(TIMEOUT_KEY)
     timeout = settings.current(e)[0]
     if type(timeout) is not int or settings.problems(e, timeout):
         raise Stop(e["code"], f"{TIMEOUT_KEY}: the stored value is rejected by the setting's own rules")
+    return timeout
+
+
+def with_reasoning(s):
+    """The caller's object schema with a short `reasoning` string as its first property, before the verdict (one already there is kept as given)."""
+    if not (isinstance(s, dict) and s.get("type") == "object" and not sd.lint_schema(s)):
+        raise Stop(UNKNOWN, "the --schema file is not an object schema in the subset stella_data.py validates")
+    props = dict(s.get("properties") or {})
+    why = props.pop("reasoning", {"type": "string", "description": "a short reasoning, written before the other fields"})
+    return {**{k: v for k, v in s.items() if k not in ("properties", "required")}, "properties": {"reasoning": why, **props},
+            "required": ["reasoning", *[x for x in s.get("required", []) if x != "reasoning"]]}
+
+
+def invalid(text, schema):
+    """Why the answer is no JSON that meets the schema; None when it is."""
+    try:
+        doc = json.loads(text)
+    except (TypeError, ValueError, RecursionError):
+        return "it is not JSON"
+    errs = sd.validate_doc(doc, schema)
+    return errs[0][:200] if errs else None
+
+
+def cmd_call(a):
+    prompt = sys.stdin.buffer.read().decode("utf-8", "replace")   # bytes that are not UTF-8 (a tool's binary output) are replaced, whatever the locale
+    rt, cat, protos, local = data()
+    doc = resolved(a, rt, True)
+    timeout = timeout_of()
+    schema = with_reasoning(json.load(open(a.schema))) if a.schema else None   # an unreadable file ends in main()'s coded line
     tokens = len(prompt.encode()) // 4 + 1   # shortcut: about four bytes a token, upgrade with F2b's probe (CONTEXT_STUB)
     a.refused = refused = []
     stubs = list(dict.fromkeys([*(doc.get("stubs") or []), CONTEXT_STUB]))
@@ -502,9 +553,26 @@ def cmd_call(a):
             forms = (key, json.dumps(key)[1:-1])   # the output is JSON: the key's escaped form too
             KEYS.update(forms)
             el.SECRETS.update(forms)   # scrubbed from every event detail, alert text and output of this run
+        proto, text, edit = protos[prov["protocol"]], prompt, None
+        if schema:   # the strongest shape the probe proved for this link puts the schema at its pointer; else (or no record) it goes in the prompt
+            import probe
+            where = proto["request"].get("output_shape", {}).get(probe.shape_of(prov["id"], link["model"]))
+            if where:
+                edit = lambda b, w=where: put(b, w, schema)
+            else:
+                text = f"{prompt}\n\nAnswer with one JSON object and nothing else. It must follow this JSON Schema:\n{json.dumps(schema)}"
         for _ in range(rt["failover"]["retry_count"] + 1):
-            ans, trigger, status = send(prov, protos[prov["protocol"]], link, prompt, key, timeout, local)
+            ans, trigger, status = send(prov, proto, link, text, key, timeout, local, edit)
             if ans is not None:
+                break
+        for n in range(rt["probe"]["repair_retries"] + 1 if ans is not None and schema else 0):   # a wrong answer gets the repair retries, then a code: never a guessed value
+            err = invalid(ans["text"], schema)
+            if err is None:
+                break
+            if n == rt["probe"]["repair_retries"]:
+                raise Stop(PROBE_FAILED, f"link {resolve.link_key(link)}: the answer is not JSON that meets the schema ({err}), also after {n} repair retries")
+            ans, trigger, status = send(prov, proto, link, f"{text}\n\nYour answer was:\n{ans['text']}\n\nIt was refused: {err}. Answer again with one JSON object that follows the schema.", key, timeout, local, edit)
+            if ans is None:
                 break
         with state() as st:
             if ans is not None:
@@ -562,6 +630,7 @@ def main(argv):
             p.add_argument("--" + k, required=req)
         p.add_argument("--json", action="store_true")
     sub.choices["call"].add_argument("--pending-tool-call", action="store_true")
+    sub.choices["call"].add_argument("--schema", help="a JSON Schema file: the answer must be JSON that meets it (one short `reasoning` property is added first)")
     p = sub.add_parser("result")
     for k in ("task", "link", "outcome"):
         p.add_argument("--" + k, required=True)

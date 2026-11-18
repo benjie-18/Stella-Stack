@@ -42,6 +42,11 @@ def call(s, m, p="hi", t=5):
     q = protos[s]["request"]
     return http(f"{BASE}/{s}{sub(q['path'], m)}", json.dumps(sub(q["body"], m, p)).encode(),
                 {**sub(q["headers"], m), "Content-Type": "application/json"}, t)
+def ptr_or_none(d, p):
+    try:
+        return ptr(d, p)
+    except (KeyError, IndexError, TypeError):
+        return None
 def ptr(d, p):
     for x in p.split("/")[1:]:
         d = d[int(x)] if isinstance(d, list) else d[x]
@@ -102,6 +107,11 @@ for s in protos:
         ok("".join(i["token"] for i in items) == V and any(i["token"] == "work" and i["logprob"] == -0.5 for i in items), f"[{s}] logprob: tokens join to the answer, the label's token has the set value")
     tctl(s, {"recall_tokens": 100}); a = json.loads(call(s, "t1", "code AB1234 here")[1]); b = json.loads(call(s, "t1", "code AB1234 " + "x " * 800)[1])
     ok("AB1234" in ptr(a, r["text"]) and "AB1234" not in ptr(b, r["text"]), f"[{s}] recall_tokens: a needle is found in a short prompt and missed in a long one")
+    if r.get("tool_calls"):   # a list pointer holds N calls; a shape whose pointer holds one call (a dict sample) has one whatever N
+        for n in (1, 2):
+            tctl(s, {"tool_calls": n}); got = ptr(json.loads(call(s, "t1")[1]), r["tool_calls"]); lst = isinstance(r["tool_calls_sample"], list)
+            ok(len(got if isinstance(got, list) else [got]) == (n if lst else 1) and "{arguments}" not in json.dumps(got) and "not json" not in json.dumps(got), f"[{s}] tool_calls {n}: well-formed call(s) in one answer")
+        tctl(s, {}); ok(not ptr_or_none(json.loads(call(s, "t1")[1]), r["tool_calls"]), f"[{s}] tool_calls unset: no tool call")
     tctl(s, {"answers": list("abcd"), "seed": 5}); x = [ptr(json.loads(call(s, "t1")[1]), r["text"]) for _ in range(10)]
     tctl(s, {"answers": list("abcd"), "seed": 5}); y = [ptr(json.loads(call(s, "t1")[1]), r["text"]) for _ in range(10)]
     ok(x == y and len(set(x)) > 1, f"[{s}] seed: answers vary and the same seed repeats them")

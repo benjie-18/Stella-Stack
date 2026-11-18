@@ -423,8 +423,8 @@ baseline whatever was applied before, so the owner's next apply goes through and
 back is refused. A file edited by hand, damaged or missing is compared instead with the
 document last applied, or, that not known, the committed one: a hand edit of a built-in preset is never recorded by an apply
 of the edited file, and putting the baseline's presets back is allowed. A candidate that drops a built-in preset something still names is refused by the validity check
-first (STL-CFG-313). `routing_state` and `card_facts` are protected state paths (`bin/roles.py` STATE_KEYS): no role reads or
-writes them.
+first (STL-CFG-313). `routing_state`, `card_facts` and `probe_records` are protected state paths (`bin/roles.py` STATE_KEYS): no role reads or
+writes them. `probe_records` is the capability probe's file (`bin/probe.py`; schema `.stella/schemas/probes.schema.json`, no data row, never in git): one record per connection, model and model version of what the probe found by trying the link; a reader takes nothing from an invalid file or from a record of another install; `probe.py check` judges it. The probe's settings are `probe` in routing.json.
 
 ### `.stella/grants.json`
 `grants[]` (capability grants, F1c) and (F2, optional) `crossing_grants[]`: `id`, `global_id`, `install_id`, `preset` and
