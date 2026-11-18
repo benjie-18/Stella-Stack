@@ -1062,6 +1062,42 @@
       "resolvable": false
     },
     {
+      "code": "STL-MDL-743",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "the build team preset cannot be generated",
+      "message": "The build team could not be generated or checked: {problem}. Nothing was written.",
+      "action": "name a preset that has agents (`--preset`, or the data index key team_preset), and give every agent a body file in the folder of the index key team_bodies, then run it again. See STL-MDL-743 in docs/alert-codes.md.",
+      "cause": "The preset is not in the role-assignments data or has no agents, or an agent has no body text file.",
+      "check": "`python3 bin/stella_data.py get --json role-assignments`; the folder of the index key team_bodies.",
+      "related": "F2b item G; bin/team.py, .stella/role-assignments.json (preset agents)",
+      "resolvable": false
+    },
+    {
+      "code": "STL-MDL-744",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "an agent file differs from the build team preset",
+      "message": "The build team check found a file that differs from its preset: {problem}.",
+      "action": "generate the files again (`python3 bin/team.py generate --json`) and commit them; change an agent in the preset and its body file, never in the generated file. See STL-MDL-744 in docs/alert-codes.md.",
+      "cause": "An agent file was edited by hand, is missing, or belongs to an agent the preset no longer has.",
+      "check": "`python3 bin/team.py check --json` (agents[].problems, stale).",
+      "related": "F2b item G; bin/team.py, .stella/role-assignments.json (preset agents)",
+      "resolvable": false
+    },
+    {
+      "code": "STL-MDL-745",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "an agent ran on a model its preset does not list",
+      "message": "The build team check found a session whose agent ran on a model its preset does not list: {problem}.",
+      "action": "find out why the agent ran on that model (a changed agent file not yet loaded, or a hand-set model), then fix the preset or the file. See STL-MDL-745 in docs/alert-codes.md.",
+      "cause": "In the latest session log an agent's transcript shows a model that is not its link, a fallback or a rung.",
+      "check": "`python3 bin/team.py check --json` (agents[].session).",
+      "related": "F2b item G; bin/team.py, .stella/role-assignments.json (preset agents)",
+      "resolvable": false
+    },
+    {
       "code": "STL-MDL-737",
       "area": "MDL",
       "severity": "info",
