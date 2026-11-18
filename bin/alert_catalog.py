@@ -214,7 +214,7 @@ def page_due(code, key, streak=""):
     only after a send that worked, so a failed send is tried again by the next alert."""
     try:
         policy = (catalog().get(code) or {}).get("page", "log")
-    except Exception:   # a broken catalog must not silence the alert: page it once an hour
+    except Exception:   # a broken catalog must not silence the alert: page it as "hourly" (interval from limits(), 0 when unreadable)
         policy = "hourly"
     sup = os.environ.get("ESCALATE_SUP_DIR") or f"{ROOT}/.supervisor"
     f = f"{sup}/state/page/{code}-{re.sub(r'[^A-Za-z0-9_.-]', '_', key or '-')[:80]}"
@@ -225,7 +225,8 @@ def page_due(code, key, streak=""):
     if policy == "card_streak":
         return old != streak, f
     if policy == "hourly":
-        return age is None or age >= limits().get("page_interval_s", float("inf")), f
+        # no readable limits: interval 0 pages every time (loud), never silent
+        return age is None or age >= limits().get("page_interval_s", 0), f
     return False, f
 
 
