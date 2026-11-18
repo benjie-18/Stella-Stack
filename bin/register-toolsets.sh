@@ -21,6 +21,8 @@ H="$HOME/.hermes"   # HOME-relative (production HOME is /home/node), so the self
 BK="$H/backups/toolsets-$(date -u +%Y%m%dT%H%M%SZ)"
 T=$(mktemp); trap 'rm -f "$T"' EXIT
 python3 /workspace/bin/roles.py spec "$H" >"$T" || { echo "toolsets: role table invalid, nothing changed ($(head -1 "$T"))"; exit 1; }
+CARD_ROLES=$(python3 -I /workspace/bin/stella_data.py get --json routing | jq -c .card_roles) \
+  || { echo "toolsets: routing data unreadable, nothing changed"; exit 1; }
 rc=0
 pdir() { jq -r --arg p "$prof" '.[$p].dir' "$T"; }
 h() { if [ "$(pdir)" = "$H" ]; then hermes "$@"; else hermes -p "$prof" "$@"; fi 2>&1 | { grep -v setlocale || true; }; }
@@ -77,12 +79,13 @@ for prof in $(jq -r 'keys[]' "$T"); do
     elif h plugins enable "$pl" >/dev/null; then echo "$prof: plugin $pl enabled"
     else echo "$prof: plugin $pl could not be enabled"; rc=1; fi
   fi
-  # the engine model: the first link the resolver lists usable for the profile's role, asked with no card; a role that works a card is
-  # refused that way, so it is asked as bin/container-start.sh asks (a random card, no facts record, no project).
+  # the engine model: the first link the resolver lists usable for the profile's role. A role of routing card_roles is asked about a
+  # random card with no facts record and no project (as the coding CLI's container start asks), any other role with no card: one
+  # call, so no role is refused first and no alert line is written for nothing (W1P-02).
   # None usable: the model stays and the resolver's code is reported (never a model the resolver did not list).
   role=$(jq -r --arg p "$prof" '.[$p].role' "$T")
-  res=$(python3 -I /workspace/bin/resolve.py resolve --role "$role" --project "" --json 2>&1 || true)
-  jq -e .chain >/dev/null 2>&1 <<<"$res" || res=$(python3 -I /workspace/bin/resolve.py resolve --role "$role" --project "" --card "$(cat /proc/sys/kernel/random/uuid)" --json 2>&1 || true)
+  card=(); jq -e --arg r "$role" 'index($r)' <<<"$CARD_ROLES" >/dev/null 2>&1 && card=(--card "$(cat /proc/sys/kernel/random/uuid)")
+  res=$(python3 -I /workspace/bin/resolve.py resolve --role "$role" --project "" "${card[@]}" --json 2>&1 || true)
   want=$(jq -r '[.chain[] | select(.status == "usable")][0].model // empty' <<<"$res" 2>/dev/null || true)
   if [ -z "$want" ]; then
     why=$(jq -r '"\(.code // "STL-MDL-710") \(.reason // "the chain holds no usable link")"' <<<"$res" 2>/dev/null || true)

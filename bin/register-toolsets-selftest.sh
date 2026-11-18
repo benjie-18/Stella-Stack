@@ -34,4 +34,5 @@ else
   echo old >"$T/store/model.default"; rc=$(reg)
   ok '[ "$rc" != 0 ] && grep -q "model.default left unchanged: STL-" "$T/out" && [ "$(cat "$T/store/model.default")" = old ]' "1 no usable link: the model is unchanged, the code is reported, exit non-zero"
 fi
-echo "register-toolsets selftest: $fails failed"; [ "$fails" = 0 ]
+echo "register-toolsets selftest: $fails failed"; [ "$fails" = 0 ] && echo "selftest PASS"   # the runner judges the last line (W1P-03)
+[ "$fails" = 0 ]
