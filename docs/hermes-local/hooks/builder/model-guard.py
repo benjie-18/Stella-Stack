@@ -9,8 +9,8 @@ runs a model (-p/--print, or a bare interactive claude) needs --model <the worke
 claude-<id>-*), and no claude call may skip permissions (--dangerously-skip-permissions,
 --allow-dangerously-skip-permissions, --permission-mode bypassPermissions, --yolo) or fall back to another model.
 A bare claude -p is refused because the builder's default model is no worker model (~/.claude/settings.json).
-Every other model goes only through bin/escalate.sh (allowed; it refuses every extra claude arg after --, so none
-reaches the model command). When the resolver, the catalog or the role table cannot be asked, or the resolver lists no usable
+Every other model goes only through bin/escalate.sh, which only the supervisor runs: every call of it is refused here (owner
+decision 2026-11-17; the supervisor's role installs no model guard, so the role table alone keeps it free). When the resolver, the catalog or the role table cannot be asked, or the resolver lists no usable
 link of this CLI, there is no worker model: every model is refused (fail closed).
 Nested quoted command lines are tokenized as git-guard.py does. Exit 2 = block; any error blocks."""
 import functools, json, re, shlex, sys
@@ -85,11 +85,9 @@ def worker(name, models):
     return models.get(name, True) and any(re.fullmatch(rf"(claude-)?{re.escape(i)}\S*", name) for i, ok in models.items() if ok)
 
 
-def why(args, escalate=False):
+def why(args):
     if SKIP & set(args) or "bypassPermissions" in opt(args, "--permission-mode"):
         return "claude may not skip permissions"
-    if escalate:
-        return None
     asked, fallback = opt(args, "--model"), opt(args, "--fallback-model")
     if asked or fallback:
         try:
@@ -119,13 +117,13 @@ def check(cmd):
                 if u in SEP or u.rsplit("/", 1)[-1] in ("claude", "claude-code", "escalate.sh"):
                     break
                 args.append(u)
-            if name == "escalate.sh":
-                args = args[args.index("--") + 1:] if "--" in args else []
-            elif not (i == 0 or toks[i - 1] in SEP or toks[i - 1].rsplit("/", 1)[-1] in PREFIX
+            if name == "escalate.sh":   # any word naming it, run or not: a worker steers it through its own environment (W7b-CVER-01)
+                return "bin/escalate.sh is run by the supervisor, never by a worker profile"
+            if not (i == 0 or toks[i - 1] in SEP or toks[i - 1].rsplit("/", 1)[-1] in PREFIX
                       or (i >= 2 and toks[i - 2].rsplit("/", 1)[-1] == "timeout" and re.fullmatch(r"[\d.]+[smhd]?", toks[i - 1]))) \
                     and not any(a.split("=", 1)[0] in RUN for a in args):
                 continue   # a word, not a run: `which claude`, `grep -rn claude docs`
-            r = why(args, name == "escalate.sh")
+            r = why(args)
             if r:
                 return r
     return None
