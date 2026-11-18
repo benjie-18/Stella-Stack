@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""The triage router (F2b item F; spec X1, Routing doc section 4), stdlib only. A small local model classifies each input into one route;
+"""The triage step (F2b item F; spec X1, Routing doc section 4), stdlib only. A small local model classifies each input into one route;
 the verdict is calibrated, logged and never steers anything but the route. Nothing here names a route, a role, a model or a host: the tiers
-(lowest first), the router role, the threshold, the sample count and the project rule are the `triage` block of the routing data.
+(lowest first), the role it calls, the threshold, the sample count and the project rule are the `triage` block of the routing data.
 CLI (host only: every command refuses in a worker environment, STL-CFG-312; the output is always JSON, --json is accepted):
   triage.py route [--project P] [--image] [--json]       the message on stdin (it is data: it is quoted into the prompt, never obeyed)
       -> {id, route, confidence, unsure, tier_moved, link {connection, model} | null, reasoning?}; id = the global_id of the one trusted
-      `triage.verdict` event line this verdict wrote. The model is called through `route.py call --schema` for the router role (an
+      `triage.verdict` event line this verdict wrote. The model is called through `route.py call --schema` for the triage role (an
       exempt role: local, never a crossing) with the verdict schema {route: one of the tiers or the image route, reasoning}. Confidence
       is never the model's own word: it is the probability of the route label's token where the link returns log probabilities (one call),
       else the share of the routing triage.samples calls that agree on the majority route. An answer that is not a verdict of the schema
@@ -120,11 +120,11 @@ def ask(role, project, task, schema_file, prompt):
     try:
         doc = json.loads(p.stdout.decode("utf-8", "replace").strip().splitlines()[-1])
     except (IndexError, ValueError):
-        raise Stop(FAILED, "the router call gave no readable answer") from None
+        raise Stop(FAILED, "the triage call gave no readable answer") from None
     if p.returncode != 0:
         if doc.get("code") == NOT_JSON:
             return None, None, None
-        raise Stop(FAILED, f"the router call was refused ({str(doc.get('code'))[:20]})")
+        raise Stop(FAILED, f"the triage call was refused ({str(doc.get('code'))[:20]})")
     try:
         v = json.loads(doc["text"])
         return (v if isinstance(v, dict) else None), doc.get("logprobs"), doc.get("link")
@@ -234,7 +234,7 @@ def cmd_fit(a):
 
 
 def main(argv):
-    ap = argparse.ArgumentParser(prog="triage.py", description="Triage router (host only).")
+    ap = argparse.ArgumentParser(prog="triage.py", description="Triage step (host only).")
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("route", "label", "fit"):
         sub.add_parser(name).add_argument("--json", action="store_true")
