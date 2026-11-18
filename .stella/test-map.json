@@ -191,6 +191,9 @@
     "probe": {
       "mark": "hermetic"
     },
+    "triage": {
+      "mark": "hermetic"
+    },
     "failover": {
       "mark": "hermetic"
     },
@@ -1347,7 +1350,7 @@
     {
       "globs": [
         ".stella/schemas/versions.schema.json",
-        ".stella/schemas/probes.schema.json",
+        ".stella/schemas/probes.schema.json", ".stella/schemas/triage-calibration.schema.json",
         ".stella/versions.json"
       ],
       "targets": [
@@ -1848,7 +1851,7 @@
     {
       "globs": [
         "bin/stella_data.py",
-        ".stella/schemas/probes.schema.json"
+        ".stella/schemas/probes.schema.json", ".stella/schemas/triage-calibration.schema.json"
       ],
       "targets": [
         "alert",
@@ -2771,7 +2774,7 @@
         "bin/roles.py",
         "bin/stella-apply.py",
         "bin/stella_data.py",
-        ".stella/schemas/probes.schema.json",
+        ".stella/schemas/probes.schema.json", ".stella/schemas/triage-calibration.schema.json",
         "bin/worker_env.py",
         "docs/alert-codes.md",
         "docs/hermes-local/alert-catalog.json",
@@ -2857,7 +2860,7 @@
         "bin/roles.py",
         "bin/stella-apply.py",
         "bin/stella_data.py",
-        ".stella/schemas/probes.schema.json",
+        ".stella/schemas/probes.schema.json", ".stella/schemas/triage-calibration.schema.json",
         "bin/worker_env.py",
         "docs/alert-codes.md",
         "docs/hermes-local/alert-catalog.json",
@@ -2871,32 +2874,36 @@
       "why": "F2 W1: the presets selftest (presets, routing data, grants and the apply tool's built-in refusal, in scratch roots) and every file it can reach: the data files and schemas check judges (from reading: the index names them), the data and apply tools, the owner authenticator and what those name (bin/test-map.py reach)"
     },
     {
-      "globs": [".claude/settings.json", ".stella/connections.json", ".stella/data-files.json", ".stella/features.json", ".stella/protocols.json", ".stella/routing.json", ".stella/schemas/data-files.schema.json", ".stella/schemas/event.schema.json", ".stella/schemas/probes.schema.json", ".stella/schemas/routing.schema.json", ".stella/settings.json", ".supervisor/limits.env", "SUPERVISOR.md", "bin/alert-catalog.sh", "bin/alert.sh", "bin/alert_catalog.py", "bin/apply-hermes-local.sh", "bin/approvals.py", "bin/consent.py", "bin/credentials.py", "bin/devices.py", "bin/escalation-complete.sh", "bin/escalation-discord.sh", "bin/escalation-on-block.sh", "bin/escalation-on-claim.sh", "bin/escalation-on-complete.sh", "bin/escalation-thread.sh", "bin/event_log.py", "bin/event_untrusted.py", "bin/failover-selftest.sh", "bin/kanban-board.sh", "bin/kanban-guard.sh", "bin/mock-provider-selftest.sh", "bin/mock_provider.py", "bin/owner-config.sh", "bin/owner_auth.py", "bin/owner_config.py", "bin/probe-selftest.sh", "bin/probe.py", "bin/register-escalation-hook.sh", "bin/register-toolsets.sh", "bin/resolve.py", "bin/role-guard.py", "bin/roles.py", "bin/route.py", "bin/settings.py", "bin/stella-apply.py", "bin/stella_data.py", "bin/worker_env.py", "docs/alert-codes.md", "docs/hermes-local/alert-catalog.json", "docs/hermes-local/board.md", "docs/hermes-local/roles.json"],
+      "globs": [".claude/settings.json", ".stella/connections.json", ".stella/data-files.json", ".stella/features.json", ".stella/protocols.json", ".stella/routing.json", ".stella/schemas/data-files.schema.json", ".stella/schemas/event.schema.json", ".stella/schemas/probes.schema.json", ".stella/schemas/triage-calibration.schema.json", ".stella/schemas/routing.schema.json", ".stella/settings.json", ".supervisor/limits.env", "SUPERVISOR.md", "bin/alert-catalog.sh", "bin/alert.sh", "bin/alert_catalog.py", "bin/apply-hermes-local.sh", "bin/approvals.py", "bin/consent.py", "bin/credentials.py", "bin/devices.py", "bin/escalation-complete.sh", "bin/escalation-discord.sh", "bin/escalation-on-block.sh", "bin/escalation-on-claim.sh", "bin/escalation-on-complete.sh", "bin/escalation-thread.sh", "bin/event_log.py", "bin/event_untrusted.py", "bin/failover-selftest.sh", "bin/kanban-board.sh", "bin/kanban-guard.sh", "bin/mock-provider-selftest.sh", "bin/mock_provider.py", "bin/owner-config.sh", "bin/owner_auth.py", "bin/owner_config.py", "bin/probe-selftest.sh", "bin/probe.py", "bin/triage.py", "bin/register-escalation-hook.sh", "bin/register-toolsets.sh", "bin/resolve.py", "bin/role-guard.py", "bin/roles.py", "bin/route.py", "bin/settings.py", "bin/stella-apply.py", "bin/stella_data.py", "bin/worker_env.py", "docs/alert-codes.md", "docs/hermes-local/alert-catalog.json", "docs/hermes-local/board.md", "docs/hermes-local/roles.json"],
       "targets": ["probe"],
       "why": "F2b item B: the probe selftest (bin/probe.py and route.py's structured-output helper against the mock provider, a stand-in resolver and a folder key backend, in a scratch root) and every file it can reach: the model call and key interface, the wire-shape, routing, catalog and settings data it reads, the event writer, the alert sender and what those name (bin/test-map.py reach)"
+    },    {
+      "globs": [".claude/settings.json", ".stella/connections.json", ".stella/data-files.json", ".stella/features.json", ".stella/protocols.json", ".stella/routing.json", ".stella/schemas/data-files.schema.json", ".stella/schemas/event.schema.json", ".stella/schemas/probes.schema.json", ".stella/schemas/triage-calibration.schema.json", ".stella/schemas/routing.schema.json", ".stella/settings.json", ".supervisor/limits.env", "SUPERVISOR.md", "bin/alert-catalog.sh", "bin/alert.sh", "bin/alert_catalog.py", "bin/apply-hermes-local.sh", "bin/approvals.py", "bin/consent.py", "bin/credentials.py", "bin/devices.py", "bin/escalation-complete.sh", "bin/escalation-discord.sh", "bin/escalation-on-block.sh", "bin/escalation-on-claim.sh", "bin/escalation-on-complete.sh", "bin/escalation-thread.sh", "bin/event_log.py", "bin/event_untrusted.py", "bin/failover-selftest.sh", "bin/kanban-board.sh", "bin/kanban-guard.sh", "bin/mock-provider-selftest.sh", "bin/mock_provider.py", "bin/owner-config.sh", "bin/owner_auth.py", "bin/owner_config.py", "bin/triage-selftest.sh", "bin/probe.py", "bin/triage.py", "bin/register-escalation-hook.sh", "bin/register-toolsets.sh", "bin/resolve.py", "bin/role-guard.py", "bin/roles.py", "bin/route.py", "bin/settings.py", "bin/stella-apply.py", "bin/stella_data.py", "bin/worker_env.py", "docs/alert-codes.md", "docs/hermes-local/alert-catalog.json", "docs/hermes-local/board.md", "docs/hermes-local/roles.json"],
+      "targets": ["triage"],
+      "why": "F2b item F: the triage selftest (bin/triage.py labels, fit and refusals in a scratch root, no model call; the route path is the shared tests of qa/wave3) and every file it can reach: the event writer, the data files and schemas check judges, the model call it makes through route.py and what that names (bin/test-map.py reach)"
     },
     {
-      "globs": ["bin/route.py", "bin/probe.py", "bin/failover-selftest.sh", "bin/credentials.py", "bin/resolve.py", "bin/consent.py", "bin/approvals.py", ".claude/settings.json", ".stella/connections.json", ".stella/data-files.json", ".stella/features.json", ".stella/protocols.json", ".stella/routing.json", ".stella/schemas/event.schema.json", ".stella/settings.json", ".supervisor/limits.env", "SUPERVISOR.md", "bin/alert-catalog.sh", "bin/alert.sh", "bin/alert_catalog.py", "bin/apply-hermes-local.sh", "bin/devices.py", "bin/escalation-complete.sh", "bin/escalation-discord.sh", "bin/escalation-on-block.sh", "bin/escalation-on-claim.sh", "bin/escalation-on-complete.sh", "bin/escalation-thread.sh", "bin/event_log.py", "bin/event_untrusted.py", "bin/kanban-board.sh", "bin/kanban-guard.sh", "bin/mock_provider.py", "bin/owner-config.sh", "bin/owner_auth.py", "bin/owner_config.py", "bin/register-escalation-hook.sh", "bin/register-toolsets.sh", "bin/role-guard.py", "bin/roles.py", "bin/settings.py", "bin/stella-apply.py", "bin/stella_data.py", ".stella/schemas/probes.schema.json", "bin/worker_env.py", "docs/alert-codes.md", "docs/hermes-local/alert-catalog.json", "docs/hermes-local/board.md", "docs/hermes-local/roles.json"],
+      "globs": ["bin/route.py", "bin/probe.py", "bin/triage.py", "bin/failover-selftest.sh", "bin/credentials.py", "bin/resolve.py", "bin/consent.py", "bin/approvals.py", ".claude/settings.json", ".stella/connections.json", ".stella/data-files.json", ".stella/features.json", ".stella/protocols.json", ".stella/routing.json", ".stella/schemas/event.schema.json", ".stella/settings.json", ".supervisor/limits.env", "SUPERVISOR.md", "bin/alert-catalog.sh", "bin/alert.sh", "bin/alert_catalog.py", "bin/apply-hermes-local.sh", "bin/devices.py", "bin/escalation-complete.sh", "bin/escalation-discord.sh", "bin/escalation-on-block.sh", "bin/escalation-on-claim.sh", "bin/escalation-on-complete.sh", "bin/escalation-thread.sh", "bin/event_log.py", "bin/event_untrusted.py", "bin/kanban-board.sh", "bin/kanban-guard.sh", "bin/mock_provider.py", "bin/owner-config.sh", "bin/owner_auth.py", "bin/owner_config.py", "bin/register-escalation-hook.sh", "bin/register-toolsets.sh", "bin/role-guard.py", "bin/roles.py", "bin/settings.py", "bin/stella-apply.py", "bin/stella_data.py", ".stella/schemas/probes.schema.json", ".stella/schemas/triage-calibration.schema.json", "bin/worker_env.py", "docs/alert-codes.md", "docs/hermes-local/alert-catalog.json", "docs/hermes-local/board.md", "docs/hermes-local/roles.json"],
       "targets": ["failover"],
       "why": "F2 W4: the failover selftest (bin/route.py against the mock provider, a stand-in resolver and a folder key backend, in a scratch root) and every file it can reach: the model call and its key interface, the routing, catalog, wire-shape and settings data it reads, the event writer, the alert sender and what those name (bin/test-map.py reach)"
     },
     {
-      "globs": ["bin/credentials.py", "bin/credentials-selftest.sh", "bin/route.py", "bin/probe.py", "bin/resolve.py", "bin/consent.py", "bin/approvals.py", ".claude/settings.json", ".stella/data-files.json", ".stella/protocols.json", ".stella/routing.json", ".stella/schemas/event.schema.json", ".stella/settings.json", ".supervisor/limits.env", "SUPERVISOR.md", "bin/alert-catalog.sh", "bin/alert.sh", "bin/alert_catalog.py", "bin/apply-hermes-local.sh", "bin/devices.py", "bin/escalation-complete.sh", "bin/escalation-discord.sh", "bin/escalation-on-block.sh", "bin/escalation-on-claim.sh", "bin/escalation-on-complete.sh", "bin/escalation-thread.sh", "bin/event_log.py", "bin/event_untrusted.py", "bin/kanban-board.sh", "bin/kanban-guard.sh", "bin/owner-config.sh", "bin/owner_auth.py", "bin/owner_config.py", "bin/register-escalation-hook.sh", "bin/register-toolsets.sh", "bin/role-guard.py", "bin/roles.py", "bin/settings.py", "bin/stella-apply.py", "bin/stella_data.py", ".stella/schemas/probes.schema.json", "bin/worker_env.py", "docs/alert-codes.md", "docs/hermes-local/alert-catalog.json", "docs/hermes-local/board.md", "docs/hermes-local/roles.json"],
+      "globs": ["bin/credentials.py", "bin/credentials-selftest.sh", "bin/route.py", "bin/probe.py", "bin/triage.py", "bin/resolve.py", "bin/consent.py", "bin/approvals.py", ".claude/settings.json", ".stella/data-files.json", ".stella/protocols.json", ".stella/routing.json", ".stella/schemas/event.schema.json", ".stella/settings.json", ".supervisor/limits.env", "SUPERVISOR.md", "bin/alert-catalog.sh", "bin/alert.sh", "bin/alert_catalog.py", "bin/apply-hermes-local.sh", "bin/devices.py", "bin/escalation-complete.sh", "bin/escalation-discord.sh", "bin/escalation-on-block.sh", "bin/escalation-on-claim.sh", "bin/escalation-on-complete.sh", "bin/escalation-thread.sh", "bin/event_log.py", "bin/event_untrusted.py", "bin/kanban-board.sh", "bin/kanban-guard.sh", "bin/owner-config.sh", "bin/owner_auth.py", "bin/owner_config.py", "bin/register-escalation-hook.sh", "bin/register-toolsets.sh", "bin/role-guard.py", "bin/roles.py", "bin/settings.py", "bin/stella-apply.py", "bin/stella_data.py", ".stella/schemas/probes.schema.json", ".stella/schemas/triage-calibration.schema.json", "bin/worker_env.py", "docs/alert-codes.md", "docs/hermes-local/alert-catalog.json", "docs/hermes-local/board.md", "docs/hermes-local/roles.json"],
       "targets": ["credentials"],
       "why": "F2 W4: the credentials selftest (bin/credentials.py with the shipped backend and a folder backend, in a scratch root) and every file it can reach: the key interface, the routing data that names the backend, the event writer it borrows its file checks from and what those name (bin/test-map.py reach)"
     },
     {
-      "globs": ["bin/consent.py", "bin/consent-selftest.sh", "bin/approvals.py", "bin/route.py", "bin/probe.py", "bin/resolve.py", "bin/credentials.py", ".claude/settings.json", ".stella/data-files.json", ".stella/protocols.json", ".stella/schemas/approval-request.schema.json", ".stella/schemas/event.schema.json", ".stella/settings.json", ".supervisor/limits.env", "SUPERVISOR.md", "bin/alert-catalog.sh", "bin/alert.sh", "bin/alert_catalog.py", "bin/apply-hermes-local.sh", "bin/devices.py", "bin/escalation-complete.sh", "bin/escalation-discord.sh", "bin/escalation-on-block.sh", "bin/escalation-on-claim.sh", "bin/escalation-on-complete.sh", "bin/escalation-thread.sh", "bin/event_log.py", "bin/event_untrusted.py", "bin/kanban-board.sh", "bin/kanban-guard.sh", "bin/owner-config.sh", "bin/owner_auth.py", "bin/owner_config.py", "bin/register-escalation-hook.sh", "bin/register-toolsets.sh", "bin/role-guard.py", "bin/roles.py", "bin/settings.py", "bin/stella-apply.py", "bin/stella_data.py", ".stella/schemas/probes.schema.json", "bin/worker_env.py", "docs/alert-codes.md", "docs/hermes-local/alert-catalog.json", "docs/hermes-local/board.md", "docs/hermes-local/roles.json"],
+      "globs": ["bin/consent.py", "bin/consent-selftest.sh", "bin/approvals.py", "bin/route.py", "bin/probe.py", "bin/triage.py", "bin/resolve.py", "bin/credentials.py", ".claude/settings.json", ".stella/data-files.json", ".stella/protocols.json", ".stella/schemas/approval-request.schema.json", ".stella/schemas/event.schema.json", ".stella/settings.json", ".supervisor/limits.env", "SUPERVISOR.md", "bin/alert-catalog.sh", "bin/alert.sh", "bin/alert_catalog.py", "bin/apply-hermes-local.sh", "bin/devices.py", "bin/escalation-complete.sh", "bin/escalation-discord.sh", "bin/escalation-on-block.sh", "bin/escalation-on-claim.sh", "bin/escalation-on-complete.sh", "bin/escalation-thread.sh", "bin/event_log.py", "bin/event_untrusted.py", "bin/kanban-board.sh", "bin/kanban-guard.sh", "bin/owner-config.sh", "bin/owner_auth.py", "bin/owner_config.py", "bin/register-escalation-hook.sh", "bin/register-toolsets.sh", "bin/role-guard.py", "bin/roles.py", "bin/settings.py", "bin/stella-apply.py", "bin/stella_data.py", ".stella/schemas/probes.schema.json", ".stella/schemas/triage-calibration.schema.json", "bin/worker_env.py", "docs/alert-codes.md", "docs/hermes-local/alert-catalog.json", "docs/hermes-local/board.md", "docs/hermes-local/roles.json"],
       "targets": ["consent"],
       "why": "F2 W5: the consent selftest (bin/consent.py through the real route.py attempt, resolver, approval service, owner authenticator and apply tool, in a scratch root) and every file it can reach: the consent gate and its commands, the tools it calls, the data they read and what those name (bin/test-map.py reach)"
     },
     {
-      "globs": ["bin/probe.py", ".stella/schemas/probes.schema.json"],
+      "globs": ["bin/probe.py", "bin/triage.py", ".stella/schemas/probes.schema.json", ".stella/schemas/triage-calibration.schema.json"],
       "targets": ["commit-guard", "escalation-reply-poll", "event-log", "kanban-guard", "loopback", "matcher-audit", "mock-provider", "model-watch", "owner-auth", "owner-config", "owner-settings", "presets", "register-toolsets", "role-guard", "roles-complete", "secret-read"],
       "why": "F2b merge of items B and H: register-toolsets.sh (H) asks the resolver, and route.py's imports reach bin/probe.py (B), so these selftests reach probe.py too (from reach; the targets test-map.py check named)."
     },
     {
-      "globs": ["bin/resolve.py", "bin/route.py", "bin/probe.py", "bin/credentials.py", "bin/consent.py", "bin/approvals.py"],
+      "globs": ["bin/resolve.py", "bin/route.py", "bin/probe.py", "bin/triage.py", "bin/credentials.py", "bin/consent.py", "bin/approvals.py"],
       "targets": ["alert-page", "approval-evidence", "box", "broker-put", "check-guard", "complete-gate", "delegation", "escalate", "escalation-thread", "kanban-board", "merge-card", "omniroute-run", "reviewer-claude", "roles", "routing", "write-guard"],
       "why": "F2 W7b: bin/escalate.sh and bin/box.py ask the resolver, so every selftest that can reach those two reaches the resolver and what it imports (from reach)."
     },
@@ -2906,12 +2913,12 @@
       "why": "F2 W7b: reached through the resolver that bin/escalate.sh now names (from reach)."
     },
     {
-      "globs": ["bin/resolve.py", "bin/route.py", "bin/probe.py", "bin/credentials.py", "bin/consent.py", "bin/approvals.py", ".stella/protocols.json"],
+      "globs": ["bin/resolve.py", "bin/route.py", "bin/probe.py", "bin/triage.py", "bin/credentials.py", "bin/consent.py", "bin/approvals.py", ".stella/protocols.json"],
       "targets": ["approvals", "devices", "settings", "settings-explain", "stella-apply", "watchdog"],
       "why": "F2 W6 fix: bin/settings.py explain imports the resolver (resolve.role_view), so every selftest that can reach settings.py reaches the resolver and what it imports (from reach)."
     },
     {
-      "globs": [".claude/settings.json", ".stella/protocols.json", ".stella/settings.json", "bin/approvals.py", "bin/consent.py", "bin/credentials.py", "bin/resolve.py", "bin/route.py", "bin/probe.py", "bin/settings.py"],
+      "globs": [".claude/settings.json", ".stella/protocols.json", ".stella/settings.json", "bin/approvals.py", "bin/consent.py", "bin/credentials.py", "bin/resolve.py", "bin/route.py", "bin/probe.py", "bin/triage.py", "bin/settings.py"],
       "targets": ["container-start", "firewall-probe", "init-firewall"],
       "why": "F2 W7b fix: bin/container-start.sh takes OpenCode's model from the resolver, so every selftest that can reach container-start.sh reaches the resolver and what it imports (from reach)."
     },
@@ -2931,7 +2938,7 @@
       "why": "F2 W7b: named by bin/route.py, which the resolver's callers reach (from reach)."
     },
     {
-      "globs": ["bin/stella_data.py", ".stella/schemas/probes.schema.json", "bin/stella-apply.py", "bin/worker_env.py", "bin/devices.py", "bin/event_log.py", "bin/event_untrusted.py", "bin/owner_auth.py", ".stella/schemas/event.schema.json", ".stella/data-files.json"],
+      "globs": ["bin/stella_data.py", ".stella/schemas/probes.schema.json", ".stella/schemas/triage-calibration.schema.json", "bin/stella-apply.py", "bin/worker_env.py", "bin/devices.py", "bin/event_log.py", "bin/event_untrusted.py", "bin/owner_auth.py", ".stella/schemas/event.schema.json", ".stella/data-files.json"],
       "targets": ["box", "broker-put", "check-guard", "container-start", "escalation-thread", "firewall-probe", "init-firewall"],
       "why": "F2 W7b: bin/container-start.sh builds the OpenCode config from the catalog through bin/stella_data.py, and bin/box.py asks the resolver (from reach; box is a superset for .stella/data-files.json)."
     },
@@ -2944,7 +2951,7 @@
       "globs": [
         "bin/resolver-selftest.sh",
         "bin/resolve.py",
-        "bin/probe.py",
+        "bin/probe.py", "bin/triage.py",
         "bin/consent.py",
         "bin/approvals.py",
         "bin/credentials.py",
@@ -2997,7 +3004,7 @@
         "bin/roles.py",
         "bin/stella-apply.py",
         "bin/stella_data.py",
-        ".stella/schemas/probes.schema.json",
+        ".stella/schemas/probes.schema.json", ".stella/schemas/triage-calibration.schema.json",
         "bin/worker_env.py",
         "docs/alert-codes.md",
         "docs/hermes-local/alert-catalog.json",

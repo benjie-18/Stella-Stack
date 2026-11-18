@@ -444,6 +444,15 @@
       "replaced_by": "the weekly model check (F2c): the one engine path that updates a built-in preset, with a changelog line and rollback; until then no path changes a built-in preset (the apply tool refuses every candidate that does)",
       "global_id": "35e660aa-0e06-419d-96a4-02a119cf7514",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "triage-classifier",
+      "owner_phase": "F2b",
+      "status": "off",
+      "depends_on": [],
+      "flag": "triage-classifier",
+      "global_id": "0e9a6e70-f416-486b-b6be-3f0b90643750",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

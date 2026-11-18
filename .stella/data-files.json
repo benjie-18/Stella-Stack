@@ -10,6 +10,7 @@
   "routing_state": ".supervisor/state/routing-state.json",
   "card_facts": ".supervisor/state/card-facts",
   "probe_records": ".supervisor/state/probes.json",
+  "triage_calibration": ".supervisor/state/triage-calibration.json",
   "untrusted_events": ".supervisor/logs/events-untrusted.jsonl",
   "event_writer_id": "engine",
   "files": [

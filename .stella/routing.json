@@ -162,5 +162,14 @@
     "output_shapes": ["strict_schema", "grammar", "json_mode", "none"],
     "shape_trials": 3,
     "repair_retries": 1
+  },
+  "triage": {
+    "role": "router",
+    "tiers": ["chat", "question", "work"],
+    "image_route": "image",
+    "project": {"default": "work", "keep": ["question"]},
+    "threshold": 0.7,
+    "samples": 3,
+    "min_labels": 50
   }
 }

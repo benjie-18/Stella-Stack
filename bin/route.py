@@ -6,7 +6,8 @@ CLI (host only: every command refuses in a worker environment, STL-CFG-312; the 
   route.py call --role R --project P [--card C] [--tier T] [--driver D] [--pending-tool-call] --task ID [--schema FILE] [--json]   (prompt on stdin)
       the engine loop's driver: calls the first link the task may use through its connection's wire shape (.stella/protocols.json),
       and on a failure moves on until a link answers. Output: {task, link {connection, model}, link_class, text, tool_calls, usage,
-      model, switches, failure_history, refused, stubs}.
+      model, switches, failure_history, refused, stubs}, plus logprobs (the per-token {token, logprob} items) when the link's answer has them
+      at the wire shape's response.logprobs pointer (bin/triage.py reads the route label's probability from it).
       --schema FILE (F2b B): the answer must be JSON that meets the object schema in FILE, which gets a short `reasoning` string as its first
       property. The link's newest probe record (bin/probe.py) names the output shape: the schema goes at that wire-shape pointer; with none
       (or no record) it goes in the prompt. A wrong answer gets routing probe.repair_retries repair retries, then STL-MDL-736: never a guessed value.
@@ -477,7 +478,8 @@ def send(prov, proto, link, prompt, key, timeout, local, edit=None):
         return None, MALFORMED, status
     if not text and not calls:   # nothing for the task: no success, so it clears no cooldown
         return None, DOWN, status
-    return {"text": text, "tool_calls": calls, "usage": ptr(doc, rs["usage"]), "model": ptr(doc, rs["model"])}, None, status
+    lp = ptr(doc, rs["logprobs"]) if rs.get("logprobs") else None   # the per-token items, when the wire shape names a pointer and the answer has them
+    return {"text": text, "tool_calls": calls, "usage": ptr(doc, rs["usage"]), "model": ptr(doc, rs["model"]), **({"logprobs": lp} if lp else {})}, None, status
 
 
 # ---- the commands ----
