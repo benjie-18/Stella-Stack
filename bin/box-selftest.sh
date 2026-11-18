@@ -394,6 +394,11 @@ rxed() { jq "${@:2}" "$RX/.stella/$1" >"$RX/.stella/$1.n" && mv "$RX/.stella/$1.
 rxed connections.json --arg r "$RR" --arg w "$RW" --argjson dc "$(jq -c .data_classes "$RX/.stella/data-policy.json")" '(.entries[] | select(.type == "cli-login")) |= (.cli = $w | .terms_ok = true | .allowed_roles += [$r]
   | .data_policy.data_classes_allowed = $dc | .models += [.models[0] + {id: "model-from-data", limits: null}]
   | .models[] |= (.capabilities = {tool_calling: true, json_mode: true, context_tokens: 1048576, vision: true, streaming: true} | .probe_source = "advertised"))'
+pr="$RX/$(jq -r .probe_records "$RX/.stella/data-files.json")"; mkdir -p "$(dirname "$pr")"   # F2b item C: routing reads what a link can do from its probe record only
+jq --arg i "$(jq -r .install_id "$RX/$(jq -r '.files[] | select(.schema == "install") | .path' "$RX/.stella/data-files.json")")" --arg o "$(jq -r '.probe.output_shapes[-1]' "$RX/.stella/routing.json")" \
+  '{schema_version: 1, records: [.entries[] | select(.type == "cli-login") | .id as $c | .models[] | {global_id: "00000000-0000-4000-8000-000000000000", install_id: $i, connection: $c,
+    model: .id, version: "qa", probed_at: "2026-01-01T00:00:00Z", family: null, tool_calling: true, parallel_tool_calls: null, json: true, vision: true, output_shape: $o,
+    context: {advertised: null, effective: 1048576, short_score: 1, points: []}, code: null}]}' "$RX/.stella/connections.json" >"$pr"
 rxed role-assignments.json --arg r "$RR" --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$IID" --argjson k "$(jq -c '[.link_classes[].id]' "$RX/.stella/routing.json")" \
   --arg c "$(jq -r '[.entries[] | select(.type == "cli-login") | .id][0]' "$RX/.stella/connections.json")" \
   '.effort_modes["qa-all"] = {allowed_localities: ["local", "cloud"], no_silent_fallback: false, class_order: $k} | .selection.global = "qa-all"

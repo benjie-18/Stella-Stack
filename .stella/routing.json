@@ -72,6 +72,7 @@
   ],
   "card_roles": ["builder", "reviewer", "tester", "validator", "verifier", "red-team"],
   "builder_roles": ["builder"],
+  "cross_family": {"builder_role": "builder", "reviewer_roles": ["validator", "verifier"]},
   "escalation": {
     "purposes": {"judge": "validator", "review": "reviewer", "plan": "proposer", "rescue": "builder"}
   },
