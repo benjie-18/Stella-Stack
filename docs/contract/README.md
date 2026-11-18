@@ -790,16 +790,23 @@ the read-only resolver at most. `route.py` holds no routing rule: it walks the c
   a pending request of the same grant is reused. The request's action is the apply tool's own, `{op: apply, target: the
   index row of the grant file, old_digest, new_digest}`: sha256 of the file now and of the file with the grant row appended
   (that row has no `request_id` yet; the candidate applied is the same document with `request_id` set). A request counts
-  only by the approval service's word (the trusted log) and only while its digest is the digest of that action rebuilt on
-  the file as it is now: a file that changed since (a revoke included), a denied or an expired request asks again. An
-  approved request is applied through `bin/stella-apply.py` with a proof of this host's owner key bound to those bytes.
+  only when consent itself made it (a trusted `routing.consent` line names it, its trusted request line carries the consent
+  approval class, it is no worker's ask), by the approval service's word (the trusted log), and only while its digest is
+  the digest of that action rebuilt on the file as it is now: a file that changed since (a revoke included), a denied or
+  an expired request asks again. The row is rebuilt for that: its grant fields and its project scope are what the call
+  needs (`complete`, `pending`: what the trusted `routing.consent` line says); the state file gives only the row's `id`,
+  `global_id` and `granted_at`, and a state row that differs from the rebuilt one asks again. An approved request is
+  applied once, through `bin/stella-apply.py` with a proof of this host's owner key bound to those bytes: once a trusted
+  line of the grant file's row put its `request_id` into the file it is spent, so a grant file put back to its old bytes
+  asks again.
   Where the grant rows are identity-critical (the shipped owner-auth data) the apply needs the typed phrase, which the gate
   never asks: the task stays `waiting` (STL-MDL-719) and the owner is told, once per request in the inbox, the one host
   command `consent.py complete <request id>`, which runs the apply on the terminal (no terminal: STL-OWN-808).
   Unattended run mode (`UNATTENDED_MODE`, read by `settings.py`'s reader; when its store holds no value, from the owner
   file the owner config reader names) off: `waiting`. On: the task is noted in the state's `queue`, the inbox gets one
   alert with `consent.alert_code_queue`, and the answer is `queued`; the request is still raised once.
-  `consent.py pending --json` lists the requests not yet settled; `consent.py revoke <grant id> --out <file>` writes the
+  `consent.py pending --json` lists the requests not yet settled (`complete` of a request consent did not make:
+  STL-CFG-311; of one that no longer stands: STL-MDL-719); `consent.py revoke <grant id> --out <file>` writes the
   candidate in which that grant carries `revoked_at` (never over a file) for the owner to apply, and applies nothing.
   The state file keeps `consents` {grant key: `request_id`, `kind`, `row`, `task`, `card`, `told`} and `queue` {task:
   `request_id`, `link`, `card`, `at`}; like the rest of it, they prove nothing.
