@@ -95,7 +95,7 @@ done
 mk fb-bad five; ed fb-bad role-assignments.json --arg p "$PINROLE" --argjson l "$(link qa-notools)" "$F.roles[\$p].fallbacks = [\$l]"
 ok 'refuses fb-bad && coded "$C_CHAIN"' "4a a fallback that fails the role's requirements is refused with $C_CHAIN"
 NOPROBES=pin-notools passes pin-notools; k=$?; n0=$(grep -c . "$T/sup/logs/alerts.log" 2>/dev/null)
-ok '[ "$k" = 0 ]' "4-norec C ruling (1): the same pin with no probe record passes (possibly serving): the catalog's advertised capabilities are not read"
+ok '[ "$k" = 0 ] && grep -q "^warning: STL-MDL-738 .*qa-pin/qa-notools" "$T/o"' "4-norec the same pin with no probe record passes (it may serve), with a STL-MDL-738 warning line naming the link: the catalog's advertised capabilities are not read"
 refuses pin-notools; n1=$(grep -c . "$T/sup/logs/alerts.log"); cp "$T/o" "$T/o-pn"; sd pin-notools get --json role-assignments >"$T/o-get" 2>&1; kg=$?
 ok 'grep -q "^$C_CHAIN .*pins\[0\].*tool_calling" "$T/o-pn" && [ $((n1 - ${n0:-0})) = "$(grep -c "^STL-" "$T/o-pn")" ] && [ "$kg" = 0 ] && jq -e .effort_modes "$T/o-get" >/dev/null' \
   "4-probed a pin whose probe record fails the role is refused with $C_CHAIN and one alert line per such line, and never stops a read (get serves the data)"
@@ -271,7 +271,9 @@ req = {"tool_calling": True, "vision": False, "min_context_tokens": 100}
 eq(s.unmet(req, {"tool_calling": True, "vision": None, "context": {"effective": 100}}), [], "unmet: a probe record that meets every requirement")
 eq(s.unmet(req, {"tool_calling": None, "vision": None, "context": {"effective": None}}), ["tool_calling", "min_context_tokens"], "unmet: a null capability meets no requirement")
 eq(s.unmet(dict(req, vision=True), {"tool_calling": True, "vision": False, "context": {"effective": 99}}), ["vision", "min_context_tokens"], "unmet: vision false and an effective context one token short")
-eq(s.unmet(req, None), ["tool_calling", "min_context_tokens"], "unmet: no record meets no requirement (not probed)")
+eq(s.unmet(req, None), [], "unmet: no record is no unmet requirement (owner ruling 2026-11-18: an unprobed link may serve, flagged)")
+eq(s.needs_probe(req, None), True, "needs_probe: no record for a role with requirements is flagged")
+eq(s.needs_probe({"tool_calling": False, "vision": False, "min_context_tokens": 0}, None) or s.needs_probe(req, {"tool_calling": True}), False, "needs_probe: not for a role with no requirements, nor for a link with a record")
 eq(s.unmet({"tool_calling": False, "vision": False, "min_context_tokens": 0}, None), [], "unmet: a role with no requirements needs no record")
 eq(s.unmet(req, {"tool_calling": True, "context_tokens": 1048576, "context": {"effective": 99, "advertised": 1048576}}), ["min_context_tokens"], "unmet: the context is the effective one, never the advertised window")
 rec = lambda c, m, at, **k: {"connection": c, "model": m, "probed_at": at, **k}
@@ -298,7 +300,7 @@ sys.exit(1 if bad else 0)
 PY
 STELLA_ROOT=$T/cls python3 -I "$T/unit.py" "$BIN" "$LOCAL" "$GCLASS" >"$T/unit.out" 2>&1; urc=$?
 cat "$T/unit.out"; fails=$((fails + $(grep -c '^FAIL' "$T/unit.out")))
-ok '[ $urc = 0 ] && [ "$(grep -c "^ok" "$T/unit.out")" = 22 ]' "7 the link class, requirement, probe and grant functions answer as the data says (22 cases ran, exit $urc)"
+ok '[ $urc = 0 ] && [ "$(grep -c "^ok" "$T/unit.out")" = 24 ]' "7 the link class, requirement, probe and grant functions answer as the data says (24 cases ran, exit $urc)"
 
 # ---- DC-03: a class that is not hosted never labels a link that leaves the machine ----
 mk reach cls; ed reach connections.json --arg c "$CLOUD" '(.entries[] | select(.id == $c)).link_class = "qa-class"'

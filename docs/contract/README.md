@@ -283,8 +283,13 @@ shape) is an x-ref to an entry of `.stella/protocols.json`; `models[].score` (ad
 benchmark) is shape-checked only. `capabilities` are the owner's notes of what a model advertises (and the probe's
 `context.advertised`): no routing rule reads them (F2b item C). What a link can do is its capability probe record
 (`stella_data.probed(records, connection, model)`: the newest of `bin/probe.py`'s records of this install, never one dated in
-the future), judged by `stella_data.unmet(requirements, record)`: no record meets no requirement, a null capability meets none,
-and `min_context_tokens` is judged against `context.effective`.
+the future), judged by `stella_data.unmet(requirements, record)`: a null capability meets no requirement, and `min_context_tokens` is
+judged against `context.effective`. A link with no record (never probed, or a CLI login, which has no wire shape and cannot be
+probed) may serve a role with requirements, flagged (owner ruling 2026-11-18, `stella_data.needs_probe`): one STL-MDL-738
+warning alert line per pick (route.py) or resolver CLI answer that serves it (a task size, `--tokens` or route.py's estimate,
+counts as a requirement), a `warning:` line of `check` for a listed link
+(never a problem: the exit code stays 0), and `probe.py due` lists it (a link with no wire shape with `version` null and `probeable` false). The probe
+records a link that fails the multi-hop test even at its shortest length at that length, never at effective context 0.
 A model's `limits` object (F2 W7b; free-form, null = none) holds what the callers read: `bin/escalate.sh` reads `purposes` (a
 list: the only purposes the model runs for), `max_concurrent` (slots) and `per_day` (calls per UTC day), each a value or a
 string naming the key of the limits store (`.supervisor/limits.env`) that holds it (a key that store does not define refuses
@@ -420,7 +425,7 @@ order, needs class and last resort, none passes the link judge (the owner's glob
 (STL-MDL-725 for a role the workflow requires, else STL-MDL-726; a role whose row in the role table has `optional: true`, such as `look`, is never judged here: it fails with NO_LINK, naming the role, when it is asked for).
 Probe data (F2b item C, ruling 1): a pin, fallback, rung (not of a built-in preset) or assignment link whose probe record fails
 the role's requirements is STL-MDL-726, and a role every allowed link of which has such a record is STL-MDL-725 or 726, as above;
-a link with no record may serve and is not refused. These lines rest on engine data: `check` lists them with one alert line each,
+a link with no record may serve and is not refused (a STL-MDL-738 warning line). These lines rest on engine data: `check` lists them with one alert line each,
 and they never make a read refuse (the role fails NO_LINK at run time). Also refused: an empty class order; a link class with
 `hosted: false` on a link that leaves the machine
 (by `reach()`; the locality rules themselves read `reach()` only, never the label); a hosted class whose `privacy_rank` is
@@ -801,7 +806,8 @@ the read-only resolver at most. `route.py` holds no routing rule: it walks the c
   task (the loop guard); with `failover.same_connection_first` a link of the connection just left goes first. A task that has
   no link left, or would pass `failover.max_switches_per_task`, stops with STL-MDL-723.
 - **Context** (`call`): the resolver is asked with the conversation's size (`tokens`, about four bytes a token), and a link
-  whose probed effective context does not hold it (no record or none probed: it does not) is refused on every pick, the first
+  whose probed effective context does not hold it (a link with no record may serve, with a STL-MDL-738 warning alert line per
+  pick or switch) is refused on every pick, the first
   one too. `attempt --tokens N` passes N to the resolver.
 - **Mid-task switch** (`call` only): refused (STL-MDL-722, one event line; the link after it is judged) when the chain says the
   link is not `mid_task`, when its probed effective context does not hold the conversation, or when `--pending-tool-call` is
@@ -866,10 +872,12 @@ the read-only resolver at most. `route.py` holds no routing rule: it walks the c
   `routing.rung-exhausted` line (731); an unwritable log withdraws a served rung (the log's code) or names its code in
   `rung.log_code`. `--rung` in a worker environment is refused (STL-CFG-312): the rung comes from a host-side caller, and the
   answer is information, never permission. `resolve(ctx)` with `ctx["rung"]` gives the same answer and writes nothing.
-- **Probe data and --tokens (F2b item C).** Rule 4 judges a role's requirements against the link's probe record only (no record:
-  unmet, "not probed"); the needs-class trigger counts a link with no record as possibly serving. `--tokens N` (a non-negative
-  integer; ctx `tokens`) excludes, after the class order is fixed, a link whose probed effective context is below N or not probed
-  (STL-MDL-715). Each chain entry carries `family` (its record's, else null). A forged record (the file is protected state) can make
+- **Probe data and --tokens (F2b item C, owner ruling 2026-11-18).** Rule 4 judges a role's requirements against the link's probe
+  record only: a record that fails one excludes the link (STL-MDL-715); a link with no record may serve (the CLI writes one
+  STL-MDL-738 warning alert line when the link its answer serves has no record and the role has requirements; `resolve(ctx)` writes
+  none). `--tokens N` (a non-negative integer; ctx `tokens`) excludes, after the class order is fixed, a link whose probed
+  effective context is below N (STL-MDL-715), never a link with no record, and never moves the needs class. Each chain entry
+  carries `family` (its record's, else null) and `probed` (whether it has a record). A forged record (the file is protected state) can make
   a link look able (it fails at run time and fails over) or unable (fail closed), never widen reach: the other rules do not read it.
 - **Cross-family review (F2b item C).** For a role of `routing.json` `cross_family.reviewer_roles` (not on a rung walk) the answer
   has `cross_family` {`builder_family`, `served_family`, `status`: `met`|`waived`, `reason`, `logged`}. Under a preset whose

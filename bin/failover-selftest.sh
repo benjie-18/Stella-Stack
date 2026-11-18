@@ -177,9 +177,13 @@ ok '[ "$(cnt st-t/st-t-m1)" = 0 ] && [ "$(cnt st-b/st-b-m1)" = 0 ] && [ "$(cnt s
   "no refused link is called; one event line per refused switch, one for the switch made"
 ok 'J mid ".stubs == [\"st-resolver-stub\"]"' "the output names the stubs the resolver's answer rests on, and no context stub of its own (C-DC-06: the context check reads probe data)"
 cp "$PF" "$T/pf.keep"; jq '.records |= map(select(.model != "st-a-m1"))' "$T/pf.keep" >"$PF"
-chain st-a/st-a-m1 st-b/st-b-m1; fresh; call norec
-ok '[ $RC = 0 ] && J norec ".link.model == \"st-b-m1\" and ([.refused[] | .code + \" \" + .link] == [\"STL-MDL-710 st-a/st-a-m1\"])" && [ "$(cnt st-a/st-a-m1)" = 0 ] && jq -e ".tokens > 0" "$R/ctx.json"' \
-  "C-DC-04 a link with no probe record does not hold the conversation, on the first pick too: refused, never called; the resolver was asked with the prompt's size (ctx tokens)"
+AL=$T/sup/logs/alerts.log; a0=$(grep -c "^STL-MDL-738 " "$AL" 2>/dev/null)
+chain st-a/st-a-m1 st-b/st-b-m1; fresh; call norec; a1=$(grep -c "^STL-MDL-738 " "$AL" 2>/dev/null)
+ok '[ $RC = 0 ] && J norec ".link.model == \"st-a-m1\" and .refused == []" && [ "$(cnt st-a/st-a-m1)" = 1 ] && jq -e ".tokens > 0" "$R/ctx.json" && [ $((a1 - ${a0:-0})) = 1 ] && grep "^STL-MDL-738 " "$AL" | tail -1 | grep -qF "st-a/st-a-m1"' \
+  "owner ruling 2026-11-18: a link with no probe record may serve (picked and called), flagged by one STL-MDL-738 warning alert naming it; the resolver was asked with the prompt's size (ctx tokens)"
+chain st-t/st-t-m1 st-b/st-b-m1; fresh; PROMPT=$(head -c 400 /dev/zero | tr '\0' 'w') call small
+ok '[ $RC = 0 ] && J small ".link.model == \"st-b-m1\" and ([.refused[] | .code + \" \" + .link] == [\"STL-MDL-710 st-t/st-t-m1\"])" && [ "$(cnt st-t/st-t-m1)" = 0 ]' \
+  "C-DC-04 a link whose probed effective context (16) does not hold the conversation is refused on the first pick too, never called"
 cp "$T/pf.keep" "$PF"
 chain st-a/st-a-m1; jq '. + {cross_family: {builder_family: "st-fam", served_family: "st-fam", status: "waived", reason: "st: no other family", logged: false}}' "$R/chain.json" >"$R/chain.n" && mv "$R/chain.n" "$R/chain.json"
 fresh; call wv; rt wva attempt --role "$ROLE" --project st-project --task wva --tokens 7 --json

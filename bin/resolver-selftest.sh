@@ -493,28 +493,31 @@ own() {  # <root> <JSON array of [connection, model, overrides]>: the root's pro
     connection: .[0], model: .[1], version: "qa", probed_at: "2026-01-01T00:00:00Z", family: null, tool_calling: true, parallel_tool_calls: null, json: true,
     vision: true, output_shape: $o, context: {advertised: null, effective: 1048576, short_score: 1, points: []}, code: null} + .[2]]}' >"$T/$1/$PF"
 }
-mk pr base; own pr '[]'; rs pr p0 --role "$NR" --project qa-proj
-ok '[ "$(rc p0)" = 1 ] && J p0 ".code == \"$C_NOLINK\" and ([.chain[] | select(.connection == (\"qa-local\", \"qa-front\", \"qa-free\")) | select(.status != \"excluded\" or .code != \"$C_UNMET\" or (.reason | test(\"not probed\") | not))] | length == 0)"' \
-  "15a C rule 4: no probe record meets no requirement (not probed): every link that passes rules 1 to 3 is excluded $C_UNMET though the catalog advertises every capability"
+mk pr base; own pr '[]'; a0=$(alerts STL-MDL-738); rs pr p0 --role "$NR" --project qa-proj; a1=$(alerts STL-MDL-738)
+STELLA_ROOT=$T/pr python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import resolve as r; r.resolve({"role": sys.argv[2], "project": "qa-proj"})' "$BIN" "$NR" 2>/dev/null; a2=$(alerts STL-MDL-738)
+ok '[ "$(rc p0)" = 0 ] && J p0 ".code == null and ([.chain[] | select(.connection == (\"qa-local\", \"qa-front\", \"qa-free\")) | select(.status != \"usable\" or .probed != false)] | length == 0)" &&
+  [ $((a1 - a0)) = 1 ] && grep "^STL-MDL-738 " "$AL" | tail -1 | grep -qF "$(jq -r "[.chain[] | select(.status == \"usable\")][0] | .connection + \"/\" + .model" "$T/o/p0.json")" && [ "$a2" = "$a1" ]' \
+  "15a owner ruling 2026-11-18: a link with no probe record may serve a role with requirements (usable, probed false); the CLI writes one STL-MDL-738 warning alert naming the link it serves; resolve(ctx) writes none"
 mk pr2 pr; ed pr2 connections '(.entries[] | select(.id == "qa-local") | .models[0].capabilities) += {tool_calling: false, context_tokens: 1}'
 own pr2 '[["qa-local", "qa-local-m1", {}], ["qa-local", "qa-local-m2", {"tool_calling": false}]]'; rs pr2 p1 --role "$NR" --project qa-proj
 ok 'passes pr2 && J p1 "$(ent qa-local qa-local-m1) | .[0].status == \"usable\"" && J p1 "$(ent qa-local qa-local-m2) | .[0].code == \"$C_UNMET\" and (.[0].reason | test(\"probe record\"))"' \
   "15b the record decides, never the catalog: a model advertised with no tool calling and a 1-token window is usable by its record, one advertised able is excluded by its record"
 own pr2 '[["qa-local", "qa-local-m1", {"context": {"advertised": null, "effective": 50000, "short_score": 1, "points": []}}], ["qa-front", "qa-front-m1", {"context": {"advertised": null, "effective": 0, "short_score": 1, "points": []}}]]'
 ed pr2 role-assignments '.effort_modes["qa-all"].class_order |= .'; rs pr2 t0 --role "$NR" --project qa-proj; rs pr2 t1 --role "$NR" --project qa-proj --tokens 60000; rs pr2 tu --role "$NR" --project qa-proj --tokens -3
-ok 'J t0 "$(ent qa-local qa-local-m1) | .[0].status == \"usable\"" && J t1 "$(ent qa-local qa-local-m1) | .[0].code == \"$C_UNMET\" and (.[0].reason | test(\"50000\") and test(\"60000\"))" && [ "$(rc tu)" = 2 ]' \
-  "15c --tokens N excludes a link whose probed effective context is below N ($C_UNMET, both sizes named); without it nothing changes; a negative N is a usage error"
-mk pn pr; preset pn qa-need '{class_order: [$l], needs_class: $x, last_resort: null}'; own pn '[["qa-front", "qa-front-m1", {}], ["qa-front", "qa-front-m2", {}]]'; rs pn n0 --role "$NR" --project qa-proj
+ok 'J t0 "$(ent qa-local qa-local-m1) | .[0].status == \"usable\"" && J t1 "$(ent qa-local qa-local-m1) | .[0].code == \"$C_UNMET\" and (.[0].reason | test(\"50000\") and test(\"60000\"))" && [ "$(rc tu)" = 2 ] &&
+  J t1 "$(ent qa-front qa-front-m1) | .[0].code == \"$C_UNMET\"" && J t1 "$(ent qa-local qa-local-m2) | .[0].status == \"usable\" and .[0].probed == false"' \
+  "15c --tokens N excludes a link whose probed effective context is below N ($C_UNMET, both sizes named; 0 too), not a link with no record (it may serve); without it nothing changes; a negative N is a usage error"
+mk pn pr; preset pn qa-need '{class_order: [$l], needs_class: $x, last_resort: null}'; own pn '[["qa-front", "qa-front-m1", {}], ["qa-front", "qa-front-m2", {}]]'; rs pn n0 --role "$NR" --project qa-proj; rs pn n0t --role "$NR" --project qa-proj --tokens 99999999
 own pn '[["qa-front", "qa-front-m1", {}], ["qa-front", "qa-front-m2", {}], ["qa-local", "qa-local-m1", {"tool_calling": false}], ["qa-local", "qa-local-m2", {"tool_calling": false}]]'
 rs pn n1 --role "$NR" --project qa-proj; rs pn n2 --role "$NR" --project qa-proj --tokens 99999999
-ok 'J n0 ".chain[0].link_class == \"$LOCAL\"" && J n1 ".chain[0].link_class == \"$FRONT\" and ([.chain[] | select(.status == \"usable\")][0].link_class == \"$FRONT\")" && J n2 ".chain[0].link_class == \"$FRONT\""' \
+ok 'J n0 ".chain[0].link_class == \"$LOCAL\"" && J n0t ".chain[0].link_class == \"$LOCAL\"" && J n1 ".chain[0].link_class == \"$FRONT\" and ([.chain[] | select(.status == \"usable\")][0].link_class == \"$FRONT\")" && J n2 ".chain[0].link_class == \"$FRONT\""' \
   "15d C-DC-02 the needs-class trigger counts an unprobed link as possibly serving (the order stays) and a failing record as not serving (the needs class first); --tokens never moves it"
 VR=$(jq -r --arg c "$CR" '[.[] | select(. != $c)][0]' <<<"$CARDR")
 U='[.chain[] | select(.status == "usable") | .model]'   # the usable links, in chain order
 mk cf pr; edt cf '.worker_markers = ["STUB_WORKER_MARK"]'; ed cf routing --arg b "$CR" --arg v "$VR" '.cross_family = {builder_role: $b, reviewer_roles: [$v]}'; ed cf role-assignments '.effort_modes["qa-all"].cross_family_review = true'
 own cf '[["qa-front", "qa-front-m1", {"family": "qa-fa"}], ["qa-front", "qa-front-m2", {"family": "qa-fb"}], ["qa-free", "qa-free-m1", {"family": "qa-fb"}]]'
 n0=$(evn cf true); rs cf c1 --role "$VR" --project qa-proj --card qa-card; rs cf cb --role "$CR" --project qa-proj --card qa-card; n1=$(evn cf true)
-ok 'passes cf && [ "$(rc c1)" = 0 ] && J c1 ".cross_family.status == \"met\" and .cross_family.builder_family == \"qa-fa\" and .cross_family.served_family == \"qa-fb\" and $U[0:3] == [\"qa-front-m2\", \"qa-front-m1\", \"qa-free-m1\"]" &&
+ok 'passes cf && [ "$(rc c1)" = 0 ] && J c1 ".cross_family.status == \"met\" and .cross_family.builder_family == \"qa-fa\" and .cross_family.served_family == \"qa-fb\" and $U[0:2] == [\"qa-front-m2\", \"qa-front-m1\"] and ($U | index(\"qa-free-m1\")) > ($U | index(\"qa-front-m1\"))" &&
   J cb "has(\"cross_family\") | not" && [ "$n1" = "$n0" ]' \
   "15e cross-family: the reviewer's other-family link moves first inside its class (never across classes: qa-free stays later), met, no event line; the builder's answer has no cross_family"
 ed cf role-assignments '.effort_modes["qa-all"].cross_family_review = false'; rs cf c2 --role "$VR" --project qa-proj --card qa-card; n2=$(evn cf true)
@@ -522,6 +525,19 @@ STUB_WORKER_MARK=1 rs cf c3 --role "$VR" --project qa-proj --card qa-card; n3=$(
 ok 'J c2 ".cross_family.status == \"waived\" and .cross_family.logged == true and $U[0:2] == [\"qa-front-m1\", \"qa-front-m2\"]" && [ $((n2 - n1)) = 1 ] && [ "$(evn cf ".type == \"routing.cross-family-waiver\" and .code == \"STL-MDL-737\"")" = 1 ] &&
   J c3 ".cross_family.status == \"waived\" and .cross_family.logged == false" && [ "$n3" = "$n2" ]' \
   "15f a preset without cross_family_review: waived, one trusted routing.cross-family-waiver line (STL-MDL-737), the order kept; in a worker environment logged false and no line"
+# ruling (2): no lift across class-order items, none past a link of a lower privacy rank inside a best-of group; a waiver that cannot be written withdraws the answer
+mk cx cf; preset cx qa-xb '{class_order: [$x, $l], last_resort: null, cross_family_review: true}'
+own cx '[["qa-front", "qa-front-m1", {"family": "qa-fa"}], ["qa-front", "qa-front-m2", {"family": "qa-fa"}], ["qa-local", "qa-local-m1", {"family": "qa-fb"}], ["qa-local", "qa-local-m2", {"family": "qa-fa"}]]'
+rs cx x1 --role "$VR" --project qa-proj --card qa-card
+preset cx qa-xa '{class_order: [[$l, $x]], last_resort: null, cross_family_review: true}'
+own cx '[["qa-local", "qa-local-m1", {"family": "qa-fa"}], ["qa-local", "qa-local-m2", {"family": "qa-fa"}], ["qa-front", "qa-front-m1", {"family": "qa-fb"}], ["qa-front", "qa-front-m2", {"family": "qa-fa"}]]'
+rs cx x2 --role "$VR" --project qa-proj --card qa-card
+ok 'J x1 ".cross_family.status == \"waived\" and .cross_family.builder_family == \"qa-fa\" and $U[0] == \"qa-front-m1\" and ($U | index(\"qa-local-m1\")) > ($U | index(\"qa-front-m2\"))" &&
+  J x2 ".cross_family.status == \"waived\" and .cross_family.builder_family == \"qa-fa\" and $U[0:2] == [\"qa-local-m1\", \"qa-local-m2\"]"' \
+  "15h cross-family never lifts a link of another family across class-order items (class order [$FRONT, $LOCAL]) nor past a more private link inside a best-of group ([[$LOCAL, $FRONT]]): waived, order kept"
+preset cx qa-xc '{class_order: [$x], last_resort: null, cross_family_review: false}'; rm -f "$T/cx/$EVREL"; mkdir -p "$T/cx/$EVREL"; rs cx x3 --role "$VR" --project qa-proj --card qa-card; rmdir "$T/cx/$EVREL"
+ok '[ "$(rc x3)" = 1 ] && J x3 ".chain == [] and (.code | test(\"^STL-[A-Z]+-[0-9]{3}$\")) and .cross_family.status == \"waived\" and .cross_family.logged == false"' \
+  "15i a waiver line that cannot be written (the event log is a folder) withdraws the answer: exit 1, chain [], the event log's code"
 ok '! J p0 ".stubs | index(\"routing-advertised-capabilities\") or index(\"routing-advertised-context\")" && ! grep -q "advertised-capabilities\|advertised-context" "$RS"' \
   "15g C-DC-06 no answer and no resolver code rests on the advertised-capability or advertised-context stubs"
 
