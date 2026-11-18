@@ -45,17 +45,17 @@
   "effort": {
     "levels": ["low", "medium", "high", "max"],
     "by_role": {
-      "dispatcher": {"default": "low"},
-      "router": {"default": "low"},
-      "voice": {"default": "low"},
-      "look": {"default": "low"},
+      "dispatcher": "low",
+      "router": "low",
+      "voice": "low",
+      "look": "low",
       "builder": {"default": "medium", "tiers": {"light": "low"}},
-      "reviewer": {"default": "medium", "tiers": {"complex": "high"}},
-      "tester": {"default": "medium"},
-      "validator": {"default": "medium"},
-      "proposer": {"default": "high"},
-      "verifier": {"default": "high"},
-      "red-team": {"default": "high"}
+      "reviewer": "medium",
+      "tester": "medium",
+      "validator": "medium",
+      "proposer": "high",
+      "verifier": "high",
+      "red-team": "high"
     }
   },
   "exempt_roles": [

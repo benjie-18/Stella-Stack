@@ -4,7 +4,7 @@ role may use right now, and why. Read-only: no network, no write to any data fil
 routing_state; absent = no cooldown, no history) and the card facts store (index key card_facts) and creates neither. No role,
 preset, link class, tier, driver, provider or model is named in this file: every id comes from the data, and every rule is the
 one function of bin/stella_data.py (reach, policy_allows, route_problems, grant_in_force, link_class, unmet).
-CLI: resolve.py resolve --role R --project P [--card C] [--tier T] [--driver D] [--task ID] [--json]   (JSON is the only output)
+CLI: resolve.py resolve --role R --project P [--card C] [--tier T] [--driver D] [--task ID] [--rung N] [--json]   (JSON is the only output)
 Import: resolve(ctx) -> the same dict (ctx: {role, project, card, tier, driver, task}); link_key(link) -> "<connection>/<model>",
 the state file's key; role_view(role, project, card=None) -> what routing gives the role before any link is judged (its
 docstring has the keys), the one copy of that rule: resolve() reads it there. Both write nothing and alert nothing: a
@@ -14,7 +14,17 @@ does not list follows the default), local_only, tier, driver, chain[], decision 
 from the state file), stubs[] (features ids the answer rests on), apps[] {app, status, code, reason} (the card's apps),
 code, reason (null when a link is usable and no app is refused)}. A chain entry: {connection, model, parameters, link_class,
 source: pin:card|pin:project|pin:global|preset|fallback|last_resort, status: usable|needs_grant|cooldown|excluded, code,
-reason, grant: null or {kind: privacy, data_class} or {kind: crossing, to_class}, mid_task, cooldown_until}.
+reason, grant: null or {kind: privacy, data_class} or {kind: crossing, to_class}, mid_task, cooldown_until, effort: its
+parameters.effort, else routing effort.by_role[role].tiers[tier], else .default, else null}.
+Rung walk (F2b item D; --rung N >= 1, ctx["rung"]; 0 is the answer without it): rungs N.. of the role's escalation_chain in the
+active preset are judged alone in order by the rules below (rule 5's class order widened to the preset's needs class and last
+resort; the last resort outside the order still needs a crossing grant; an exempt role keeps its own order); an excluded or
+waiting (needs_grant) rung is skipped, the first other one served (a rung in cooldown is answered as itself, STL-MDL-724). The
+answer adds rung {requested, served, last, link, skipped[] {rung, connection, model, link_class, status, code, reason}} and its
+chain is [link] or []; none served: STL-MDL-731 (escalate to the owner), exit 1. The CLI alone writes the walk to the event log:
+one routing.rung-skipped line (STL-MDL-732) per skip, one routing.rung-exhausted line (731) when none is served; a line that cannot
+be written withdraws a served rung (the log's code) or, exhausted, names it in rung.log_code. --rung in a worker environment
+fails closed (STL-CFG-312) before anything is judged.
 Exit: 0 one usable link or more and no app refused; 1 no usable link (NO_LINK, the same JSON) or a refused card app (its
 code, the same JSON), or fail closed with one catalog line, one alert line and no JSON: an unknown role, tier, driver, card
 id, preset or link class, a role that works a card called with no card, a project id that is a listed one but for case or
@@ -274,6 +284,7 @@ def resolve(ctx):
 
     req = table["roles"][role].get("requirements", {})
     eff = rt.get("effort", {}).get("by_role", {}).get(role, {})
+    eff = {"default": eff} if isinstance(eff, str) else eff   # an id alone is the role's default
     effort = lambda params: params["effort"] if params.get("effort") is not None else eff.get("tiers", {}).get(tier, eff.get("default"))
     need = req.get("allowed_data_classes", [])
     providers = [p for p in conn.values() if p["kind"] == "provider"]

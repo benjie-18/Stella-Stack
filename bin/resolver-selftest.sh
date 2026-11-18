@@ -426,6 +426,8 @@ ok 'passes rg && [ "$(rc h0)" = 0 ] && J h0 "all(.chain[]; .effort == \"qa-lo\")
 ok '[ "$(rc r1)" = 0 ] && J r1 --slurpfile h "$T/o/ht.json" "([\$h[0].chain[] | select(.status == \"usable\")][0]) as \$u | .rung.requested == 1 and .rung.served == 1 and .rung.last == 4 and .rung.skipped == [] and .code == null and .chain == [.rung.link]
   and .rung.link.connection == \$u.connection and .rung.link.model == \$u.model and \$u.effort == \"qa-mid\" and .rung.link.effort == \"qa-hi\" and .rung.link.status == \"usable\""' \
   "14a rung 1 keeps the first usable link's model and raises its effort (the link's parameters beat the role's tier entry)"
+mk rgs rg; ed rgs routing --arg r2 "$NR2" '.effort.by_role[$r2] = "qa-hi"'; rs rgs hs --role "$NR2" --project qa-proj
+ok 'passes rgs && J hs "(.chain | length > 0) and all(.chain[]; .effort == \"qa-hi\")"' "14a2 a role's effort given as an id alone is its default"
 n0=$(evn rg "true"); rs rg r3 --role "$NR" --project qa-proj --rung 3; n1=$(evn rg "true")
 ok '[ "$(rc r3)" = 0 ] && J r3 ".rung.served == 4 and [.rung.skipped[] | [.rung, .connection, .status, .code]] == [[3, \"qa-front\", \"needs_grant\", \"$C_CROSS\"]]" &&
   [ $((n1 - n0)) = 1 ] && [ "$(evn rg ".type == \"routing.rung-skipped\" and .code == \"$C_SKIP\"")" = 1 ]' \

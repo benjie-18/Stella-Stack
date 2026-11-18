@@ -359,10 +359,11 @@ The resolver that applies the precedence is `bin/resolve.py` (F2; see "Model cal
 class id, or a list of ids: the best suited of these), `frontier_when` {`tiers`} with `needs_class` (that class goes first for
 a listed task tier, or when no link of `class_order` meets the role's requirements), `last_resort` (a class used only under a
 crossing grant), `verification_depth`, `changelog[]` {`at`, `by`, `what`} and `roles{}`: per role `active` and optional
-`class_order`, `last_resort`, `pins[]`, `fallbacks[]`, `escalation_chain[]` (links; the chain is stored only, the walk is
-F2b). A role not listed follows the preset's own values and is active. Shipped, all `builtin: true`: standard (one best-of
+`class_order`, `last_resort`, `pins[]`, `fallbacks[]`, `escalation_chain[]` (links: the rungs `resolve --rung N` walks, rung N
+= entry N-1; a link's `parameters.effort` may raise the effort of a model the chain already has). A role not listed follows the preset's own values and is active. Shipped, all `builtin: true`: standard (one best-of
 group of free cloud and local; frontier is its `needs_class` for the medium and complex tiers), eco (local, free cloud; last
-resort frontier), max (frontier, free cloud; last resort local), local_only (local). `selection` {`global`, `projects{}`,
+resort frontier), max (frontier, free cloud; last resort local), local_only (local); each gives every building role
+(routing `builder_roles`) an `escalation_chain` (shipped: the local model at effort high, then max). `selection` {`global`, `projects{}`,
 `cards{}`} names the active preset (card beats project beats global; ships standard). An assignment may add `class_order`
 (the owner's per-role override). Every key is optional, but a preset must leave each active role something to resolve from
 (see "What `check` refuses"); a class order, where given, holds at least one class. The ids that cannot be null
@@ -382,7 +383,10 @@ one present: the schema pins the set), `same_connection_first`, `max_switches_pe
 `retry_count`}; `consent` {`approval_class`, `ttl_s`, `alert_code_queue`, `alert_code_notice`}; `card_facts` {`when_missing`:
 the card facts the resolver judges, each `true`: a fact that is not recorded counts as holding, so hosted links are excluded;
 `carries_secrets` and `vault_content` are required, `false` is refused, a new fact is added as a key}; `credentials` {`backend`,
-`backends{}` by id {`kind` none or dir, `path`}} (ships kind none: every read is refused until the secrets broker).
+`backends{}` by id {`kind` none or dir, `path`}} (ships kind none: every read is refused until the secrets broker);
+`builder_roles[]` (the card roles that build: the builder escalation applies to them); `effort` {`levels[]` (the effort ids,
+lowest first), `by_role{}`: per role an effort id (its default) or {`default`, `tiers{}` by task tier}} (optional: a resolved link's `effort` is its
+`parameters.effort`, else the role's tier value, else its default, else null; absent, no effort id exists).
 *To add a link class, tier or driver:* add the entry; no code names one. A hosted class takes a `privacy_rank` above every
 class that is not hosted. *A failover trigger* is added to the protocols schema and to this file's schema together.
 **What `check` refuses** (rules `presets`, `routing`, `link classes`, `grant scopes` of `bin/stella_data.py`; an unknown id
@@ -394,7 +398,10 @@ link judge refuses (`stella_data.link_problems()`, which also judges every assig
 listing the role or not allowing every data class it handles, a CLI login without `terms_ok`, the model not listed or not
 meeting the role's requirements by the catalog's advertised capabilities, a null one meeting none, the link outside the
 preset's `allowed_localities` unless its class is the role's last resort) (STL-MDL-726; an inactive role's links are not
-judged; a preset has no project, so the project's policy and grants are judged for an assignment and by the resolver); a
+judged; an `escalation_chain` rung is judged the same way, but in a built-in preset only for its model: listed and meeting the
+role's requirements, so a catalog switch never makes a preset the owner cannot edit invalid, and the resolver skips that rung at
+run time; a `parameters.effort`, a `by_role` role or tier, or an effort id that the routing data does not define; a
+`builder_roles` entry that is not a card role; a preset has no project, so the project's policy and grants are judged for an assignment and by the resolver); a
 preset that leaves an active role no link that can serve it: of its pins, its fallbacks and the catalog's links of its class
 order, needs class and last resort, none passes the link judge (the owner's global assignment for the role counts as one)
 (STL-MDL-725 for a role the workflow requires, else STL-MDL-726; a role whose row in the role table has `optional: true`, such as `look`, is never judged here: it fails with NO_LINK, naming the role, when it is asked for); an empty class order; a link class with
@@ -826,7 +833,17 @@ the read-only resolver at most. `route.py` holds no routing rule: it walks the c
   no tool call, is `server_error`; no proxy variable of the environment is followed; a task id longer than the limit in
   `route.py` is refused (STL-MDL-711) and the state keeps the task entries used last.
 - **The resolver's per-role view** is `resolve.role_view(role, project, card=None)` (the preset, class order and its
-  source, last resort, pins and fallbacks `resolve()` itself uses); `settings.py explain` prints it.
+  source, last resort, pins and fallbacks `resolve()` itself uses, and the role's `escalation_chain`); `settings.py explain` prints it.
+- **The escalation walk (F2b).** `resolve.py resolve ... --rung N` (a non-negative integer, else usage, exit 2; 0 or no flag:
+  the chain, byte for byte) answers rung N of the role's `escalation_chain` in the active preset: rungs N.. are judged alone,
+  in order, by the chain's rules (rule 5's class order also admits the preset's needs class and its last resort; the last
+  resort outside the order needs a crossing grant; an exempt role keeps its own order); an excluded or waiting rung is skipped,
+  the first other one served (`rung` {`requested`, `served`, `last`, `link`, `skipped[]`}, `chain` = [link]); a rung in
+  cooldown is answered as itself (STL-MDL-724); none served, past the last rung or no chain: STL-MDL-731 (escalate to the
+  owner, not "no link"), exit 1. The CLI writes one trusted `routing.rung-skipped` line (STL-MDL-732) per skip and one
+  `routing.rung-exhausted` line (731); an unwritable log withdraws a served rung (the log's code) or names its code in
+  `rung.log_code`. `--rung` in a worker environment is refused (STL-CFG-312): the rung comes from a host-side caller, and the
+  answer is information, never permission. `resolve(ctx)` with `ctx["rung"]` gives the same answer and writes nothing.
 - **A project id given to the resolver** (the request's, a card facts record's, an assignment scope's) is a listed project
   only when it is that project's id or `global_id` exactly. It is refused (STL-MDL-711) when it is a listed one but for
   case or outer spaces, and when it does not match the pattern the data policy schema sets for a project key (an

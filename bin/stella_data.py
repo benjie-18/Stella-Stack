@@ -1063,8 +1063,9 @@ def inside_state(rel, idx):
 def rule_presets(c):
     """The presets (effort modes) against the routing data, the catalog and the role table (F2 D1.9): every class, preset and
     role a preset names exists; no preset turns off a role the workflow requires (always, or under a trigger that can fire:
-    OFF_REQUIRED) or an exempt role (it stays on under every preset); no active role keeps a pin or a fallback that
-    link_problems() refuses (CHAIN_FAILS; an inactive role's links are not judged); no active role is left with no link that
+    OFF_REQUIRED) or an exempt role (it stays on under every preset); no active role keeps a pin, a fallback or a rung that
+    link_problems() refuses (CHAIN_FAILS; an inactive role's links are not judged; a built-in preset's rung only by
+    model_problems(), as the owner cannot edit it); every link's parameters.effort is an effort id of the routing data; no active role is left with no link that
     can serve it (W1-RT-02, W1-RT-10: off in effect; OFF_REQUIRED for a role the workflow requires, else CHAIN_FAILS): of its
     pins, its fallbacks and the catalog's links of its class order, needs class and last resort, one at least passes
     link_problems() (the owner's global assignment for the role counts: the assignment rule judges its chain). A role whose role-table row
@@ -1142,7 +1143,7 @@ def rule_routing(c):
     """The routing data against itself, the role table, the alert catalog and the index: ids listed once, an exempt role too; a
     hosted class less private than every class that is not hosted (W1-RT-06); every role it names is assignable; an exempt
     role's class order names known classes, none of them hosted (W1-RT-09); a required role's `when` is always or a trigger;
-    a cooldown is not above its cap; consent names an approval class and alert codes that exist; the credentials backend in
+    a cooldown is not above its cap; a building role is a card role; the effort table names known roles, tiers and effort ids; consent names an approval class and alert codes that exist; the credentials backend in
     use is defined, and a dir backend lies inside a protected state path (DC-05: no role may read the keys)."""
     P, table = c["P"], c["table"]
     roles = set(table["roles"]) - {table["fallback_role"]}
@@ -1173,6 +1174,7 @@ def rule_routing(c):
         ef = rt.get("effort", {"levels": [], "by_role": {}})
         tiers = {x["id"] for x in rt["task_tiers"]}
         for r, x in ef["by_role"].items():
+            x = {"default": x} if isinstance(x, str) else x   # an id alone is the role's default
             at = f"effort.by_role: {nm(r, table['roles'], 'a key')}"
             if r not in roles:
                 P(rid, f"{at} is not an assignable role in the role table")

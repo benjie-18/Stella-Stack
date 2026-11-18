@@ -272,7 +272,8 @@
         "by_role": {
           "type": "object",
           "additionalProperties": {
-            "type": "object",
+            "type": ["string", "object"],
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$",
             "properties": {
               "default": {"$ref": "#/$defs/id"},
               "tiers": {
@@ -283,7 +284,7 @@
             },
             "additionalProperties": false
           },
-          "description": "Per role of the role table: its effort by task tier, else its default. `check` refuses a role, a tier or an effort id the data does not define."
+          "description": "Per role of the role table: an effort id (the role's default), or {default, tiers}: its effort by task tier, else its default (the id form keeps a table of many roles a reference to the role table, not a copy of it, for the one-owner lint). `check` refuses a role, a tier or an effort id the data does not define."
         }
       },
       "required": ["levels", "by_role"],
