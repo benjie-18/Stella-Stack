@@ -2626,6 +2626,15 @@
     },
     {
       "globs": [
+        "docs/hermes-local/roles.json"
+      ],
+      "targets": [
+        "bench"
+      ],
+      "why": "sweep E: bin/bench.sh reads main_branch from the role table"
+    },
+    {
+      "globs": [
         ".stella/data-policy.json",
         "docs/contract/README.md"
       ],

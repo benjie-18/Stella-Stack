@@ -1063,7 +1063,8 @@ def rule_presets(c):
     link_problems() refuses (CHAIN_FAILS; an inactive role's links are not judged); no active role is left with no link that
     can serve it (W1-RT-02, W1-RT-10: off in effect; OFF_REQUIRED for a role the workflow requires, else CHAIN_FAILS): of its
     pins, its fallbacks and the catalog's links of its class order, needs class and last resort, one at least passes
-    link_problems() (the owner's global assignment for the role counts: the assignment rule judges its chain)."""
+    link_problems() (the owner's global assignment for the role counts: the assignment rule judges its chain). A role whose role-table row
+    has optional: true is not judged here (W1-RT-10): it fails with NO_LINK, naming the role, when it is asked for."""
     P, table, conn = c["P"], c["table"], c["by"].get("connections", {})
     flat = lambda order: {k for it in order for k in (it if isinstance(it, list) else [it])}
     roles = set(table["roles"]) - {table["fallback_role"]}   # the fail-closed row is no role to route

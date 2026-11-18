@@ -6,7 +6,7 @@ escapes, no expansion); a double-quoted value has no $, `, backslash or " (K5); 
 quotes, $, `, backslash or shell operator, glob or tilde character. The file is never sourced; the grammar still keeps
 every accepted line one that bash would read the same way, except that a CR at a line end and a leading UTF-8 BOM are
 dropped (Windows editors write them): lines end at "\n" only, only space, tab or CR may follow a value, the text is UTF-8. A missing file, a bad line, or a missing or
-empty key (OWNER_DISCORD_USER_ID may be empty) raises OwnerConfigError: there is no fallback to other values.
+empty key (OWNER_DISCORD_USER_ID, DISCORD_GUILD_ID, ESCALATIONS_CHANNEL_ID and SUPERVISOR_CHANNEL_ID may be empty: Discord is one connection type) raises OwnerConfigError: there is no fallback to other values.
 CLI: owner_config.py --shell   the keys as shell assignments, for bin/owner-config.sh; exit 2 and a reason on error.
 OPTIONAL keys are never required; get(key) reads one and never raises (D44).
 """
