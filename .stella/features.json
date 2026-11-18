@@ -413,17 +413,6 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
-      "id": "routing-escalation-walk",
-      "owner_phase": "F2",
-      "status": "on",
-      "depends_on": [],
-      "flag": null,
-      "due_phase": "F2b",
-      "replaced_by": "the builder escalation walk (F2b: resolve --rung N); until then a preset's escalation_chain is stored and checked for shape only, and nothing climbs it",
-      "global_id": "a4518e0e-8d1f-4af8-8689-d95b5db754cf",
-      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
-    },
-    {
       "id": "escalate-caller-names-model",
       "owner_phase": "F2",
       "status": "on",

@@ -952,13 +952,13 @@
       "code": "STL-MDL-730",
       "area": "MDL",
       "severity": "warning",
-      "status": "reserved",
+      "status": "retired",
       "title": "the escalation walk is not built yet",
       "message": "A request for the next rung of a role's escalation chain was refused: {problem}. The chain is stored, and nothing climbs it until phase F2b.",
       "action": "nothing until F2b builds the walk. See STL-MDL-730 in docs/alert-codes.md.",
-      "cause": "Phase F2 stores each role's escalation chain and builds no walk (features stub routing-escalation-walk).",
+      "cause": "Phase F2 stored each role's escalation chain and built no walk. Retired in F2b: the walk is `resolve --rung` (STL-MDL-731, STL-MDL-732).",
       "check": "`python3 bin/stella_data.py stubs --phase F2b`.",
-      "related": "F2 B3, design D1.8; features stub routing-escalation-walk",
+      "related": "F2 B3, design D1.8; F2b item D",
       "resolvable": false
     },
     {
