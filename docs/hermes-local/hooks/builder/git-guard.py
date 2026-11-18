@@ -147,12 +147,12 @@ def why(args, env_targets=()):
 
 
 def check(cmd):
-    if MB is None and "git" in cmd:
-        return "the role table's main_branch cannot be read"
     for toks in all_tokens(cmd):
         for i, t in enumerate(toks):
             if t.rsplit("/", 1)[-1] != "git":
                 continue
+            if MB is None:
+                return "the role table's main_branch cannot be read"
             cfg_env = False   # RT20-04: GIT_CONFIG_COUNT/KEY_n/VALUE_n/PARAMETERS/GLOBAL/SYSTEM change remote.<n>.push, push.default, hooksPath
             env_targets = []   # K1c: GIT_DIR=, GIT_WORK_TREE=, GIT_COMMON_DIR= before git (also after env) are -C targets
             for u in reversed(toks[:i]):
