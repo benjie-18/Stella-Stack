@@ -125,5 +125,8 @@ done
 printf '#!/usr/bin/env bash\necho "{\\"entries\\": []}"\n' > "$T/chk/python3"; chmod +x "$T/chk/python3"   # connections data with no local link
 chk "FAKE_OPEN=${OPEN/host.docker.internal:11434/}"
 ok '[ "$rc" = 0 ] && ! grep -q "host.docker.internal" "$T/out"' "firewall-check: no enabled local link -> no Ollama probe, so the check still passes (exit $rc)"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$T/chk/python3"   # connections data unreadable: fails closed, never a silent PASS
+chk "FAKE_OPEN=$OPEN"
+ok '[ "$rc" = 1 ] && grep -q "^FAIL connections data readable" "$T/out"' "firewall-check: connections data unreadable -> FAIL connections data readable, exit $rc"
 rm -f "$T/chk/python3"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
