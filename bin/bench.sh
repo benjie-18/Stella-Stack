@@ -100,10 +100,11 @@ metrics() {
 }
 
 reset_repo() {  # reset_repo <id> <repo>: main = the task's start commit. Card worktrees stay out of it (.worktrees/ is excluded) and untouched.
-  local id=$1 repo=$2
-  mkdir -p "$repo" && { [ -d "$repo/.git" ] || git -C "$repo" init -q -b main; }
+  local id=$1 repo=$2 mb
+  mb=$(jq -r '.main_branch // empty' "${ROLES_FILE:-$W/docs/hermes-local/roles.json}") && [ -n "$mb" ] || die "main_branch cannot be read from the role table"
+  mkdir -p "$repo" && { [ -d "$repo/.git" ] || git -C "$repo" init -q -b "$mb"; }
   grep -qxF '.worktrees/' "$repo/.git/info/exclude" 2>/dev/null || echo '.worktrees/' >>"$repo/.git/info/exclude"
-  git -C "$repo" checkout -q main && git -C "$repo" rm -rqf --ignore-unmatch . && git -C "$repo" clean -fdxq \
+  git -C "$repo" checkout -q "$mb" && git -C "$repo" rm -rqf --ignore-unmatch . && git -C "$repo" clean -fdxq \
     && cp -a "$D/tasks/$id/repo/." "$repo/" && git -C "$repo" add -A \
     && git -C "$repo" -c user.name=bench -c user.email=bench@localhost commit -qm "bench: $id start" --allow-empty || die "cannot reset $repo"
 }

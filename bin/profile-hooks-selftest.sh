@@ -136,6 +136,15 @@ for c in "git add phase4-test.md && git commit -m 'Add phase4-test.md'" "git pus
   ok '[ "$(term $G "$c")" = 0 ]' "builder terminal allowed: $c"
 done
 ok '[ "$(echo not-json | $G >/dev/null 2>&1; echo $?)" = 2 ]' "git guard fails closed on a garbage payload"
+# main_branch is data: a table copy naming another branch moves the refusal to it; the shipped name stops being special
+jq '.main_branch = "trunk"' /workspace/docs/hermes-local/roles.json >"$T/trunk.json"
+for c in "git push origin trunk" "git push origin HEAD:Trunk" "git push origin HEAD:refs/heads/trunk" "git fetch origin HEAD:heads/trunk"; do
+  ok '[ "$(ROLES_FILE=$T/trunk.json term $G "$c")" = 2 ] && grep -q "git guard" "$T/out"' "builder terminal refused (K1b, main_branch trunk): $c"
+done
+for c in "git push origin main" "git push origin HEAD:main"; do
+  ok '[ "$(ROLES_FILE=$T/trunk.json term $G "$c")" = 0 ]' "builder terminal allowed (K1b, main_branch trunk): $c"
+done
+ok '[ "$(ROLES_FILE=$T/none.json term $G "git push origin HEAD:card")" = 2 ] && [ "$(ROLES_FILE=$T/none.json term $G "ls")" = 0 ]' "builder terminal refused (K1b): git with the role table unreadable (fail closed)"
 # K1b (red team): git writes to the main checkout are refused from any directory (-C, --git-dir, a ref update of main, a
 # commit against a path that is not a repo), and reads and linked-worktree commits are not. No bound worker: git-guard has no proof.
 GR=$T/gg; git init -q -b main "$GR/main" && git -C "$GR/main" -c user.name=test -c user.email=test@example.invalid commit -q --allow-empty -m init \
