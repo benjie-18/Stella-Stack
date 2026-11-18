@@ -778,8 +778,8 @@
       "severity": "warning",
       "title": "a model does not meet the role's requirements",
       "message": "A model link was left out because its model does not meet what the role requires: {problem}.",
-      "action": "probe the link (`python3 bin/probe.py due`, then `probe.py run`) if it has no record, or use a link whose record meets them (a null capability meets no requirement). See STL-MDL-715 in docs/alert-codes.md.",
-      "cause": "The role's requirements (tool calling, vision, smallest context size) against the link's capability probe record (F2b): a link with no record meets none, and the context size is the probed effective context; with resolve --tokens N, a link whose effective context is below N (or not probed) is left out too.",
+      "action": "use a link whose probe record meets them, or probe the link again if the model changed (`probe.py run --again`). See STL-MDL-715 in docs/alert-codes.md.",
+      "cause": "The role's requirements (tool calling, vision, smallest context size) against the link's capability probe record (F2b): a record that fails one (or a null capability) excludes the link, and the context size is the probed effective context; with resolve --tokens N, a link whose probed effective context is below N is left out too. A link with no record is not left out (it serves unproven, STL-MDL-738).",
       "check": "`python3 bin/roles.py requirements <role>`; `python3 bin/probe.py show --connection <id> --model <model> --json`.",
       "related": "F2 B2, F2b B2 and item C; bin/stella_data.py probed, unmet",
       "resolvable": false
@@ -1107,6 +1107,18 @@
       "cause": "The preset does not ask for cross-family review, the builder's family is not known (no probe record), or no usable link of the reviewer has another family where the chain may be reordered (inside one class-order item, never past a more private link).",
       "check": "the event log (routing.cross-family-waiver lines: card, role, preset, families, reason); the resolver's JSON answer (cross_family).",
       "related": "F2b B2, A4 and item C (design-C.md); bin/resolve.py crossed, bin/route.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-MDL-738",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "a link with no probe record serves a role",
+      "message": "A model link that has no capability probe record was picked or listed for a role with requirements: {problem}. It may serve, but what it can do is not proven.",
+      "action": "run `python3 bin/probe.py due` and probe the links it lists (`probe.py run`); a CLI-login link cannot be probed and stays flagged. See STL-MDL-738 in docs/alert-codes.md.",
+      "cause": "The link was never probed (a fresh install, a new model) or cannot be probed (no wire shape). Owner ruling 2026-11-18: such a link may serve a role with requirements, flagged once per pick; `check` lists it as a warning, never as a problem.",
+      "check": "`python3 bin/probe.py due --json` (due, unprobeable); `python3 bin/probe.py show --json`; `python3 bin/stella_data.py check` (warning lines).",
+      "related": "F2b item C (design-C.md, owner ruling 2026-11-18); bin/stella_data.py needs_probe, bin/route.py, bin/resolve.py",
       "resolvable": false
     },
     {

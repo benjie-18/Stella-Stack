@@ -16,14 +16,17 @@ cross_family (only for a role of routing cross_family.reviewer_roles, not on a r
 met|waived, reason, logged}), code, reason (null when a link is usable and no app is refused)}. A chain entry: {connection, model, parameters, link_class,
 source: pin:card|pin:project|pin:global|preset|fallback|last_resort, status: usable|needs_grant|cooldown|excluded, code,
 reason, grant: null or {kind: privacy, data_class} or {kind: crossing, to_class}, mid_task, cooldown_until, effort: its
-parameters.effort, else routing effort.by_role[role].tiers[tier], else .default, else null, family: its probe record's, else null}.
-Probe data (F2b item C): what a link can do is read from its probe record only (stella_data.probed(): bin/probe.py's records, the
-newest not dated in the future; the catalog's advertised capabilities are not read). Rule 4 reads it, and through rule 4 the
-needs-class trigger (which counts a link with no record as possibly serving), --tokens and cross_family. The records file is
+parameters.effort, else routing effort.by_role[role].tiers[tier], else .default, else null, family: its probe record's, else null,
+probed: whether it has a probe record}.
+Probe data (F2b item C, owner ruling 2026-11-18): what a link can do is read from its probe record only (stella_data.probed():
+bin/probe.py's records, the newest not dated in the future; the catalog's advertised capabilities are not read). A link with no
+record may serve (a CLI-login link cannot be probed at all): rule 4 refuses only a link whose record fails a requirement; the CLI
+writes one STL-MDL-738 warning alert line when the link its answer serves (the served rung, else the first usable link) has no
+record and the role has requirements or --tokens gives a size (route.py does the same for each pick; resolve(ctx) writes none). Rule 4 reads it, and through rule 4 the needs-class trigger, --tokens and cross_family. The records file is
 protected state (index key probe_records: no role may write it, records of another install are ignored); a forged record can make a
 link look able (it then fails at run time and fails over) or unable (no link: fail closed), never widen reach: rules 1 to 3 and 5 to
-7 do not read it. --tokens N: after the class order is fixed, a link whose probed effective context is below N, or that has no record
-or none, is excluded (STL-MDL-715). Cross-family review (a role of cross_family.reviewer_roles, with a card, not on a rung walk): see
+7 do not read it. --tokens N: after the class order is fixed, a link whose probed effective context is below N is excluded
+(STL-MDL-715); a link with no record is not (it may serve, unproven). Cross-family review (a role of cross_family.reviewer_roles, with a card, not on a rung walk): see
 crossed(); a waived answer is written by the CLI alone as one trusted routing.cross-family-waiver line (STL-MDL-737; logged true), none
 in a worker environment (logged false: information only); a line that cannot be written withdraws the answer (chain [], the log's
 code, exit 1).
@@ -311,9 +314,8 @@ def resolve(ctx, d=None):
 
     rec = lambda prov, model: sd.probed(d.recs, prov["id"], model, now)
 
-    def early(prov, model, maybe=False):
-        """Rules 1 to 4: None, or why this link cannot serve the role at all. maybe: the needs-class trigger's question (could
-        a link serve), where a link with no probe record may (C-DC-02); rule 4 itself treats no record as unmet."""
+    def early(prov, model):
+        """Rules 1 to 4: None, or why this link cannot serve the role at all (a link with no probe record may: owner ruling 2026-11-18)."""
         if sd.reach(prov) != "local" and hard:
             return X(HARD, f"the link leaves the machine, and {hard[0]}")
         if not all(sd.policy_allows(p, prov) for p in policies):
@@ -334,17 +336,15 @@ def resolve(ctx, d=None):
             return X(POLICY, "the connection does not allow every data class the role handles")
         if models.get((prov["id"], model)) is None:
             return X(UNMET, "its model is not listed for its connection")
-        r = rec(prov, model)
-        miss = [] if r is None and maybe else sd.unmet(req, r)
-        return X(UNMET, ("the link is not probed (no probe record), so it meets none of the role's requirements" if r is None else
-                         "its probe record does not meet the role's requirements") + f" ({', '.join(miss)})") if miss else None
+        miss = sd.unmet(req, rec(prov, model))
+        return X(UNMET, f"its probe record does not meet the role's requirements ({', '.join(miss)})") if miss else None
 
     # the preset's needs class goes first for a listed task tier, or when no link of the order can serve the role (rules 1 to 4)
     notes = [f"class order {json.dumps(order)} of " + ("the exempt role" if exempt else "the Local only policy, which overrides the preset" if local_only
                                                        else f"preset {sd.idn(preset, True)}")]
     if needs is not None and needs not in flat(order):
         listed = tier in mode.get("frontier_when", {}).get("tiers", [])
-        if listed or not any(early(p, m, True) is None for p, m in catalog(flat(order))):
+        if listed or not any(early(p, m) is None for p, m in catalog(flat(order))):
             order = [needs] + order
             notes.append(f"class {sd.idn(needs, True)} goes first: " + (f"task tier {sd.idn(tier, True)} is listed for it" if listed
                                                                          else "no link of the class order meets the role's requirements"))
@@ -356,9 +356,9 @@ def resolve(ctx, d=None):
         cls, reach, no = sd.link_class(prov, model, rt), sd.reach(prov), early(prov, model)
         if no:
             return no
-        eff = ((rec(prov, model) or {}).get("context") or {}).get("effective")
-        if tokens and (eff or 0) < tokens:   # A4a: a task longer than the probed effective context; no record or none probed: excluded (C-DC-04)
-            return X(UNMET, f"its probed effective context ({'not probed' if eff is None else eff} tokens) is below the task's {tokens} tokens")
+        r = rec(prov, model)
+        if tokens and r is not None and r["context"]["effective"] < tokens:   # A4a: a task longer than the probed effective context (no record: may serve)
+            return X(UNMET, f"its probed effective context ({r['context']['effective']} tokens) is below the task's {tokens} tokens")
         if cls is None:
             return X(POLICY, "the link has no link class (its connection names none), so it is not routable")
         if not (exempt or local_only) and reach not in mode["allowed_localities"] and cls != last:   # Local only overrides the preset's localities
@@ -385,7 +385,8 @@ def resolve(ctx, d=None):
     def judged(prov, model, params, source, rung=False):
         status, code, why, grant, until = judge(prov, model, rung)
         return {"connection": prov["id"], "model": model, "parameters": params, "effort": effort(params), "link_class": sd.link_class(prov, model, rt), "source": source,
-                "status": status, "code": code, "reason": why, "grant": grant, "mid_task": False, "cooldown_until": until, "family": (rec(prov, model) or {}).get("family")}
+                "status": status, "code": code, "reason": why, "grant": grant, "mid_task": False, "cooldown_until": until,
+                "family": (rec(prov, model) or {}).get("family"), "probed": rec(prov, model) is not None}
 
     def links(pairs, source):
         got = []
@@ -504,13 +505,13 @@ def waived_line(out):
     be written, and the answer stays information (logged false). A line that cannot be written withdraws the answer (chain [],
     the log's code): an unlogged waiver is never silent."""
     import event_log as el, worker_env
-    cf = out["cross_family"]
+    cf, nn = out["cross_family"], lambda v, none: none if v is None else v   # a missing card or family reads as missing, never as None
     if worker_env.reason():
         return
     try:
-        el.append(el.build("routing.cross-family-waiver", f"role {out['role']} on card {out['card']}", code=WAIVER, who={"role": out["role"]},
-                           detail=f"card {out['card']}, role {out['role']}, preset {out['preset']['id']}, builder family {cf['builder_family']}, "
-                                  f"served family {cf['served_family']}: {cf['reason']}"))
+        el.append(el.build("routing.cross-family-waiver", f"role {out['role']} on " + nn(out["card"] and f"card {out['card']}", "no card"), code=WAIVER,
+                           who={"role": out["role"]}, detail=f"card {nn(out['card'], 'none')}, role {out['role']}, preset {out['preset']['id']}, builder family "
+                                  f"{nn(cf['builder_family'], 'not known')}, served family {nn(cf['served_family'], 'not known')}: {cf['reason']}"))
         cf["logged"] = True
     except Exception as e:   # fail closed
         code, why = (e.code, e.problem) if isinstance(e, el.EventError) else (LOG_FAILED, f"{type(e).__name__} while writing the waiver's event line")
@@ -532,6 +533,9 @@ def main(argv):
             raise Refusal(WORKER, f"resolve --rung is asked from a worker environment ({w}); only a host-side caller walks the escalation chain")
     out = resolve(a)
     log = out.get("rung") and walked(out)
+    lk = (out["rung"].get("link") if out.get("rung") else None) or next((e for e in out["chain"] if e["status"] == "usable"), None)   # the link this answer serves
+    if lk and out["chain"] and lk.get("probed") is False and sd.needs_probe(sd.load(sd.load(sd.INDEX)["role_table"])["roles"][out["role"]].get("requirements", {}), None, a["tokens"]):
+        sd.alert_line(sd.UNPROBED, f"role {out['role']}: the answer serves link {link_key(lk)}, which has no probe record (run bin/probe.py due)")
     if (out.get("cross_family") or {}).get("status") == "waived" and any(e["status"] == "usable" for e in out["chain"]):   # no link served: no review to waive
         waived_line(out)
     print(json.dumps(out, indent=2, ensure_ascii=False))

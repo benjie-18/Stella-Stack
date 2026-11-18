@@ -27,10 +27,13 @@ A step (one pick of a link, the same for call and attempt), in this order:
      switch past failover.max_switches_per_task stops the task (STL-MDL-723); a task with no switch left stays on its last link
      while that one can be used.
   3. call only: a link with no wire shape cannot be called here, nor one whose probed effective context (its newest probe record,
-     stella_data.probed; no record or none: it does not hold) is below the conversation, on the first pick too; a switch is
+     stella_data.probed; a link with no record may serve, unproven) is below the conversation, on the first pick too; a switch is
      mid-task, so the link must also allow it (`mid_task` of the chain) and a pending tool call must stay on the same wire shape;
      else the link is refused (a switch: STL-MDL-722, one event line) and the next link is judged. The resolver is asked with the conversation's size (call: the prompt's estimate, on
      every pick; attempt: --tokens when the launcher gives it), so a link whose effective context is below it is never in the chain.
+     A pick or switch of a link with no probe record for a role with requirements, or with a task size (call always has one),
+     writes one STL-MDL-738 warning alert line
+     (owner ruling 2026-11-18: it may serve, flagged).
   4. a link that needs a grant is never skipped: with a card and a module `consent`, consent.gate(ctx, link) -> {status: granted |
      waiting | queued, code?, request_id?} decides; with no card or no such module the task stops with STL-MDL-719 and one inbox
      alert, and no approval request is raised. A task that waits exits 3.
@@ -267,9 +270,9 @@ def unfit(a, link, left, cat, tokens, recs):
     prov, _ = model_of(cat, link)
     if not prov.get("protocol"):
         return "its connection has no wire shape (a worker CLI drives it, between attempts)"
-    eff = ((sd.probed(recs, prov["id"], link["model"]) or {}).get("context") or {}).get("effective")
-    if (eff or 0) < tokens:   # the first pick too; no record, or no effective context probed: it does not hold (C-DC-04)
-        return f"its probed effective context ({'not probed' if eff is None else eff} tokens) does not hold the conversation (about {tokens} tokens)"
+    r = sd.probed(recs, prov["id"], link["model"])
+    if r is not None and r["context"]["effective"] < tokens:   # the first pick too; a link with no record may serve (owner ruling 2026-11-18)
+        return f"its probed effective context ({r['context']['effective']} tokens) does not hold the conversation (about {tokens} tokens)"
     if not left:
         return None
     if link.get("mid_task") is not True:
@@ -283,6 +286,7 @@ def advance(a, doc, rt, cat, refused, tokens=None):
     """The next link of the task after every gate of a step (module text), or Stop. tokens: the conversation's size for the engine
     loop's mid-task checks; None for an attempt (a worker CLI switches between attempts only)."""
     chain, rank, recs = doc["chain"], {c["id"]: c["privacy_rank"] for c in rt["link_classes"]}, sd.probe_records(rt)
+    req = sd.load(sd.load(sd.INDEX)["role_table"])["roles"].get(a.role, {}).get("requirements", {})
     while True:
         with state() as st:
             ts = task_of(st, a.task)
@@ -320,11 +324,14 @@ def advance(a, doc, rt, cat, refused, tokens=None):
             alert(code, problem)
             event("routing.notice", a, code, new={"link": key, "link_class": link.get("link_class")}, detail=problem)
         cf = doc.get("cross_family") if isinstance(doc.get("cross_family"), dict) else None   # a review role: the waiver goes next to its pick or switch
-        fam = (sd.probed(recs, link["connection"], link["model"]) or {}).get("family")   # the probe record's, as the resolver judged it
+        lrec = sd.probed(recs, link["connection"], link["model"])
+        fam = (lrec or {}).get("family")   # the probe record's, as the resolver judged it
+        if sd.needs_probe(req, lrec, getattr(a, "tokens", None)):   # it may serve unproven, flagged once per pick or switch (a task size counts as a requirement)
+            sd.alert_line(sd.UNPROBED, f"task {a.task}, role {a.role}: link {key} has no probe record (run bin/probe.py due)")
         if cf and (cf.get("status") != "met" or fam in (None, cf.get("builder_family"))):
             event("routing.cross-family-waiver", a, WAIVER, new={"link": key, "family": fam},
-                  detail=f"card {a.card}, role {a.role}, preset {(doc.get('preset') or {}).get('id')}, builder family {cf.get('builder_family')}, served family "
-                         f"{fam}: " + str(cf.get("reason") if cf.get("status") != "met" else "the task moved to a link of no other known family than the builder's")[:300])
+                  detail=f"card {a.card or 'none'}, role {a.role}, preset {(doc.get('preset') or {}).get('id')}, builder family {cf.get('builder_family') or 'not known'}, served family "
+                         f"{fam or 'not known'}: " + str(cf.get("reason") if cf.get("status") != "met" else "the task moved to a link of no other known family than the builder's")[:300])
         if left:
             h = hist[-1] if hist and isinstance(hist[-1], dict) else {}   # a history entry is read as data: any shape
             own = h.get("link") == left and isinstance(h.get("trigger"), str)
