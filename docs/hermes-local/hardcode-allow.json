@@ -162,7 +162,7 @@
     {"kind": "models", "owner": ".stella/connections.json", "path": "entries[].models", "id": "id"},
     {"kind": "providers", "owner": ".stella/connections.json", "path": "entries", "id": "id", "where": {"kind": "provider"}},
     {"kind": "hosts", "owner": ".stella/connections.json", "path": "entries[].hosts", "id": "host", "refs": [{"record_kind": "approved-host", "why": "an approval is a record of its own kind (the index row .stella/data-files.json approved-hosts), keyed by host and port: it refers to the connection host by id"}]},
-    {"kind": "roles", "owner": "docs/hermes-local/roles.json", "path": "roles", "id": "id"},
+    {"kind": "roles", "owner": "docs/hermes-local/roles.json", "path": "roles", "id": "id", "refs": [{"record_kind": "role-assignment", "why": "a team preset keeps agents keyed by the agent file name (the roster agents of the build team); some of those names are the ids of roles, but an agent is a record of its own kind, not a copy of the role list"}]},
     {"kind": "boards", "owner": null},
     {"kind": "presets", "owner": ".stella/role-assignments.json", "path": "effort_modes", "id": "id"},
     {"kind": "link_classes", "owner": ".stella/routing.json", "path": "link_classes", "id": "id"},

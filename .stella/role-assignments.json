@@ -29,20 +29,20 @@
         "builder": {
           "active": true,
           "escalation_chain": [
-          {
-            "connection": "local-model-server",
-            "model": "qwen3.5:9b-64k",
-            "parameters": {
-              "effort": "high"
+            {
+              "connection": "local-model-server",
+              "model": "qwen3.5:9b-64k",
+              "parameters": {
+                "effort": "high"
+              }
+            },
+            {
+              "connection": "local-model-server",
+              "model": "qwen3.5:9b-64k",
+              "parameters": {
+                "effort": "max"
+              }
             }
-          },
-          {
-            "connection": "local-model-server",
-            "model": "qwen3.5:9b-64k",
-            "parameters": {
-              "effort": "max"
-            }
-          }
           ]
         }
       },
@@ -69,20 +69,20 @@
         "builder": {
           "active": true,
           "escalation_chain": [
-          {
-            "connection": "local-model-server",
-            "model": "qwen3.5:9b-64k",
-            "parameters": {
-              "effort": "high"
+            {
+              "connection": "local-model-server",
+              "model": "qwen3.5:9b-64k",
+              "parameters": {
+                "effort": "high"
+              }
+            },
+            {
+              "connection": "local-model-server",
+              "model": "qwen3.5:9b-64k",
+              "parameters": {
+                "effort": "max"
+              }
             }
-          },
-          {
-            "connection": "local-model-server",
-            "model": "qwen3.5:9b-64k",
-            "parameters": {
-              "effort": "max"
-            }
-          }
           ]
         }
       },
@@ -108,20 +108,20 @@
         "builder": {
           "active": true,
           "escalation_chain": [
-          {
-            "connection": "local-model-server",
-            "model": "qwen3.5:9b-64k",
-            "parameters": {
-              "effort": "high"
+            {
+              "connection": "local-model-server",
+              "model": "qwen3.5:9b-64k",
+              "parameters": {
+                "effort": "high"
+              }
+            },
+            {
+              "connection": "local-model-server",
+              "model": "qwen3.5:9b-64k",
+              "parameters": {
+                "effort": "max"
+              }
             }
-          },
-          {
-            "connection": "local-model-server",
-            "model": "qwen3.5:9b-64k",
-            "parameters": {
-              "effort": "max"
-            }
-          }
           ]
         }
       },
@@ -146,25 +146,266 @@
         "builder": {
           "active": true,
           "escalation_chain": [
-          {
-            "connection": "local-model-server",
-            "model": "qwen3.5:9b-64k",
-            "parameters": {
-              "effort": "high"
+            {
+              "connection": "local-model-server",
+              "model": "qwen3.5:9b-64k",
+              "parameters": {
+                "effort": "high"
+              }
+            },
+            {
+              "connection": "local-model-server",
+              "model": "qwen3.5:9b-64k",
+              "parameters": {
+                "effort": "max"
+              }
             }
-          },
-          {
-            "connection": "local-model-server",
-            "model": "qwen3.5:9b-64k",
-            "parameters": {
-              "effort": "max"
-            }
-          }
           ]
         }
       },
       "verification_depth": 1,
       "changelog": []
+    },
+    "build-team": {
+      "allowed_localities": [
+        "local",
+        "cloud"
+      ],
+      "no_silent_fallback": false,
+      "cross_family_review": true,
+      "class_order": [
+        [
+          "free_cloud",
+          "local"
+        ]
+      ],
+      "frontier_when": {
+        "tiers": [
+          "medium",
+          "complex"
+        ]
+      },
+      "needs_class": "frontier",
+      "last_resort": null,
+      "verification_depth": 1,
+      "label": "Build team",
+      "builtin": false,
+      "based_on": "standard",
+      "agents": {
+        "builder": {
+          "description": "Code and tests for one work item of a build phase, in its own git worktree. Use for one work item per call.",
+          "tools": [
+            "Read",
+            "Edit",
+            "Write",
+            "Bash",
+            "Grep",
+            "Glob"
+          ],
+          "link": {
+            "connection": "claude-subscription",
+            "model": "sonnet",
+            "parameters": {
+              "effort": "medium"
+            }
+          },
+          "escalation_chain": [
+            {
+              "connection": "claude-subscription",
+              "model": "sonnet",
+              "parameters": {
+                "effort": "high"
+              }
+            },
+            {
+              "connection": "claude-subscription",
+              "model": "opus",
+              "parameters": {
+                "effort": "high"
+              }
+            }
+          ]
+        },
+        "tester": {
+          "description": "Runs the selected tests on a scratch copy of a frozen hash, uses what was built, saves evidence, writes failing tests into the phase qa folder. The only agent that runs tests.",
+          "tools": [
+            "Read",
+            "Write",
+            "Bash",
+            "Grep",
+            "Glob"
+          ],
+          "link": {
+            "connection": "claude-subscription",
+            "model": "opus",
+            "parameters": {
+              "effort": "high"
+            }
+          },
+          "fallbacks": [
+            {
+              "connection": "claude-subscription",
+              "model": "sonnet",
+              "parameters": {
+                "effort": "high"
+              }
+            }
+          ]
+        },
+        "checker": {
+          "description": "For light and medium work items: checks each acceptance check and each builder claim against the tester's evidence and the frozen files.",
+          "tools": [
+            "Read",
+            "Grep",
+            "Glob"
+          ],
+          "link": {
+            "connection": "claude-subscription",
+            "model": "opus",
+            "parameters": {
+              "effort": "high"
+            }
+          },
+          "fallbacks": [
+            {
+              "connection": "claude-subscription",
+              "model": "sonnet",
+              "parameters": {
+                "effort": "high"
+              }
+            }
+          ]
+        },
+        "verifier": {
+          "description": "For complex work items: checks each builder claim against the tester's evidence and the frozen files.",
+          "tools": [
+            "Read",
+            "Grep",
+            "Glob"
+          ],
+          "link": {
+            "connection": "claude-subscription",
+            "model": "opus",
+            "parameters": {
+              "effort": "high"
+            }
+          },
+          "fallbacks": [
+            {
+              "connection": "claude-subscription",
+              "model": "sonnet",
+              "parameters": {
+                "effort": "high"
+              }
+            }
+          ]
+        },
+        "red-team": {
+          "description": "For complex work items: tries to break a scratch copy of the frozen hash, one concrete repro per finding.",
+          "tools": [
+            "Read",
+            "Write",
+            "Bash",
+            "Grep",
+            "Glob"
+          ],
+          "link": {
+            "connection": "claude-subscription",
+            "model": "opus",
+            "parameters": {
+              "effort": "high"
+            }
+          },
+          "fallbacks": [
+            {
+              "connection": "claude-subscription",
+              "model": "sonnet",
+              "parameters": {
+                "effort": "high"
+              }
+            }
+          ]
+        },
+        "critical-verifier": {
+          "description": "Verifier for work items tagged critical: checks each builder claim and the security-relevant behaviour against the tester's evidence and the frozen files.",
+          "tools": [
+            "Read",
+            "Grep",
+            "Glob"
+          ],
+          "link": {
+            "connection": "claude-subscription",
+            "model": "opus",
+            "parameters": {
+              "effort": "high"
+            }
+          },
+          "fallbacks": [
+            {
+              "connection": "claude-subscription",
+              "model": "sonnet",
+              "parameters": {
+                "effort": "high"
+              }
+            }
+          ]
+        },
+        "critical-red-team": {
+          "description": "Red team for work items tagged critical: tries to break a scratch copy of the frozen hash, one concrete repro per finding.",
+          "tools": [
+            "Read",
+            "Write",
+            "Bash",
+            "Grep",
+            "Glob"
+          ],
+          "link": {
+            "connection": "claude-subscription",
+            "model": "opus",
+            "parameters": {
+              "effort": "high"
+            }
+          },
+          "fallbacks": [
+            {
+              "connection": "claude-subscription",
+              "model": "sonnet",
+              "parameters": {
+                "effort": "high"
+              }
+            }
+          ]
+        },
+        "scout": {
+          "description": "Read-only finder for build phases before F3. Copies text verbatim with path and line (spec sections, callers of a module, test-map candidates) and cuts a long test log down to the first real failure and its repro command. Never writes code or tests, never gives a verdict.",
+          "tools": [
+            "Read",
+            "Grep",
+            "Glob"
+          ],
+          "link": {
+            "connection": "claude-subscription",
+            "model": "haiku",
+            "parameters": {
+              "effort": "high"
+            }
+          },
+          "fallbacks": [
+            {
+              "connection": "claude-subscription",
+              "model": "sonnet",
+              "parameters": {
+                "effort": "medium"
+              }
+            }
+          ]
+        }
+      },
+      "escalation_caps": {
+        "per_rung": 2,
+        "total": 4,
+        "critical_last_rung": 3
+      }
     }
   },
   "selection": {

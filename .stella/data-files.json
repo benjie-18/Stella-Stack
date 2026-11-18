@@ -11,6 +11,9 @@
   "card_facts": ".supervisor/state/card-facts",
   "probe_records": ".supervisor/state/probes.json",
   "triage_calibration": ".supervisor/state/triage-calibration.json",
+  "agents_dir": ".claude/agents",
+  "team_bodies": "docs/build-team",
+  "team_preset": "build-team",
   "untrusted_events": ".supervisor/logs/events-untrusted.jsonl",
   "event_writer_id": "engine",
   "files": [

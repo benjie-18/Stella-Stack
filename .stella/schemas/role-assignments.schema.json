@@ -143,6 +143,70 @@
               "additionalProperties": false
             },
             "description": "Per role of the role table (the key): what this preset changes for it."
+          },
+          "agents": {
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+            },
+            "description": "The agents of a team preset (F2b G): per agent name, the Claude Code agent file bin/team.py generates from it (docs/build-team/<name>.md holds the body text). link, fallbacks and escalation_chain are links as everywhere; `check` judges that each model is listed for its connection and that each effort is an effort id. They never route through the resolver.",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "description": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "tools": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
+                },
+                "link": {
+                  "$ref": "#/$defs/link"
+                },
+                "fallbacks": {
+                  "$ref": "#/$defs/links"
+                },
+                "escalation_chain": {
+                  "$ref": "#/$defs/links"
+                }
+              },
+              "required": [
+                "description",
+                "tools",
+                "link"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "escalation_caps": {
+            "type": "object",
+            "properties": {
+              "per_rung": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "critical_last_rung": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "per_rung",
+              "total",
+              "critical_last_rung"
+            ],
+            "additionalProperties": false,
+            "description": "How many tries a team's builder gets per rung and in all, and the rung a critical item ends on (data for the QA loop built later)."
           }
         },
         "required": [

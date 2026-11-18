@@ -144,6 +144,21 @@
         "additionalProperties": false
       },
       "minItems": 1
+    },
+    "agents_dir": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The folder bin/team.py writes and checks the build team's agent files in (F2b G), one file per agent of the team preset."
+    },
+    "team_bodies": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The folder of the agents' body texts (F2b G), <agent>.md each: tracked prose bin/team.py copies below the generated front matter."
+    },
+    "team_preset": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "description": "The preset (a key of the role-assignments effort_modes) bin/team.py generates and checks when no --preset is given (F2b G)."
     }
   },
   "required": [
@@ -159,6 +174,9 @@
     "card_facts",
     "probe_records",
     "triage_calibration",
+    "agents_dir",
+    "team_bodies",
+    "team_preset",
     "untrusted_events",
     "event_writer_id",
     "files"
