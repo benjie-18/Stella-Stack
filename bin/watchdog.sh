@@ -52,9 +52,30 @@ cleared() {
   send "$(alert_text "${code:-$2}" resolved=1 since="$since" "${@:3}")" && rm -f "$OPEN/$1"
 }
 
+write_status() {
+jq -n --arg started "$started" --arg finished "$(date -u +%FT%TZ)" \
+  --arg trigger "${WATCHDOG_TRIGGER:-manual}" --arg head "$(git rev-parse HEAD 2>/dev/null)" \
+  --arg failed "$failed" --argjson steps "$steps" --arg target "$ALERT_TARGET" \
+  --arg poller "$poller" --arg gateway "$gateway" --argjson open "$(ls "$OPEN" | jq -Rsc 'split("\n")[:-1]')" \
+  '{started: $started, finished: $finished, trigger: $trigger, head: $head,
+    ok: ($failed == ""), failed: (if $failed == "" then null else $failed end),
+    steps: $steps, health: {poller: $poller, gateway: $gateway}, alert: {target: $target, open: $open}}' >"$STATUS.tmp" && mv "$STATUS.tmp" "$STATUS"
+}
 started=$(date -u +%FT%TZ)
 steps='[]'
 failed=""
+# A run value that cannot be read must never read as healthy: write the status as failed naming it, send the one unknown-gateway
+# alert (D47, the settings path), and stop before any check that would use the empty value.
+for k in alert_target step_timeout_s model_watch_fails_n poller_heartbeat_max_age_s send_retry_sleep_s; do
+  case $k in alert_target) v=$ALERT_TARGET;; step_timeout_s) v=$STEP_TIMEOUT;; model_watch_fails_n) v=$MW_FAILS_N;;
+    poller_heartbeat_max_age_s) v=$HB_MAX_AGE;; *) v=$SEND_RETRY_SLEEP;; esac
+  if [ -z "$v" ]; then
+    failed="settings: run.$k is missing or unreadable"; poller=unknown; gateway=unknown
+    echo "$(date -u +%FT%TZ) $failed" >>"$LOG"
+    problem gateway STL-GW-103 parts=settings
+    write_status; exit 1
+  fi
+done
 for step in test lint build; do
   # The test step runs the npm script the settings name (test_step.npm_script: the quick tier, owner decision 2026-11-12); its name here stays "test".
   script=$step; [ "$step" != test ] || script=$(python3 -I "$BIN/watchdog_settings.py" get test_step.npm_script 2>/dev/null)
@@ -150,12 +171,6 @@ case "$gstate" in
   *)       cleared gateway STL-GW-101 parts="$gcause" ;;
 esac
 
-jq -n --arg started "$started" --arg finished "$(date -u +%FT%TZ)" \
-  --arg trigger "${WATCHDOG_TRIGGER:-manual}" --arg head "$(git rev-parse HEAD 2>/dev/null)" \
-  --arg failed "$failed" --argjson steps "$steps" --arg target "$ALERT_TARGET" \
-  --arg poller "$poller" --arg gateway "$gateway" --argjson open "$(ls "$OPEN" | jq -Rsc 'split("\n")[:-1]')" \
-  '{started: $started, finished: $finished, trigger: $trigger, head: $head,
-    ok: ($failed == ""), failed: (if $failed == "" then null else $failed end),
-    steps: $steps, health: {poller: $poller, gateway: $gateway}, alert: {target: $target, open: $open}}' >"$STATUS.tmp" && mv "$STATUS.tmp" "$STATUS"
+write_status
 
 [ -z "$failed" ]
