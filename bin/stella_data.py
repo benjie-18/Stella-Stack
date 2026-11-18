@@ -213,7 +213,7 @@ def jload(path, label=None):
 
 
 STATE = ("event_log", "backup_dir", "applied_state", "role_table", "owner_key", "approval_store", "event_writer_state", "routing_state",
-         "card_facts", "probe_records", "untrusted_events")   # the index keys that name a path; the last is the agents' stream (untrusted())
+         "card_facts", "probe_records", "triage_calibration", "untrusted_events")   # the index keys that name a path; the last is the agents' stream (untrusted())
 
 
 def untrusted(idx):

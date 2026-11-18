@@ -1023,6 +1023,42 @@
       "resolvable": false
     },
     {
+      "code": "STL-MDL-740",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "the triage router could not give a verdict",
+      "message": "The triage router could not classify an input: {problem}. No verdict was made and nothing was routed.",
+      "action": "check that the router role has a local link that answers (`python3 bin/resolve.py resolve --role <router role> --project '' --json`) and that the routing data's triage block is consistent, then try again. See STL-MDL-740 in docs/alert-codes.md.",
+      "cause": "The router role's link was refused or gave no readable answer (a non-JSON answer is not this: that is an unsure verdict), or the routing triage block is wrong.",
+      "check": "the command's output; `python3 bin/stella_data.py get --json routing` (triage).",
+      "related": "F2b item F; bin/triage.py (the routing data triage block)",
+      "resolvable": false
+    },
+    {
+      "code": "STL-MDL-741",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "a triage label was refused",
+      "message": "A triage label was refused: {problem}. Nothing was recorded.",
+      "action": "give the id of a verdict that `triage.py route` printed, a route of the routing data's triage tiers (or its image route) and the source override or reroute. See STL-MDL-741 in docs/alert-codes.md.",
+      "cause": "The id is no logged triage verdict, or the route is outside the tiers.",
+      "check": "`python3 bin/event_log.py tail --json -n 50` (type triage.verdict).",
+      "related": "F2b item F; bin/triage.py (the routing data triage block)",
+      "resolvable": false
+    },
+    {
+      "code": "STL-MDL-742",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "the triage threshold could not be fitted or read",
+      "message": "The triage calibration was refused: {problem}. The threshold was not changed.",
+      "action": "label more verdicts (`triage.py label`) until the routing data's triage min_labels is reached, or remove or repair the calibration file named by the data index key triage_calibration. See STL-MDL-742 in docs/alert-codes.md.",
+      "cause": "Fewer labelled verdicts than triage.min_labels, or the calibration file cannot be read or is invalid.",
+      "check": "`python3 bin/triage.py fit --json`; the file the index key triage_calibration names.",
+      "related": "F2b item F; bin/triage.py (the routing data triage block)",
+      "resolvable": false
+    },
+    {
       "code": "STL-MDL-746",
       "area": "MDL",
       "severity": "warning",

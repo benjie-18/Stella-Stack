@@ -611,6 +611,23 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
+      "id": "triage",
+      "kind": "command",
+      "summary": "Triage router (host only): a small local model, called through route.py for the router role, classifies one input (stdin) into a route of the routing data's triage tiers (or the image route when the input carries an image); confidence is the route label's token probability where the link gives it, else the agreement of triage.samples calls; unsure or below the threshold moves one tier up, never down; inside a project a message is work unless it is a confident pure question; one triage.verdict event line per verdict (its id); label records an owner override or reroute (triage.label); fit sets the threshold from the labelled verdicts (triage calibration state, triage.calibrated); an optional classifier behind the features.json flag triage-classifier (off by default).",
+      "keywords": ["triage", "router", "route", "classify", "confidence", "unsure", "label", "calibration", "threshold"],
+      "inputs": "route [--project P] [--image] --json (message on stdin) | label --id ID --route R --source override|reroute --json | fit --json",
+      "outputs": "JSON (route: {id, route, confidence, unsure, tier_moved, link, reasoning?}; label: {id, route, source, label_id}; fit: {threshold, labels}); exit 1 with a catalog code (STL-MDL-740 no verdict could be made, 741 label refused, 742 calibration refused, STL-CFG-312 in a worker environment)",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/triage.py",
+      "triage": {"result": "shipped"},
+      "global_id": "06c3c8c4-e0bf-485f-9745-d1cb7acf11e5",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
       "id": "consent",
       "kind": "command",
       "summary": "Routing consent: the accept popup for a link that needs a grant, project-scoped grants applied through the apply tool, unattended queue; pending, complete, revoke",

@@ -357,6 +357,29 @@
       "required": ["backend", "backends"],
       "additionalProperties": false
     },
+    "triage": {
+      "type": "object",
+      "description": "The triage router (bin/triage.py, F2b F): the role whose link classifies each input, the route tiers lowest first (an unsure verdict moves one up, the top stays, never down; the list is the only order), the id of the image route (the route only when the input carries an image, no tier), inside a project the route a message gets (`default`) unless the verdict is one of `keep` (a pure question), the confidence below which a verdict is unsure (`threshold`; bin/triage.py fit writes a fitted one to the triage calibration state, which then wins), the calls whose agreement is the confidence where the link gives no log probabilities, and how many labelled verdicts the optional classifier needs before it answers first.",
+      "properties": {
+        "role": {"type": "string", "minLength": 1, "description": "A role of the role table (an exempt role: local, never a crossing)."},
+        "tiers": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$", "maxLength": 64}},
+        "image_route": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$", "maxLength": 64},
+        "project": {
+          "type": "object",
+          "properties": {
+            "default": {"type": "string", "minLength": 1},
+            "keep": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+          },
+          "required": ["default", "keep"],
+          "additionalProperties": false
+        },
+        "threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "samples": {"type": "integer", "minimum": 1, "maximum": 16},
+        "min_labels": {"type": "integer", "minimum": 1}
+      },
+      "required": ["role", "tiers", "image_route", "project", "threshold", "samples", "min_labels"],
+      "additionalProperties": false
+    },
     "probe": {
       "type": "object",
       "description": "The capability probe's settings (bin/probe.py): the token lengths of the context test (the probe runs them ascending), the chains planted at each (`needles` chains of `hops` hops: each hop is a code that the next code is looked up from), the share of the shortest length's score a longer length may lose and still count (`tolerance`), the output shapes strongest first (the ids a wire shape's request.output_shape names a pointer for, then none), how often a shape is tried before it counts as proved (`shape_trials`), and the repair retries of the structured-output helper.",
@@ -373,6 +396,6 @@
       "additionalProperties": false
     }
   },
-  "required": ["schema_version", "link_classes", "class_defaults", "task_tiers", "drivers", "exempt_roles", "card_roles", "workflow", "failover", "consent", "card_facts", "credentials", "probe"],
+  "required": ["schema_version", "link_classes", "class_defaults", "task_tiers", "drivers", "exempt_roles", "card_roles", "workflow", "failover", "consent", "card_facts", "credentials", "probe", "triage"],
   "additionalProperties": false
 }

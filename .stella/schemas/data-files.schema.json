@@ -51,6 +51,11 @@
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The capability probe's records (F2b B), one file (schema probes): what bin/probe.py found out about each model version by trying it; written on the host only; a protected state path, not a data file (no role writes it, git never holds it). bin/probe.py check judges it."
     },
+    "triage_calibration": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The triage router's fitted threshold (F2b F), one file (schema triage-calibration): written by bin/triage.py fit from the labelled verdicts, on the host only; a protected state path, not a data file (no role writes it, git never holds it)."
+    },
     "card_facts": {
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
@@ -153,6 +158,7 @@
     "routing_state",
     "card_facts",
     "probe_records",
+    "triage_calibration",
     "untrusted_events",
     "event_writer_id",
     "files"
