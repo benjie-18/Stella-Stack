@@ -16,7 +16,7 @@ reach discord.com 443 "Discord REST"
 reach gateway.discord.gg 443 "Discord gateway"
 reach github.com 22 "git over SSH, GitHub's git ranges only"
 # Local model hosts come from the connections data; no enabled local link = nothing to probe (optional), unreadable data = FAIL.
-loc=$(python3 -I "$(dirname "$0")/stella_data.py" get --json connections 2>/dev/null | jq -r '.entries[] | select(.enabled == true and .locality == "local") | .hosts[]? | "\(.host) \(.port)"' 2>/dev/null); result $? "connections data readable (local model hosts)"
+loc=$(set -o pipefail; python3 -I "$(dirname "$0")/stella_data.py" get --json connections 2>/dev/null | jq -r '.entries[] | select(.enabled == true and .locality == "local") | .hosts[]? | "\(.host) \(.port)"' 2>/dev/null); result $? "connections data readable (local model hosts)"
 while read -r h p; do [ -n "$h" ] && reach "$h" "$p" "local model"; done <<<"$loc"
 refused example.com 443 "a host not on the allowlist"
 refused gitlab.com 22 "tcp/22 outside GitHub; example.com does not listen on 22"
