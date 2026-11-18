@@ -1143,7 +1143,7 @@ def rule_routing(c):
     """The routing data against itself, the role table, the alert catalog and the index: ids listed once, an exempt role too; a
     hosted class less private than every class that is not hosted (W1-RT-06); every role it names is assignable; an exempt
     role's class order names known classes, none of them hosted (W1-RT-09); a required role's `when` is always or a trigger;
-    a cooldown is not above its cap; a building role is a card role; the effort table names known roles, tiers and effort ids; every escalation purpose names an assignable role; consent names an approval class and alert codes that exist; the credentials backend in
+    a cooldown is not above its cap; the effort table names known roles, tiers and effort ids; every escalation purpose names an assignable role; consent names an approval class and alert codes that exist; the credentials backend in
     use is defined, and a dir backend lies inside a protected state path (DC-05: no role may read the keys)."""
     P, table = c["P"], c["table"]
     roles = set(table["roles"]) - {table["fallback_role"]}
@@ -1159,6 +1159,7 @@ def rule_routing(c):
         wf, co, cr = rt["workflow"], rt["consent"], rt["credentials"]
         for at, r in [(f"exempt_roles[{i}].role", x["role"]) for i, x in enumerate(rt["exempt_roles"])] \
                 + [(f"card_roles[{i}]", x) for i, x in enumerate(rt["card_roles"])] \
+                + [(f"builder_roles[{i}]", x) for i, x in enumerate(rt.get("builder_roles", []))] \
                 + [(f"workflow.required_roles[{i}].role", x["role"]) for i, x in enumerate(wf["required_roles"])]:
             if r not in roles:
                 P(rid, f"{at}: {nm(r, table['roles'], 'it')} is not an assignable role in the role table")
@@ -1168,9 +1169,6 @@ def rule_routing(c):
                 P(rid, m)
             if hosted & {k for it in x["class_order"] for k in (it if isinstance(it, list) else [it])}:   # W1-RT-09: no preset's localities bind an exempt role
                 P(rid, f"exempt_roles[{i}].class_order names a hosted link class: an exempt role stays on links that do not leave the machine under every preset")
-        for i, r in enumerate(rt.get("builder_roles", [])):
-            if r not in rt["card_roles"]:
-                P(rid, f"builder_roles[{i}]: {nm(r, rt['card_roles'], 'it')} is not a card role (card_roles)")
         ef = rt.get("effort", {"levels": [], "by_role": {}})
         tiers = {x["id"] for x in rt["task_tiers"]}
         for r, x in ef["by_role"].items():

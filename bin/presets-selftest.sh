@@ -212,7 +212,9 @@ u u23 routing.json '.effort.by_role[$p] = {tiers: {($x): .effort.levels[0]}}' "5
 u u24 role-assignments.json "$F.roles[\$p].escalation_chain[0].parameters.effort = \$x" "5za an unknown effort id in a rung's parameters is refused"
 u u25 role-assignments.json "$F.roles[\$p].pins[0].parameters.effort = \$x" "5zb an unknown effort id in a pin's parameters is refused"
 u u26 role-assignments.json '.assignments[0].chain[0].parameters.effort = $x' "5zc an unknown effort id in an assignment's chain is refused"
-u u27 routing.json '.builder_roles += [$x]' "5ze a building role that is not a card role is refused"
+u u27 routing.json '.builder_roles += [$x]' "5ze a building role that is not an assignable role is refused"
+mk bnc five; ed bnc routing.json '.card_roles -= [.builder_roles[0]]'
+ok 'passes bnc' "5zf control: a building role need not be a card role (a role asked with no card)"
 mk edup five; ed edup routing.json '.effort.levels += [.effort.levels[0]]'
 ok 'refuses edup' "5zd an effort level listed twice is refused"
 
