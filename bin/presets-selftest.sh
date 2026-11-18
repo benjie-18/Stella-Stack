@@ -205,7 +205,8 @@ mk dup five; ed dup routing.json '.link_classes += [.link_classes[0]]'
 ok 'refuses dup && grep -q "link_classes: an id is listed twice" "$T/o"' "5v a link class listed twice is refused"
 mk cool five; ed cool routing.json '.failover.triggers |= with_entries(.value.cooldown_s = .value.max_cooldown_s + 1)'
 ok 'refuses cool && grep -q "cooldown_s is above max_cooldown_s" "$T/o"' "5w a cooldown above its cap is refused"
-u u21 routing.json '.effort.by_role[$p].default = $x' "5x an unknown effort id in the routing data's effort table is refused"
+u u21 routing.json '.effort.by_role[$p] = $x' "5x an unknown effort id in the routing data's effort table is refused (a role's id alone)"
+u u21b routing.json '.effort.by_role[$p] = {default: $x}' "5x2 and as a role's default"
 u u22 routing.json '.effort.by_role[$x] = {default: .effort.levels[0]}' "5y an unknown role in the effort table is refused"
 u u23 routing.json '.effort.by_role[$p] = {tiers: {($x): .effort.levels[0]}}' "5z an unknown task tier in the effort table is refused"
 u u24 role-assignments.json "$F.roles[\$p].escalation_chain[0].parameters.effort = \$x" "5za an unknown effort id in a rung's parameters is refused"
