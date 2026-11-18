@@ -149,6 +149,8 @@ jq '.limits={max_chars:50,page_interval_s:7}' /workspace/docs/hermes-local/alert
 jq 'del(.limits)' "$T/lim.json" > "$T/nolim.json"
 pi() { ALERT_CATALOG="$T/lim.json" python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import alert_catalog as c; print(c.limits()["page_interval_s"])' "$B"; }
 ok '[ "$(ALERT_CATALOG="$T/lim.json" alert_text STL-WDG-101 commit=abc1234 check=build | wc -m)" -le 51 ] && [ "$(pi)" = 7 ] && ALERT_CATALOG="$T/nolim.json" $C validate | grep -q "limits.max_chars"' "limits block: a catalog copy with another max length and page interval is honoured; validate requires both"
+mkdir -p "$T/x/bin" && cp "$B/alert_catalog.py" "$T/x/bin/"   # ROOT=$T/x has no shipped catalog; the override is unreadable too
+ok '[ "$(ESCALATE_SUP_DIR="$T/sup2" ALERT_CATALOG="$T/missing.json" python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import alert_catalog as c; d, f = c.page_due(\"STL-GEN-000\", \"k\"); c.mark_paged(f); print(d, c.page_due(\"STL-GEN-000\", \"k\")[0])" "$T/x/bin")" = "True True" ]' "page_due: no readable catalog or limits: a paged key is due again (loud, not silent)"
 ok '"$B/alert-catalog.sh" --check >/dev/null 2>&1' "docs/alert-codes.md is generated from the catalog and up to date"
 ok '"$B/alert-explain.sh" STL-ESC-210 | grep -q "^Means    Stella tried {count} times" && ! "$B/alert-explain.sh" "STL-ZZZ-""999" >/dev/null && ! "$B/alert-explain.sh" "x; ls" >/dev/null 2>&1' "alert-explain.sh prints an entry; an unknown code or other text fails"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
