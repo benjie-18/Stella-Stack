@@ -90,6 +90,8 @@ printf '%s\n' '2026-10-29 08:05:00,000 INFO gateway.run: ✓ discord reconnected
 ok '[ "$(n "\[STL-GW-102 resolved\]")" = 1 ] && grep -q "the check saw: her log was written recently" "$T/sup/sends" && ! grep -q "quiet or down" "$T/sup/sends"' "D47: recovery after a disconnect says what was observed"
 reset; WATCHDOG_SETTINGS="$T/no-such.json" $W >/dev/null 2>&1; WATCHDOG_SETTINGS="$T/no-such.json" $W >/dev/null 2>&1
 ok '[ "$(n "\[STL-GW-103\]\*\*$")" = 1 ] && [ "$(n "\[STL-GW-10[12]\]")" = 0 ] && grep -q "the settings for this check are missing or invalid" "$T/sup/sends" && ! grep -qE "$PLAIN" "$T/sup/sends"' "D47: unreadable settings: one unknown alert, not a down alert"
+reset; gw 'del(.run)'; $W >/dev/null 2>&1; rc1=$?; $W >/dev/null 2>&1
+ok '[ "$rc1" = 1 ] && [ "$(n "\[STL-GW-103\]\*\*$")" = 1 ] && [ "$(n "resolved")" = 0 ] && jq -e ".ok == false and (.failed | test(\"run\\\\.\"))" "$T/sup/status.json" >/dev/null' "settings without the run section: the run fails naming run.<key>, one unknown alert, no false recovery line"
 fresh; $W >/dev/null 2>&1
 ok '[ "$(n "\[STL-GW-103 resolved\]")" = 1 ] && grep -q "it saw: her log was written recently" "$T/sup/sends"' "D47: recovery after unknown says what the check saw"
 reset; rm -f "$T/gateway.log"; $W >/dev/null 2>&1; $W >/dev/null 2>&1
