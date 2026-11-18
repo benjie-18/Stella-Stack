@@ -112,6 +112,10 @@ ok '[ "$(amsg STL-ESC-231 t_cafecafe)" = 1 ] && grep -qF -- "$want" "$T/sup/send
 ok 'grep -q "comment --author escalation-thread.sh t_cafecafe Capability block held for triage" "$T/sup/comments" && grep -q "Error: $CR" "$T/sup/comments"' "capability block: card comment names the error"
 FAKE_KIND=capability FAKE_ASSIGNEE=builder-claude $E t_cafecaff "Some card" "$CR" >/dev/null 2>&1
 ok '[ "$(amsg STL-ESC-231 t_cafecaff)" = 1 ] && grep "^STL-ESC-231 .*t_cafecaff" "$T/sup/logs/alerts.log" | grep -q "suggestion=..$" && ! grep "t_cafecaff" "$T/sup/sends" | grep -q "Suggestion"' "capability block on builder-claude: no reassignment suggestion"
+# a capability hold posts nothing to #escalations, so an empty ESCALATIONS_CHANNEL_ID must not stop it
+cp "$T/owner.env" "$T/owner-nochan.env"; printf "ESCALATIONS_CHANNEL_ID=''\n" >> "$T/owner-nochan.env"
+OWNER_CONFIG="$T/owner-nochan.env" FAKE_KIND=capability $E t_cafecafd "Some card" "$CR" >/dev/null 2>&1
+ok '[ "$(amsg STL-ESC-231 t_cafecafd)" = 1 ]' "capability block with ESCALATIONS_CHANNEL_ID empty: still held for triage"
 
 # F6: a long title keeps the thread name within Discord's 100-character limit, card id first.
 FAKE_NBLOCKS=1 $E t_0000000a "$(printf 'y%.0s' $(seq 1 120))" "Decision needed: pick (A) or (B)." >/dev/null 2>&1

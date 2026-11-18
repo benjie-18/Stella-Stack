@@ -14,7 +14,7 @@ import os, re, shlex, sys
 
 KEYS = ("OWNER_NAME", "OWNER_DISCORD_USER_ID", "OWNER_STACK_PATH_WIN", "GITHUB_OWNER",
         "DISCORD_GUILD_ID", "ESCALATIONS_CHANNEL_ID", "SUPERVISOR_CHANNEL_ID")
-MAY_BE_EMPTY = {"OWNER_DISCORD_USER_ID"}
+MAY_BE_EMPTY = {"OWNER_DISCORD_USER_ID", "DISCORD_GUILD_ID", "ESCALATIONS_CHANNEL_ID", "SUPERVISOR_CHANNEL_ID"}   # Discord is one connection type: an empty id means that path is skipped, and the script that needs it fails naming it
 OPTIONAL = ("OWNER_TIMEZONE",)   # D44: IANA zone for alert times; absent = the container's TZ, then UTC
 LINE = re.compile(r"([A-Z][A-Z0-9_]*)=(?:'([^']*)'|\"([^\"$`\\]*)\"|([^\s'\"$`\\;&|<>()*?~{}\[\]]*))[ \t\r]*")
 FORMS = "KEY=value, KEY='value' or KEY=\"value\" (no $, backtick or backslash inside double quotes)"

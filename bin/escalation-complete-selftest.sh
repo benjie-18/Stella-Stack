@@ -5,7 +5,7 @@ T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin" "$T/sup/state"
 : > "$T/sup/limits.env"
 { cat /workspace/config/owner.example.env; printf "ESCALATIONS_CHANNEL_ID='100'\\nDISCORD_GUILD_ID='200'\\nSUPERVISOR_CHANNEL_ID='300'\\n"; } > "$T/owner.env"; export OWNER_CONFIG="$T/owner.env"   # scratch owner config (D39)
-printf '555\tt_aaaaaaaa\tnow\tT16 escalation test: pick a colour\n556\tt_bbbbbbbb\tnow\tGeneric card\n557\tt_cccccccc\tnow\tNot done yet\n558\tt_dddddddd\tnow\tLegacy\n559\tt_ffffffff\tnow\tCreate phase4-test.md\n560\tt_fffffff0\tnow\tTrailing backslash\n' \
+printf '555\tt_aaaaaaaa\tnow\tT16 escalation test: pick a colour\n556\tt_bbbbbbbb\tnow\tGeneric card\n557\tt_cccccccc\tnow\tNot done yet\n558\tt_dddddddd\tnow\tLegacy\n559\tt_ffffffff\tnow\tCreate phase4-test.md\n560\tt_fffffff0\tnow\tTrailing backslash\n561\tt_e0e0e0e0\tnow\tNo supervisor\n' \
   > "$T/sup/state/escalation-threads.tsv"
 printf 't_dddddddd\tlegacy\tnow\n' > "$T/sup/state/escalation-completed.tsv"
 cat > "$T/sup/escalations.log" <<'L'
@@ -20,6 +20,7 @@ case "$1 $2" in
       t_aaaaaaaa) echo '{"task":{"status":"done","title":"Rewritten title"},"latest_summary":"Decision: A","runs":[{"summary":"Decision: A","metadata":{"decision":"A"}}]}';;
       t_bbbbbbbb) echo '{"task":{"status":"done","title":"Generic card"},"latest_summary":"Task complete.","runs":[{"summary":"Task complete.","metadata":{}}]}';;
       t_ffffffff) echo '{"task":{"status":"done","title":"x","workspace_path":"/workspace/.worktrees/t_ffffffff"},"latest_summary":"Created phase4-test.md","runs":[{"summary":"Created phase4-test.md","metadata":{"files_created":["phase4-test.md","/workspace/.worktrees/t_ffffffff/sub/b.txt"]}}]}';;
+      t_e0e0e0e0) echo '{"task":{"status":"done","title":"No supervisor"},"latest_summary":"Decision: A","runs":[{"summary":"Decision: A","metadata":{"decision":"A"}}]}';;
       t_fffffff0) echo '{"task":{"status":"done","title":"x","workspace_path":"/workspace/.worktrees/t_fffffff0"},"latest_summary":"Created a.md","runs":[{"summary":"Created a.md","metadata":{"files_created":["a.md"]}}]}';;
       *) echo '{"task":{"status":"running","title":"x"}}';;
     esac;;
@@ -79,4 +80,8 @@ ok 'grep -qF "Done t_ffffffff: \"Create phase4-test.md\". Decision: see summary.
 printf "OWNER_STACK_PATH_WIN='C:\\\\stack\\\\'\n" >> "$T/owner.env"   # the same path with a trailing backslash: one is dropped
 $X t_fffffff0 ""
 ok 'grep -qF "Path: C:\\stack\\.worktrees\\t_fffffff0\\a.md. Status: done." "$T/sup/sends"' "a trailing backslash on OWNER_STACK_PATH_WIN is dropped when joining (shell)"
+# no #supervisor channel configured: that step is not owed, so the delete prompt and COMPLETED still happen
+printf "SUPERVISOR_CHANNEL_ID=''\n" >> "$T/owner.env"
+$X t_e0e0e0e0 "Decision: A"
+ok '[ "$(completed t_e0e0e0e0)" = 1 ] && grep -q "send_message 561 What should happen" "$T/sup/discord_calls"' "SUPERVISOR_CHANNEL_ID empty: delete prompt and COMPLETED still happen"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

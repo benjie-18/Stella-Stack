@@ -56,6 +56,7 @@ owner_config_check() {
     if [ "$k" = OWNER_DISCORD_USER_ID ] && [ -z "${!k}" ]; then
       echo "WARN OWNER_DISCORD_USER_ID is empty: no reply or reaction is applied until it is set (D72)"; continue
     fi
+    if [ -z "${!k}" ]; then echo "WARN $k is empty: what needs it (a Discord post or reply) is skipped or refused until it is set"; continue; fi
     echo "FAIL $k is not a 17-20 digit Discord id"; rc=1
   done
   [ ! -w "$f" ] || echo "WARN $f is writable: chmod 444 $f"
@@ -69,6 +70,7 @@ owner_config_verify() {
   card=""
   . /workspace/bin/escalation-discord.sh
   for k in ESCALATIONS_CHANNEL_ID SUPERVISOR_CHANNEL_ID; do
+    [ -n "${!k}" ] || { echo "SKIP $k is empty"; continue; }
     res=$(discord_action channel_info "${!k}"); err=$(jq -r '.error // empty' <<<"$res" 2>/dev/null)
     if grep -qi 'token\|bootstrap' <<<"$err"; then echo "SKIP Hermes's Discord token loader is not usable here: ${err:0:200}"; return 0; fi
     if [ -n "$err" ]; then echo "FAIL $k ${!k}: ${err:0:300}"; rc=1
@@ -76,7 +78,7 @@ owner_config_verify() {
     else echo "ok   $k ${!k} is #$(jq -r '.name' <<<"$res") in guild $DISCORD_GUILD_ID"; fi
   done
   id="$OWNER_DISCORD_USER_ID"
-  if [ -z "$id" ]; then echo "SKIP owner membership: OWNER_DISCORD_USER_ID is empty"
+  if [ -z "$id" ] || [ -z "$DISCORD_GUILD_ID" ]; then echo "SKIP owner membership: OWNER_DISCORD_USER_ID or DISCORD_GUILD_ID is empty"
   else
     res=$(discord_action member_info "$DISCORD_GUILD_ID" "$id"); err=$(jq -r '.error // empty' <<<"$res" 2>/dev/null)
     if [ -n "$err" ]; then echo "FAIL owner $id is not a visible member of guild $DISCORD_GUILD_ID: ${err:0:300}"; rc=1
