@@ -6,6 +6,7 @@
 #   (no model is named here). That the caller names it is a stub (features `escalate-caller-names-model`, due F2b: the walk of
 #   the role's escalation chain). The call runs only when the resolver (bin/resolve.py, read-only), asked for the role of the
 #   card's assignee, the card and its project, lists exactly that link `usable`; no other link is tried.
+#   A call from a worker run names that run's own proven card, or is refused (STL-GRD-604, exit 3, not queued).
 #   The model's limits are its catalog `limits` object: `purposes` (the only purposes it runs for), `max_concurrent` (slots),
 #   `per_day` (calls per UTC day), each a value or the name of the limits.env key that holds it, and `purpose_models`
 #   {purpose: the model name the CLI gets for that purpose instead of the id}.
@@ -142,6 +143,16 @@ extra_args=("$@")   # always empty past the next line; kept with a queue entry
 [[ "$card" =~ ^t_[0-9a-f]{8}$ ]] || refuse USAGE 2 "card id required (t_xxxxxxxx), got '${card}'"
 [ -n "$reason" ] || refuse USAGE 2 "reason required"
 card_json=$(kanban show "$card" --json 2>/dev/null) || refuse USAGE 2 "card $card not found on the board"
+# A worker run escalates its own card only (W7b-VAL-01): the card decides the role, the project and the facts the resolver judges,
+# so a run on a secrets card must not name a clean one. own = the card the guards' proof names for this call (roles.prove_card: the
+# board and the kernel, never the caller's word); "?" when a worker marker of the role table is set but no card is proven, or when
+# it cannot be told (the board or the table unreadable); empty when the call belongs to no worker run (the supervisor path: the card
+# as named). Not queued: the drain would replay the call as the supervisor.
+own=$(python3 -I -c 'import os, sys; sys.path.insert(0, "/workspace/bin"); import roles
+j, why = roles.prove_card()
+if not why: print(j["task"]["id"])
+elif why.startswith("the board cannot be read") or any(os.environ.get(m) for m in roles.worker_markers(roles.load())): print("?")' 2>/dev/null) || own="?"
+[ -z "$own" ] || [ "$own" = "$card" ] || refuse NOT_OWN_CARD 3 "STL-GRD-604 this call comes from a worker run, and card $card is not the card that run is proven on (${own/#\?/none proven}): a worker run escalates its own card only"
 # The model is data: an id the catalog lists on a connection whose `cli` is this script's. link = {connection, limits}.
 catalog=$(python3 -I /workspace/bin/stella_data.py get --json connections 2>/dev/null) || unreadable "the connections catalog cannot be read" "no model is known"
 link=$(jq -c --arg cli "$CLI" --arg m "$model" '[.entries[] | select(.kind == "provider" and .cli == $cli) | {connection: .id, limits: (.models[] | select(.id == $m) | .limits // {})}][0] // empty' <<<"$catalog" 2>/dev/null)
