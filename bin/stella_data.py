@@ -1101,13 +1101,14 @@ def rule_assignments(c):
                 prov = entry(conn, ch["connection"])
                 if prov is None or prov["kind"] != "provider":
                     continue   # its x-ref (connections, kind provider) refuses it, naming the field
-                for m in link_problems(table, a["role"], prov, ch["model"], mode and mode["allowed_localities"], a["effort_mode"], policies,
-                                       idn(pid) if listed else "the default", pols, now, pid):
+                bad = link_problems(table, a["role"], prov, ch["model"], mode and mode["allowed_localities"], a["effort_mode"], policies,
+                                    idn(pid) if listed else "the default", pols, now, pid)
+                for m in bad:
                     P(rid, f"{aid}: chain[{i}]: {m}")
                 for m in probe_problems(table, a["role"], prov, ch["model"], recs):
                     P(rid, Probed(CHAIN_FAILS, f"{aid}: chain[{i}]: {m}"), {PROBED})
-                for m in unprobed(table, a["role"], prov, ch["model"], recs):
-                    P(rid, Warned(UNPROBED, f"{aid}: chain[{i}]: {m}"), {PROBED})
+                if not bad and unprobed(table, a["role"], prov, ch["model"], recs):   # a listed model only (never a value the data does not hold); warned by rule_presets, once per link
+                    c.setdefault("flag", {}).setdefault((rid, prov["id"], ch["model"]), set()).add(a["role"])
 
 
 def scope_problems(g):
@@ -1151,7 +1152,7 @@ def rule_presets(c):
     (the role fails NO_LINK at run time). A listed link (pin, fallback, rung of a custom preset) with no record for a role with
     requirements is a Warned UNPROBED line: printed by `check`, never counted (owner ruling 2026-11-18)."""
     P, table, conn, recs = c["P"], c["table"], c["by"].get("connections", {}), probes_of(c)
-    flag = {}   # (row, connection, model) -> the roles an unprobed link may serve
+    flag = c.setdefault("flag", {})   # (row, connection, model) -> the roles an unprobed link may serve (rule_assignments adds its chains')
     flat = lambda order: {k for it in order for k in (it if isinstance(it, list) else [it])}
     roles = set(table["roles"]) - {table["fallback_role"]}   # the fail-closed row is no role to route
     for _, rt in c["whole"].get("routing", []):
