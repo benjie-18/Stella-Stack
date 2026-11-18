@@ -404,4 +404,59 @@ ok 'J v-bs ".view | .class_order == [[\"$FREE\", \"$LOCAL\"]] and .needs_class =
 ok 'J v-off ".view | .active == false and (.class_order | length > 0)" && J v-nocard ".differs == null and (.view | .active == true and .card == null and (.class_order | length > 0))"' \
   "13e it answers for a role the preset turns off, and for a role that works a card asked with no card"
 
+
+# ---- 14: the escalation chain walk (F2b item D, design-D.md): --rung N, effort as data ----
+# the trusted event writer must see no worker run: a stub marker, a board stub for `roles.py prove`, no agent token
+unset HERMES_KANBAN_TASK HERMES_KANBAN_WORKSPACE HERMES_DELEGATED_CHILD_CONTEXT STUB_WORKER_MARK
+for v in $(jq -r '.worker_signals.token_env[]?' "$ROOT/$(j '.files[] | select(.id == "owner-auth") | .path' "$IX")" 2>/dev/null); do unset "$v"; done
+mkdir -p "$T/pb"; printf '#!/usr/bin/env bash\necho "[]"\n' >"$T/pb/hermes"; chmod +x "$T/pb/hermes"; export PATH=$T/pb:$PATH
+read -r C_EXH C_SKIP < <(python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import resolve as r; print(r.EXHAUSTED, r.RUNG_SKIPPED)' "$BIN")
+EVREL=$(j .event_log "$IX"); evn() { local f="$T/$1/$EVREL"; if [ -f "$f" ]; then jq -c "select($2)" "$f" | grep -c .; else echo 0; fi; }   # <root> <jq condition>
+L() { echo "{\"connection\":\"$1\",\"model\":\"$1-$2\",\"parameters\":${3:-{\}}}"; }   # <connection> <m1|m2> [<parameters JSON>]
+mk rg base; mkdir -p "$T/rg/.supervisor/logs" "$T/rg/.supervisor/state"; edt rg '.worker_markers = ["STUB_WORKER_MARK"]'
+# fake effort levels and a per-role/tier table (data only); an Eco-shaped preset: local and the aggregator class in order, the frontier class last resort
+ed rg routing --arg r "$NR" --arg t "$TIER" '.effort = {levels: ["qa-lo", "qa-mid", "qa-hi"], by_role: {($r): {default: "qa-lo", tiers: {($t): "qa-mid"}}}}'
+preset rg qa-rung '{class_order: [$l, $f], last_resort: $x}'
+ed rg role-assignments --arg r "$NR" --arg e "$ER" --argjson ch "[$(L qa-local m1 '{"effort":"qa-hi"}'), $(L qa-free m2), $(L qa-front m1), $(L qa-local m2)]" \
+  --argjson ex "[$(L qa-free m1), $(L qa-local m2)]" '.effort_modes["qa-rung"].roles = {($r): {active: true, escalation_chain: $ch}, ($e): {active: true, escalation_chain: $ex}}'
+rs rg h0 --role "$NR" --project qa-proj; rs rg ht --role "$NR" --project qa-proj --tier "$TIER"; rs rg hz --role "$NR" --project qa-proj --rung 0
+rs rg h2 --role "$NR2" --project qa-proj; rs rg r1 --role "$NR" --project qa-proj --rung 1 --tier "$TIER"
+ok 'passes rg && [ "$(rc h0)" = 0 ] && J h0 "all(.chain[]; .effort == \"qa-lo\") and (has(\"rung\") | not)" && J ht "all(.chain[]; .effort == \"qa-mid\")" && J h2 "all(.chain[]; .effort == null)" && cmp -s "$T/o/h0.json" "$T/o/hz.json"' \
+  "14 effort is data: the role's tier entry, else its default, else null, on every chain entry; --rung 0 is the answer without --rung, byte for byte, with no rung key"
+ok '[ "$(rc r1)" = 0 ] && J r1 --slurpfile h "$T/o/ht.json" ".rung.requested == 1 and .rung.served == 1 and .rung.last == 4 and .rung.skipped == [] and .code == null and .chain == [.rung.link]
+  and .rung.link.connection == \$h[0].chain[0].connection and .rung.link.model == \$h[0].chain[0].model and .rung.link.effort == \"qa-hi\" and .rung.link.status == \"usable\""' \
+  "14a rung 1 keeps the chain head's model and raises its effort (the link's parameters beat the role's tier entry)"
+n0=$(evn rg "true"); rs rg r3 --role "$NR" --project qa-proj --rung 3; n1=$(evn rg "true")
+ok '[ "$(rc r3)" = 0 ] && J r3 ".rung.served == 4 and [.rung.skipped[] | [.rung, .connection, .status, .code]] == [[3, \"qa-front\", \"needs_grant\", \"$C_CROSS\"]]" &&
+  [ $((n1 - n0)) = 1 ] && [ "$(evn rg ".type == \"routing.rung-skipped\" and .code == \"$C_SKIP\"")" = 1 ]' \
+  "14b a last-resort rung with no crossing grant is skipped (needs_grant $C_CROSS) and the next rung served; one trusted $C_SKIP line"
+mk rgg rg; cgrant rgg qa-cg qa-rung "$FRONT" '{"level":"global"}'; rs rgg g3 --role "$NR" --project qa-proj --rung 3
+ok 'passes rgg && [ "$(rc g3)" = 0 ] && J g3 ".rung.served == 3 and .rung.skipped == [] and .rung.link.connection == \"qa-front\""' "14c with a crossing grant in force the same rung is served"
+mk rgl rg; ed rgl data-policy '.default.mode = "local_only"'; rs rgl l2 --role "$NR" --project qa-proj --rung 2
+ok 'passes rgl && [ "$(rc l2)" = 0 ] && J l2 ".local_only and .rung.served == 4 and [.rung.skipped[] | [.rung, .status, .code]] == [[2, \"excluded\", \"$C_POLICY\"], [3, \"excluded\", \"$C_POLICY\"]]" &&
+  [ "$(evn rgl ".type == \"routing.rung-skipped\"")" = 2 ]' \
+  "14d Local only: both cloud rungs are skipped (excluded $C_POLICY, in rung order, one line each), the local rung served"
+m0=$(evn rg ".type == \"routing.rung-exhausted\""); rs rg x5 --role "$NR" --project qa-proj --rung 5; rs rg nc --role "$NR2" --project qa-proj --rung 1
+ok '[ "$(rc x5)" = 1 ] && J x5 ".code == \"$C_EXH\" and .rung.served == null and .rung.link == null and .chain == []" && grep -q "^$C_EXH " "$T/o/x5.err" &&
+  [ "$(rc nc)" = 1 ] && J nc ".code == \"$C_EXH\" and .rung.last == 0" && [ $(( $(evn rg ".type == \"routing.rung-exhausted\" and .code == \"$C_EXH\"") - m0 )) = 2 ]' \
+  "14e past the last rung, and for a role with no chain: $C_EXH (escalate to the owner), exit 1, one routing.rung-exhausted line each"
+rs rg ex1 --role "$ER" --project qa-proj --rung 1
+ok '[ "$(rc ex1)" = 0 ] && J ex1 ".rung.served == 2 and [.rung.skipped[] | [.rung, .status, .code]] == [[1, \"excluded\", \"$C_POLICY\"]]"' \
+  "14f an exempt role keeps its own class order for its rungs: a hosted rung is excluded ($C_POLICY), its local rung served"
+mk rgc rg; state rgc "{\"links\":{\"qa-local/qa-local-m1\":{\"until\":\"$SOON\"}},\"tasks\":{}}"; n0=$(evn rgc "true"); rs rgc c1 --role "$NR" --project qa-proj --rung 1
+ok '[ "$(rc c1)" = 1 ] && J c1 ".rung.served == 1 and .rung.link.status == \"cooldown\" and .code == \"$C_COOL\"" && [ "$(evn rgc "true")" = "$n0" ]' \
+  "14g a rung in cooldown is answered as itself ($C_COOL, exit 1): no climb, no event line"
+n0=$(evn rgl "true"); STUB_WORKER_MARK=1 rs rgl wk --role "$NR" --project qa-proj --rung 2
+STELLA_ROOT=$T/rgl python3 -I -B -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import resolve as r
+print(json.dumps(r.resolve({"role": sys.argv[2], "project": "qa-proj", "rung": 2})))' "$BIN" "$NR" >"$T/o/imp.json" 2>"$T/o/imp.err"
+ok 'closed wk STL-CFG-312 && J imp ".rung.served == 4 and (.rung.skipped | length) == 2" && [ "$(evn rgl "true")" = "$n0" ]' \
+  "14h --rung in a worker environment fails closed (STL-CFG-312, no answer); resolve(ctx) with a rung answers the same walk and writes no event line"
+mk rgf rgl; rm -f "$T/rgf/$EVREL"; mkdir -p "$T/rgf/$EVREL"; rs rgf f2 --role "$NR" --project qa-proj --rung 2; rs rgf f5 --role "$NR" --project qa-proj --rung 5
+ok '[ "$(rc f2)" = 1 ] && J f2 ".chain == [] and .rung.served == null and (.code | test(\"^STL-[A-Z]+-[0-9]{3}$\")) and .code != \"$C_EXH\"" &&
+  [ "$(rc f5)" = 1 ] && J f5 ".code == \"$C_EXH\" and (.rung.log_code | test(\"^STL-[A-Z]+-[0-9]{3}$\"))"' \
+  "14i an event log that cannot be written: a served rung after skips is withdrawn (the log's code); an exhausted walk keeps $C_EXH and names the log's code"
+for v in -1 x 1.5; do rs rg "u$v" --role "$NR" --project qa-proj --rung "$v"; done
+ok '[ "$(rc u-1)" = 2 ] && [ "$(rc ux)" = 2 ] && [ "$(rc u1.5)" = 2 ]' "14j --rung that is not a non-negative integer is a usage error (exit 2)"
+ok '[ "$(sha256sum "$RS")" = "$sum0" ] && ! grep -q "qa-" "$RS"' "14k the walk and the fake effort levels needed no change to the resolver's file, which names no fake id"
+
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
