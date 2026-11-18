@@ -38,7 +38,7 @@ if jq --argjson m "${lm:-null}" '(.providers | keys[0]) as $p | {"$schema"} + (i
       limit: ({context: $m.capabilities.context_tokens, output: $m.limits.output_tokens} | with_entries(select(.value != null)))}} else {} end)),
     permission: {skill: (.permission.skill | del(.brainstorming))}}' \
   /workspace/opencode.json > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
-then [ -n "$lm" ] || fail "opencode.json names no model: $why (role ${role:-unknown})"
+then [ -n "$lm" ] || [ "$(python3 -I /workspace/bin/stella_data.py get --json connections 2>/dev/null | jq '[.entries[] | select(.enabled == true and .locality == "local")] | length' 2>/dev/null)" = 0 ] || fail "opencode.json names no model: $why (role ${role:-unknown})"
 else rm -f "$cfg.tmp"; fail "opencode.json not written (jq or mv failed); the previous config is kept"; fi
 # Vetted anti-ai-slop-writing (jalaalrd/anti-ai-slop-writing@63255f9), kept in the ~/.hermes volume.
 skill=~/.hermes/skills/writing/anti-ai-slop-writing

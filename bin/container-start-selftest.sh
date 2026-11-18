@@ -74,6 +74,9 @@ ok '[ "$rc" != 0 ] && grep -q "opencode.json names no model: STL-MDL-7[0-9][0-9]
 rm -f "$RS"; jq "(.entries[] | $LQ | .allowed_roles) = []" /workspace/.stella/connections.json >"$FX/.stella/connections.json"   # data the resolver refuses to read
 run STELLA_ROOT=$FX
 ok '[ "$rc" != 0 ] && grep -q "opencode.json names no model: STL-CFG-310" "$T/err" && nomodel' "W7b-VAL-02: the resolver gives no answer (data that is not valid): the same, with the coded line it failed closed with (exit $rc: $(grep -m1 opencode "$T/err" | head -c 200))"
+jq "(.entries[] | $LQ | .enabled) = false" /workspace/.stella/connections.json >"$FX/.stella/connections.json"   # no enabled local link: optional, never fails the start
+run STELLA_ROOT=$FX
+ok '[ "$rc" = 0 ] && ! grep -q "names no model" "$T/err"' "no enabled local link: the missing OpenCode model does not fail the start (exit $rc)"
 
 # postStartCommand: the gateway session starts unless the firewall failed.
 PS=$(jq -r .postStartCommand /workspace/.devcontainer/devcontainer.json)

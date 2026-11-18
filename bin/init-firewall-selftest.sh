@@ -122,4 +122,8 @@ for c in "FAKE_OPEN=$OPEN example.com:443|example.com:443" "FAKE_OPEN=$OPEN gitl
   chk "${c%|*}"
   ok '[ "$rc" = 1 ] && grep "^FAIL" "$T/out" | grep -qF -- "${c#*|}"' "firewall-check: ${c%%=*} broken -> exit $rc, FAIL names ${c#*|}"
 done
+printf '#!/usr/bin/env bash\necho "{\\"entries\\": []}"\n' > "$T/chk/python3"; chmod +x "$T/chk/python3"   # connections data with no local link
+chk "FAKE_OPEN=${OPEN/host.docker.internal:11434/}"
+ok '[ "$rc" = 0 ] && ! grep -q "host.docker.internal" "$T/out"' "firewall-check: no enabled local link -> no Ollama probe, so the check still passes (exit $rc)"
+rm -f "$T/chk/python3"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
