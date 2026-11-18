@@ -149,6 +149,8 @@ for c in "git push origin main" "git push origin HEAD:main"; do
   ok '[ "$(ROLES_FILE=$T/trunk.json term $G "$c")" = 0 ]' "builder terminal allowed (K1b, main_branch trunk): $c"
 done
 ok '[ "$(ROLES_FILE=$T/none.json term $G "git push origin HEAD:card")" = 2 ] && [ "$(ROLES_FILE=$T/none.json term $G "ls")" = 0 ]' "builder terminal refused (K1b): git with the role table unreadable (fail closed)"
+QS1="g''it fetch origin x:main"; QS2='gi""t update-ref refs/heads/main HEAD'   # git split by quotes: the guard must still see the git word
+ok '[ "$(ROLES_FILE=$T/none.json term $G "$QS1")" = 2 ] && [ "$(ROLES_FILE=$T/none.json term $G "$QS2")" = 2 ] && [ "$(ROLES_FILE=$T/none.json term $G ls)" = 0 ]' "builder terminal refused (K1b): quote-split git with the role table unreadable (fail closed)"
 # K1b (red team): git writes to the main checkout are refused from any directory (-C, --git-dir, a ref update of main, a
 # commit against a path that is not a repo), and reads and linked-worktree commits are not. No bound worker: git-guard has no proof.
 GR=$T/gg; git init -q -b main "$GR/main" && git -C "$GR/main" -c user.name=test -c user.email=test@example.invalid commit -q --allow-empty -m init \
