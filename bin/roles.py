@@ -47,7 +47,7 @@ MAX_TOKENS = 2**53 - 1   # the largest integer every JSON reader (a double) hold
 SCHEMA_VERSION = 1
 # The keys each object of the table may carry: these lists (validate() refuses any other key) and the schema's property lists each
 # hold them, and roles-selftest checks they are equal. A key a reader starts to use is added in both in the same change.
-ROLE_KEYS = set(PERMS) | {"workspace", "allowed_overrides", "requirements", "background_review", "complete_metadata",
+ROLE_KEYS = set(PERMS) | {"workspace", "allowed_overrides", "requirements", "background_review", "optional", "complete_metadata",
                           "complete_needs_review", "workers", "skills_disabled", "platform_toolsets", "config", "git_identity", "hooks",
                           "runs_unboxed", "catch_all_tools", "global_id", "install_id"}
 HOOK_KEYS = {"matcher", "file", "command", "timeout", "workers", "writes", "catch_all"}   # writes: "refused" = the hook refuses every write; "judged" = a text guard that lets some through
@@ -189,6 +189,8 @@ def validate(d, root=ROOT):
             errs.append(f"role {n}: allowed_overrides must be a list of {', '.join(OVERRIDES)}, each once")
         if "background_review" in r and not isinstance(r["background_review"], bool):
             errs.append(f"role {n}: background_review must be true or false")
+        if "optional" in r and not isinstance(r["optional"], bool):
+            errs.append(f"role {n}: optional must be true or false")
         cm = r.get("complete_metadata")   # S3A-03: the metadata pairs a reviewing role's kanban_complete must carry
         if "complete_metadata" in r and not (isinstance(cm, dict) and cm and all(isinstance(k, str) and k and isinstance(v, str) and v
                                                                       for k, v in cm.items())):

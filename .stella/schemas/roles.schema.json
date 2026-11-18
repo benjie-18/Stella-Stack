@@ -313,6 +313,10 @@
         "background_review": {
           "type": "boolean"
         },
+        "optional": {
+          "type": "boolean",
+          "description": "true: no link able to serve this role is not a failure at load, check or preset time; it fails when the role is asked for. Absent or false: the role is required."
+        },
         "complete_metadata": {
           "type": "object"
         },

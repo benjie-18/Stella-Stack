@@ -880,6 +880,7 @@
       ]
     },
     "look": {
+      "optional": true,
       "global_id": "1eac93e0-3237-4edd-91ff-58e77ac068eb",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "runs_unboxed": false,

@@ -397,7 +397,7 @@ preset's `allowed_localities` unless its class is the role's last resort) (STL-M
 judged; a preset has no project, so the project's policy and grants are judged for an assignment and by the resolver); a
 preset that leaves an active role no link that can serve it: of its pins, its fallbacks and the catalog's links of its class
 order, needs class and last resort, none passes the link judge (the owner's global assignment for the role counts as one)
-(STL-MDL-725 for a required role, else STL-MDL-726); an empty class order; a link class with
+(STL-MDL-725 for a role the workflow requires, else STL-MDL-726; a role whose row in the role table has `optional: true`, such as `look`, is never judged here: it fails with NO_LINK, naming the role, when it is asked for); an empty class order; a link class with
 `hosted: false` on a link that leaves the machine
 (by `reach()`; the locality rules themselves read `reach()` only, never the label); a hosted class whose `privacy_rank` is
 not above that of every class that is not hosted; an id listed twice, an exempt role too; an exempt role's class order
