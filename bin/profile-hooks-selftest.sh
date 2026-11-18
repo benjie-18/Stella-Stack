@@ -104,6 +104,10 @@ done
 ok '[ "$(run $R process_manage "{\"action\":\"list\"}")" = 0 ] && [ "$(run $R process_manage "{\"action\":\"poll\",\"session_id\":\"p1\"}")" = 0 ]' "process_manage list/poll allowed"
 ok '[ "$(run $R process_manage "{\"action\":\"kill\",\"session_id\":\"p1\"}")" = 2 ] && [ "$(run $R process_manage "{\"action\":\"submit\",\"session_id\":\"p1\",\"data\":\"rm x\"}")" = 2 ]' "process_manage kill/submit refused"
 ok '[ "$(echo not-json | $R >/dev/null 2>&1; echo $?)" = 2 ]' "read-only terminal fails closed on a garbage payload"
+# sweep B: nothing is boxed without a sandbox block, so no card worktree folders exist to refuse and git still runs in the stack (norm: as box-selftest's mkrf)
+NORM='def norm: . as $d | (($d.sandbox.boxed_profiles // []) as $b | [$d.profiles | to_entries[] | select(.key as $k | $b | index($k) | not) | .value.role]) as $rs | reduce ($rs | unique)[] as $x (.; if $d.roles[$x].runs_unboxed == true then . else .roles[$x] |= (.runs_unboxed = true | .hooks = $d.roles[$d.fallback_role].hooks | .platform_toolsets = $d.roles[$d.fallback_role].platform_toolsets | .catch_all_tools = $d.roles[$d.fallback_role].catch_all_tools) end);'
+jq "$NORM del(.sandbox) | norm" "$D/../roles.json" >"$T/nosb.json"
+ok '[ "$(ROLES_FILE=$T/nosb.json term $R "git status --short")" = 0 ]' "read-only terminal: git still runs in the stack when the role table has no sandbox block"
 
 G=${GG:-$D/builder/git-guard.py}
 for c in "git config user.name x" "git config --global user.email a@b" "git -c user.email=x commit -m y" \

@@ -3,6 +3,7 @@
 # from the host, because node cannot read iptables:   docker exec -u root <container> /workspace/bin/firewall-check.sh
 # One PASS/FAIL line per probe; exit 1 if any probe fails. Changes nothing: TCP connects, one DNS query, `iptables -S`.
 set -u
+jq() { env -u HOME jq "$@"; }  # RT-RTA-02: ~/.jq is worker-writable and jq has no flag to skip it
 fails=0
 result() { if [ "$1" = 0 ]; then echo "PASS $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 tcp() { timeout 8 bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$1" "$2" >/dev/null 2>&1; }   # TCP connect only
