@@ -2732,6 +2732,16 @@
       "why": "F2 W6 fix: bin/settings.py explain imports the resolver (resolve.role_view), so every selftest that can reach settings.py reaches the resolver and what it imports (from reach)."
     },
     {
+      "globs": [".claude/settings.json", ".stella/protocols.json", ".stella/settings.json", "bin/approvals.py", "bin/consent.py", "bin/credentials.py", "bin/resolve.py", "bin/route.py", "bin/settings.py"],
+      "targets": ["container-start", "firewall-probe", "init-firewall"],
+      "why": "F2 W7b fix: bin/container-start.sh takes OpenCode's model from the resolver, so every selftest that can reach container-start.sh reaches the resolver and what it imports (from reach)."
+    },
+    {
+      "globs": [".stella/connections.json"],
+      "targets": ["container-start"],
+      "why": "F2 W7b fix: read by the resolver that bin/container-start.sh now names (from reach)."
+    },
+    {
       "globs": ["bin/settings.py", ".stella/connections.json"],
       "targets": ["box"],
       "why": "F2 W7b: bin/box.py takes the review model from the resolver, which reads these (from reach)."
