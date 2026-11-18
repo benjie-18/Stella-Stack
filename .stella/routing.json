@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "link_classes": [
+    {
+      "id": "local",
+      "privacy_rank": 0,
+      "hosted": false
+    },
+    {
+      "id": "frontier",
+      "privacy_rank": 1,
+      "hosted": true
+    },
+    {
+      "id": "free_cloud",
+      "privacy_rank": 2,
+      "hosted": true
+    }
+  ],
+  "class_defaults": {
+    "local": "local",
+    "aggregator": "free_cloud"
+  },
+  "task_tiers": [
+    {
+      "id": "light"
+    },
+    {
+      "id": "medium"
+    },
+    {
+      "id": "complex"
+    }
+  ],
+  "drivers": [
+    {
+      "id": "engine_loop",
+      "mid_task": true
+    },
+    {
+      "id": "worker_cli",
+      "mid_task": false
+    }
+  ],
+  "exempt_roles": [
+    {
+      "role": "router",
+      "class_order": ["local"],
+      "in_fallback_chain": true
+    },
+    {
+      "role": "voice",
+      "class_order": ["local"],
+      "in_fallback_chain": false
+    }
+  ],
+  "card_roles": ["builder", "reviewer", "tester", "validator", "verifier", "red-team"],
+  "workflow": {
+    "required_roles": [
+      {
+        "role": "tester",
+        "when": "always"
+      },
+      {
+        "role": "red-team",
+        "when": "security"
+      }
+    ],
+    "triggers": {
+      "security": {
+        "can_fire": true
+      }
+    }
+  },
+  "failover": {
+    "triggers": {
+      "rate_limit": {
+        "cooldown_s": 60,
+        "max_cooldown_s": 3600,
+        "scope": "link"
+      },
+      "daily_cap": {
+        "cooldown_s": 3600,
+        "max_cooldown_s": 86400,
+        "scope": "connection"
+      },
+      "timeout": {
+        "cooldown_s": 120,
+        "max_cooldown_s": 1800,
+        "scope": "link"
+      },
+      "server_error": {
+        "cooldown_s": 120,
+        "max_cooldown_s": 1800,
+        "scope": "link"
+      },
+      "malformed_tool_call": {
+        "cooldown_s": 300,
+        "max_cooldown_s": 3600,
+        "scope": "link"
+      },
+      "model_gone": {
+        "cooldown_s": 86400,
+        "max_cooldown_s": 86400,
+        "scope": "link"
+      },
+      "context_too_small": {
+        "cooldown_s": 0,
+        "max_cooldown_s": 0,
+        "scope": "link"
+      }
+    },
+    "same_connection_first": true,
+    "max_switches_per_task": 8,
+    "retry_count": 0
+  },
+  "consent": {
+    "approval_class": "send",
+    "ttl_s": 86400,
+    "alert_code_queue": "STL-MDL-720",
+    "alert_code_notice": "STL-MDL-729"
+  },
+  "card_facts": {
+    "when_missing": {
+      "carries_secrets": true,
+      "vault_content": true
+    }
+  },
+  "credentials": {
+    "backend": "none",
+    "backends": {
+      "none": {
+        "kind": "none"
+      }
+    }
+  }
+}

@@ -50,7 +50,9 @@ and, on a row with records, `record_kind` (a kind of the data policy's `record_k
 names a kind the policy does not list, is refused).
 It also names the event log, the backup folder, the applied-state file, the role table, and (F1c) the owner key stub
 (`owner_key`), the approval store (`approval_store`), the event writer's state and identity (`event_writer_state`,
-`event_writer_id`) and the untrusted event stream (`untrusted_events`). Every path in the index is
+`event_writer_id`), the untrusted event stream (`untrusted_events`) and (F2) the failover state (`routing_state`, a file) and the
+card facts store (`card_facts`, a folder: one `<card>.json` {`project`, `carries_secrets`, `vault_content`} per card, written on
+the host only; the card document an agent writes is never read for these facts). Every path in the index is
 relative, has no `..` part and must resolve (symlinks followed) inside the stack root; `check` refuses one that does not,
 and `get`, `list` and `search` never read it. `untrusted_events`, the one state path a worker writes, never is, holds or lies
 inside another state path of the index: `check` refuses that overlap (STL-CFG-310) and the stream's writer and reader refuse it. The index row of the index is `owner_only`: it decides which files are. A row
@@ -273,6 +275,27 @@ no rule row counts as never) and its `locality` is `local` or `hub` (a home-auto
 source is on a hub). A provider may carry `realtime` {`audio`, `video`} for models that take live audio or video (schema only).
 The shipped Claude Code login (`claude-subscription`, CLI `claude-code`, used by the builder-claude and reviewer-claude
 profiles) is `cli-login` with `terms_ok` null; every other shipped entry is `api`.
+Routing fields (F2, all optional): `link_class` on a provider and `models[].link_class` (an override) name a link class of
+`routing.json` (x-ref: an unknown id is refused); `stella_data.link_class(prov, model)` is the one function that names
+a link's class: the model's, else the connection's, else the class `routing.json` `class_defaults` gives a link whose
+`reach()` is local, or an aggregator; any other link has no class and is not routable. `protocol` (an api provider's wire
+shape) is an x-ref to an entry of `.stella/protocols.json`; `models[].score` (advertised suitability, a stub until the F2c
+benchmark) is shape-checked only. Capabilities are advertised values until the F2b probe (`probe_source: "advertised"`); a null capability
+meets no requirement of a role (`stella_data.unmet(requirements, capabilities)`).
+A model's `limits` object (F2 W7b; free-form, null = none) holds what the callers read: `bin/escalate.sh` reads `purposes` (a
+list: the only purposes the model runs for), `max_concurrent` (slots) and `per_day` (calls per UTC day), each a value or a
+string naming the key of the limits store (`.supervisor/limits.env`) that holds it (a key that store does not define refuses
+the call), and `purpose_models` {purpose: the model name the CLI gets for that purpose instead of the id};
+`bin/container-start.sh` reads `output_tokens` for the coding tool's user config, whose model is the first link the resolver
+lists `usable` on a local connection for the role that runs that tool (the role table's first profile of its worker kind),
+asked at container start about a card with no facts record and no project; no such link, or no answer, leaves a config that
+names no model, and the step fails with the resolver's code. The engine model of each Hermes profile is set outside the repo,
+by hand (stub `profile-engine-model-host-step`, due F2b). No script names a model, a model's limit or a per-model settings key.
+The callers of a coding CLI (`bin/escalate.sh`, the builder model guard) take the model from the resolver: the escalation
+script runs the model its caller names only when the resolver lists that link `usable` (stub `escalate-caller-names-model`,
+due F2b), and the guard allows the model of the first usable link on a connection whose `cli` is its CLI; the F1b mark
+`worker_run` is gone. A call of `bin/escalate.sh` from a worker run (a card proven for the call by `roles.py prove`, or a
+worker marker of the role table set) names that run's own proven card or is refused (`STL-GRD-604`, exit 3, not queued).
 
 ### `.stella/data-policy.json`
 `data_classes[]`, `local_hosts[]` (the host names that count as local; a provider declared local may list only these), a `default` and `projects{}`; each has `mode` (`open`, `local_only`, `allowed_providers`) and
@@ -293,7 +316,9 @@ never synced, stored only when the owner asks, sent to a hosted model only under
 reach a worker's or the supervisor's context; `secret` is never synced and never hosted. A class with no rule row gets the
 most restrictive rules (never, owner_asks, never, text_only); a rule row for a class `data_classes` does not define is
 refused. `privacy_grants[]` (`id`, `global_id`, `install_id`, `data_class`, `connection` (an x-ref to the catalog),
-`granted_at`, optional `expires_at`) is `x-owner-only` and ships empty; routing (F2) reads it.
+`granted_at`, optional `expires_at`, and (F2) optional `scope` {`level` global or project, `project`}, `revoked_at` and
+`request_id`) is `x-owner-only` and ships empty; routing reads it. A grant with no `scope` is Stella-wide, as before F2.
+`check` refuses a grant for a class whose hosted rule is not `grant` (a class that never reaches a hosted link takes none).
 
 ### `.stella/install.json`
 The install's one document, owner-only: `install_id` (this install's UUID, made once, `x-owner-only`). No switch turns the
@@ -319,11 +344,85 @@ whose connection is cloud or `data_policy.hosted`, each data class the role hand
 follows its `class_rules` `hosted`: `allowed` passes, `never` (and a class with no rule row) is refused outright, `grant`
 needs a `privacy_grants` entry for that class naming the connection (id or `global_id`) that is in force: `granted_at` a
 real date not in the future, and `expires_at` (null or absent never expires) a real date after `granted_at` and not past;
-any other grant grants nothing. A private project never routes to a hosted connection (`policy_allows`). Card app rules are
+any other grant grants nothing. F2: one function, `stella_data.grant_in_force(grant, project, now)` (`now` naive UTC), judges
+privacy grants and crossing grants alike: the dates above, plus `scope` (level project holds in that project only and never
+for a task with no project; level global or no scope is Stella-wide) and `revoked_at` (a real date still ahead; any other
+value stops the grant). `route_problems(policies, classes, provider, now, project)` takes the project (a global assignment
+passes none) and returns `[{kind: terms|never|grant, data_class, text}]`: only kind `grant` can be lifted by a grant.
+A private project never routes to a hosted connection (`policy_allows`). Card app rules are
 F2's: when F2 routes by card, it refuses a `cli-login` app whose `terms_ok` is not true, and a hosted integration aggregator app
 (`integration_aggregator: true`) on a card that carries secrets or belongs to a private project.
-The resolver that applies the precedence is built in a later phase; this file is the data and the validator.
+The resolver that applies the precedence is `bin/resolve.py` (F2; see "Model calls, failover and keys"); this file is the data and the validator.
 *To add one:* append an assignment with a new `id`.
+**Presets (F2).** An effort mode is a routing preset. Beside its two required keys an entry may carry `label`, `builtin`,
+`based_on` (the preset it was copied from, or null), `class_order` (link classes in the order they are tried; an item is a
+class id, or a list of ids: the best suited of these), `frontier_when` {`tiers`} with `needs_class` (that class goes first for
+a listed task tier, or when no link of `class_order` meets the role's requirements), `last_resort` (a class used only under a
+crossing grant), `verification_depth`, `changelog[]` {`at`, `by`, `what`} and `roles{}`: per role `active` and optional
+`class_order`, `last_resort`, `pins[]`, `fallbacks[]`, `escalation_chain[]` (links; the chain is stored only, the walk is
+F2b). A role not listed follows the preset's own values and is active. Shipped, all `builtin: true`: standard (one best-of
+group of free cloud and local; frontier is its `needs_class` for the medium and complex tiers), eco (local, free cloud; last
+resort frontier), max (frontier, free cloud; last resort local), local_only (local). `selection` {`global`, `projects{}`,
+`cards{}`} names the active preset (card beats project beats global; ships standard). An assignment may add `class_order`
+(the owner's per-role override). Every key is optional, but a preset must leave each active role something to resolve from
+(see "What `check` refuses"); a class order, where given, holds at least one class. The ids that cannot be null
+(`frontier_when.tiers`, the three `selection` levels) are x-refs: an unknown one is refused and never printed.
+*To add a preset:* add a key under `effort_modes` (blank, or a copy of any preset with `based_on`), then select it.
+
+### `.stella/routing.json` (F2)
+One owner-only document beside the presets: `link_classes[]` {`id`, `privacy_rank` (0 = most private), `hosted`};
+`class_defaults` {`local`, `aggregator`} (the class of a link that names none); `task_tiers[]` {`id`}; `drivers[]` {`id`,
+`mid_task`} (the engine's own loop may switch mid-task, a worker CLI only between attempts; a `cli-login` connection never
+switches mid-task); `exempt_roles[]` {`role`, `class_order`, `in_fallback_chain`} (the preset class rules do not apply to
+them, and that is never a crossing; their class order names no hosted class, so they stay on links that do not leave the
+machine under every preset); `card_roles[]` (the roles that work a card: the resolver needs the card);
+`workflow` {`required_roles[]` {`role`, `when`: `always` or a trigger id}, `triggers{}` {`can_fire`}}; `failover` {`triggers{}`
+by id {`cooldown_s`, `max_cooldown_s`, `scope` link or connection} (exactly the trigger ids of the protocols schema, every
+one present: the schema pins the set), `same_connection_first`, `max_switches_per_task`,
+`retry_count`}; `consent` {`approval_class`, `ttl_s`, `alert_code_queue`, `alert_code_notice`}; `card_facts` {`when_missing`:
+the card facts the resolver judges, each `true`: a fact that is not recorded counts as holding, so hosted links are excluded;
+`carries_secrets` and `vault_content` are required, `false` is refused, a new fact is added as a key}; `credentials` {`backend`,
+`backends{}` by id {`kind` none or dir, `path`}} (ships kind none: every read is refused until the secrets broker).
+*To add a link class, tier or driver:* add the entry; no code names one. A hosted class takes a `privacy_rank` above every
+class that is not hosted. *A failover trigger* is added to the protocols schema and to this file's schema together.
+**What `check` refuses** (rules `presets`, `routing`, `link classes`, `grant scopes` of `bin/stella_data.py`; an unknown id
+fails closed and is never printed): a class a `class_order`, `needs_class` or `last_resort` names that `link_classes` does not
+define; a `based_on` that is no preset; a role in a preset or in this file that is not an assignable role of the role table; a
+`when` that is neither `always` nor a trigger; a preset that sets `active: false` for a role `workflow.required_roles` lists as
+`always` or under a trigger that can fire (STL-MDL-725), or for an exempt role; an active role's pin or fallback that the one
+link judge refuses (`stella_data.link_problems()`, which also judges every assignment chain: the connection switched off, not
+listing the role or not allowing every data class it handles, a CLI login without `terms_ok`, the model not listed or not
+meeting the role's requirements by the catalog's advertised capabilities, a null one meeting none, the link outside the
+preset's `allowed_localities` unless its class is the role's last resort) (STL-MDL-726; an inactive role's links are not
+judged; a preset has no project, so the project's policy and grants are judged for an assignment and by the resolver); a
+preset that leaves an active role no link that can serve it: of its pins, its fallbacks and the catalog's links of its class
+order, needs class and last resort, none passes the link judge (the owner's global assignment for the role counts as one)
+(STL-MDL-725 for a role the workflow requires, else STL-MDL-726; a role whose row in the role table has `optional: true`, such as `look`, is never judged here: it fails with NO_LINK, naming the role, when it is asked for); an empty class order; a link class with
+`hosted: false` on a link that leaves the machine
+(by `reach()`; the locality rules themselves read `reach()` only, never the label); a hosted class whose `privacy_rank` is
+not above that of every class that is not hosted; an id listed twice, an exempt role too; an exempt role's class order
+that names a hosted class; a cooldown above its
+cap; a consent approval class or alert code that does not exist; a credentials backend that is not defined, and a `dir`
+backend whose path is not inside a protected state path of the index; a grant whose scope level and project disagree, or
+whose scope names its project by a global_id (a grant names the alias). The policies of a project come from one helper,
+`stella_data.project_policies()` (the project's row, or every default, plus every Local only default: DC-04).
+**Built-in presets.** `bin/stella-apply.py apply` (a dry run too) refuses a candidate that changes any key of a preset marked
+`builtin: true`, drops it, or marks another preset `builtin: true` (a new id, or a custom preset turned into one: the owner
+could not edit or remove it afterwards) (STL-MDL-727, `stella_data.frozen()`); a custom preset (a new id, `builtin` false or
+absent) applies and can be changed. The comparison is with the file only while the file holds the applied bytes or the
+committed ones: an update of a built-in preset that arrives committed (a release merged outside the apply tool) is the
+baseline whatever was applied before, so the owner's next apply goes through and a candidate that puts the older built-in
+back is refused. A file edited by hand, damaged or missing is compared instead with the
+document last applied, or, that not known, the committed one: a hand edit of a built-in preset is never recorded by an apply
+of the edited file, and putting the baseline's presets back is allowed. A candidate that drops a built-in preset something still names is refused by the validity check
+first (STL-CFG-313). `routing_state` and `card_facts` are protected state paths (`bin/roles.py` STATE_KEYS): no role reads or
+writes them.
+
+### `.stella/grants.json`
+`grants[]` (capability grants, F1c) and (F2, optional) `crossing_grants[]`: `id`, `global_id`, `install_id`, `preset` and
+`to_class` (x-refs: a preset, a link class), `scope` {`level` global or project, `project`}, `granted_at`, `expires_at`,
+`revoked_at`, `request_id`. A crossing grant lets that preset use its last-resort class while it is in force
+(`stella_data.grant_in_force`). Owner-only and identity-critical; ships empty.
 
 ### `.stella/approved-hosts.json`
 `hosts[]`: host (a host name; a wildcard `*.` needs at least two labels after it, so `*.com` is refused), port, scope and approved_by (not empty), approved_at and expires_at
@@ -656,6 +755,99 @@ The canonical env writer refuses a value that holds both a single quote and any 
 - The merge answers a card that changes an owner or state path with STL-CFG-312 before it looks at untracked files (STL-GRD-607), so such a card never reads as a checkout that is not ready. STL-GRD-607 also refuses a card that turns a tracked folder of main into a file or a link while a file below it is not tracked (git would remove it with the folder), and a merge that did not produce the checked tree (it is undone). The files a 607 names are the main checkout's own local files: the card goes back or the owner moves them aside; an ignored file is never added to the repository.
 - STL-GRD-605 no longer says nothing was merged: with `--push` it can be raised after the local merge, and the merge output says which it is (nothing merged, or merged locally and not pushed, with the undo). A `merge-check/<card>` branch left by an interrupted merge is reused.
 - The write guard refuses every call with STL-CFG-303 while an owner command file cannot be read: its by-bytes rule for copies cannot be proven then.
+
+## Model calls, failover and keys (F2: `bin/route.py`, `bin/credentials.py`)
+Both are owner commands of the role table (no role runs them) and refuse in a worker environment (STL-CFG-312): a worker gets
+the read-only resolver at most. `route.py` holds no routing rule: it walks the chain `resolve.resolve(ctx)` returns (ctx:
+`role`, `project`, `card`, `tier`, `driver`, `task`) and never adds a link, a grant or a class to it.
+- `route.py call --role R --project P [--card C] [--tier T] [--driver D] [--pending-tool-call] --task ID --json`, prompt on
+  stdin (the engine loop's driver): calls the task's next link through its connection's wire shape (`protocol`, an entry of
+  `.stella/protocols.json`; the first host of the catalog entry, plain HTTP only to a `local_hosts` name or a loopback address,
+  TLS to any other; a redirect is never followed) and moves on after a failure until a link answers. Output: `task`, `link`
+  {`connection`, `model`}, `link_class`, `text`, `tool_calls`, `usage`, `model`, `switches`, `failure_history[]`, `refused[]`
+  {`link`, `code`, `reason`}, `stubs[]`. The call timeout is the `CALL_TIMEOUT` setting.
+- `route.py attempt` (same arguments, no prompt; a worker CLI's launcher): one link and the task's `failure_history`, no model
+  call, never a switch inside an attempt. `route.py result --task ID --link <connection>/<model> --outcome ok|<trigger id>`:
+  how the attempt ended; a trigger cools the link, so the next attempt starts on the next link.
+- **A failure becomes a trigger** by the wire shape's `errors` rows (first match). The transport itself says `timeout` and
+  `server_error` (no answer, no connection, an answer that is not JSON); tool-call arguments that do not parse are
+  `malformed_tool_call`. An error no row maps is no trigger: the task stops (STL-MDL-710). `failover.retry_count` tries the
+  same link again first.
+- **The next link** is the first of the chain that is `usable` or `needs_grant`, not in cooldown, and has not failed in this
+  task (the loop guard); with `failover.same_connection_first` a link of the connection just left goes first. A task that has
+  no link left, or would pass `failover.max_switches_per_task`, stops with STL-MDL-723.
+- **Mid-task switch** (`call` only): refused (STL-MDL-722, one event line; the link after it is judged) when the chain says the
+  link is not `mid_task`, when its advertised `context_tokens` do not hold the conversation (about four bytes a token; stub
+  `routing-advertised-context`) or when `--pending-tool-call` is given and the link speaks another wire shape. A link with no
+  wire shape (a `cli-login` connection) is never called here.
+- **A link that needs a grant is never skipped.** With a card and an importable module `consent`,
+  `consent.gate(ctx, link)` -> {`status`: `granted`, `waiting` or `queued`, `code`, `request_id`} decides; with no card, or no
+  such module, the task stops with STL-MDL-719 and one inbox alert and raises no approval request. Exit 3: the task waits.
+- **Consent** (`bin/consent.py`, an owner command of the role table; host only, STL-CFG-312 in a worker environment). The gate
+  asks the resolver again and answers `granted` only when it no longer asks for a grant. Else, for the grant the resolver
+  names (kind `crossing`: preset and class, a `crossing_grants` row; kind `privacy`: data class and connection, a
+  `privacy_grants` row; always `scope` project: a Stella-wide grant is the owner's own apply): one approval request (class
+  and ttl: `routing.json` `consent`), delivered on every channel that may answer, one trusted event line `routing.consent`;
+  a pending request of the same grant is reused. The request's action is the apply tool's own, `{op: apply, target: the
+  index row of the grant file, old_digest, new_digest}`: sha256 of the file now and of the file with the grant row appended
+  (that row has no `request_id` yet; the candidate applied is the same document with `request_id` set). A request counts
+  only when consent itself made it (a trusted `routing.consent` line names it, its trusted request line carries the consent
+  approval class, it is no worker's ask), by the approval service's word (the trusted log), and only while its digest is
+  the digest of that action rebuilt on the file as it is now: a file that changed since (a revoke included), a denied or
+  an expired request asks again. The row is rebuilt for that: its grant fields and its project scope are what the call
+  needs (`complete`, `pending`: what the trusted `routing.consent` line says); the state file gives only the row's `id`,
+  `global_id` and `granted_at`, and a state row that differs from the rebuilt one asks again. An approved request is
+  applied once, through `bin/stella-apply.py` with a proof of this host's owner key bound to those bytes: once a trusted
+  line of the grant file's row put its `request_id` into the file it is spent, so a grant file put back to its old bytes
+  asks again.
+  Where the grant rows are identity-critical (the shipped owner-auth data) the apply needs the typed phrase, which the gate
+  never asks: the task stays `waiting` (STL-MDL-719) and the owner is told, once per request in the inbox, the one host
+  command `consent.py complete <request id>`, which runs the apply on the terminal (no terminal: STL-OWN-808).
+  Unattended run mode (`UNATTENDED_MODE`, read by `settings.py`'s reader; when its store holds no value, from the owner
+  file the owner config reader names) off: `waiting`. On: the task is noted in the state's `queue`, the inbox gets one
+  alert with `consent.alert_code_queue`, and the answer is `queued`; the request is still raised once.
+  `consent.py pending --json` lists the requests not yet settled (`complete` of a request consent did not make:
+  STL-CFG-311; of one that no longer stands: STL-MDL-719); `consent.py revoke <grant id> --out <file>` writes the
+  candidate in which that grant carries `revoked_at` (never over a file) for the owner to apply, and applies nothing.
+  The state file keeps `consents` {grant key: `request_id`, `kind`, `row`, `task`, `card`, `told`} and `queue` {task:
+  `request_id`, `link`, `card`, `at`}; like the rest of it, they prove nothing.
+- **Notice.** A pick or switch to a class of higher `privacy_rank` than the class of the link the task used last (on a
+  task's first pick: of the chain's first link that is not `excluded`; a head that cools down or needs a grant is that bar,
+  only an excluded head is skipped) sends one inbox alert and writes one event line with `consent.alert_code_notice`,
+  whatever the grant.
+- **A switch is judged from the task's last link** (state field `last`), whoever caused the cooldown: picking any other
+  link on a later call is a counted switch with the mid-task checks, also when the task goes back to an earlier link.
+- **Event lines** (trusted log): `routing.pick` (a call's or attempt's first link, with the resolver's `decision` reason),
+  `routing.switch` (STL-MDL-721, `old.link` and `new.link`), `routing.switch-refused` (722), `routing.notice`,
+  `routing.cooldown` (`result` cooled a link) and `routing.cooldown-cleared` (a success cleared it). No pick, switch or
+  cooldown change by `result` happens without its line.
+- **Bounds.** One wall-clock deadline (`CALL_TIMEOUT`) covers a whole call: name lookup, connect, status line, headers and
+  body; past it the result is `timeout`, whatever the server still sends. A body that cannot be parsed, or holds no text and
+  no tool call, is `server_error`; no proxy variable of the environment is followed; a task id longer than the limit in
+  `route.py` is refused (STL-MDL-711) and the state keeps the task entries used last.
+- **The resolver's per-role view** is `resolve.role_view(role, project, card=None)` (the preset, class order and its
+  source, last resort, pins and fallbacks `resolve()` itself uses); `settings.py explain` prints it.
+- **A project id given to the resolver** (the request's, a card facts record's, an assignment scope's) is a listed project
+  only when it is that project's id or `global_id` exactly. It is refused (STL-MDL-711) when it is a listed one but for
+  case or outer spaces, and when it does not match the pattern the data policy schema sets for a project key (an
+  invisible, full-width or look-alike character, a combining mark), so a misspelling never drops a project's private or
+  Local only marking. An id that matches the pattern and is not listed follows the default policy, as does an empty id
+  (no project: what a caller with no card gives).
+- **A cooldown the resolver reads** from the state file: an `until` that is text but no date counts as still ahead (the
+  link is `cooldown`, `cooldown_until` null), as `route.py` reads it.
+- **State** (index key `routing_state`, a protected state path; proof of nothing): `links` {`<connection>/<model>`, or
+  `<connection>` for a trigger of scope `connection`: `trigger`, `since`, `until`, `failures`, `observed_limit`} and `tasks`
+  {task: `switches`, `visited[]`, `history[]` {`link`, `trigger`, `at`}, `last`}; written whole under a lock, refused when it
+  is, or passes through, a link. `until` = now + `cooldown_s`, doubled per repeated failure up to `max_cooldown_s`; one
+  success clears the link.
+- **Keys.** `credentials.get(name)` (in-process only; no command prints a value), `credentials.check(names)` -> True only
+  when the backend holds every name, False for anything else, a worker environment included (a plain yes or no: the resolver
+  asks it for an aggregator's broker entries) and `credentials.state(names)`
+  -> {`backend`, `kind`, `ok`, `missing`}, which the CLI `credentials.py check [--json] [<name>...]` prints. The backend is `routing.json` `credentials`: kind `none` refuses every read (STL-MDL-728) until the secrets
+  broker; kind `dir` is one file per name (this user's, 0600, one link, no symbolic link on the way, one line of printable
+  ASCII). `route.py` reads the first name of the connection's `secrets[]`, puts it into the request header only, and it is in
+  no message, event, state or output: an answer that repeats the key is printed with the key masked, where it stands whole
+  and where it is glued to other characters.
 
 ## Alert codes
 `STL-CFG-310` (a data file is invalid), `STL-CFG-311` (a name is not in the data) and `STL-CFG-319` (an env-format row is

@@ -81,7 +81,7 @@ ok '[ ! -s "$T/sup/sends" ] && [ "$(hg)" = quiet ] && grep -q "gateway quiet (qu
 reset; logw gateway.log ""; : > "$T/second.log"; gw --arg s "$T/second.log" '.gateway.activity_logs += [$s]'; $W >/dev/null 2>&1
 ok '[ ! -s "$T/sup/sends" ] && [ "$(hg)" = active ]' "D47: activity only in the second log: no alert"
 reset; gw '.gateway.process_match = "no-such-gateway-process"'; $W >/dev/null 2>&1; $W >/dev/null 2>&1
-ok '[ "$(n "\[STL-GW-101\]\*\*$")" = 1 ] && grep -q "No running program for Stella.s Discord connection was found" "$T/sup/sends" && ! grep -qiE "gone quiet|silent|no activity|$PLAIN" "$T/sup/sends"' "D47: process missing: one alert that names the process, not a quiet log"
+ok '[ "$(n "\[STL-GW-101\]\*\*$")" = 1 ] && grep -q "No running program for Stella.s chat connection was found" "$T/sup/sends" && ! grep -qiE "gone quiet|silent|no activity|$PLAIN" "$T/sup/sends"' "D47: process missing: one alert that names the process, not a quiet log"
 fresh; $W >/dev/null 2>&1
 ok '[ "$(n "\[STL-GW-101 resolved\]")" = 1 ] && grep -q "the check saw: her log was written recently" "$T/sup/sends" && ! grep -q "quiet or down" "$T/sup/sends"' "D47: recovery after a missing process says what was observed"
 reset; printf '%s\n%s\n' "$UP" "$DOWN" > "$T/gateway.log"; $W >/dev/null 2>&1; $W >/dev/null 2>&1
@@ -90,6 +90,8 @@ printf '%s\n' '2026-10-29 08:05:00,000 INFO gateway.run: ✓ discord reconnected
 ok '[ "$(n "\[STL-GW-102 resolved\]")" = 1 ] && grep -q "the check saw: her log was written recently" "$T/sup/sends" && ! grep -q "quiet or down" "$T/sup/sends"' "D47: recovery after a disconnect says what was observed"
 reset; WATCHDOG_SETTINGS="$T/no-such.json" $W >/dev/null 2>&1; WATCHDOG_SETTINGS="$T/no-such.json" $W >/dev/null 2>&1
 ok '[ "$(n "\[STL-GW-103\]\*\*$")" = 1 ] && [ "$(n "\[STL-GW-10[12]\]")" = 0 ] && grep -q "the settings for this check are missing or invalid" "$T/sup/sends" && ! grep -qE "$PLAIN" "$T/sup/sends"' "D47: unreadable settings: one unknown alert, not a down alert"
+reset; gw 'del(.run)'; $W >/dev/null 2>&1; rc1=$?; $W >/dev/null 2>&1
+ok '[ "$rc1" = 1 ] && [ "$(n "\[STL-GW-103\]\*\*$")" = 1 ] && [ "$(n "resolved")" = 0 ] && jq -e ".ok == false and (.failed | test(\"run\\\\.\"))" "$T/sup/status.json" >/dev/null' "settings without the run section: the run fails naming run.<key>, one unknown alert, no false recovery line"
 fresh; $W >/dev/null 2>&1
 ok '[ "$(n "\[STL-GW-103 resolved\]")" = 1 ] && grep -q "it saw: her log was written recently" "$T/sup/sends"' "D47: recovery after unknown says what the check saw"
 reset; rm -f "$T/gateway.log"; $W >/dev/null 2>&1; $W >/dev/null 2>&1
@@ -114,6 +116,9 @@ SET=/workspace/docs/hermes-local/watchdog-settings.json
 ok 'WATCHDOG_SETTINGS=$SET python3 -I /workspace/bin/watchdog_settings.py --check >/dev/null' "D47: the shipped settings file passes --check"
 jq 'del(.gateway.process_match)' $SET > "$T/bad1.json"; jq '.schema_version = 2' $SET > "$T/bad2.json"; jq '.gateway.connected_marker = "("' $SET > "$T/bad3.json"; jq '.test_rerun.rerun_command = "x"' $SET > "$T/bad4.json"
 ok '( for f in bad1 bad2 bad3 bad4; do WATCHDOG_SETTINGS="$T/$f.json" python3 -I /workspace/bin/watchdog_settings.py --check >/dev/null 2>&1 && exit 1; done; exit 0 )' "D47: --check refuses a missing key, a wrong schema_version, a bad regex and a rerun command without {check}"
+# Absent optional sections (test_rerun, model_watch) never block the gateway verdict or --check; each fails only when its feature runs, naming the section.
+reset; gw 'del(.test_rerun, .model_watch)'; logw gateway.log "$UP"; $W >/dev/null 2>&1
+ok '[ "$(hg)" = quiet ] && [ ! -s "$T/sup/sends" ] && WATCHDOG_SETTINGS="$T/settings.json" python3 -I /workspace/bin/watchdog_settings.py --check >/dev/null && WATCHDOG_SETTINGS="$T/settings.json" python3 -I /workspace/bin/watchdog_settings.py failures /dev/null 2>&1 | grep -q "test_rerun: missing" && WATCHDOG_SETTINGS="$T/settings.json" python3 -I -c "import sys; sys.path.insert(0, \"/workspace/bin\"); import model_watch; model_watch.settings()" 2>&1 | grep -q "model_watch: missing"' "D47: settings without the optional sections: gateway verdict still works, --check passes, and the missing section fails only when its feature runs, naming it"
 # K10: a quiet gateway must still refresh its own status file (state_file, every ~60 s); a stale one is "can't tell", not "down".
 WS=/workspace/bin/watchdog_settings.py
 st() { printf '{"gateway_state":"running","updated_at":"%s"}\n' "$(date -u -d "-$1 min" +%FT%T.000000+00:00)" > "$T/gateway_state.json"; }   # updated_at as Hermes writes it
@@ -234,5 +239,7 @@ ok '[ "$(n "automatic test run failed")" = 1 ] && grep -q "nothing was tested" "
 reset; gw 'del(.test_step)'; $W >/dev/null 2>&1
 ok '[ "$(n "automatic test run failed")" = 1 ] && grep -q "nothing was tested" "$T/sup/sends"' "S4: a settings file with no test_step is a failed test step, not a silent pass"
 jq "del(.test_step)" $SET > "$T/nots.json"
-ok '! WATCHDOG_SETTINGS="$T/nots.json" python3 -I $WS --check >/dev/null 2>&1' "S4: --check refuses settings without test_step.npm_script"
+ok 'WATCHDOG_SETTINGS="$T/nots.json" python3 -I $WS --check >/dev/null 2>&1' "S4: --check passes settings without test_step (optional; the test step fails clearly when it runs, above)"
+jq ".test_step.npm_script = \"\"" $SET > "$T/nots.json"
+ok '! WATCHDOG_SETTINGS="$T/nots.json" python3 -I $WS --check >/dev/null 2>&1' "S4: --check refuses a test_step that is present with an empty npm_script"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

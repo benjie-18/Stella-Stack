@@ -16,8 +16,9 @@ row=$(map_row "$card")
 exec 8>"$SUP/state/complete.lock"
 flock 8                                        # hook and cron backstop never post twice
 done_for() { grep -q "^${card}"$'\t'"$1"$'\t' "$DONE" 2>/dev/null; }
+sup_done() { done_for supervisor || [ -z "${SUPERVISOR_CHANNEL_ID:-}" ]; }   # no supervisor channel configured: that step is not owed
 done_for legacy && exit 0
-done_for thread && done_for supervisor && done_for delete_prompt && exit 0
+done_for thread && sup_done && done_for delete_prompt && exit 0
 
 json=$(kanban show "$card" --json 2>/dev/null) || exit 0
 [ "$(jq -r '.task.status' <<<"$json")" = done ] || exit 0
@@ -53,7 +54,7 @@ if ! done_for thread; then
     log COMPLETE_FAIL "hermes send to thread $thread failed"
   fi
 fi
-if ! done_for supervisor && [ -n "${SUPERVISOR_CHANNEL_ID:-}" ]; then
+if ! sup_done && [ -n "${SUPERVISOR_CHANNEL_ID:-}" ]; then
   # REST, not `hermes send`, which mirrors the line into Stella's #supervisor session as her own turn (F1).
   res=$(discord_action send_message "$SUPERVISOR_CHANNEL_ID" "$sup_line")
   if [ -n "$(jq -r '.message_id // empty' <<<"$res" 2>/dev/null)" ]; then
@@ -63,7 +64,7 @@ if ! done_for supervisor && [ -n "${SUPERVISOR_CHANNEL_ID:-}" ]; then
   fi
 fi
 set_status_reaction "$card" completed   # 🌟 on the reply (D32)
-if done_for thread && done_for supervisor && ! done_for delete_prompt; then
+if done_for thread && sup_done && ! done_for delete_prompt; then
   # Completion prompt (D37): 🔒 Archive (renamed, read-only) or 🗑️ Delete; no reaction keeps it. A Discord button click
   # would go to Hermes's gateway, which has no handler for it, so the choices are reactions; bin/escalation-reply-poll.sh
   # acts on them.
@@ -78,7 +79,7 @@ if done_for thread && done_for supervisor && ! done_for delete_prompt; then
     log COMPLETE_FAIL "delete prompt in thread $thread failed: $(jq -r '.error // "no message id"' <<<"$res" 2>/dev/null | cut -c1-300)"
   fi
 fi
-if done_for thread && done_for supervisor && ! log_has "$card" COMPLETED; then
+if done_for thread && sup_done && ! log_has "$card" COMPLETED; then
   jq -nc --arg time "$(date -u +%FT%TZ)" --arg card "$card" --arg thread "$thread" --arg reply "$reply" \
     --arg summary "$summary" --arg decision "$decision" \
     '{time: $time, card: $card, event: "COMPLETED",

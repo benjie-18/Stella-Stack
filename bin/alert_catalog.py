@@ -7,7 +7,7 @@ CLI: alert_catalog.py render <CODE> [key=value ...]   the #alerts body on stdout
      alert_catalog.py streak < card.json                K3: "<code> <n>", the card's run of same-code guard refusals
      alert_catalog.py field <CODE> <field>              one catalog field (for example the action)
 Keys: since=/now= are times (UTC ISO 8601 or epoch seconds), shown as HH:MM in the owner's zone; error=<raw> becomes
-{what}, a plain phrase; resolved=1 renders the recovery form. Every key goes to the log, only placeholders reach Discord.
+{what}, a plain phrase; resolved=1 renders the recovery form. Every key goes to the log, only placeholders reach the chat.
 An unknown code renders STL-GEN-000; render never exits non-zero (bin/alert.sh still has a last-resort text)."""
 import calendar, json, os, re, sys, time
 from datetime import datetime, timezone
@@ -15,23 +15,22 @@ from datetime import datetime, timezone
 BIN = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(BIN)
 ICON = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨"}
-MAX = 1800
 FIELDS = ("code", "area", "severity", "title", "message", "action", "cause", "check", "related", "resolvable")
 UTC_NAMES = {"UTC", "Etc/UTC", "Etc/GMT", "GMT", "Etc/Zulu", "Zulu", "Universal", "Etc/Universal"}
 # raw error -> plain phrase; first match wins (an SSL error also says "urlopen error")
 CLASSES = (
-    (r"SSL|TLS|handshake|UNEXPECTED_EOF|EOF occurred", "a network problem: the secure connection to Discord dropped"),
-    (r"(error|status|HTTP)\D{0,6}429\b|rate.?limit|Too Many Requests", "Discord is rate-limiting Stella"),
+    (r"SSL|TLS|handshake|UNEXPECTED_EOF|EOF occurred", "a network problem: the secure connection to the chat platform dropped"),
+    (r"(error|status|HTTP)\D{0,6}429\b|rate.?limit|Too Many Requests", "the chat platform is rate-limiting Stella"),
     (r"(error|status|HTTP)\D{0,6}40[134]\b|Missing Access|Missing Permissions|Unknown (Channel|Message)|Forbidden|Unauthorized",
-     "Discord refused the request: missing permission or a missing channel"),
+     "the chat platform refused the request: missing permission or a missing channel"),
     (r"(error|status|HTTP)\D{0,6}5\d\d\b|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout",
-     "Discord had a server error"),
+     "the chat platform had a server error"),
     (r"urlopen error|Name or service not known|name resolution|getaddrinfo|Connection (refused|reset|aborted)|timed? ?out|"
-     r"Network is unreachable|No route to host|ConnectionError|ClientConnector|Cannot connect", "a network or DNS problem reaching Discord"),
+     r"Network is unreachable|No route to host|ConnectionError|ClientConnector|Cannot connect", "a network or DNS problem reaching the chat platform"),
     (r"No space left|Permission denied|Read-only file system|Disk quota", "a disk or permissions problem"),
     (r"exit \d+|exit code|command not found|failed|non-zero", "a local command failed"),
 )
-SAMPLE = {"served": "a free model", "card": "t_0000a1b2", "commit": "abc1234", "count": "3", "title": "Sample card title", "model": "Haiku",
+SAMPLE = {"served": "a free model", "card": "t_0000a1b2", "commit": "abc1234", "count": "3", "title": "Sample card title", "model": "sample-model",
           "minutes": "12", "max": "50", "check": "test run", "restarted": "the Stella container",
           "failing": "the local model server", "requested": "a code that is not listed", "parts": "ssh,web443", "summary": "This is a sample.",
           "error": "<urlopen error [Errno -3] Temporary failure in name resolution>",
@@ -51,6 +50,19 @@ def classify(raw):
 def catalog():
     with open(os.environ.get("ALERT_CATALOG") or f"{ROOT}/docs/hermes-local/alert-catalog.json", encoding="utf-8") as f:
         return {a["code"]: a for a in json.load(f)["alerts"]}
+
+
+def limits():
+    """The catalog's "limits" block (max_chars, page_interval_s); a catalog without it uses the shipped one's. {} if neither reads."""
+    for p in (os.environ.get("ALERT_CATALOG"), f"{ROOT}/docs/hermes-local/alert-catalog.json"):
+        try:
+            with open(p, encoding="utf-8") as f:
+                lim = json.load(f).get("limits")
+            if isinstance(lim, dict):
+                return lim
+        except Exception:
+            pass
+    return {}
 
 
 def zone():
@@ -133,7 +145,8 @@ def render(code, kv, sample=False):
         if kv.get("since"):
             lines.append(f"First seen {vals['since']}")
     body = "\n".join(lines)
-    return (body if len(body) <= MAX else body[:MAX - 1] + "…"), tag, kv
+    mx = limits().get("max_chars", len(body))
+    return (body if len(body) <= mx else body[:mx - 1] + "…"), tag, kv
 
 
 def log(tag, kv):
@@ -201,7 +214,7 @@ def page_due(code, key, streak=""):
     only after a send that worked, so a failed send is tried again by the next alert."""
     try:
         policy = (catalog().get(code) or {}).get("page", "log")
-    except Exception:   # a broken catalog must not silence the alert: page it once an hour
+    except Exception:   # a broken catalog must not silence the alert: page it as "hourly" (interval from limits(), 0 when unreadable)
         policy = "hourly"
     sup = os.environ.get("ESCALATE_SUP_DIR") or f"{ROOT}/.supervisor"
     f = f"{sup}/state/page/{code}-{re.sub(r'[^A-Za-z0-9_.-]', '_', key or '-')[:80]}"
@@ -212,7 +225,8 @@ def page_due(code, key, streak=""):
     if policy == "card_streak":
         return old != streak, f
     if policy == "hourly":
-        return age is None or age >= 3600, f
+        # no readable limits: interval 0 pages every time (loud), never silent
+        return age is None or age >= limits().get("page_interval_s", 0), f
     return False, f
 
 
@@ -260,6 +274,10 @@ def validate():
     except Exception as e:
         return [f"{path}: {type(e).__name__}: {e}"]
     errs, seen = [], set()
+    lim = json.load(open(path, encoding="utf-8")).get("limits")
+    for k in ("max_chars", "page_interval_s"):
+        if not (isinstance(lim, dict) and isinstance(lim.get(k), int) and not isinstance(lim[k], bool) and lim[k] > 0):
+            errs.append(f"limits.{k}: a positive whole number is required")
     for a in alerts:
         c = a.get("code", "?")
         errs += [f"{c}: missing {k}" for k in FIELDS if k not in a]

@@ -15,7 +15,13 @@ GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "LC_ALL": "C"}   # C:
 SEP = {"&&", "||", ";", "|", "&"}
 READ = {"status", "log", "show", "diff", "rev-parse", "ls-files", "blame", "grep", "describe", "cat-file", "show-ref",
         "for-each-ref", "shortlog", "rev-list", "ls-tree", "merge-base", "name-rev"}
-MAIN = re.compile(r"(?:^|:)\+?(?:refs/heads/)?main$", re.I)   # RT19-01: the repos sit on a case-insensitive mount
+try:   # the main branch is the role table's main_branch (as bin/commit-guard.sh reads it); unreadable: every git command is refused in check()
+    sys.path.insert(0, "/workspace/bin")
+    import roles
+    MB = roles.load()["main_branch"].lower()   # RT19-01: the repos sit on a case-insensitive mount
+except Exception:
+    MB = None
+MAIN = re.compile(r"(?:^|:)\+?(?:refs/heads/)?" + re.escape(MB or "") + "$", re.I)
 
 
 def dest_is_main(a):
@@ -24,11 +30,11 @@ def dest_is_main(a):
     cannot (refs/remotes/origin/*) is the default fetch form and stays allowed."""
     d = a.rsplit(":", 1)[-1].lstrip("+").lower()   # RT19-01: MAIN, Main and refs/HEADS/main name the same ref file here
     if re.search(r"[*?\[]", d):
-        return any(fnmatch.fnmatchcase("refs/heads/main", x) for x in (d, "refs/" + d, "refs/heads/" + d))
+        return any(fnmatch.fnmatchcase("refs/heads/" + MB, x) for x in (d, "refs/" + d, "refs/heads/" + d))
     for pre in ("refs/heads/", "heads/"):
         if d.startswith(pre):
             d = d[len(pre):]; break
-    return d == "main"
+    return d == MB
 
 
 def positional(rest):
@@ -134,8 +140,8 @@ def why(args, env_targets=()):
         return "--no-verify skips the commit guard"
     if sub == "add" and any(a in ("-A", "--all", ".", "./", ":/") or re.fullmatch(r"-[a-zA-Z]*A[a-zA-Z]*", a) for a in rest):
         return "git add -A/--all/. sweeps unrelated files; add files by name"
-    if sub == "push" and (any(a in ("--all", "--mirror") or (len(a) > 2 and a.startswith("--") and ("--all".startswith(a) or "--mirror".startswith(a))) or a.lower() in ("main", "+main", "refs/heads/main") or
-                              re.search(r":(refs/heads/)?main$", a, re.I) for a in rest) or any(dest_is_main(a) for a in positional(rest))):
+    if sub == "push" and (any(a in ("--all", "--mirror") or (len(a) > 2 and a.startswith("--") and ("--all".startswith(a) or "--mirror".startswith(a))) or a.lower() in (MB, "+" + MB, "refs/heads/" + MB) or
+                              MAIN.search(a) for a in rest) or any(dest_is_main(a) for a in positional(rest))):
         return "git push to main"
     return None
 
@@ -145,6 +151,8 @@ def check(cmd):
         for i, t in enumerate(toks):
             if t.rsplit("/", 1)[-1] != "git":
                 continue
+            if MB is None:
+                return "the role table's main_branch cannot be read"
             cfg_env = False   # RT20-04: GIT_CONFIG_COUNT/KEY_n/VALUE_n/PARAMETERS/GLOBAL/SYSTEM change remote.<n>.push, push.default, hooksPath
             env_targets = []   # K1c: GIT_DIR=, GIT_WORK_TREE=, GIT_COMMON_DIR= before git (also after env) are -C targets
             for u in reversed(toks[:i]):

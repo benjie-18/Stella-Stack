@@ -11,13 +11,17 @@ CLI: settings.py get <key> [--json]            the stored value (the default whe
                                                 the action a proof must cover, and changes nothing
      settings.py check [--json]                 the registry is valid and every stored value satisfies its entry
      settings.py list --json                    the registry entries (never a stored value)
+     settings.py explain --project P [--json]   what holds for project P and where each value comes from (default, global, project):
+                                                settings (a secret shown ***), the active preset, Local only, the data policy, per role the
+                                                class order and its source, the grants in force and the revoked ones; read only; an unknown
+                                                project follows the default policy (said so); an unknown preset fails closed, STL-CFG-311
 Refused: a secret entry (secrets live in the vault; the registry never stores or shows one), STL-CFG-315; a value the entry
 rejects or the owner file format cannot hold, STL-CFG-315; a worker environment (bin/worker_env.py), STL-CFG-312; no owner proof,
 the codes of bin/owner_auth.py (806 no owner key, 808 the typed phrase of an identity-critical change missing or wrong, ...); an
 unknown key, STL-CFG-311 with one alert line.
 Exit: 0 ok (a set of the value already stored is "no change"); 1 refused or failed; 2 usage. The value of a secret is never
 printed, logged or put in a message. Only env-format stores are written (the stores of the registry today)."""
-import fcntl, json, os, re, subprocess, sys, tempfile
+import datetime, fcntl, json, os, re, subprocess, sys, tempfile
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
 import event_log as el
@@ -216,22 +220,98 @@ def do_list():
     return 0
 
 
+def doc(schema):
+    """The one document of a schema, found by the index (no path is named here), validated by its schema."""
+    row = next((r for r in sd.rows() if r["schema"] == schema), None) or sd.refuse("data file of schema", schema)
+    return sd.checked(sd.load(row["path"]), row["path"], schema)
+
+
+def explain(project):
+    """What holds for `project`, and where each value comes from. Read-only; every id and name is read from the data."""
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    pol, gr = doc("data-policy"), doc("grants")
+    row = sd.entry(pol["projects"], project)
+    names = {project} | ({row.get("global_id")} | {k for k, v in pol["projects"].items() if v is row} if row else set())   # a project is its alias or its global_id
+    settings = []
+    for e in registry():
+        srow, _ = store(e)
+        if e["sensitivity"] != SECRET and is_owner_file(srow):
+            need_owner(f"{e['key']} (stored in {srow['path']})")
+        value, src = ("***", "global") if e["sensitivity"] == SECRET else current(e)
+        settings.append({"key": e["key"], "value": value, "source": "default" if src == "default" else "global", "sensitivity": e["sensitivity"]})
+    try:
+        import resolve   # here, not at the top: bin/route.py imports this file before its own guarded resolver import
+    except ImportError:
+        raise Refuse("STL-CFG-311", "the resolver is not installed")
+    try:   # the per-role view is the resolver's own answer (resolve.role_view): class order, pins, last resort and where each comes from
+        views = {r: resolve.role_view(r, project) for r in sorted(set(role_table()["roles"]) - {role_table()["fallback_role"]})}
+    except resolve.Refusal as r:
+        raise Refuse(r.code, str(r))
+    first = next(iter(views.values()))
+    pid, psrc, mode = first["preset"]["id"], first["preset"]["source"], first["local_only"]
+    eff = pol["default"] if pol["default"]["mode"] == "local_only" or not row else row
+    esrc = "default" if eff is pol["default"] else "project"
+    # role_view says "preset" for a role entry and for the preset's default alike; the label splits them (the order itself is the resolver's)
+    entries = doc("role-assignments")["effort_modes"][pid].get("roles", {})
+    label = lambda r, v: ("preset role entry" if entries.get(r, {}).get("class_order") is not None else "preset default") if v["order_source"] == "preset" else v["order_source"]
+    roles = {r: {k: v[k] for k in ("active", "class_order", "needs_class", "last_resort", "pins", "preset_pins", "fallbacks")} | {"class_order_source": label(r, v)}
+             for r, v in views.items()}
+    grants = []
+    for kind, lst in (("privacy", pol["privacy_grants"]), ("crossing", gr.get("crossing_grants", []))):
+        for g in lst:
+            sc = g.get("scope", {"level": "global"})
+            if not (sc["level"] == "global" or sc.get("project") in names):
+                continue   # another project's grant is not in force here, and not this project's business
+            rv = g.get("revoked_at") is not None and not (sd.when(g, "revoked_at") and now < sd.when(g, "revoked_at"))   # a date that is no date counts as revoked
+            live = not rv and any(sd.grant_in_force(g, n, now) for n in names)
+            grants.append({"kind": kind, "id": g["id"], "scope": sc, "expires_at": g.get("expires_at"), "revoked_at": g.get("revoked_at"), "revoked": rv, "in_force": live,
+                           "status": "revoked" if rv else "in force" if live else "not in force",
+                           **{k: g[k] for k in ("data_class", "connection", "preset", "to_class") if k in g}})
+    return {"project": project, "project_known": row is not None,
+            **({} if row else {"note": "unknown project: the default data policy applies"}),
+            "settings": settings, "preset": {"id": pid, "source": psrc},
+            "local_only": {"value": mode, "source": esrc},
+            "data_policy": {"mode": eff["mode"], "source": esrc}, "roles": roles, "grants": grants}
+
+
+def do_explain(project, as_json):
+    out = explain(project)
+    if as_json:
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+        return 0
+    flat = lambda v: json.dumps(v, ensure_ascii=False)
+    print(f"project {project}" + ("" if out["project_known"] else f" ({out['note']})"))
+    print(f"preset {out['preset']['id']} ({out['preset']['source']})")
+    print(f"local only {flat(out['local_only']['value'])} ({out['local_only']['source']}); data policy {out['data_policy']['mode']} ({out['data_policy']['source']})")
+    for s in out["settings"]:
+        print(f"setting {s['key']} = {flat(s['value'])} ({s['source']})")
+    for r, v in out["roles"].items():
+        print(f"role {r}: {'active' if v['active'] else 'off'}; order {flat(v['class_order'])} ({v['class_order_source']}); pins {flat(v['pins'])}; fallbacks {flat(v['fallbacks'])}; last resort {flat(v['last_resort'])}")
+    for g in out["grants"]:
+        print(f"grant {g['id']} ({g['kind']}): {g['status']}; scope {flat(g['scope'])}; expires {g['expires_at'] or 'never'}")
+    return 0
+
+
 def main(argv):
     as_json, dry = "--json" in argv, "--dry-run" in argv
-    a, proof, it = [], [], iter(argv)
+    a, proof, proj, it = [], [], [], iter(argv)
     for x in it:
         if x == "--proof":
             proof.append(next(it, ""))
+        elif x == "--project":
+            proj.append(next(it, ""))
         elif x not in ("--json", "--dry-run"):
             a.append(x)
     cmd, args = (a[0] if a else ""), a[1:]
-    if proof and (cmd != "set" or len(proof) > 1 or not proof[0]):
-        cmd = ""   # --proof once, with a file, and for set only: else usage
+    if proof and (cmd != "set" or len(proof) > 1 or not proof[0]) or proj and cmd != "explain":
+        cmd = ""   # --proof once, with a file, and for set only; --project for explain only: else usage
     try:
         if cmd == "get" and len(args) == 1 and not dry:
             return do_get(args[0], as_json)
         if cmd == "set" and len(args) == 2 and not as_json:
             return do_set(args[0], args[1], dry, proof[0] if proof else None)
+        if cmd == "explain" and not args and len(proj) == 1 and proj[0] and not dry:
+            return do_explain(proj[0], as_json)
         if cmd == "check" and not args and not dry:
             return do_check(as_json)
         if cmd == "list" and not args and as_json and not dry:

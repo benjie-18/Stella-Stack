@@ -13,10 +13,12 @@ BIN = os.path.dirname(os.path.abspath(__file__))
 PATH = os.environ.get("WATCHDOG_SETTINGS") or f"{os.path.dirname(BIN)}/docs/hermes-local/watchdog-settings.json"
 GATEWAY_KEYS = {"process_match": str, "pause_file": str, "activity_logs": list, "activity_window_minutes": int,
                 "connected_marker": str, "disconnected_marker": str, "marker_scan_bytes": int,
-                "log_time_format": str, "log_timezone": str}
+                "log_time_format": str, "log_timezone": str, "process_check_timeout_s": int}
+RUN_KEYS = {"alert_target": str, "step_timeout_s": int, "model_watch_fails_n": int, "poller_heartbeat_max_age_s": int,
+            "send_retry_sleep_s": int}   # bin/watchdog.sh itself; env WATCHDOG_ALERT_TARGET / _STEP_TIMEOUT / _MODEL_WATCH_FAILS_N override
 RERUN_KEYS = {"failed_check_line": str, "failed_detail_line": str, "rerun_command": str, "parallel": int}
 MW_KEYS = {"window_minutes": int, "min_errors": int, "error_line": str, "progress_line": str, "log_time_format": str,
-           "log_timezone": str, "loaded_models_path": str}   # K4: bin/model_watch.py
+           "log_timezone": str, "loaded_models_path": str, "log_tail_bytes": int, "config_timeout_s": int, "server_timeout_s": int}   # K4: bin/model_watch.py
 
 
 def load():
@@ -34,14 +36,20 @@ def zone(name):
     return ZoneInfo(name)
 
 
-def validate():
-    """Problems with the settings file, as a list of strings (empty = valid)."""
+OPTIONAL = ("test_rerun", "model_watch", "test_step")   # --check skips these when absent; a consumer that needs one validates it by name
+
+def validate(*only):
+    """Problems with the settings file, as a list of strings (empty = valid). With names: only those sections (a consumer checks
+    the section it uses, so an absent optional section fails only the feature that runs, naming the section)."""
     try:
         s = load()
     except Exception as e:
         return [f"{PATH}: {type(e).__name__}: {e}"]
     errs = [] if s.get("schema_version") == 1 else [f"schema_version is {s.get('schema_version')!r}, expected 1"]
-    for section, keys in (("gateway", GATEWAY_KEYS), ("test_rerun", RERUN_KEYS), ("test_step", {"npm_script": str}), ("model_watch", MW_KEYS)):
+    want = lambda n: n in only if only else not (n in OPTIONAL and n not in s)
+    for section, keys in (("gateway", GATEWAY_KEYS), ("run", RUN_KEYS), ("test_rerun", RERUN_KEYS), ("test_step", {"npm_script": str}), ("model_watch", MW_KEYS)):
+        if not want(section):
+            continue
         d = s.get(section)
         if not isinstance(d, dict):
             errs.append(f"{section}: missing")
@@ -51,24 +59,28 @@ def validate():
                 errs.append(f"{section}.{k}: must be a non-empty {t.__name__}")
     g, r = s.get("gateway", {}), s.get("test_rerun", {})
     mw = s["model_watch"] if isinstance(s.get("model_watch"), dict) else {}
-    if isinstance(g.get("activity_logs"), list) and not all(isinstance(p, str) and p for p in g["activity_logs"]):
+    if want("gateway") and isinstance(g.get("activity_logs"), list) and not all(isinstance(p, str) and p for p in g["activity_logs"]):
         errs.append("gateway.activity_logs: every entry must be a non-empty string")
     for name, rx in (("gateway.connected_marker", g.get("connected_marker")), ("gateway.disconnected_marker", g.get("disconnected_marker")),
                      ("test_rerun.failed_check_line", r.get("failed_check_line")), ("test_rerun.failed_detail_line", r.get("failed_detail_line")),
                      ("model_watch.error_line", mw.get("error_line")), ("model_watch.progress_line", mw.get("progress_line"))):
+        if not want(name.split(".")[0]):
+            continue
         try:
             re.compile(rx or "")
         except (re.error, TypeError) as e:
             errs.append(f"{name}: not a regex ({e})")
-    if isinstance(r.get("failed_check_line"), str) and re.compile(r["failed_check_line"]).groups != 1:
+    if want("test_rerun") and isinstance(r.get("failed_check_line"), str) and re.compile(r["failed_check_line"]).groups != 1:
         errs.append("test_rerun.failed_check_line: needs exactly one capture group (the check name)")
-    if "state_file" in g and not (isinstance(g["state_file"], str) and g["state_file"]
+    if want("gateway") and "state_file" in g and not (isinstance(g["state_file"], str) and g["state_file"]
                                   and isinstance(g.get("state_max_age_minutes"), int)
                                   and not isinstance(g["state_max_age_minutes"], bool) and g["state_max_age_minutes"] > 0):
         errs.append("gateway.state_file needs a path and a positive state_max_age_minutes (K10)")
-    if isinstance(r.get("rerun_command"), str) and "{check}" not in r["rerun_command"]:
+    if want("test_rerun") and isinstance(r.get("rerun_command"), str) and "{check}" not in r["rerun_command"]:
         errs.append("test_rerun.rerun_command: must contain {check}")
     for name, tzname in (("gateway", g.get("log_timezone")), ("model_watch", mw.get("log_timezone"))):
+        if not want(name):
+            continue
         try:
             zone(tzname or "")
         except Exception as e:
@@ -100,7 +112,7 @@ def gateway():
         return {"state": state, "cause": cause, "evidence": evidence, "marker_time": marker_time}
     try:
         g = load()["gateway"]
-        errs = validate()
+        errs = validate("gateway")
         if errs:
             return v("unknown", "settings", "the watchdog settings are invalid: " + "; ".join(errs[:3]))
         if os.path.exists(os.path.expanduser(g["pause_file"])):   # K10/A-06: ~ in the settings, never a user's path
@@ -108,7 +120,7 @@ def gateway():
     except Exception as e:
         return v("unknown", "settings", f"the watchdog settings cannot be read: {type(e).__name__}")
     try:
-        up = subprocess.run(["pgrep", "-f", "--", g["process_match"]], capture_output=True, timeout=30).returncode
+        up = subprocess.run(["pgrep", "-f", "--", g["process_match"]], capture_output=True, timeout=g["process_check_timeout_s"]).returncode
     except Exception as e:
         return v("unknown", "process_check", f"the process check could not run: {type(e).__name__}")
     if up == 1:
@@ -148,6 +160,8 @@ def gateway():
 
 def failures(path):
     """(check, first failing line) per failed check in a test run's output; the line is cut and stripped of @ and backticks (it goes to Discord)."""
+    if errs := validate("test_rerun"):
+        raise ValueError("; ".join(errs))
     r = load()["test_rerun"]
     chk, det, out = re.compile(r["failed_check_line"]), re.compile(r["failed_detail_line"]), []
     for line in open(path, encoding="utf-8", errors="replace").read().splitlines():
@@ -169,7 +183,8 @@ if __name__ == "__main__":
     elif cmd == "failures" and args:
         try:
             print("\n".join(f"{c}\t{d}" for c, d in failures(args[0])))
-        except Exception:
+        except Exception as e:
+            print(f"{type(e).__name__}: {e}", file=sys.stderr)
             sys.exit(1)
     elif cmd == "get" and args:
         try:

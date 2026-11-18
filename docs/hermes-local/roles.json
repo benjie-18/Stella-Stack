@@ -46,7 +46,10 @@
     "bin/owner_auth.py",
     "bin/stella-apply.py",
     "bin/settings.py",
-    "bin/event_log.py"
+    "bin/event_log.py",
+    "bin/route.py",
+    "bin/credentials.py",
+    "bin/consent.py"
   ],
   "owner_commands_by_name": [
     "bin/merge-card.sh"
@@ -94,7 +97,11 @@
     "bin/settings.py",
     "bin/stella-apply.py",
     "bin/stella_data.py",
-    "bin/worker_env.py"
+    "bin/worker_env.py",
+    "bin/route.py",
+    "bin/credentials.py",
+    "bin/resolve.py",
+    "bin/consent.py"
   ],
   "write_tools": [
     "write_file",
@@ -873,6 +880,7 @@
       ]
     },
     "look": {
+      "optional": true,
       "global_id": "1eac93e0-3237-4edd-91ff-58e77ac068eb",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "runs_unboxed": false,

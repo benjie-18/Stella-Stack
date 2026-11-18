@@ -14,12 +14,32 @@ ws=$(cd "$(dirname "$0")/.." && pwd)
 git config --global --get-all safe.directory | grep -qxF "$ws" || git config --global --add safe.directory "$ws" \
   || fail "git safe.directory not set for $ws"
 # OpenCode user config: local model only (never a cloud fallback) + the Claude-account skill denies.
+# The model is the resolver's (F2 W7b, W7b-VAL-02): the first link bin/resolve.py lists usable, on a local connection, for the role
+# that runs this CLI (the role table's first profile of its worker kind), with the catalog model's advertised capabilities and its
+# `limits.output_tokens`; the tracked opencode.json holds the provider frame and names no model. That role works a card and none
+# exists here, so the resolver is asked about a card with no facts record (a random id) and no project: it then lists no link that
+# leaves the machine. No usable local link, or no answer: the config names no model (fail closed) and the step fails with the code.
+# shortcut: that file has one provider frame, taken as the local one; name the catalog entry in it when a second comes.
+# shortcut: one model for every card, read once at container start; a pin or preset changed later, or one of a card or project, is not followed: upgrade when the box launcher hands each run its model
 # brainstorming is dropped: superpowers is a project-scope OpenCode plugin, so its deny stays in the repo config.
 # Through a temp file, so a jq failure keeps the previous config instead of truncating it (S23).
 cfg=~/.config/opencode/opencode.json
-jq '{"$schema", model, providers, permission: {skill: (.permission.skill | del(.brainstorming))}}' \
-  /workspace/opencode.json > "$cfg.tmp" && mv "$cfg.tmp" "$cfg" \
-  || { rm -f "$cfg.tmp"; fail "opencode.json not written (jq or mv failed); the previous config is kept"; }
+WORKER=opencode   # the role table's worker kind of the CLI this config is for
+role=$(python3 -I -c 'import sys; sys.path.insert(0, "/workspace/bin"); import roles; print(next(p["role"] for p in roles.load()["profiles"].values() if p.get("worker") == sys.argv[1]))' "$WORKER" 2>/dev/null)
+res=$(python3 -I /workspace/bin/resolve.py resolve --role "$role" --project "" --card "$(cat /proc/sys/kernel/random/uuid)" --json 2>"$cfg.err")
+lm=$(jq -c --slurpfile c <(python3 -I /workspace/bin/stella_data.py get --json connections 2>/dev/null) '[.chain[] | select(.status == "usable") | . as $l
+  | $c[0].entries[] | select(.id == $l.connection and .locality == "local") | .models[] | select(.id == $l.model)][0] // empty' <<<"$res" 2>/dev/null)
+why=$(jq -r '"\(.code // "STL-MDL-710") \(.reason // "the chain the resolver answers holds no usable local link")"' <<<"$res" 2>/dev/null)
+why=${why:-$(grep -m1 'STL-[A-Z]*-[0-9]' "$cfg.err" | head -c 300)}; why=${why:-STL-MDL-710 the resolver gave no answer}   # no JSON = it failed closed: its coded line
+rm -f "$cfg.err"
+if jq --argjson m "${lm:-null}" '(.providers | keys[0]) as $p | {"$schema"} + (if $m then {model: "\($p)/\($m.id)"} else {} end) + {
+    providers: (.providers | .[$p].models = (if $m then {($m.id): {name: $m.id, capabilities: {tools: ($m.capabilities.tool_calling == true),
+      input: (["text"] + (if $m.capabilities.vision == true then ["image"] else [] end)), output: ["text"]},
+      limit: ({context: $m.capabilities.context_tokens, output: $m.limits.output_tokens} | with_entries(select(.value != null)))}} else {} end)),
+    permission: {skill: (.permission.skill | del(.brainstorming))}}' \
+  /workspace/opencode.json > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
+then [ -n "$lm" ] || [ "$(python3 -I /workspace/bin/stella_data.py get --json connections 2>/dev/null | jq '[.entries[] | select(.enabled == true and .locality == "local")] | length' 2>/dev/null)" = 0 ] || fail "opencode.json names no model: $why (role ${role:-unknown})"
+else rm -f "$cfg.tmp"; fail "opencode.json not written (jq or mv failed); the previous config is kept"; fi
 # Vetted anti-ai-slop-writing (jalaalrd/anti-ai-slop-writing@63255f9), kept in the ~/.hermes volume.
 skill=~/.hermes/skills/writing/anti-ai-slop-writing
 [ -d "$skill" ] && cp -r "$skill" ~/.config/opencode/skills/ || fail "skill copy failed: $skill missing or not copied"

@@ -1,31 +1,11 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "ollama/qwen3.5:9b-64k",
   "providers": {
     "ollama": {
       "name": "Ollama",
       "package": "aisdk:@ai-sdk/openai-compatible",
       "settings": {
         "baseURL": "http://host.docker.internal:11434/v1"
-      },
-      "models": {
-        "qwen3.5:9b-64k": {
-          "name": "Qwen 3.5 9B 64K",
-          "capabilities": {
-            "tools": true,
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 65536,
-            "output": 8192
-          }
-        }
       }
     }
   },
@@ -33,18 +13,12 @@
     "bash": {
       "bin/escalate.sh *": "allow",
       "/workspace/bin/escalate.sh *": "allow",
-      "claude *--model opus*": "deny",
-      "claude *--model=opus*": "deny",
-      "claude *--model haiku*": "deny",
-      "claude *--model=haiku*": "deny",
+      "claude *--model *": "deny",
+      "claude *--model=*": "deny",
       "claude *opusplan*": "deny",
       "claude *--dangerously-skip-permissions*": "deny",
       "claude *--allow-dangerously-skip-permissions*": "deny",
       "claude setup-token*": "deny",
-      "claude *--model sonnet*": "deny",
-      "claude *--model=sonnet*": "deny",
-      "claude *--model claude-*": "deny",
-      "claude *--model=claude-*": "deny",
       "claude -p*": "deny",
       "claude *-p *": "deny",
       "claude *--print*": "deny",

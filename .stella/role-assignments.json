@@ -2,21 +2,87 @@
   "schema_version": 2,
   "effort_modes": {
     "standard": {
-      "allowed_localities": ["local", "cloud"],
-      "no_silent_fallback": false
+      "allowed_localities": [
+        "local",
+        "cloud"
+      ],
+      "no_silent_fallback": false,
+      "label": "Standard",
+      "builtin": true,
+      "based_on": null,
+      "class_order": [
+        [
+          "free_cloud",
+          "local"
+        ]
+      ],
+      "frontier_when": {
+        "tiers": [
+          "medium",
+          "complex"
+        ]
+      },
+      "needs_class": "frontier",
+      "last_resort": null,
+      "verification_depth": 1,
+      "changelog": []
     },
     "eco": {
-      "allowed_localities": ["local", "cloud"],
-      "no_silent_fallback": false
+      "allowed_localities": [
+        "local",
+        "cloud"
+      ],
+      "no_silent_fallback": false,
+      "label": "Eco",
+      "builtin": true,
+      "based_on": null,
+      "class_order": [
+        "local",
+        "free_cloud"
+      ],
+      "needs_class": null,
+      "last_resort": "frontier",
+      "verification_depth": 1,
+      "changelog": []
     },
     "max": {
-      "allowed_localities": ["cloud"],
-      "no_silent_fallback": true
+      "allowed_localities": [
+        "cloud"
+      ],
+      "no_silent_fallback": true,
+      "label": "Max",
+      "builtin": true,
+      "based_on": null,
+      "class_order": [
+        "frontier",
+        "free_cloud"
+      ],
+      "needs_class": null,
+      "last_resort": "local",
+      "verification_depth": 1,
+      "changelog": []
     },
     "local_only": {
-      "allowed_localities": ["local"],
-      "no_silent_fallback": true
+      "allowed_localities": [
+        "local"
+      ],
+      "no_silent_fallback": true,
+      "label": "Local only",
+      "builtin": true,
+      "based_on": null,
+      "class_order": [
+        "local"
+      ],
+      "needs_class": null,
+      "last_resort": null,
+      "verification_depth": 1,
+      "changelog": []
     }
+  },
+  "selection": {
+    "global": "standard",
+    "projects": {},
+    "cards": {}
   },
   "assignments": [
     {

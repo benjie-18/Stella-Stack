@@ -14,7 +14,8 @@ cat >"$T/bin/hermes" <<'S'
 #!/usr/bin/env bash
 [ "$1 $2" = "kanban --board" ] && set -- "$1" "${@:4}"   # scripts name the board (F4)
 case "$1 $2" in
-  "kanban show") { [ "$3" = t_00000000 ] || [ -n "${FAKE_SHOW_FAIL:-}" ]; } && exit 1; [ -z "${FAKE_SHOW_RAW:-}" ] || { printf '%s\n' "$FAKE_SHOW_RAW"; exit 0; }; printf '{"task":{"body":"%s","status":"%s"}}\n' "${FAKE_BODY:-}" "${FAKE_STATUS:-running}";;
+  "kanban show") { [ "$3" = t_00000000 ] || [ -n "${FAKE_SHOW_FAIL:-}" ]; } && exit 1; [ -z "${FAKE_SHOW_RAW:-}" ] || { printf '%s\n' "$FAKE_SHOW_RAW"; exit 0; }; printf '{"task":{"body":"%s","status":"%s","assignee":"%s","project":"%s"}}\n' "${FAKE_BODY:-}" "${FAKE_STATUS:-running}" "$FAKE_ASSIGNEE" "$FAKE_PROJECT";;
+  "kanban list") jq -nc --arg c "${FAKE_RUNNING:-}" '[$c | select(. != "") | {id: .}]';;   # the running cards: none, or FAKE_RUNNING
   "kanban comment") echo "$*" >>"$ESCALATE_SUP_DIR/comments";;
   send*) echo "$*" >>"$ESCALATE_SUP_DIR/sends"
     # FAKE_SEND_HOLD=<path>: a slow alert. Says it arrived (<path>.in), then waits for <path>.go, at most 30 s.
@@ -24,6 +25,22 @@ esac
 S
 chmod +x "$T/bin/"*
 export PATH="$T/bin:$PATH" ESCALATE_SUP_DIR="$T/sup" FALLBACK_CONFIG="$T/no-such-fallback-config.json"   # no reroute unless a test writes one
+# F2 W7b: escalate.sh asks the resolver, which refuses the CLI-login connection on the shipped data (no terms recorded). The whole
+# run uses a fixture root (STELLA_ROOT): the shipped data with what the owner records on the host: that connection usable for the
+# caller's role (terms, the role, advertised capabilities) and a selected preset of every link class; the board stub answers the
+# caller (the first profile of the first card role) and a project, and every card id this file uses has a clean facts record.
+# The model ids and their limits are the shipped catalog's (limits.env keys named in each model's `limits`).
+FX=$T/fx; mkdir -p "$FX/docs"; cp -r /workspace/.stella "$FX/"; cp -r /workspace/docs/hermes-local "$FX/docs/"
+CR=$(jq -r '.card_roles[0]' "$FX/.stella/routing.json"); export FAKE_PROJECT=qa-proj
+export FAKE_ASSIGNEE=$(jq -r --arg r "$CR" '[.profiles | to_entries[] | select(.value.role == $r) | .key][0]' "/workspace/$(jq -r .role_table /workspace/.stella/data-files.json)")
+fxed() { jq "${@:2}" "$FX/.stella/$1" >"$FX/.stella/$1.n" && mv "$FX/.stella/$1.n" "$FX/.stella/$1"; }   # fxed <data file> <jq args and filter>
+fxed connections.json --arg r "$CR" --argjson dc "$(jq -c .data_classes "$FX/.stella/data-policy.json")" '(.entries[] | select(.type == "cli-login")) |= (.terms_ok = true | .allowed_roles += [$r]
+  | .data_policy.data_classes_allowed = $dc | .models[] |= (.capabilities = {tool_calling: true, json_mode: true, context_tokens: 1048576, vision: true, streaming: true} | .probe_source = "advertised"))'
+fxed role-assignments.json --argjson k "$(jq -c '[.link_classes[].id]' "$FX/.stella/routing.json")" '.effort_modes["qa-all"] = {allowed_localities: ["local", "cloud"], no_silent_fallback: false, class_order: $k} | .selection.global = "qa-all"'
+CF=$FX/$(jq -r .card_facts "$FX/.stella/data-files.json"); mkdir -p "$CF"
+for c in $(grep -o 't_[0-9a-f]\{8\}' "$0" | sort -u) t_dddd000{1..9} t_eeee000{1..9}; do echo '{"project":"qa-proj","carries_secrets":false,"vault_content":false,"apps":[]}' >"$CF/$c.json"; done
+export STELLA_ROOT=$FX
+python3 -I /workspace/bin/stella_data.py check >"$T/fxcheck" 2>&1 && [ -n "$FAKE_ASSIGNEE" ] || { echo "FAIL the fixture root does not pass the data check, or no profile has role $CR: $(head -3 "$T/fxcheck")"; echo "selftest FAIL (fixture)"; exit 1; }
 E=${ESCALATE:-/workspace/bin/escalate.sh} fails=0   # ESCALATE=<copy>: a staged copy while it is being replaced
 check() { local want=$1 desc=$2; shift 2; "$@" >/dev/null 2>"$T/err"; local rc=$?
   if [ "$rc" = "$want" ]; then echo "ok   $desc (exit $rc)"; else echo "FAIL $desc: want $want got $rc: $(cat "$T/err")"; fails=$((fails+1)); fi; }
@@ -59,6 +76,35 @@ qid() { jq -r --arg c "$1" 'select(.card == $c) | .id' "$Q" | head -1; }
 nalerts() { grep -c -- "$1" "$T/sup/sends" 2>/dev/null || true; }
 runs() { cat "$T/sup/claude_n" 2>/dev/null || echo 0; }
 setlimit() { sed -i "s/^$1=.*/$1=$2/" "$T/sup/limits.env"; }
+# F2 W7b: the model is data and the resolver decides (the fixture cases of the phase tests are in qa/wave3/T-CALLERS-escalate.sh)
+n=$(runs); check 3 "W7b: a model the catalog does not list for this CLI: refused" sh -c "echo hi | $E t_aaaa0901 nosuchmodel judge why"
+ok 'grep -q "STL-MDL-711" "$T/err" && [ "$(runs)" = "$n" ] && [ -z "$(q t_aaaa0901)" ]' "W7b: ... with STL-MDL-711, no model call, nothing queued (a name is not replayable)"
+check 3 "W7b: on the shipped data (no terms recorded, no card facts) the resolver does not list the link usable: refused" env STELLA_ROOT=/workspace sh -c "echo hi | $E t_aaaa0902 sonnet review why"
+ok 'grep -q "STL-MDL-7[0-9][0-9] the resolver does not list" "$T/err" && [ "$(runs)" = "$n" ] && [ "$(q t_aaaa0902)" = "queued," ] && grep -q "t_aaaa0902 escalate.sh LIMIT.*no other link is tried" "$T/sup/comments"' "W7b: ... with the resolver's code, no model call, queued as a limit is, and the card note promises no other link"
+# W3P-F-3: under a Local only project the resolver lists no hosted link at all; the refusal still says why (the data-policy code and Local only)
+LO=$T/fx-lo; cp -r "$FX" "$LO"; jq --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$(jq -r .install_id "$FX/.stella/install.json")" '.projects["qa-proj"] = {mode: "local_only", allowed_providers: [], global_id: $g, install_id: $i}' "$FX/.stella/data-policy.json" >"$LO/.stella/data-policy.json"
+n=$(runs); check 3 "W3P-F-3: a Local only project: a hosted model is refused" env STELLA_ROOT=$LO sh -c "echo hi | $E t_aaaa0903 sonnet review why"
+ok 'STELLA_ROOT=$LO python3 -I /workspace/bin/stella_data.py check >/dev/null 2>&1 && grep -q "STL-MDL-716 the resolver does not list" "$T/err" && grep -q "Local only" "$T/err" && [ "$(runs)" = "$n" ] && [ "$(q t_aaaa0903)" = "queued," ]' "W3P-F-3: ... with STL-MDL-716 and a reason naming Local only, no model call, queued (the fixture passes the data check)"
+# D-F-1: a link the resolver lists cooling is not usable either (the cases above meet an excluded link or none)
+CD=$T/fx-cd; cp -r "$FX" "$CD"; RS=$CD/$(jq -r .routing_state "$FX/.stella/data-files.json"); mkdir -p "$(dirname "$RS")"
+jq -n --arg l "$(jq -r '[.entries[] | select(.type == "cli-login") | .id][0]' "$FX/.stella/connections.json")/sonnet" --arg s "$(date -u +%FT%TZ)" --arg u "$(date -u -d '+30 days' +%FT%TZ)" \
+  '{links: {($l): {trigger: "rate_limit", since: $s, until: $u, failures: 1, observed_limit: null}}, tasks: {}}' >"$RS"
+n=$(runs); check 3 "D-F-1: a link the resolver lists in cooldown: refused" env STELLA_ROOT=$CD sh -c "echo hi | $E t_aaaa0904 sonnet review why"
+ok 'STELLA_ROOT=$CD python3 -I /workspace/bin/resolve.py resolve --role "$CR" --project qa-proj --card t_aaaa0904 --json 2>/dev/null | jq -e "any(.chain[]; .model == \"sonnet\" and .status == \"cooldown\")" >/dev/null && grep -q "STL-MDL-724 the resolver does not list" "$T/err" && [ "$(runs)" = "$n" ]' "D-F-1: ... with the cooldown code STL-MDL-724 (the resolver lists the link cooling in this fixture), no model call"
+# W7b-VAL-01: a worker run escalates its own card only. A worker is what every owner command takes for one (bin/worker_env.py: here
+# a marker of the role table, or a card's open run bound to an ancestor of the call, this script's own process); its card is the one
+# the guards' proof names (roles.py prove). The board stub lists FAKE_RUNNING as the running card.
+WM=$(jq -r '.worker_markers[0]' "$FX/docs/hermes-local/roles.json")
+bound() {  # bound <card>: the board record of a card whose open run is bound to this script's process
+  jq -nc --arg c "$1" --arg a "$FAKE_ASSIGNEE" --argjson pid $$ --arg fp "$(python3 -I -c 'import sys; sys.path.insert(0, "/workspace/bin"); import roles; print(roles.fingerprint(int(sys.argv[1])))' $$)" \
+    '{task: {id: $c, assignee: $a, project: "qa-proj", status: "running", body: ""}, runs: [{id: 7, ended_at: null}],
+      events: [{kind: "claimed", run_id: 7, payload: {lock: "h:1"}}, {kind: "worker_bound", run_id: 7, payload: {pid: $pid, claim_lock: "h:1", started_at: $fp}}]}'; }
+n=$(runs); check 3 "W7b-VAL-01: a worker marker is set and the board proves no card for the caller: refused" env "$WM=t_aaaa0911" sh -c "echo hi | $E t_aaaa0911 sonnet review why"
+ok 'grep -q "STL-GRD-604" "$T/err" && [ "$(runs)" = "$n" ] && [ -z "$(q t_aaaa0911)" ]' "W7b-VAL-01: ... with STL-GRD-604, no model call, nothing queued"
+check 3 "W7b-VAL-01: a worker proven on one card names another card: refused" env FAKE_RUNNING=t_aaaa0912 FAKE_SHOW_RAW="$(bound t_aaaa0912)" sh -c "echo hi | $E t_aaaa0913 sonnet review why"
+ok 'grep -q "STL-GRD-604.*t_aaaa0912" "$T/err" && [ "$(runs)" = "$n" ] && [ -z "$(q t_aaaa0913)" ]' "W7b-VAL-01: ... with STL-GRD-604 naming the card it is proven on, no model call, nothing queued (a drain would replay it as the supervisor)"
+check 0 "W7b-VAL-01: a worker (marker set) proven on a card names that card: the call runs" env "$WM=t_aaaa0912" FAKE_RUNNING=t_aaaa0912 FAKE_SHOW_RAW="$(bound t_aaaa0912)" sh -c "echo hi | $E t_aaaa0912 sonnet review why"
+ok '[ "$(runs)" = "$((n + 1))" ]' "W7b-VAL-01: ... one model call"
 setlimit HAIKU_MAX_PER_DAY 0
 check 3 "T13: zeroed HAIKU_MAX_PER_DAY refused" sh -c "echo hi | $E t_aaaa0001 haiku judge zeroed"
 pf=$(jq -r 'select(.card == "t_aaaa0001") | .prompt_file' "$Q" 2>/dev/null)
@@ -183,8 +229,12 @@ for body in 'High risk: migration' 'high-risk card' 'Risk is high' 'Risk tier: h
   i=$((i+1)); n=$(fbn); echo hi | FAKE_BODY="$body" ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_eeee000$i sonnet review "risk-spelling-$i" >/dev/null 2>&1; rc=$?
   ok '[ "$rc" = 75 ] && [ "$(fbn)" = "$n" ] && [ "$(q t_eeee000$i)" = "queued," ]' "S6D-04: body '$body' counts as high risk: queued, runner never called (exit $rc)"
 done
-n=$(fbn); echo hi | FAKE_SHOW_RAW='not json at all' ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_eeee0009 sonnet review "unparsable-card" >/dev/null 2>&1; rc=$?
-ok '[ "$rc" = 75 ] && [ "$(fbn)" = "$n" ] && [ "$(q t_eeee0009)" = "queued," ]' "S6D-04: a card whose JSON cannot be read is treated as high risk (exit $rc)"
+# F2 W7b: the card must name its caller and project before any model call, so the card that reaches the risk gate unreadable is one
+# whose body is not text; a card that is not JSON at all is refused earlier (the case after it)
+n=$(fbn); echo hi | FAKE_SHOW_RAW="{\"task\":{\"assignee\":\"$FAKE_ASSIGNEE\",\"project\":\"$FAKE_PROJECT\",\"body\":{\"not\":\"text\"}}}" ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_eeee0009 sonnet review "unparsable-card" >/dev/null 2>&1; rc=$?
+ok '[ "$rc" = 75 ] && [ "$(fbn)" = "$n" ] && [ "$(q t_eeee0009)" = "queued," ]' "S6D-04: a card whose JSON cannot be read (its body is not text) is treated as high risk (exit $rc)"
+n=$(fbn); r0=$(runs); echo hi | FAKE_SHOW_RAW='not json at all' ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_eeee0014 sonnet review "not-json-card" >/dev/null 2>"$T/err1"; rc=$?
+ok '[ "$rc" = 3 ] && [ "$(fbn)" = "$n" ] && [ "$(runs)" = "$r0" ] && grep -q "STL-MDL-711" "$T/err1" && ! jq -e "select(.card == \"t_eeee0014\" and .event == \"START\")" "$T/sup/escalations.log" >/dev/null' "W7b: a card that is not JSON names no caller and no project: refused with STL-MDL-711 before any model call or fallback (exit $rc)"
 n=$(fbn); echo hi | FAKE_BODY='This is low risk, nobody called it high.' ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_eeee0010 sonnet review "control" >/dev/null 2>&1; rc=$?
 ok '[ "$rc" = 75 ] && [ "$(fbn)" = "$n" ] && [ "$(q t_eeee0010)" = "queued," ]' "S6D-04 note: a body that denies high risk in words is queued too (the gate prefers a false alarm)"
 n=$(fbn); echo hi | FAKE_BODY='Rename a variable in the docs.' ESCALATE_FORCE_POOL_EXHAUSTED=1 $E t_eeee0011 sonnet review "plain-low" >/dev/null 2>&1; rc=$?
@@ -199,7 +249,7 @@ export FALLBACK_CONFIG="$T/no-such-fallback-config.json"
 
 # W5: the two fallback numbers (call timeout, queue maximum) are the settings registry defaults, read through bin/stella_data.py.
 # A scratch root (STELLA_ROOT) holds a registry whose defaults differ from the shipped ones, so the source is proven.
-cp "$T/sup/limits.env" "$T/limits.keep"; R="$T/reg"; mkdir -p "$R"; cp -r /workspace/.stella "$R/.stella"
+cp "$T/sup/limits.env" "$T/limits.keep"; R="$T/reg"; mkdir -p "$R"; cp -r "$FX/." "$R/"
 REG=$(jq -r '.files[] | select(.id == "settings") | .path' /workspace/.stella/data-files.json)   # the registry's path comes from the data index
 setdef() { jq --arg k "$1" --argjson v "$2" '(.entries[] | select(.key == $k) | .default) = $v' "/workspace/$REG" >"$R/$REG"; }
 setdef CALL_TIMEOUT 123; setlimit CALL_TIMEOUT abc; setlimit HAIKU_MAX_PER_DAY 40; : > "$T/timeout_args"
@@ -226,13 +276,13 @@ ok '[ "$(PATH="$T/tbin:$PATH" sh -c "echo hi | $E t_aaaa0203 haiku judge why 2>$
 # E2: the refusal prints the catalog code itself when the catalog tool fails
 cp "$T/limits.keep" "$T/sup/limits.env"; mkdir -p "$T/pbin"; py=$(command -v python3)
 printf '#!/bin/sh\ncase "$*" in *alert_catalog*) exit 1;; esac\nexec %s "$@"\n' "$py" >"$T/pbin/python3"; chmod +x "$T/pbin/python3"
-R="$T/reg"; mkdir -p "$R"; cp -r /workspace/.stella "$R/.stella"; echo '{' >"$R/$REG"
+R="$T/reg"; mkdir -p "$R"; cp -r "$FX/." "$R/"; echo '{' >"$R/$REG"
 check 2 "E2: unreadable registry and a failing catalog tool: still refused" env STELLA_ROOT=$R PATH="$T/pbin:$PATH" sh -c "echo hi | $E t_aaaa0204 haiku judge why"
 ok 'grep -q "^STL-CFG-310 " "$T/err"' "E2: ... and the refusal prints STL-CFG-310 and the problem itself"
 cp "$T/limits.keep" "$T/sup/limits.env"; rm -rf "$R"
 
 # W5 r3 (F4, F5, F6): a refusal or a lost call is never silent; a queue file is never trusted blindly and never lied about
-cp "$T/limits.keep" "$T/sup/limits.env"; : >"$T/sup/sends"; rm -f "$T/sup/state/alert-"*.stamp; R="$T/reg2"; mkdir -p "$R"; cp -r /workspace/.stella "$R/.stella"; echo '{' >"$R/$REG"
+cp "$T/limits.keep" "$T/sup/limits.env"; : >"$T/sup/sends"; rm -f "$T/sup/state/alert-"*.stamp; R="$T/reg2"; mkdir -p "$R"; cp -r "$FX/." "$R/"; echo '{' >"$R/$REG"
 check 2 "F4: unreadable registry: refused" env STELLA_ROOT=$R sh -c "echo hi | $E t_aaaa0301 haiku judge why"
 ok '[ "$(nalerts "\\[STL-CFG-310\\]\\*\\*\$")" = 1 ] && grep -q "t_aaaa0301" "$T/sup/sends" && grep -q "^STL-CFG-310\|STL-CFG-310" "$T/err"' "F4: ... the refusal raises one #alerts line (STL-CFG-310, the card named) beside the coded stderr line; nothing is queued (the queue bound is what could not be read)"
 rm -rf "$R"; cp "$T/limits.keep" "$T/sup/limits.env"; setlimit HAIKU_MAX_PER_DAY 0; setlimit QUEUE_MAX 2
@@ -262,7 +312,7 @@ rm -f "$Q"
 # the registry is read after the usage checks and never alerts for a replay. Written before the fix.
 nlog() { jq -r --arg e "$1" 'select(.event == $e) | .card' "$T/sup/escalations.log" | grep -c -- "$2" || true; }
 stamps() { rm -f "$T/sup/state/alert-"*.stamp; : >"$T/sup/sends"; }
-cp "$T/limits.keep" "$T/sup/limits.env"; R="$T/reg4"; mkdir -p "$R"; cp -r /workspace/.stella "$R/.stella"; echo '{' >"$R/$REG"; stamps
+cp "$T/limits.keep" "$T/sup/limits.env"; R="$T/reg4"; mkdir -p "$R"; cp -r "$FX/." "$R/"; echo '{' >"$R/$REG"; stamps
 check 2 "V4: unreadable registry, a replayed call: refused" env STELLA_ROOT=$R ESCALATE_REPLAY=q_zz sh -c "echo hi | $E t_aaaa0401 haiku judge why"
 ok '[ "$(nalerts t_aaaa0401)" = 0 ]' "V4: ... no #alerts line for a replay"
 check 2 "V4: unreadable registry, a call with an unknown card: refused as a usage error" env STELLA_ROOT=$R sh -c "echo hi | $E t_00000000 haiku judge why"

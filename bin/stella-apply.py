@@ -12,7 +12,7 @@ CLI: stella-apply.py apply <id> --from <file> [--dry-run] [--proof <file>]
      stella-apply.py history <id> [--json]                  the event lines of <id> and its backups
 Exit: 0 ok (a no-change apply too); 1 refused or failed, or drift (check); 2 usage. Every failure prints its catalog code and a
 plain message (310 unreadable data, 311 unknown id, 312 owner-only, 313 a change refused before it started, 314 drift, 315 a
-setting's own code, 316 no, damaged or unrecorded backup, 318 event log, 321 a change that stopped after it started (what is
+setting's own code, STL-MDL-727 a candidate that changes, removes or adds a built-in preset (stella_data.frozen; a dry run too), 316 no, damaged or unrecorded backup, 318 event log, 321 a change that stopped after it started (what is
 left and the one command that finishes or undoes it), 322 a read command refused, 323 an unfinished step seen by check); an
 unexpected exception or an interrupt (Ctrl-C, SIGTERM) is exit 1 and one coded line, never a traceback.
 Every write of a command is entered in STEPS, with how to undo it, BEFORE it starts (did); a failure or an interrupt undoes
@@ -905,6 +905,25 @@ def validate(row, rel, data):
         raise bad(why)
     return doc
 
+def kept(row, key, rel, cur, old_doc, new_doc, good, rec):
+    """What a candidate may not change in the document it replaces (the data tool's rule, frozen(): a built-in preset), refused
+    with that rule's own code before anything is written; apply and its dry run alike. The file is that document only while
+    it holds the applied bytes or the committed ones (W1-RT-11: an update that arrives committed, a release merged outside
+    this tool, is the baseline whatever was applied before, so the next apply goes through and putting the older built-in
+    back is refused). A file edited by hand, damaged or missing says nothing of what was built in (W1-CVER-01, W1-RT-04):
+    the candidate is then compared with the document last applied (prior_doc, as the owner proof judges a hand edit), or,
+    that one not known, the committed one."""
+    if not (rec and cur is not None and sha(cur) == rec["sha256"]):
+        blob = git_blob(rel)
+        if cur is None or cur != blob:
+            base = prior_doc(row, key, good, rec)
+            if base is None and blob is not None:
+                base = parse_or_none(row, blob)[0]
+            # shortcut: with no applied copy and no committed file the file itself is the only document known, upgrade when a release signs its built-in presets (E1)
+            old_doc = base if base is not None else old_doc
+    for code, why in sd.frozen(row["schema"], old_doc, new_doc):
+        raise bad(why, code)
+
 def added(rid, base, after):
     """The one rule of the whole-set check: a candidate (and a saved copy a rollback restores) may not add a problem to the set.
     Each problem LINE is judged, never a whole row: a line (row, text) of the data tool that was not there before the change
@@ -1236,7 +1255,9 @@ def dry_run(row, key, tgt, rel, cand):
     old_doc, parses = parse_or_none(row, cur)
     note_secrets(old_doc, red)
     good, junk, strange, _ = scan(key, sha(cur) if cur is not None else None)
-    act, err = pending_action(key, cur, cand, good, junk, strange, applied().get(key))
+    rec = applied().get(key)
+    kept(row, key, rel, cur, old_doc, new_doc, good, rec)
+    act, err = pending_action(key, cur, cand, good, junk, strange, rec)
     if act == "refuse":
         raise err
     if act in ("finish", "finish_adopt", "adopt"):
@@ -1356,6 +1377,7 @@ def apply_locked(row, key, tgt, rel, cand):
     note_secrets(old_doc, red)
     rec = applied().get(key)
     good, junk, strange, _ = scan(key, sha(cur) if cur is not None else None)
+    kept(row, key, rel, cur, old_doc, new_doc, good, rec)
     act, err = pending_action(key, cur, cand, good, junk, strange, rec)
     if act == "refuse":
         raise err

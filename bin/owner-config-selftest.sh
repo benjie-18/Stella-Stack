@@ -39,6 +39,8 @@ ok '[ "$(shell_vals)" = "A \$B #c|C:\\stack\\||" ] && [ "$(py_vals)" = "$(shell_
 ok 'python3 -I -c "import sys; sys.path.insert(0, \"/workspace/bin\"); import owner_config as o; assert o.windows(o.load(), \"a/b.md\") == \"C:\\\\stack\\\\a\\\\b.md\""' "one trailing backslash of the path is dropped when joining"
 out=$(/workspace/bin/owner-config.sh --check); rc=$?
 ok '[ "$rc" = 1 ] && grep -q "FAIL DISCORD_GUILD_ID" <<<"$out" && ! grep -q "FAIL SUPERVISOR_CHANNEL_ID\\|FAIL OWNER_DISCORD_USER_ID" <<<"$out" && grep -q "WARN OWNER_DISCORD_USER_ID is empty" <<<"$out"' "--check: a short id fails; the last of two keys wins; an empty owner id only warns"
+printf "OWNER_NAME=a\nOWNER_STACK_PATH_WIN=x\nGITHUB_OWNER=org\nOWNER_DISCORD_USER_ID=\nDISCORD_GUILD_ID=\nESCALATIONS_CHANNEL_ID=\nSUPERVISOR_CHANNEL_ID=\n" > "$T/e.env"
+ok 'OWNER_CONFIG="$T/e.env" python3 -I -c "import sys; sys.path.insert(0, \"/workspace/bin\"); import owner_config as o; o.load()" && out2=$(OWNER_CONFIG="$T/e.env" /workspace/bin/owner-config.sh --check); grep -q "WARN ESCALATIONS_CHANNEL_ID is empty" <<<"$out2" && ! grep -q "^FAIL" <<<"$out2"' "Discord is one connection: empty guild and channel ids load and only warn in --check"
 ok 'grep -q "WARN $T/g.env is writable" <<<"$out" && grep -q "WARN $T is writable, so $T/g.env can be replaced: chmod 555 $T" <<<"$out"' "--check warns when the file or its folder is writable (D40)"
 # K5 (owner decision 2026-10-29): a double-quoted value with no $, backtick, backslash or " is accepted and reads exactly as
 # its single-quoted form. k5_form: an error names the file, the line number and the three accepted forms (not the sentence).

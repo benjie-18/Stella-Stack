@@ -40,7 +40,6 @@ question="$*"
 
 [[ "$card" =~ ^t_[0-9a-f]{8}$ ]] && [ -n "$summary" ] && [ -n "$question" ] \
   || fail "usage: escalation-thread.sh <card-id> <card title> <question>" 2
-[ -n "$ESCALATIONS_CHANNEL_ID" ] || fail "ESCALATIONS_CHANNEL_ID is empty in config/owner.env" 3
 
 q=$(normalize_reason "$question")
 [ -n "$q" ] || q="see the card for the decision needed"
@@ -69,6 +68,9 @@ if [ "$(jq -r '[.events[]? | select(.kind == "blocked")] | last | .payload.kind 
   kanban comment --author escalation-thread.sh "$card" "Capability block held for triage (not a human decision, no #escalations thread). What the worker wrote is its own claim, not checked by the stack. Error: ${q}${sug}" >/dev/null
   exit 0
 fi
+
+# Only the path that posts to the escalations channel needs its id; a capability hold (above) posts nothing there.
+[ -n "$ESCALATIONS_CHANNEL_ID" ] || fail "ESCALATIONS_CHANNEL_ID is empty in config/owner.env" 3
 
 # The thread map is checked first: an existing thread for this card is reused, never re-created or re-announced.
 row=$(map_row "$card")              # a deleted thread (D32) is never reused: the card then gets a new one

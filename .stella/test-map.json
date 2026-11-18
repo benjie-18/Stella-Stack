@@ -145,6 +145,9 @@
     "settings": {
       "mark": "hermetic"
     },
+    "settings-explain": {
+      "mark": "hermetic"
+    },
     "stella-apply": {
       "mark": "hermetic"
     },
@@ -171,6 +174,24 @@
       "mark": "hermetic"
     },
     "loopback": {
+      "mark": "hermetic"
+    },
+    "mock-provider": {
+      "mark": "hermetic"
+    },
+    "presets": {
+      "mark": "hermetic"
+    },
+    "resolver": {
+      "mark": "hermetic"
+    },
+    "failover": {
+      "mark": "hermetic"
+    },
+    "credentials": {
+      "mark": "hermetic"
+    },
+    "consent": {
       "mark": "hermetic"
     }
   },
@@ -286,6 +307,18 @@
       "targets": [
         "settings"
       ]
+    },
+    {
+      "globs": [
+        "bin/settings-explain-selftest.sh",
+        ".claude/settings.json",
+        ".stella/owner-auth.json",
+        ".stella/settings.json"
+      ],
+      "targets": [
+        "settings-explain"
+      ],
+      "why": "F2 W6: the explain selftest and the data it reads that no other row sends it (bin/test-map.py reach)"
     },
     {
       "globs": [
@@ -962,11 +995,13 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "box",
         "card-schema",
         "commit-guard",
         "complete-gate",
         "delegation",
+        "devices",
         "escalate",
         "escalation-reply-poll",
         "event-log",
@@ -974,8 +1009,10 @@
         "kanban-board",
         "kanban-guard",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "owner-settings",
         "profile-hooks",
         "reviewer-claude",
@@ -987,10 +1024,7 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field); plus the selftests that reach it since the merge of build/F1 69edb47 (bin/test-map.py reach)"
     },
@@ -1059,9 +1093,11 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "card-schema",
         "complete-gate",
         "delegation",
+        "devices",
         "escalate",
         "escalation-reply-poll",
         "event-log",
@@ -1069,8 +1105,10 @@
         "kanban-board",
         "kanban-guard",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "profile-hooks",
         "reviewer-claude",
         "role-guard",
@@ -1080,10 +1118,7 @@
         "stella-apply",
         "stella-data",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
     },
@@ -1195,6 +1230,7 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "box",
         "broker-put",
         "card-schema",
@@ -1203,6 +1239,7 @@
         "complete-gate",
         "container-start",
         "delegation",
+        "devices",
         "escalate",
         "escalation-complete",
         "escalation-reply-hook",
@@ -1217,8 +1254,10 @@
         "kanban-guard",
         "matcher-audit",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "owner-config",
         "owner-leak",
         "owner-settings",
@@ -1234,10 +1273,7 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1275,6 +1311,7 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "box",
         "broker-put",
         "card-schema",
@@ -1283,6 +1320,7 @@
         "complete-gate",
         "container-start",
         "delegation",
+        "devices",
         "escalate",
         "escalation-reply-poll",
         "escalation-thread",
@@ -1294,8 +1332,10 @@
         "kanban-guard",
         "matcher-audit",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "owner-config",
         "owner-settings",
         "profile-hooks",
@@ -1310,10 +1350,7 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1391,6 +1428,7 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "box",
         "broker-put",
         "card-schema",
@@ -1399,6 +1437,7 @@
         "complete-gate",
         "container-start",
         "delegation",
+        "devices",
         "escalate",
         "escalation-complete",
         "escalation-reply-poll",
@@ -1411,8 +1450,10 @@
         "kanban-guard",
         "matcher-audit",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "owner-config",
         "owner-settings",
         "profile-hooks",
@@ -1427,10 +1468,7 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1442,9 +1480,11 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "card-schema",
         "complete-gate",
         "delegation",
+        "devices",
         "escalate",
         "escalation-reply-poll",
         "event-log",
@@ -1452,8 +1492,10 @@
         "kanban-board",
         "kanban-guard",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "profile-hooks",
         "reviewer-claude",
         "role-guard",
@@ -1463,10 +1505,7 @@
         "stella-apply",
         "stella-data",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1511,6 +1550,7 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "bench",
         "box",
         "broker-put",
@@ -1520,6 +1560,7 @@
         "complete-gate",
         "container-start",
         "delegation",
+        "devices",
         "escalate",
         "escalation-complete",
         "escalation-reply-hook",
@@ -1534,8 +1575,10 @@
         "kanban-guard",
         "matcher-audit",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "owner-config",
         "owner-leak",
         "owner-settings",
@@ -1551,10 +1594,7 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1593,6 +1633,7 @@
         "bin/settings.py"
       ],
       "targets": [
+        "settings-explain",
         "alert",
         "approvals",
         "devices",
@@ -1618,9 +1659,11 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "card-schema",
         "complete-gate",
         "delegation",
+        "devices",
         "escalate",
         "escalation-reply-poll",
         "event-log",
@@ -1628,8 +1671,10 @@
         "kanban-board",
         "kanban-guard",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "profile-hooks",
         "reviewer-claude",
         "role-guard",
@@ -1639,10 +1684,7 @@
         "stella-apply",
         "stella-data",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach)"
     },
@@ -1654,9 +1696,11 @@
         "alert",
         "alert-page",
         "approval-evidence",
+        "approvals",
         "card-schema",
         "complete-gate",
         "delegation",
+        "devices",
         "escalate",
         "escalation-reply-poll",
         "event-log",
@@ -1664,8 +1708,10 @@
         "kanban-board",
         "kanban-guard",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
+        "owner-auth",
         "profile-hooks",
         "reviewer-claude",
         "role-guard",
@@ -1676,10 +1722,7 @@
         "stella-data",
         "test-map",
         "watchdog",
-        "write-guard",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "write-guard"
       ],
       "why": "from reach: the selftests that run or name these files (bin/test-map.py reach); plus the selftests that reach it since the merge of build/F1 69edb47 (bin/test-map.py reach)"
     },
@@ -2284,14 +2327,15 @@
         ".stella/schemas/owner-auth.schema.json"
       ],
       "targets": [
+        "approvals",
+        "devices",
+        "event-log",
+        "mock-provider",
+        "owner-auth",
+        "roles",
         "settings",
         "stella-apply",
-        "stella-data",
-        "event-log",
-        "roles",
-        "owner-auth",
-        "approvals",
-        "devices"
+        "stella-data"
       ],
       "why": "F1c G0, conservative: the one worker-environment answer and its policy; every owner command and the event writer use it (W2a/W4b narrow this when their selftests land)"
     },
@@ -2302,8 +2346,9 @@
       ],
       "targets": [
         "approvals",
-        "owner-auth",
-        "devices"
+        "devices",
+        "mock-provider",
+        "owner-auth"
       ],
       "why": "F1c W2a: the owner-authenticator and its selftest (which also runs stella_data.py stubs over the features file)"
     },
@@ -2311,8 +2356,10 @@
       "globs": [
         ".stella/grants.json",
         ".stella/host-access.json",
+        ".stella/routing.json",
         ".stella/schemas/grants.schema.json",
-        ".stella/schemas/host-access.schema.json"
+        ".stella/schemas/host-access.schema.json",
+        ".stella/schemas/routing.schema.json"
       ],
       "targets": [
         "commit-guard",
@@ -2335,6 +2382,7 @@
         "card-schema",
         "complete-gate",
         "delegation",
+        "devices",
         "escalate",
         "escalation-reply-poll",
         "event-log",
@@ -2342,6 +2390,7 @@
         "kanban-board",
         "kanban-guard",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
         "owner-auth",
@@ -2354,8 +2403,7 @@
         "stella-apply",
         "stella-data",
         "watchdog",
-        "write-guard",
-        "devices"
+        "write-guard"
       ],
       "why": "F1c W1: the agents' untrusted stream (event-log-selftest runs it); bin/event_log.py imports its line limits, so every selftest that reaches the writer reaches it"
     },
@@ -2472,6 +2520,7 @@
         "kanban-guard",
         "loopback",
         "merge-card",
+        "mock-provider",
         "model-watch",
         "omniroute-run",
         "owner-auth",
@@ -2577,6 +2626,15 @@
     },
     {
       "globs": [
+        "docs/hermes-local/roles.json"
+      ],
+      "targets": [
+        "bench"
+      ],
+      "why": "sweep E: bin/bench.sh reads main_branch from the role table"
+    },
+    {
+      "globs": [
         ".stella/data-policy.json",
         "docs/contract/README.md"
       ],
@@ -2584,6 +2642,200 @@
         "roles"
       ],
       "why": "F1c W7 (FV-01): the roles selftest's FV-01 cases read the data policy's record_kinds (role, profile) and the contract README's env-row identity rule"
+    },
+    {
+      "globs": [
+        "bin/mock_provider.py",
+        "bin/mock_cli.py",
+        "bin/mock-provider-selftest.sh",
+        ".stella/protocols.json",
+        ".stella/schemas/protocols.schema.json"
+      ],
+      "targets": [
+        "mock-provider"
+      ],
+      "why": "F2 W2: the test rig (mock provider server, fake CLI) and the wire-shape data it serves; the selftest starts them in a scratch root"
+    },
+    {
+      "globs": [
+        "bin/presets-selftest.sh",
+        ".stella/connections.json",
+        ".stella/data-files.json",
+        ".stella/data-policy.json",
+        ".stella/grants.json",
+        ".stella/role-assignments.json",
+        ".stella/routing.json",
+        ".stella/schemas/connections.schema.json",
+        ".stella/schemas/data-files.schema.json",
+        ".stella/schemas/data-policy.schema.json",
+        ".stella/schemas/event.schema.json",
+        ".stella/schemas/grants.schema.json",
+        ".stella/schemas/role-assignments.schema.json",
+        ".stella/schemas/routing.schema.json",
+        ".supervisor/limits.env",
+        "SUPERVISOR.md",
+        "bin/alert-catalog.sh",
+        "bin/alert.sh",
+        "bin/alert_catalog.py",
+        "bin/apply-hermes-local.sh",
+        "bin/devices.py",
+        "bin/escalation-complete.sh",
+        "bin/escalation-discord.sh",
+        "bin/escalation-on-block.sh",
+        "bin/escalation-on-claim.sh",
+        "bin/escalation-on-complete.sh",
+        "bin/escalation-thread.sh",
+        "bin/event_log.py",
+        "bin/event_untrusted.py",
+        "bin/kanban-board.sh",
+        "bin/kanban-guard.sh",
+        "bin/owner-config.sh",
+        "bin/owner_auth.py",
+        "bin/owner_config.py",
+        "bin/register-escalation-hook.sh",
+        "bin/register-toolsets.sh",
+        "bin/role-guard.py",
+        "bin/roles.py",
+        "bin/stella-apply.py",
+        "bin/stella_data.py",
+        "bin/worker_env.py",
+        "docs/alert-codes.md",
+        "docs/hermes-local/alert-catalog.json",
+        "docs/hermes-local/board.md",
+        "docs/hermes-local/roles.json"
+      ],
+      "targets": [
+        "presets",
+        "settings-explain"
+      ],
+      "why": "F2 W1: the presets selftest (presets, routing data, grants and the apply tool's built-in refusal, in scratch roots) and every file it can reach: the data files and schemas check judges (from reading: the index names them), the data and apply tools, the owner authenticator and what those name (bin/test-map.py reach)"
+    },
+    {
+      "globs": ["bin/route.py", "bin/failover-selftest.sh", "bin/credentials.py", "bin/resolve.py", "bin/consent.py", "bin/approvals.py",".claude/settings.json", ".stella/connections.json", ".stella/data-files.json", ".stella/features.json", ".stella/protocols.json", ".stella/routing.json", ".stella/schemas/event.schema.json", ".stella/settings.json", ".supervisor/limits.env", "SUPERVISOR.md", "bin/alert-catalog.sh", "bin/alert.sh", "bin/alert_catalog.py", "bin/apply-hermes-local.sh", "bin/devices.py", "bin/escalation-complete.sh", "bin/escalation-discord.sh", "bin/escalation-on-block.sh", "bin/escalation-on-claim.sh", "bin/escalation-on-complete.sh", "bin/escalation-thread.sh", "bin/event_log.py", "bin/event_untrusted.py", "bin/kanban-board.sh", "bin/kanban-guard.sh", "bin/mock_provider.py", "bin/owner-config.sh", "bin/owner_auth.py", "bin/owner_config.py", "bin/register-escalation-hook.sh", "bin/register-toolsets.sh", "bin/role-guard.py", "bin/roles.py", "bin/settings.py", "bin/stella-apply.py", "bin/stella_data.py", "bin/worker_env.py", "docs/alert-codes.md", "docs/hermes-local/alert-catalog.json", "docs/hermes-local/board.md", "docs/hermes-local/roles.json"],
+      "targets": ["failover"],
+      "why": "F2 W4: the failover selftest (bin/route.py against the mock provider, a stand-in resolver and a folder key backend, in a scratch root) and every file it can reach: the model call and its key interface, the routing, catalog, wire-shape and settings data it reads, the event writer, the alert sender and what those name (bin/test-map.py reach)"
+    },
+    {
+      "globs": ["bin/credentials.py", "bin/credentials-selftest.sh", "bin/route.py", "bin/resolve.py", "bin/consent.py", "bin/approvals.py",".claude/settings.json", ".stella/data-files.json", ".stella/protocols.json", ".stella/routing.json", ".stella/schemas/event.schema.json", ".stella/settings.json", ".supervisor/limits.env", "SUPERVISOR.md", "bin/alert-catalog.sh", "bin/alert.sh", "bin/alert_catalog.py", "bin/apply-hermes-local.sh", "bin/devices.py", "bin/escalation-complete.sh", "bin/escalation-discord.sh", "bin/escalation-on-block.sh", "bin/escalation-on-claim.sh", "bin/escalation-on-complete.sh", "bin/escalation-thread.sh", "bin/event_log.py", "bin/event_untrusted.py", "bin/kanban-board.sh", "bin/kanban-guard.sh", "bin/owner-config.sh", "bin/owner_auth.py", "bin/owner_config.py", "bin/register-escalation-hook.sh", "bin/register-toolsets.sh", "bin/role-guard.py", "bin/roles.py", "bin/settings.py", "bin/stella-apply.py", "bin/stella_data.py", "bin/worker_env.py", "docs/alert-codes.md", "docs/hermes-local/alert-catalog.json", "docs/hermes-local/board.md", "docs/hermes-local/roles.json"],
+      "targets": ["credentials"],
+      "why": "F2 W4: the credentials selftest (bin/credentials.py with the shipped backend and a folder backend, in a scratch root) and every file it can reach: the key interface, the routing data that names the backend, the event writer it borrows its file checks from and what those name (bin/test-map.py reach)"
+    },
+    {
+      "globs": ["bin/consent.py", "bin/consent-selftest.sh", "bin/approvals.py", "bin/route.py", "bin/resolve.py", "bin/credentials.py", ".claude/settings.json", ".stella/data-files.json", ".stella/protocols.json", ".stella/schemas/approval-request.schema.json", ".stella/schemas/event.schema.json", ".stella/settings.json", ".supervisor/limits.env", "SUPERVISOR.md", "bin/alert-catalog.sh", "bin/alert.sh", "bin/alert_catalog.py", "bin/apply-hermes-local.sh", "bin/devices.py", "bin/escalation-complete.sh", "bin/escalation-discord.sh", "bin/escalation-on-block.sh", "bin/escalation-on-claim.sh", "bin/escalation-on-complete.sh", "bin/escalation-thread.sh", "bin/event_log.py", "bin/event_untrusted.py", "bin/kanban-board.sh", "bin/kanban-guard.sh", "bin/owner-config.sh", "bin/owner_auth.py", "bin/owner_config.py", "bin/register-escalation-hook.sh", "bin/register-toolsets.sh", "bin/role-guard.py", "bin/roles.py", "bin/settings.py", "bin/stella-apply.py", "bin/stella_data.py", "bin/worker_env.py", "docs/alert-codes.md", "docs/hermes-local/alert-catalog.json", "docs/hermes-local/board.md", "docs/hermes-local/roles.json"],
+      "targets": ["consent"],
+      "why": "F2 W5: the consent selftest (bin/consent.py through the real route.py attempt, resolver, approval service, owner authenticator and apply tool, in a scratch root) and every file it can reach: the consent gate and its commands, the tools it calls, the data they read and what those name (bin/test-map.py reach)"
+    },
+    {
+      "globs": ["bin/resolve.py", "bin/route.py", "bin/credentials.py", "bin/consent.py", "bin/approvals.py"],
+      "targets": ["alert-page", "approval-evidence", "box", "broker-put", "check-guard", "complete-gate", "delegation", "escalate", "escalation-thread", "kanban-board", "merge-card", "omniroute-run", "reviewer-claude", "roles", "routing", "write-guard"],
+      "why": "F2 W7b: bin/escalate.sh and bin/box.py ask the resolver, so every selftest that can reach those two reaches the resolver and what it imports (from reach)."
+    },
+    {
+      "globs": ["bin/settings.py", ".stella/settings.json", ".claude/settings.json"],
+      "targets": ["alert-page", "approval-evidence", "broker-put", "check-guard", "complete-gate", "delegation", "escalation-thread", "routing"],
+      "why": "F2 W7b: reached through the resolver that bin/escalate.sh now names (from reach)."
+    },
+    {
+      "globs": ["bin/resolve.py", "bin/route.py", "bin/credentials.py", "bin/consent.py", "bin/approvals.py", ".stella/protocols.json"],
+      "targets": ["approvals", "devices", "settings", "settings-explain", "stella-apply", "watchdog"],
+      "why": "F2 W6 fix: bin/settings.py explain imports the resolver (resolve.role_view), so every selftest that can reach settings.py reaches the resolver and what it imports (from reach)."
+    },
+    {
+      "globs": [".claude/settings.json", ".stella/protocols.json", ".stella/settings.json", "bin/approvals.py", "bin/consent.py", "bin/credentials.py", "bin/resolve.py", "bin/route.py", "bin/settings.py"],
+      "targets": ["container-start", "firewall-probe", "init-firewall"],
+      "why": "F2 W7b fix: bin/container-start.sh takes OpenCode's model from the resolver, so every selftest that can reach container-start.sh reaches the resolver and what it imports (from reach)."
+    },
+    {
+      "globs": [".stella/connections.json"],
+      "targets": ["container-start"],
+      "why": "F2 W7b fix: read by the resolver that bin/container-start.sh now names (from reach)."
+    },
+    {
+      "globs": ["bin/settings.py", ".stella/connections.json"],
+      "targets": ["box"],
+      "why": "F2 W7b: bin/box.py takes the review model from the resolver, which reads these (from reach)."
+    },
+    {
+      "globs": [".stella/protocols.json"],
+      "targets": ["alert", "alert-page", "approval-evidence", "box", "broker-put", "check-guard", "complete-gate", "delegation", "escalate", "escalation-thread", "kanban-board", "merge-card", "omniroute-run", "profile-hooks", "reviewer-claude", "roles", "routing", "write-guard"],
+      "why": "F2 W7b: named by bin/route.py, which the resolver's callers reach (from reach)."
+    },
+    {
+      "globs": ["bin/stella_data.py", "bin/stella-apply.py", "bin/worker_env.py", "bin/devices.py", "bin/event_log.py", "bin/event_untrusted.py", "bin/owner_auth.py", ".stella/schemas/event.schema.json", ".stella/data-files.json"],
+      "targets": ["box", "broker-put", "check-guard", "container-start", "escalation-thread", "firewall-probe", "init-firewall"],
+      "why": "F2 W7b: bin/container-start.sh builds the OpenCode config from the catalog through bin/stella_data.py, and bin/box.py asks the resolver (from reach; box is a superset for .stella/data-files.json)."
+    },
+    {
+      "globs": [".stella/connections.json", ".stella/data-policy.json", ".stella/role-assignments.json", ".stella/routing.json"],
+      "targets": ["box", "escalate", "profile-hooks", "reviewer-claude"],
+      "why": "F2 W7b: the escalate, profile-hooks, box and reviewer-claude selftests build resolver fixture roots from these (from reach; reviewer-claude is a superset for the three routing data files)."
+    },
+    {
+      "globs": [
+        "bin/resolver-selftest.sh",
+        "bin/resolve.py",
+        "bin/consent.py",
+        "bin/approvals.py",
+        "bin/credentials.py",
+        "bin/route.py",
+        "bin/settings.py",
+        ".claude/settings.json",
+        ".stella/protocols.json",
+        ".stella/settings.json",
+        ".stella/connections.json",
+        ".stella/data-files.json",
+        ".stella/data-policy.json",
+        ".stella/features.json",
+        ".stella/grants.json",
+        ".stella/install.json",
+        ".stella/role-assignments.json",
+        ".stella/routing.json",
+        ".stella/schemas/connections.schema.json",
+        ".stella/schemas/data-files.schema.json",
+        ".stella/schemas/data-policy.schema.json",
+        ".stella/schemas/event.schema.json",
+        ".stella/schemas/features.schema.json",
+        ".stella/schemas/grants.schema.json",
+        ".stella/schemas/install.schema.json",
+        ".stella/schemas/role-assignments.schema.json",
+        ".stella/schemas/roles.schema.json",
+        ".stella/schemas/routing.schema.json",
+        ".supervisor/limits.env",
+        "SUPERVISOR.md",
+        "bin/alert-catalog.sh",
+        "bin/alert.sh",
+        "bin/alert_catalog.py",
+        "bin/apply-hermes-local.sh",
+        "bin/devices.py",
+        "bin/escalation-complete.sh",
+        "bin/escalation-discord.sh",
+        "bin/escalation-on-block.sh",
+        "bin/escalation-on-claim.sh",
+        "bin/escalation-on-complete.sh",
+        "bin/escalation-thread.sh",
+        "bin/event_log.py",
+        "bin/event_untrusted.py",
+        "bin/kanban-board.sh",
+        "bin/kanban-guard.sh",
+        "bin/owner-config.sh",
+        "bin/owner_auth.py",
+        "bin/owner_config.py",
+        "bin/register-escalation-hook.sh",
+        "bin/register-toolsets.sh",
+        "bin/role-guard.py",
+        "bin/roles.py",
+        "bin/stella-apply.py",
+        "bin/stella_data.py",
+        "bin/worker_env.py",
+        "docs/alert-codes.md",
+        "docs/hermes-local/alert-catalog.json",
+        "docs/hermes-local/board.md",
+        "docs/hermes-local/roles.json"
+      ],
+      "targets": [
+        "resolver"
+      ],
+      "why": "F2 W3: the resolver selftest (the chain and every rule's code, the fake-entry test, card apps, read-only, in scratch roots) and every file it can reach: the resolver, the data files and schemas a resolve reads through the data tool's check (from reading: the index names them), the data tool and what it names (bin/test-map.py reach)"
     }
   ]
 }

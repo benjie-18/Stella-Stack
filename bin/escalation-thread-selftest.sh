@@ -112,6 +112,10 @@ ok '[ "$(amsg STL-ESC-231 t_cafecafe)" = 1 ] && grep -qF -- "$want" "$T/sup/send
 ok 'grep -q "comment --author escalation-thread.sh t_cafecafe Capability block held for triage" "$T/sup/comments" && grep -q "Error: $CR" "$T/sup/comments"' "capability block: card comment names the error"
 FAKE_KIND=capability FAKE_ASSIGNEE=builder-claude $E t_cafecaff "Some card" "$CR" >/dev/null 2>&1
 ok '[ "$(amsg STL-ESC-231 t_cafecaff)" = 1 ] && grep "^STL-ESC-231 .*t_cafecaff" "$T/sup/logs/alerts.log" | grep -q "suggestion=..$" && ! grep "t_cafecaff" "$T/sup/sends" | grep -q "Suggestion"' "capability block on builder-claude: no reassignment suggestion"
+# a capability hold posts nothing to #escalations, so an empty ESCALATIONS_CHANNEL_ID must not stop it
+cp "$T/owner.env" "$T/owner-nochan.env"; printf "ESCALATIONS_CHANNEL_ID=''\n" >> "$T/owner-nochan.env"
+OWNER_CONFIG="$T/owner-nochan.env" FAKE_KIND=capability $E t_cafecafd "Some card" "$CR" >/dev/null 2>&1
+ok '[ "$(amsg STL-ESC-231 t_cafecafd)" = 1 ]' "capability block with ESCALATIONS_CHANNEL_ID empty: still held for triage"
 
 # F6: a long title keeps the thread name within Discord's 100-character limit, card id first.
 FAKE_NBLOCKS=1 $E t_0000000a "$(printf 'y%.0s' $(seq 1 120))" "Decision needed: pick (A) or (B)." >/dev/null 2>&1
@@ -148,7 +152,7 @@ ok '[ "$(grep -c "^--to discord:100:556 --quiet Card t_0000000d" "$T/sup/sends")
 FAKE_CREATE_FAIL=1 $E t_0000000e "$LONG" "Decision needed: pick (A) or (B)." >/dev/null 2>&1; rc=$?
 FAKE_CREATE_FAIL=1 $E t_0000000e "$LONG" "Decision needed: pick (A) or (B)." >/dev/null 2>&1
 ok '[ "$rc" = 1 ] && [ "$(jq -r "select(.card == \"t_0000000e\") | .event" "$T/sup/escalations.log" | sort | uniq -c | tr -s " ")" = " 2 THREAD_FAIL" ]' "F1: create_thread failure: THREAD_FAIL, exit 1"
-ok '[ "$(amsg STL-ESC-220 t_0000000e)" = 1 ] && grep -qF "Card t_0000000e (\"${LONG:0:80}\") needs a decision from you, but Stella could not post it in #escalations (Discord had a server error)" "$T/sup/sends" && grep -q "^STL-ESC-220 .*card=.t_0000000e.*create_thread failed.*503" "$T/sup/logs/alerts.log"' "F1: one #alerts line per card an hour: card, title cut to 80, error"
+ok '[ "$(amsg STL-ESC-220 t_0000000e)" = 1 ] && grep -qF "Card t_0000000e (\"${LONG:0:80}\") needs a decision from you, but Stella could not post it in #escalations (the chat platform had a server error)" "$T/sup/sends" && grep -q "^STL-ESC-220 .*card=.t_0000000e.*create_thread failed.*503" "$T/sup/logs/alerts.log"' "F1: one #alerts line per card an hour: card, title cut to 80, error"
 
 # F5: the #supervisor link is the only notice outside #escalations; a failed post is LINK_FAIL plus one #alerts line.
 : > "$T/sup/sends"

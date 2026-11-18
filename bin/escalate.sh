@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
-# The only sanctioned way to run Claude Opus, Haiku or Sonnet: card-scoped, logged, rate-limited.
-# usage: escalate.sh <card-id> <haiku|sonnet|opus> <purpose> <reason...> [--]
-#   prompt on stdin; opus purpose must be in OPUS_PURPOSES (plan runs --model opusplan). Anything after -- is refused (exit 2): no caller passes an extra arg. A reason over 8192 characters is refused (exit 2; not on a replay).
-# Exit: 0 ok, 2 usage or a refusal (a setting's registry default unreadable: STL-CFG-310; the log or a state file of the call is a link; nothing run), 3 over a limit (never retried), 75 pool exhausted, else claude's exit code.
-# Queue (F15, F28, F29): a call refused by a zeroed or exceeded limit (Opus slots, Haiku per day) and every pool-exhausted
+# The only sanctioned way to run an escalation model on the coding CLI this script drives: card-scoped, logged, rate-limited.
+# usage: escalate.sh <card-id> <model> <purpose> <reason...> [--]
+#   prompt on stdin. Anything after -- is refused (exit 2): no caller passes an extra arg. A reason over 8192 characters is refused (exit 2; not on a replay).
+#   <model> is the model the caller asks for: an id the connections catalog lists on a connection whose `cli` is this script's CLI
+#   (no model is named here). That the caller names it is a stub (features `escalate-caller-names-model`, due F2b: the walk of
+#   the role's escalation chain). The call runs only when the resolver (bin/resolve.py, read-only), asked for the role of the
+#   card's assignee, the card and its project, lists exactly that link `usable`; no other link is tried.
+#   A call from a worker run names that run's own proven card, or is refused (STL-GRD-604, exit 3, not queued).
+#   The model's limits are its catalog `limits` object: `purposes` (the only purposes it runs for), `max_concurrent` (slots),
+#   `per_day` (calls per UTC day), each a value or the name of the limits.env key that holds it, and `purpose_models`
+#   {purpose: the model name the CLI gets for that purpose instead of the id}.
+# Exit: 0 ok, 2 usage or a refusal (a setting's registry default or the catalog unreadable: STL-CFG-310; the log or a state file of the call is a link; nothing run), 3 over a limit, a model the catalog does not list for this CLI (STL-MDL-711) or a link the resolver does not list usable (its code) (never retried), 75 pool exhausted, else the CLI's exit code.
+# Queue (F15, F28, F29): a call refused by a zeroed or exceeded limit (slots, per day) or by the resolver, and every pool-exhausted
 # call is recorded in state/queue.jsonl with its prompt file, and raises one #alerts line; the caller still gets 3 or 75.
 # A queue file that cannot be read, parsed or written is never read as empty and never reported as written: the call is not queued,
 # the caller still gets 3 or 75, the stderr line, the card note and a NOT_QUEUED log line say it was lost, and STL-LIM-405 tells the
@@ -20,6 +28,7 @@ set -uo pipefail
 export PATH="$PATH:/home/node/.local/bin:/home/node/.hermes/hermes-agent/.hermes/bin:/usr/local/share/npm-global/bin:/usr/local/bin:/usr/bin:/bin"
 export LC_ALL=C.UTF-8   # F19: the inherited en_US.UTF-8 is not installed, so bash falls back to C and ${s:0:N} cuts bytes
 
+CLI=claude-code   # the catalog id (a connection's `cli`) of the coding CLI this script drives: the `claude` command below
 SUP="${ESCALATE_SUP_DIR:-/workspace/.supervisor}"
 FALLBACK_CONFIG="${FALLBACK_CONFIG:-/workspace/docs/hermes-local/fallback-routing.json}"
 LOG="$SUP/escalations.log"
@@ -49,16 +58,29 @@ log() {  # log <event> <exit_code|null> [model_used] [fallback] [cost] [detail]
 }
 refuse() { log "$1" "$2" "" false null "$3"; echo "escalate.sh: $1: $3" >&2; exit "$2"; }
 registry() {  # registry <KEY>: sets reg_def reg_min reg_max from the settings registry; unreadable = refuse (exit 2, STL-CFG-310)
-  local v p="the default and range of setting $1 cannot be read"
+  local v
   v=$(python3 -I /workspace/bin/stella_data.py get --json settings "$1" 2>/dev/null | jq -er '[.default, .validation.minimum, .validation.maximum]
     | select(all(type == "number" and . == floor) and .[1] <= .[0] and .[0] <= .[2]) | @tsv') && read -r reg_def reg_min reg_max <<<"$v" && [ -n "$reg_max" ] && return
+  unreadable "the default and range of setting $1 cannot be read" "no call without a timeout, no unbounded queue"
+}
+unreadable() {  # unreadable <problem> <what that rules out>: data this call rests on (the settings registry, the catalog) cannot be read: refuse (exit 2, STL-CFG-310)
+  local p=$1
   python3 -I /workspace/bin/alert_catalog.py preview STL-CFG-310 problem="$p" >&2 2>/dev/null || echo "STL-CFG-310 $p" >&2   # fallback: no catalog, still a code
   # Nothing is queued (the queue bound is what could not be read) and the prompt is not read: the caller keeps it. The owner is told
   # on the alerts channel once an hour (a standing condition), never for a replay; each refused call has its own log line.
   if [ -z "${ESCALATE_REPLAY:-}" ] && once_per_hour registry-unreadable; then
     hermes send --to "$ALERT_TARGET" --quiet "$(alert_text STL-CFG-310 problem="$p; escalate.sh refused the call for card $card ($model $purpose): it was not run and not queued, the caller still holds the prompt; later calls are refused the same way until it is fixed (each in escalations.log, SETTING_UNREADABLE)")" >/dev/null 2>&1
   fi
-  refuse SETTING_UNREADABLE 2 "$p; no call without a timeout, no unbounded queue"
+  refuse SETTING_UNREADABLE 2 "$p; $2"
+}
+# lim <name>: L = the model's limit of that name, from its catalog `limits` object: a number or a list as it stands; a string names
+# the limits.env key that holds it (a key that file does not define gives an empty L, which every check below refuses). False when
+# the model has no such limit.
+lim() {
+  local t
+  IFS=$'\t' read -r t L < <(jq -r --arg k "$1" '.limits[$k] | select(. != null) | [type, (if type == "array" then join(" ") else tostring end)] | @tsv' <<<"$link") || return 1
+  [ "$t" = string ] || return 0
+  if [[ $L =~ ^[A-Z][A-Z0-9_]*$ ]] && grep -q "^$L=" "$SUP/limits.env"; then L=${!L-}; else L=""; fi
 }
 note() { kanban comment --author escalate.sh "$card" "$1" >/dev/null 2>&1; }
 QUEUE="$STATE/queue.jsonl"
@@ -121,13 +143,23 @@ extra_args=("$@")   # always empty past the next line; kept with a queue entry
 [[ "$card" =~ ^t_[0-9a-f]{8}$ ]] || refuse USAGE 2 "card id required (t_xxxxxxxx), got '${card}'"
 [ -n "$reason" ] || refuse USAGE 2 "reason required"
 card_json=$(kanban show "$card" --json 2>/dev/null) || refuse USAGE 2 "card $card not found on the board"
-case "$model" in
-  haiku|sonnet) claude_model="$model" ;;
-  opus)
-    [[ " $OPUS_PURPOSES " == *" $purpose "* ]] || refuse LIMIT 3 "opus is allowed only for: $OPUS_PURPOSES"
-    claude_model=$([ "$purpose" = plan ] && echo opusplan || echo opus) ;;
-  *) refuse USAGE 2 "model must be haiku, sonnet or opus" ;;
-esac
+# A worker run escalates its own card only (W7b-VAL-01): the card decides the role, the project and the facts the resolver judges,
+# so a run on a secrets card must not name a clean one. own = the card the guards' proof names for this call (roles.prove_card: the
+# board and the kernel, never the caller's word); "?" when a worker marker of the role table is set but no card is proven, or when
+# it cannot be told (the board or the table unreadable); empty when the call belongs to no worker run (the supervisor path: the card
+# as named). Not queued: the drain would replay the call as the supervisor.
+own=$(python3 -I -c 'import os, sys; sys.path.insert(0, "/workspace/bin"); import roles
+j, why = roles.prove_card()
+if not why: print(j["task"]["id"])
+elif why.startswith("the board cannot be read") or any(os.environ.get(m) for m in roles.worker_markers(roles.load())): print("?")' 2>/dev/null) || own="?"
+[ -z "$own" ] || [ "$own" = "$card" ] || refuse NOT_OWN_CARD 3 "STL-GRD-604 this call comes from a worker run, and card $card is not the card that run is proven on (${own/#\?/none proven}): a worker run escalates its own card only"
+# The model is data: an id the catalog lists on a connection whose `cli` is this script's. link = {connection, limits}.
+catalog=$(python3 -I /workspace/bin/stella_data.py get --json connections 2>/dev/null) || unreadable "the connections catalog cannot be read" "no model is known"
+link=$(jq -c --arg cli "$CLI" --arg m "$model" '[.entries[] | select(.kind == "provider" and .cli == $cli) | {connection: .id, limits: (.models[] | select(.id == $m) | .limits // {})}][0] // empty' <<<"$catalog" 2>/dev/null)
+[ -n "$link" ] || refuse UNKNOWN_MODEL 3 "STL-MDL-711 model $(printf %q "${model:0:64}") is not a model the connections catalog lists for this script's CLI"
+conn=$(jq -r .connection <<<"$link")
+if lim purposes; then [[ " $L " == *" $purpose "* ]] || refuse LIMIT 3 "$model is allowed only for: $L"; fi
+cli_model=$(jq -r --arg p "$purpose" --arg m "$model" '(.limits.purpose_models[$p]? | strings) // $m' <<<"$link")
 # The settings registry is read after the usage checks: a bad call is refused for what it is, before any alert.
 # A limit that is set but outside the registry's type and range is treated like a bad timeout: one warning, then the registry
 # default (`timeout 0` means no timeout; a non-number makes `[ -ge ]` fail, which would queue without bound).
@@ -150,22 +182,46 @@ prompt="$STATE/prompt-$(date -u +%Y%m%dT%H%M%SZ)-$card-$$.txt"
 cat >"$prompt"
 [ -s "$prompt" ] || { rm -f "$prompt"; refuse USAGE 2 "prompt required on stdin"; }
 
-if [ "$model" = opus ]; then
+# The resolver decides (F2 B1): the call runs only when the chain it answers for the caller's role lists exactly this link usable.
+# The caller is the card's assignee (its role from the role tool); the project is the card's (the board's field, else the folder
+# part of its branch). A card that names no project is refused: an empty project would be judged by the default policy only.
+profile=$(jq -r '.task.assignee | strings' <<<"$card_json" 2>/dev/null)
+project=$(jq -r '.task | (.project | strings) // ((.branch_name // .branch // "") | strings | select(contains("/")) | split("/")[0])' <<<"$card_json" 2>/dev/null)
+role=$(python3 -I -c 'import sys; sys.path.insert(0, "/workspace/bin"); import roles; print(roles.role_of(roles.load(), sys.argv[1])[0])' "$profile" 2>/dev/null)
+driver=$(python3 -I /workspace/bin/stella_data.py get --json routing 2>/dev/null | jq -r '[.drivers[]? | select(.mid_task == false) | .id][0] // empty' 2>/dev/null)   # the worker-CLI driver: the one that never switches mid-task
+if [ -z "$project" ]; then rcode=STL-MDL-711 rwhy="card $card names no project on the board"
+else
+  res=$(python3 -I /workspace/bin/resolve.py resolve --role "$role" --project "$project" --card "$card" ${driver:+--driver "$driver"} --json 2>"$prompt.err")
+  # the link's own status; a chain without it (under a Local only project the resolver lists no hosted link: the data-policy code
+  # says so, W3P-F-3), an answer the resolver refuses for another reason (a card app), or no chain at all (fail closed: the coded
+  # line is on stderr) is a refusal too
+  IFS=$'\t' read -r rcode rwhy < <(jq -r --arg c "$conn" --arg m "$model" '([.chain[] | select(.connection == $c and .model == $m)][0]) as $e
+    | if $e == null and .local_only == true then ["STL-MDL-716", "the project is Local only (data policy): the resolver lists local links only, and this link leaves the machine"]
+      elif $e == null then [.code // "STL-MDL-710", "the chain the resolver answers does not hold this link" + (if .reason then ": " + .reason else "" end)]
+      elif $e.status != "usable" then [$e.code // "STL-MDL-710", $e.reason // $e.status]
+      elif .code != null then [.code, .reason // "the resolver refused the request"] else ["usable", "-"] end | @tsv' <<<"$res" 2>/dev/null) \
+    || { rcode=$(grep -om1 'STL-[A-Z]*-[0-9]*' "$prompt.err"); rcode=${rcode:-STL-MDL-710}; rwhy="the resolver gave no chain: $(grep -m1 "$rcode" "$prompt.err" | head -c 300)"; }
+  rm -f "$prompt.err"
+fi
+[ "$rcode" = usable ] || limit "$rcode the resolver does not list $conn/$model usable for role ${role:-unknown}: $rwhy (the caller names the model: no other link is tried)"
+
+mkey=${model//[^A-Za-z0-9._-]/_}   # the model id as a file name of the state folder
+if lim max_concurrent; then
   got=""
-  for i in $(seq 1 "$OPUS_MAX_CONCURRENT"); do
-    lk="$STATE/opus.$i.lock"; nolink "$lk" || continue
+  for i in $(seq 1 "$L" 2>/dev/null); do
+    lk="$STATE/$mkey.$i.lock"; nolink "$lk" || continue
     exec 8>>"$lk"
     flock -n 8 && { got=1; break; }
   done
-  [ -n "$got" ] || limit "no Opus slot free (OPUS_MAX_CONCURRENT=$OPUS_MAX_CONCURRENT)"
+  [ -n "$got" ] || limit "no $model slot free (max_concurrent=$L)"
 fi
-if [ "$model" = haiku ]; then
-  counter="$STATE/haiku-$(date -u +%F).count"
-  lk="$STATE/haiku.lock"; { nolink "$lk" && nolink "$counter"; } || limit "the lock or counter of the daily limit in the state folder is a link"
+if lim per_day; then
+  counter="$STATE/$mkey-$(date -u +%F).count"
+  lk="$STATE/$mkey.lock"; { nolink "$lk" && nolink "$counter"; } || limit "the lock or counter of the daily limit in the state folder is a link"
   exec 7>>"$lk"
   flock 7
   n=$(cat "$counter" 2>/dev/null || echo 0)
-  [ "$n" -lt "$HAIKU_MAX_PER_DAY" ] || { flock -u 7; limit "Haiku daily limit reached ($n/$HAIKU_MAX_PER_DAY for $(date -u +%F))"; }
+  [ "$n" -lt "$L" ] 2>/dev/null || { flock -u 7; limit "$model daily limit reached ($n/$L for $(date -u +%F))"; }
   echo $((n + 1)) >"$counter"
   flock -u 7
 fi
@@ -174,7 +230,7 @@ log START null
 if [ "${ESCALATE_FORCE_POOL_EXHAUSTED:-}" = 1 ]; then
   out="" err="You've hit your session limit (forced by ESCALATE_FORCE_POOL_EXHAUSTED)" rc=1
 else
-  out=$(timeout "$CALL_TIMEOUT" claude -p --model "$claude_model" --output-format json \
+  out=$(timeout "$CALL_TIMEOUT" claude -p --model "$cli_model" --output-format json \
     --max-budget-usd "$MAX_BUDGET_USD" "$@" <"$prompt" 2>"$prompt.err")
   rc=$?
   err=$(cat "$prompt.err"); rm -f "$prompt.err"

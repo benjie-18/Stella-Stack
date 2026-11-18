@@ -56,6 +56,28 @@ echo '{"schema_version":1,"enabled":true}' > "$T/fb.json"; gw FAKE_GW_FAIL=1
 ok '[ "$rc" = 0 ] && [ -f "$T/apply.ran" ]' "D93: a gateway that fails to start does not fail container start or skip the apply step (exit $rc)"
 run FAKE_JQ_FAIL=1; ok '[ "$rc" != 0 ] && [ -f "$T/apply.ran" ]' "D93: with jq failing the later steps still run"
 
+# W7b-VAL-02: OpenCode's model is the resolver's answer for the role that runs it (the role table's first profile of the script's
+# worker kind), not the catalog's first local model; no usable local link = a config that names no model and a coded failed step.
+# Fixture root: the shipped data with one more model put first on the local provider (the shipped pin still names the other).
+FX=$T/fx; mkdir -p "$FX/docs"; cp -r /workspace/.stella "$FX/"; cp -r /workspace/docs/hermes-local "$FX/docs/"
+LQ='select(.kind == "provider" and .locality == "local")'; eval "$(grep -m1 '^WORKER=[a-z-]* ' "$T/ws/bin/cs.sh")"
+ROLE=$(jq -r --arg w "${WORKER:-}" '[.profiles[] | select(.worker == $w) | .role][0]' /workspace/docs/hermes-local/roles.json)
+jq "(.entries[] | $LQ | .models) |= [(.[0] | .id = \"qa-first\")] + ." /workspace/.stella/connections.json >"$FX/.stella/connections.json"
+WANT=$(STELLA_ROOT=$FX python3 -I /workspace/bin/resolve.py resolve --role "$ROLE" --project "" --card "$(cat /proc/sys/kernel/random/uuid)" --json 2>/dev/null | jq -r '[.chain[] | select(.status == "usable") | .model][0]')
+run STELLA_ROOT=$FX
+ok 'STELLA_ROOT=$FX python3 -I /workspace/bin/stella_data.py check >/dev/null 2>&1 && [ "$rc" = 0 ] && [ -n "$WANT" ] && [ "$WANT" != qa-first ] && [ "$(jq -r ".model | sub(\"^[^/]*/\"; \"\")" "$CFG")" = "$WANT" ] && [ "$(jq -r ".providers[].models | keys[]" "$CFG")" = "$WANT" ]' "W7b-VAL-02: the config names the model the resolver answers for role $ROLE ($WANT), not the catalog's first local model (the fixture passes the data check)"
+nomodel() { jq -e '(has("model") | not) and ([.providers[].models] == [{}]) and (.permission.skill | length > 0)' "$CFG" >/dev/null && [ ! -e "$CFG.tmp" ] && [ ! -e "$CFG.err" ] && [ -f "$T/apply.ran" ]; }
+RS=$FX/$(jq -r .routing_state "$FX/.stella/data-files.json"); mkdir -p "$(dirname "$RS")"   # every local link cools down
+jq --arg s "$(date -u +%FT%TZ)" --arg u "$(date -u -d '+30 days' +%FT%TZ)" "{links: ([.entries[] | $LQ | .id as \$c | .models[] | {key: (\$c + \"/\" + .id), value: {trigger: \"rate_limit\", since: \$s, until: \$u, failures: 1, observed_limit: null}}] | from_entries), tasks: {}}" "$FX/.stella/connections.json" >"$RS"
+run STELLA_ROOT=$FX
+ok '[ "$rc" != 0 ] && grep -q "opencode.json names no model: STL-MDL-7[0-9][0-9]" "$T/err" && nomodel' "W7b-VAL-02: the resolver lists no usable local link for the role (every local link cools down): the config names no model (the denies stay), the step fails with the resolver's code, apply still runs (exit $rc: $(grep -m1 opencode "$T/err" | head -c 200))"
+rm -f "$RS"; jq "(.entries[] | $LQ | .allowed_roles) = []" /workspace/.stella/connections.json >"$FX/.stella/connections.json"   # data the resolver refuses to read
+run STELLA_ROOT=$FX
+ok '[ "$rc" != 0 ] && grep -q "opencode.json names no model: STL-CFG-310" "$T/err" && nomodel' "W7b-VAL-02: the resolver gives no answer (data that is not valid): the same, with the coded line it failed closed with (exit $rc: $(grep -m1 opencode "$T/err" | head -c 200))"
+jq "(.entries[] | $LQ | .enabled) = false" /workspace/.stella/connections.json >"$FX/.stella/connections.json"   # no enabled local link: optional, never fails the start
+run STELLA_ROOT=$FX
+ok '[ "$rc" = 0 ] && ! grep -q "names no model" "$T/err"' "no enabled local link: the missing OpenCode model does not fail the start (exit $rc)"
+
 # postStartCommand: the gateway session starts unless the firewall failed.
 PS=$(jq -r .postStartCommand /workspace/.devcontainer/devcontainer.json)
 PS=${PS//\/workspace\/bin\/container-start.sh/$T/bin/cs-stub}

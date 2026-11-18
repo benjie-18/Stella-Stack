@@ -198,7 +198,7 @@
     "privacy_grants": {
       "type": "array",
       "x-owner-only": true,
-      "description": "The owner's privacy grants: a data class whose rule is hosted grant may reach the named connection while the grant runs. Only the owner's path writes them; ships empty.",
+      "description": "The owner's privacy grants: a data class whose rule is hosted grant may reach the named connection while the grant is in force (stella_data.grant_in_force: started, not ended, not revoked, in its scope). `check` refuses a grant for a class whose rule is not grant. Only the owner's path writes them; ships empty.",
       "items": {
         "type": "object",
         "properties": {
@@ -233,6 +233,43 @@
               "null"
             ],
             "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+          },
+          "scope": {
+            "type": "object",
+            "properties": {
+              "level": {
+                "enum": [
+                  "global",
+                  "project"
+                ]
+              },
+              "project": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+              }
+            },
+            "required": [
+              "level"
+            ],
+            "additionalProperties": false,
+            "description": "Where the grant holds: one project (level project, with project) or Stella-wide (level global). `check` refuses a level without its project, or a project beside level global. Absent: Stella-wide (a grant written before F2)."
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+            "description": "When the owner revoked the grant (null or absent: not revoked). From then on it grants nothing; a value that is no real date grants nothing either."
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "The approval request the grant was accepted through, or null (the owner's own apply)."
           }
         },
         "required": [
