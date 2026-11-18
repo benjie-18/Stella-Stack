@@ -5,6 +5,7 @@
 #   skills_disabled    -> `hermes config set skills.disabled`
 #   config             -> `hermes config set <key> <value>` (the role's config keys, and auxiliary.background_review.enabled
 #                         from its background_review field)
+#   model.default      -> the first usable link bin/resolve.py lists for the profile's role (none usable: unchanged, its code reported, exit 1)
 #   hook_files         -> byte copies of the repo hook scripts into <profile dir>/hooks/ (registered by
 #                         bin/register-escalation-hook.sh)
 # Profiles: every row of the table plus every profile found in ~/.hermes (no row = the fallback role). The volume is
@@ -75,6 +76,24 @@ for prof in $(jq -r 'keys[]' "$T"); do
     elif [ "$mode" = --check ]; then echo "$prof: plugin $pl DRIFT (not enabled)"; rc=1
     elif h plugins enable "$pl" >/dev/null; then echo "$prof: plugin $pl enabled"
     else echo "$prof: plugin $pl could not be enabled"; rc=1; fi
+  fi
+  # the engine model: the first link the resolver lists usable for the profile's role, asked with no card; a role that works a card is
+  # refused that way, so it is asked as bin/container-start.sh asks (a random card, no facts record, no project).
+  # None usable: the model stays and the resolver's code is reported (never a model the resolver did not list).
+  role=$(jq -r --arg p "$prof" '.[$p].role' "$T")
+  res=$(python3 -I /workspace/bin/resolve.py resolve --role "$role" --project "" --json 2>&1 || true)
+  jq -e .chain >/dev/null 2>&1 <<<"$res" || res=$(python3 -I /workspace/bin/resolve.py resolve --role "$role" --project "" --card "$(cat /proc/sys/kernel/random/uuid)" --json 2>&1 || true)
+  want=$(jq -r '[.chain[] | select(.status == "usable")][0].model // empty' <<<"$res" 2>/dev/null || true)
+  if [ -z "$want" ]; then
+    why=$(jq -r '"\(.code // "STL-MDL-710") \(.reason // "the chain holds no usable link")"' <<<"$res" 2>/dev/null || true)
+    echo "$prof: model.default left unchanged: ${why:-$(grep -m1 'STL-[A-Z]*-[0-9]' <<<"$res" | head -c 300)}"; rc=1
+  else
+    have=$(h config get model.default | head -1 || true)
+    if [ "$have" = "$want" ]; then echo "$prof: model.default $want (in sync)"
+    elif [ "$mode" = --check ]; then echo "$prof: model.default is ${have:-unset or unreadable}, expected $want"; rc=1
+    else backup
+      if h config set model.default "$want" >/dev/null; then echo "$prof: model.default set to $want"
+      else echo "$prof: model.default could not be set (hermes config set failed)"; rc=1; fi; fi
   fi
 done
 exit $rc
