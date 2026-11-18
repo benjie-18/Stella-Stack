@@ -6,8 +6,10 @@ CLI (host only: every command refuses in a worker environment, STL-CFG-312; the 
   probe.py run --connection C --model M [--again] [--json]   probe one link; one record keyed (connection, model, version), the version
         being the one the connection's model list shows; one trusted `probe.recorded` event line. A version that has a record is refused
         (STL-MDL-735) unless --again, which replaces that record.
-  probe.py due [--json]    {due: [{connection, model, version}], unreachable: [{connection, problem}]}: the links of the catalog whose
-        current model-list version has no record (the batch lane's input; scheduling it is later work).
+  probe.py due [--json]    {due: [{connection, model, version[, probeable: false]}], unreachable: [{connection, problem}]}: the links of the catalog whose
+        current model-list version has no record (the batch lane's input; scheduling it is later work), and with version null and
+        probeable false the links with no record whose connection has no wire shape (a CLI login): they serve unproven, flagged
+        (STL-MDL-738), and no probe run can record them.
   probe.py show [--connection C] [--model M] [--json]    the records.
   probe.py check [--json]  the records file against its schema and the routing data (the file is protected state, not a data row).
 Records: the file the index key probe_records names (a protected state path: no role writes it, git never holds it), schema
@@ -19,7 +21,7 @@ nothing recorded. An unknown connection or model: STL-MDL-734. Tests (each a smo
   routing probe.output_shapes, strongest first, that the wire shape names a pointer for, the test schema is sent there shape_trials
   times; the first id with no invalid answer is recorded, else none. context: `needles` chains of `hops` hops planted in a filler
   prompt at each length (about four bytes a token); the score of a length is the share of chains answered; effective = the longest
-  length whose score >= the shortest's * (1 - tolerance).
+  length whose score >= the shortest's * (1 - tolerance); when the shortest scores 0, the shortest length (never 0).
 Exit: 0 ok; 1 refused or failed (catalog code and plain message on stderr, {code, problem} on stdout); 2 usage."""
 import os, sys
 
@@ -188,8 +190,10 @@ def context(route, ask, p, rnd):
         got = sum(1 for prompt, last in chain_prompt(n, p["needles"], p["hops"], rnd) if last in str((ask(prompt)[0] or {}).get("text") or ""))
         pts.append({"tokens": n, "score": round(got / p["needles"], 4)})
     short = pts[0]["score"]
+    # W23P-02: a link that fails the multi-hop test even at the shortest length answered prompts of that length, so that length is
+    # what it is known to hold (never 0, which would refuse every call); a score that never left 0 cannot drop from there either
     return {"short_score": short, "points": pts,
-            "effective": max((x["tokens"] for x in pts if short > 0 and x["score"] >= short * (1 - p["tolerance"])), default=0)}
+            "effective": pts[0]["tokens"] if short == 0 else max(x["tokens"] for x in pts if x["score"] >= short * (1 - p["tolerance"]))}
 
 
 def probe(route, rt, prov, mod, proto, local, link, key, item, timeout):
@@ -262,11 +266,15 @@ def cmd_run(a):
 def cmd_due(a):
     import route
     rt, cat, protos, local = route.data()
-    have, due, bad = {(r["connection"], r["model"], r["version"]) for r in records()}, [], []
+    recs = records()
+    have, due, bad = {(r["connection"], r["model"], r["version"]) for r in recs}, [], []
+    seen = {(r["connection"], r["model"]) for r in recs}
     timeout = route.timeout_of()
     for prov in cat.values():
         proto = protos.get(prov.get("protocol")) if prov["kind"] == "provider" and prov.get("enabled") is not False else None
-        if proto is None:
+        if proto is None:   # no wire shape (a CLI login): it cannot be probed; its links with no record serve unproven (owner ruling 2026-11-18)
+            if prov["kind"] == "provider" and prov.get("enabled") is not False:
+                due += [{"connection": prov["id"], "model": m["id"], "version": None, "probeable": False} for m in prov["models"] if (prov["id"], m["id"]) not in seen]
             continue
         try:
             items = listing(route, prov, proto, local, key_of(route, prov), timeout)

@@ -138,6 +138,11 @@ pr c3 run --connection qa-p --model qa-ctx --again --json
 ok '[ "$(rc c3)" = 0 ] && [ "$(rec qa-ctx | jq length)" = 1 ] && [ "$(evn ".type == \"probe.recorded\"")" = 5 ]' "S6 --again replaces the record of the version and writes one more line"
 pr d1 due --json
 ok 'jq -e "[.due[].model] | index(\"qa-due\") != null and index(\"qa-ctx\") == null" "$T/o/d1.json"' "S7 due lists the link whose version has no record and not the probed one"
+CLIW=$(jq -c '[.entries[] | select(.kind == "provider" and .enabled != false and (.protocol // null) == null) | .id as $c | .models[] | {connection: $c, model: .id}]' "$R/.stella/connections.json")
+ok 'jq -e --argjson w "$CLIW" "(\$w | length > 0) and [.due[] | select(.probeable == false) | {connection, model}] == \$w and ([.due[] | select(.probeable == false) | .version] | all(. == null))" "$T/o/d1.json"' \
+  "S7a owner ruling 2026-11-18: due also lists every link with no record whose connection has no wire shape (a CLI login), with version null and probeable false"
+ok 'R1 qa-plain ".context.short_score == 0 and .context.effective == .context.points[0].tokens and .context.effective > 0"' \
+  "S7b W23P-02: a link that fails the multi-hop test even at the shortest length is recorded at that length, never at effective context 0"
 NEW=qa-new$RANDOM; addmodel "$NEW"
 world "$(printf '%s\n' $MODELS "$NEW" | jq -Rsc 'split("\n")[:-1]')" "" "$(jq -c --argjson t "$(trt "$NEW" '{"version":"v7","family":"qa-fam7"}')" '. + [$t]' <<<"$TRAITS")"
 pr f1 run --connection qa-p --model "$NEW" --json
