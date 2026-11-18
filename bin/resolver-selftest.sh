@@ -467,6 +467,21 @@ mk rgf rgl; rm -f "$T/rgf/$EVREL"; mkdir -p "$T/rgf/$EVREL"; rs rgf f2 --role "$
 ok '[ "$(rc f2)" = 1 ] && J f2 ".chain == [] and .rung.served == null and (.code | test(\"^STL-[A-Z]+-[0-9]{3}$\")) and .code != \"$C_EXH\"" &&
   [ "$(rc f5)" = 1 ] && J f5 ".code == \"$C_EXH\" and (.rung.log_code | test(\"^STL-[A-Z]+-[0-9]{3}$\"))"' \
   "14i an event log that cannot be written: a served rung after skips is withdrawn (the log's code); an exhausted walk keeps $C_EXH and names the log's code"
+# W1P-04: the widening is the rung's only: with no --rung a preset pin of the needs class outside the class order stays excluded
+mk rgn base; preset rgn qa-nc "{class_order: [\$l], needs_class: \$x, last_resort: null, roles: {(\$r): {active: true, pins: [$(L qa-front m1)]}}}"; rs rgn nn --role "$NR" --project qa-proj
+ok 'passes rgn && [ "$(rc nn)" = 0 ] && J nn "[.chain[] | select(.connection == \"qa-front\" and .model == \"qa-front-m1\")][0] | .status == \"excluded\" and .code == \"$C_POLICY\""' \
+  "14i2 no --rung: a preset pin of the needs class outside the class order is excluded $C_POLICY (the rung's wider classes are the rung's only)"
+# a rung whose connection is no provider (data check refuses it, so the loaded data is edited after it): skipped as excluded $C_UNKNOWN, rung numbers kept
+STELLA_ROOT=$T/rg python3 -I -B -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import resolve as r
+orig = r._data
+def patched(*a, **k):
+    d = orig(*a, **k)
+    d.ra["effort_modes"]["qa-rung"]["roles"][sys.argv[2]]["escalation_chain"][0]["connection"] = "qa-nope"
+    return d
+r._data = patched
+print(json.dumps(r.resolve({"role": sys.argv[2], "project": "qa-proj", "rung": 1})))' "$BIN" "$NR" >"$T/o/np.json" 2>"$T/o/np.err"
+ok 'J np ".rung.last == 4 and .rung.served == 2 and [.rung.skipped[] | [.rung, .connection, .link_class, .status, .code]] == [[1, \"qa-nope\", null, \"excluded\", \"$C_UNKNOWN\"]]"' \
+  "14i3 a rung whose connection is no provider is skipped (excluded $C_UNKNOWN), never dropped: the next rung keeps its number"
 for v in -1 x 1.5; do rs rg "u$v" --role "$NR" --project qa-proj --rung "$v"; done
 ok '[ "$(rc u-1)" = 2 ] && [ "$(rc ux)" = 2 ] && [ "$(rc u1.5)" = 2 ]' "14j --rung that is not a non-negative integer is a usage error (exit 2)"
 ok '[ "$(sha256sum "$RS")" = "$sum0" ] && ! grep -q "qa-" "$RS"' "14k the walk and the fake effort levels needed no change to the resolver's file, which names no fake id"

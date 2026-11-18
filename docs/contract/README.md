@@ -397,7 +397,7 @@ one present: the schema pins the set), `same_connection_first`, `max_switches_pe
 the card facts the resolver judges, each `true`: a fact that is not recorded counts as holding, so hosted links are excluded;
 `carries_secrets` and `vault_content` are required, `false` is refused, a new fact is added as a key}; `credentials` {`backend`,
 `backends{}` by id {`kind` none or dir, `path`}} (ships kind none: every read is refused until the secrets broker);
-`builder_roles[]` (the card roles that build: the builder escalation applies to them); `escalation` {`purposes{}`: per
+`builder_roles[]` (the roles that build: the builder escalation applies to them); `escalation` {`purposes{}`: per
 escalation purpose the role whose chain `bin/escalate.sh` walks (owner decision 2026-11-18; `check` refuses a role that is
 not assignable)} (optional: absent, every escalation call is refused); `effort` {`levels[]` (the effort ids,
 lowest first), `by_role{}`: per role an effort id (its default) or {`default`, `tiers{}` by task tier}} (optional: a resolved link's `effort` is its
@@ -414,7 +414,7 @@ listing the role or not allowing every data class it handles, a CLI login withou
 outside the preset's `allowed_localities` unless its class is the role's last resort) (STL-MDL-726; an inactive role's links are not
 judged; an `escalation_chain` rung is judged the same way, but in a built-in preset only for its model being listed, so a catalog switch never makes a preset the owner cannot edit invalid, and the resolver skips that rung at
 run time; a `parameters.effort`, a `by_role` role or tier, or an effort id that the routing data does not define; a
-`builder_roles` entry that is not a card role; a preset has no project, so the project's policy and grants are judged for an assignment and by the resolver); a
+`builder_roles` entry that is not an assignable role; a preset has no project, so the project's policy and grants are judged for an assignment and by the resolver); a
 preset that leaves an active role no link that can serve it: of its pins, its fallbacks and the catalog's links of its class
 order, needs class and last resort, none passes the link judge (the owner's global assignment for the role counts as one)
 (STL-MDL-725 for a role the workflow requires, else STL-MDL-726; a role whose row in the role table has `optional: true`, such as `look`, is never judged here: it fails with NO_LINK, naming the role, when it is asked for).
