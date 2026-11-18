@@ -81,7 +81,7 @@ ok '[ ! -s "$T/sup/sends" ] && [ "$(hg)" = quiet ] && grep -q "gateway quiet (qu
 reset; logw gateway.log ""; : > "$T/second.log"; gw --arg s "$T/second.log" '.gateway.activity_logs += [$s]'; $W >/dev/null 2>&1
 ok '[ ! -s "$T/sup/sends" ] && [ "$(hg)" = active ]' "D47: activity only in the second log: no alert"
 reset; gw '.gateway.process_match = "no-such-gateway-process"'; $W >/dev/null 2>&1; $W >/dev/null 2>&1
-ok '[ "$(n "\[STL-GW-101\]\*\*$")" = 1 ] && grep -q "No running program for Stella.s Discord connection was found" "$T/sup/sends" && ! grep -qiE "gone quiet|silent|no activity|$PLAIN" "$T/sup/sends"' "D47: process missing: one alert that names the process, not a quiet log"
+ok '[ "$(n "\[STL-GW-101\]\*\*$")" = 1 ] && grep -q "No running program for Stella.s chat connection was found" "$T/sup/sends" && ! grep -qiE "gone quiet|silent|no activity|$PLAIN" "$T/sup/sends"' "D47: process missing: one alert that names the process, not a quiet log"
 fresh; $W >/dev/null 2>&1
 ok '[ "$(n "\[STL-GW-101 resolved\]")" = 1 ] && grep -q "the check saw: her log was written recently" "$T/sup/sends" && ! grep -q "quiet or down" "$T/sup/sends"' "D47: recovery after a missing process says what was observed"
 reset; printf '%s\n%s\n' "$UP" "$DOWN" > "$T/gateway.log"; $W >/dev/null 2>&1; $W >/dev/null 2>&1
