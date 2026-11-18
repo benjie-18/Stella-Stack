@@ -1095,4 +1095,14 @@ STUB_WORKER_MARK=1 STELLA_ROOT=$T/wk python3 -I "$BIN/event_untrusted.py" append
 ok '[ $rc = 1 ] && grep -q "^STL-CFG-318 " "$T/o" && [ "$(sha256sum <"$KP")" = "$s0" ]' "266c a worker's untrusted line never lands in the owner key file: event_untrusted.py append refuses STL-CFG-318 ($rc)"
 cp "$T/wk.idx" "$WI"
 ok 'sd wk check >"$T/o" 2>&1 && STUB_WORKER_MARK=1 STELLA_ROOT=$T/wk python3 -I "$BIN/event_untrusted.py" append --type zz --what zz >"$T/o" 2>&1' "266d control: the shipped index checks and a worker's untrusted line is appended"
+# F2b G-VER-01: a team preset's agent links are judged like role links: the model listed for its connection, the effort an effort id (link, fallbacks, escalation_chain alike)
+TP=$(jq -r .team_preset "$ROOT/.stella/data-files.json"); TA=$(jq -r ".effort_modes[\"$TP\"].agents | keys[0]" "$ROOT/.stella/role-assignments.json")
+mk tm0; ok 'sd tm0 check' "267a control: the shipped team preset checks"
+for f in link fallbacks escalation_chain; do
+  AG=".effort_modes[\"$TP\"].agents[\"$TA\"]"; W="$AG.link | "; X=; [ $f != link ] && W="[$W" && X="]"   # a bad copy of the agent's link, as the link or as a one-link list
+  mk tm1; ed tm1 role-assignments.json "$AG.$f = (${W}.model = \"qa-unlisted-model\"$X)"
+  ok 'refuses tm1 check && grep -q "agent .*fails the link.s requirements.*is not listed for" "$T/o"' "267b an agent's $f naming a model its connection does not list is refused"
+  mk tm2; ed tm2 role-assignments.json "$AG.$f = (${W}.parameters.effort = \"qa-bogus-effort\"$X)"
+  ok 'refuses tm2 check && grep -q "agent .*parameters.effort.*is not an effort id" "$T/o"' "267c an agent's $f naming an unknown effort id is refused"
+done
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

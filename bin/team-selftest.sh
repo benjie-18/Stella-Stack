@@ -68,4 +68,28 @@ tm check --preset no-such-preset --sessions "$T/s0" --json; u2=$?
 ok '[ "$u1" != 0 ] && [ "$e1" = 0 ] && [ ! -e "$T/nowhere" ] && [ "$u2" != 0 ] && [ "$(ls -A "$R/$AD" | md5sum)" = "$before" ]' "S9 an unknown preset fails closed with STL-MDL-743 and writes nothing"
 ok '[ "$(jq -s "[.[] | select(.type == \"team.generated\")] | length" "$R/$(ix .event_log)")" -ge 3 ]' "S10 each generate wrote one team.generated event line"
 
+# Gate B fix 1: a twin by name, data check refuses is never used, no write through a link, a missing sessions folder is said
+tm generate --json; cp "$RA" "$T/ra.keep"; cp "$IX" "$T/ix.keep"; snap() { (cd "$R/$AD" && find . -type f -o -type l | sort | xargs -r md5sum 2>/dev/null) | md5sum; }
+printf -- '---\nname: %s\ndescription: hand made\nmodel: other\ntools: Read\n---\n\ntwin\n' "$F" >"$R/$AD/zz-$F-twin.md"; tm check --sessions "$T/s0" --json; c9=$?
+ok '[ "$c9" != 0 ] && grep -q "STL-MDL-744" "$T/o/err" && grep -q "zz-$F-twin" "$T/o/out"' "S11 an unmanaged file whose front matter name is a preset agent fails check (STL-MDL-744, the file named); an unrelated unmanaged file still passes (S8)"
+rm -f "$R/$AD/zz-$F-twin.md"
+mkdir -p "$T/outside"; cp "$BD/$F.md" "$T/outside/esc.md"; REL=$(python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$T/outside/esc" "$BD")
+ra --arg a "$F" --arg n "$REL" "$P.agents[\$n] = $P.agents[\$a]"; e0=$(md5sum <"$T/outside/esc.md"); before=$(snap); tm generate --json; u5=$?
+ok '[ "$u5" != 0 ] && [ "$e0" = "$(md5sum <"$T/outside/esc.md")" ] && [ "$before" = "$(snap)" ]' "S12a an agent name the schema refuses ($REL: a path out of the folder) is refused by generate (the checked reader): nothing written, in the folder or outside it"
+cp "$T/ra.keep" "$RA"
+ra --arg a "$F" "$P.agents[\$a].link.parameters.effort = \"qa-bogus-effort\""; before=$(snap); echo changed >"$R/$AD/zz-keep.md"; before=$(snap); tm generate --json; u3=$?; after=$(snap)
+ok '[ "$u3" != 0 ] && [ "$before" = "$after" ]' "S12b data the data check refuses (an unknown effort id) is not generated from: generate refuses, nothing written"
+cp "$T/ra.keep" "$RA"; rm -f "$R/$AD/zz-keep.md"
+mkdir -p "$T/owner"; echo "owner file" >"$T/owner/x.md"; rm -f "$R/$AD/$F.md"; ln -s "$T/owner/x.md" "$R/$AD/$F.md"; before=$(snap); tm generate --json; u4=$?
+ok '[ "$u4" != 0 ] && grep -q "^STL-MDL-743" "$T/o/err" && [ "$(cat "$T/owner/x.md")" = "owner file" ] && [ "$before" = "$(snap)" ]' "S13 an agent file that is a symbolic link is never written through: generate refuses (STL-MDL-743), the target and every other file stay as they were"
+rm -f "$R/$AD/$F.md"; tm generate --json
+ln -s "$T/outside" "$R/lnk"
+for bad in "../outside" "/abs/outside" "lnk"; do jq --arg v "$bad" '.agents_dir = $v' "$T/ix.keep" >"$IX"; tm generate --json; v1=$?; tm check --sessions "$T/s0" --json; v2=$?
+  ok '[ "$v1" != 0 ] && [ "$v2" != 0 ] && [ ! -e "$T/outside/$F.md" ]' "S14 an agents_dir ($bad) that is not a path inside the root is refused by generate and check"; done
+cp "$T/ix.keep" "$IX"
+tm check --sessions "$T/no-such-folder" --json; w1=$?
+ok '[ "$w1" = 0 ] && jq -e ".warnings | length == 1" "$T/o/out" && grep -qi "warning" "$T/o/err"' "S15 a missing sessions folder is said (a warning in the JSON and on stderr), the exit code is unchanged"
+tm check --sessions "$T/s0" --json
+ok 'jq -e ".warnings | length == 0" "$T/o/out" && ! grep -qi warning "$T/o/err"' "S16 a sessions folder with no session gives no warning"
+
 echo "# team-selftest: $fails failed"; [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
