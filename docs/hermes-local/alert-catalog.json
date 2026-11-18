@@ -863,9 +863,9 @@
       "title": "a mid-task switch to a model link was refused",
       "message": "A switch to another model link in the middle of a task was refused: {problem}. The link after it was tried instead.",
       "action": "nothing; to let this link take over mid-task, give the task a model with a larger context window. See STL-MDL-722 in docs/alert-codes.md.",
-      "cause": "The new model's context window does not hold the conversation so far, or the tool call in progress cannot carry over to it.",
-      "check": "the event log (the switch line); `python3 bin/stella_data.py get connections <id>` (models[].capabilities.context_tokens).",
-      "related": "F2 B5, A7; features stub routing-advertised-context",
+      "cause": "The new model's probed effective context (its probe record; no record counts as too small) does not hold the conversation so far, or the tool call in progress cannot carry over to it.",
+      "check": "the event log (the switch line); `python3 bin/probe.py show --json` (context.effective).",
+      "related": "F2 B5, A7; F2b item C (probe data)",
       "resolvable": false
     },
     {

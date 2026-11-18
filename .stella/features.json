@@ -380,39 +380,6 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
-      "id": "routing-advertised-capabilities",
-      "owner_phase": "F2",
-      "status": "on",
-      "depends_on": [],
-      "flag": null,
-      "due_phase": "F2b",
-      "replaced_by": "the capability probe (F2b): probed tool calling, vision and JSON mode per model; until then routing judges a role's requirements by the catalog's advertised capabilities (a null value meets no requirement)",
-      "global_id": "0cb60837-7e61-4e4b-af77-3ea73ed0878e",
-      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
-    },
-    {
-      "id": "preset-check-unserved-role",
-      "owner_phase": "F2",
-      "status": "on",
-      "depends_on": [],
-      "flag": null,
-      "due_phase": "F2b",
-      "replaced_by": "the check rule that refuses a preset leaving an active role with no link able to serve it (built on branch f2/W1-rt10-held, finding W1-RT-10); it waits for the capability probe (F2b) because no shipped model advertises vision yet; until then the check judges only an explicit chain and that the class order is not empty",
-      "global_id": "aae349f5-1604-4b83-81fd-41c0991aa651",
-      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
-    },
-    {
-      "id": "routing-advertised-context",
-      "owner_phase": "F2",
-      "status": "on",
-      "depends_on": [],
-      "flag": null,
-      "due_phase": "F2b",
-      "replaced_by": "the capability probe's effective context size (F2b); until then the context check of a role's requirements and of a mid-task switch reads the catalog's advertised context_tokens",
-      "global_id": "42057f9b-da35-4662-a792-f5e3d720dd3a",
-      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
-    },
-    {
       "id": "routing-observed-quota",
       "owner_phase": "F2",
       "status": "on",
