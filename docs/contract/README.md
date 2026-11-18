@@ -289,8 +289,9 @@ the call), and `purpose_models` {purpose: the model name the CLI gets for that p
 `bin/container-start.sh` reads `output_tokens` for the coding tool's user config, whose model is the first link the resolver
 lists `usable` on a local connection for the role that runs that tool (the role table's first profile of its worker kind),
 asked at container start about a card with no facts record and no project; no such link, or no answer, leaves a config that
-names no model, and the step fails with the resolver's code. The engine model of each Hermes profile is set outside the repo,
-by hand (stub `profile-engine-model-host-step`, due F2b). No script names a model, a model's limit or a per-model settings key.
+names no model, and the step fails with the resolver's code. The engine model of each Hermes profile (`model.default`) is set by
+`bin/register-toolsets.sh` (run by `bin/apply-hermes-local.sh`) from the first link the resolver lists usable for the profile's role
+(F2b item H); no usable link leaves that profile's model as it was and the run fails with the resolver's code. No script names a model, a model's limit or a per-model settings key.
 The callers of a coding CLI (`bin/escalate.sh`, the builder model guard) take the model from the resolver: the escalation
 script runs the model its caller names only when the resolver lists that link `usable` (stub `escalate-caller-names-model`,
 due F2b), and the guard allows the model of the first usable link on a connection whose `cli` is its CLI; the F1b mark
