@@ -191,6 +191,22 @@ ok 'closed pj1 "$C_UNKNOWN" && closed pj2 "$C_UNKNOWN" && closed pj3 "$C_UNKNOWN
   "5f a private project asked for in another case, with a trailing space, or by its global id so misspelled fails closed with $C_UNKNOWN (one alert line each)"
 ok '[ "$(rc pj4)" = 0 ] && J pj4 "$HARD" && J pj4 ".policy == \"project\"" && [ "$(rc pj5)" = 0 ] && J pj5 ".policy == \"default\"" && J pj5 "$AWAY | any(.status == \"usable\")"' \
   "5g its exact global id is the project (the same exclusion); an id that matches no listed project follows the default policy"
+# W3-CRT-01 reopened: an id that is no project key by the data policy schema's own key pattern is refused: an invisible character
+# (zero-width space, BOM), a full-width letter, a look-alike letter, a combining mark (bytes spelled out, so no locale is needed),
+# another case, a blank id. The pattern is the schema's: a root whose schema allows upper case resolves that id (default policy).
+# An empty id is no project at all (what a caller with no card gives, the model guard for one): the default policy.
+n0=$(alerts "$C_UNKNOWN"); i=0
+for v in $'qa-private\xe2\x80\x8b' $'\xef\xbb\xbfqa-private' $'\xef\xbd\x91a-private' $'qa-privat\xd0\xb5' $'qa-private\xcc\x81' Qa-New " "; do i=$((i+1)); rs h "pk$i" --role "$NR" --project "$v"; done
+allclosed() { local k; for k; do closed "$k" "$C_UNKNOWN" || return 1; done; }
+ok 'allclosed pk1 pk2 pk3 pk4 pk5 pk6 pk7 && [ $(( $(alerts "$C_UNKNOWN") - n0 )) = 7 ]' \
+  "5h a project id that does not match the schema's project key pattern fails closed with $C_UNKNOWN: invisible, full-width, look-alike and combining variants of the private id, another case, a blank id"
+rs h pk0 --role "$NR" --project ""
+ok '[ "$(rc pk0)" = 0 ] && J pk0 ".policy == \"default\" and .project == \"\""' "5j an empty project id is no project: the default policy"
+mk hp h; SCH=$T/hp/.stella/schemas/data-policy.schema.json
+jq '.properties.projects.propertyNames.pattern = "^[A-Za-z0-9][A-Za-z0-9._:-]*$"' "$SCH" >"$SCH.n" && mv "$SCH.n" "$SCH"
+rs hp pk8 --role "$NR" --project Qa-New; rs hp pk9 --role "$NR" --project QA-Private
+ok '[ "$(rc pk8)" = 0 ] && J pk8 ".policy == \"default\"" && closed pk9 "$C_UNKNOWN"' \
+  "5i the pattern is read from the schema: where it allows upper case such an id follows the default policy, and the near-miss of a listed id is still refused"
 cgrant() {  # <root> <id> <preset> <to class> <scope JSON>: a crossing grant
   ed "$1" grants --arg id "$2" --arg p "$3" --arg k "$4" --arg g "$(uuid)" --arg i "$IID" --arg a "$PAST" --argjson s "$5" \
     '.crossing_grants = ((.crossing_grants // []) + [{id: $id, global_id: $g, install_id: $i, preset: $p, to_class: $k, scope: $s, granted_at: $a}])'
@@ -307,6 +323,10 @@ ok '[ "$(rc cd1)" = 0 ] && J cd1 "$(ent qa-local qa-local-m1) | length == 1 and 
 ok 'J cd1 "$(ent qa-free) | length == 2 and all(.status == \"cooldown\")" && J cd1 "$(ent qa-front) | length == 2 and all(.status == \"usable\")"' \
   "10a a cooldown under a connection's id cools each of its links; a state entry that is no cooldown record cools nothing"
 ok 'J cd1 ".failure_history == [{link: \"qa-free/qa-free-m1\", trigger: \"qa-trigger\", at: \"$RECENT\"}]" && J cd2 ".failure_history == []"' "10b failure_history is the task's own history"
+mk cdx base; state cdx '{"links":{"qa-local/qa-local-m1":{"until":"tomorrow"},"qa-free":{"until":""}},"tasks":{}}'; rs cdx cdx --role "$NR" --project qa-proj
+ok '[ "$(rc cdx)" = 0 ] && J cdx "$(ent qa-local qa-local-m1) | length == 1 and all(.status == \"cooldown\" and .code == \"$C_COOL\" and .cooldown_until == null and (.reason | length > 0))" &&
+  J cdx "$(ent qa-local qa-local-m2) | length == 1 and all(.status == \"usable\")" && J cdx "$(ent qa-free) | length == 2 and all(.status == \"cooldown\" and .cooldown_until == null)"' \
+  "10c an until that is text but no date counts as still cooling (fail closed, as the call side reads it), under a link's key and under a connection's id; no time is echoed"
 
 # ---- 11: card apps ----
 mk ap base

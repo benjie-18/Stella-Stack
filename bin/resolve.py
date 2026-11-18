@@ -18,8 +18,8 @@ reason, grant: null or {kind: privacy, data_class} or {kind: crossing, to_class}
 Exit: 0 one usable link or more and no app refused; 1 no usable link (NO_LINK, the same JSON) or a refused card app (its
 code, the same JSON), or fail closed with one catalog line, one alert line and no JSON: an unknown role, tier, driver, card
 id, preset or link class, a role that works a card called with no card, a project id that is a listed one but for case or
-outer spaces (UNKNOWN), a card whose facts record names another project (NO_LINK), data that `check` refuses (STL-CFG-310);
-2 usage.
+outer spaces or that is no project key by the data policy schema's pattern (UNKNOWN), a card whose facts record names
+another project (NO_LINK), data that `check` refuses (STL-CFG-310); 2 usage.
 Every link is judged by all the rules, in this order; the first that fails names its status:
  1 hard exclusions: a card fact the record does not state as false (the facts: the keys of routing data
    card_facts.when_missing and every other key of the record) or a private project excludes every link that leaves the
@@ -34,7 +34,7 @@ Every link is judged by all the rules, in this order; the first that fails names
    its own class order instead, and is never a crossing;
  6 the data classes the role handles: hosted never excludes, and does so before the crossing grant of rule 5 is asked;
    hosted grant needs a privacy grant (route_problems);
- 7 health: a link, or its connection, in cooldown in the state file.
+ 7 health: a link, or its connection, in cooldown in the state file (an `until` that is text but no date counts as ahead).
 Chain order: the owner's pins (card, project, global assignment rows), the preset's pins for the role, the catalog's links
 of each class of the order (a list item of the order is a group: best(), the one ranking), the preset's fallbacks, the
 last-resort class. A link listed twice keeps its first place."""
@@ -110,8 +110,9 @@ def _data(project):
     """What every answer reads, loaded once: the served documents (a DataError while `check` refuses anything a resolve rests
     on) and the project's policies (a project the policy does not list follows the default; DC-04: a Local only default always
     holds). alias(p) is the one place a project id is compared: the listed id of p (its own id or its global_id, exactly), p
-    itself when it matches no listed project, and a Refusal when it only matches one with case and outer spaces ignored, so a
-    misspelling never drops a project's private or Local only marking."""
+    itself when it matches no listed project, and a Refusal when it only matches one with case and outer spaces ignored, or is
+    no project key by the pattern of the data policy schema (an invisible, full-width or look-alike character, a combining
+    mark), so a misspelling never drops a project's private or Local only marking."""
     idx = sd.load(sd.INDEX)
     mine = [r for r in sd.rows() if r["format"] == "json" and r["schema"] in READS]
     by = sd.served([r["id"] for r in mine])
@@ -130,12 +131,15 @@ def _data(project):
     gids = {v["global_id"]: k for k, v in reversed(projects.items()) if isinstance(v.get("global_id"), str)}   # the first row of a global_id wins
 
     def alias(p):
-        if not isinstance(p, str) or p in projects:
+        if not isinstance(p, str) or not p or p in projects:   # None or "": no project (what a caller with no card gives), the default policy
             return p
         if p in gids:
             return gids[p]
         if p.strip().casefold() in {x.strip().casefold() for x in (*projects, *gids)}:
             raise Refusal(UNKNOWN, f"project {sd.idn(p[:64], True)}: it is not a listed project, but it is one when case and outer spaces are ignored")
+        pat = dig(sd.schema_of("data-policy"), "properties", "projects", "propertyNames", "pattern")   # no pattern: no id is one (fail closed)
+        if not isinstance(pat, str) or not sd.rx(pat).search(p):   # ascii(): an invisible or look-alike character shows as its code point
+            raise Refusal(UNKNOWN, f"project {ascii(sd.idn(p[:64]))}: it is not a project id (the data policy schema's pattern for a project key)")
         return p
     pid, defaults = alias(project), [d["default"] for _, d in pols]
     policies = [dict(p, allowed_providers=[(sd.entry(conn, x) or {}).get("id", x) for x in p["allowed_providers"]])
@@ -241,9 +245,11 @@ def resolve(ctx):
     history = dig(state, "tasks", task, "history") if task else None
 
     def cooling(key):
+        """The `until` of the entry while it is ahead; "" for one that is text but no date: it counts as ahead (fail closed, as
+        route.py reads it) and is not echoed; None: not cooling."""
         c = dig(state, "links", key)
         u = sd.when(c, "until") if isinstance(dig(c, "until"), str) else None
-        return c["until"] if u and u > now else None
+        return "" if u is False else c["until"] if u and u > now else None
 
     feats = by.get("features", {})
     out = {"role": role, "project": project, "card": card, "preset": {"id": preset, "source": source}, "policy": "project" if d.listed else "default",
@@ -324,8 +330,10 @@ def resolve(ctx):
                     {"kind": "crossing", "to_class": cls}, None)
         if "grant" in probs:
             return ("needs_grant", PRIVACY, f"the connection {probs['grant']['text']}", {"kind": "privacy", "data_class": probs["grant"]["data_class"]}, None)
-        until = cooling(f"{prov['id']}/{model}") or cooling(prov["id"])
-        return ("cooldown", COOLDOWN, f"the link failed recently and cools down until {until}", None, until) if until else ("usable", None, None, None, None)
+        cool = [u for u in (cooling(f"{prov['id']}/{model}"), cooling(prov["id"])) if u is not None]
+        until = next((u for u in cool if u), None)
+        return ("cooldown", COOLDOWN, "the link failed recently and cools down until " + (until or "a time its state entry gives as no date (it counts as ahead)"),
+                None, until) if cool else ("usable", None, None, None, None)
 
     # ---- the chain
     seen = set()
