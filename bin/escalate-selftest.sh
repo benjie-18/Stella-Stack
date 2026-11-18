@@ -15,6 +15,7 @@ cat >"$T/bin/hermes" <<'S'
 [ "$1 $2" = "kanban --board" ] && set -- "$1" "${@:4}"   # scripts name the board (F4)
 case "$1 $2" in
   "kanban show") { [ "$3" = t_00000000 ] || [ -n "${FAKE_SHOW_FAIL:-}" ]; } && exit 1; [ -z "${FAKE_SHOW_RAW:-}" ] || { printf '%s\n' "$FAKE_SHOW_RAW"; exit 0; }; printf '{"task":{"body":"%s","status":"%s","assignee":"%s","project":"%s"}}\n' "${FAKE_BODY:-}" "${FAKE_STATUS:-running}" "$FAKE_ASSIGNEE" "$FAKE_PROJECT";;
+  "kanban list") jq -nc --arg c "${FAKE_RUNNING:-}" '[$c | select(. != "") | {id: .}]';;   # the running cards: none, or FAKE_RUNNING
   "kanban comment") echo "$*" >>"$ESCALATE_SUP_DIR/comments";;
   send*) echo "$*" >>"$ESCALATE_SUP_DIR/sends"
     # FAKE_SEND_HOLD=<path>: a slow alert. Says it arrived (<path>.in), then waits for <path>.go, at most 30 s.
@@ -84,6 +85,26 @@ ok 'grep -q "STL-MDL-7[0-9][0-9] the resolver does not list" "$T/err" && [ "$(ru
 LO=$T/fx-lo; cp -r "$FX" "$LO"; jq --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$(jq -r .install_id "$FX/.stella/install.json")" '.projects["qa-proj"] = {mode: "local_only", allowed_providers: [], global_id: $g, install_id: $i}' "$FX/.stella/data-policy.json" >"$LO/.stella/data-policy.json"
 n=$(runs); check 3 "W3P-F-3: a Local only project: a hosted model is refused" env STELLA_ROOT=$LO sh -c "echo hi | $E t_aaaa0903 sonnet review why"
 ok 'STELLA_ROOT=$LO python3 -I /workspace/bin/stella_data.py check >/dev/null 2>&1 && grep -q "STL-MDL-716 the resolver does not list" "$T/err" && grep -q "Local only" "$T/err" && [ "$(runs)" = "$n" ] && [ "$(q t_aaaa0903)" = "queued," ]' "W3P-F-3: ... with STL-MDL-716 and a reason naming Local only, no model call, queued (the fixture passes the data check)"
+# D-F-1: a link the resolver lists cooling is not usable either (the cases above meet an excluded link or none)
+CD=$T/fx-cd; cp -r "$FX" "$CD"; RS=$CD/$(jq -r .routing_state "$FX/.stella/data-files.json"); mkdir -p "$(dirname "$RS")"
+jq -n --arg l "$(jq -r '[.entries[] | select(.type == "cli-login") | .id][0]' "$FX/.stella/connections.json")/sonnet" --arg s "$(date -u +%FT%TZ)" --arg u "$(date -u -d '+30 days' +%FT%TZ)" \
+  '{links: {($l): {trigger: "rate_limit", since: $s, until: $u, failures: 1, observed_limit: null}}, tasks: {}}' >"$RS"
+n=$(runs); check 3 "D-F-1: a link the resolver lists in cooldown: refused" env STELLA_ROOT=$CD sh -c "echo hi | $E t_aaaa0904 sonnet review why"
+ok 'STELLA_ROOT=$CD python3 -I /workspace/bin/resolve.py resolve --role "$CR" --project qa-proj --card t_aaaa0904 --json 2>/dev/null | jq -e "any(.chain[]; .model == \"sonnet\" and .status == \"cooldown\")" >/dev/null && grep -q "STL-MDL-724 the resolver does not list" "$T/err" && [ "$(runs)" = "$n" ]' "D-F-1: ... with the cooldown code STL-MDL-724 (the resolver lists the link cooling in this fixture), no model call"
+# W7b-VAL-01: a worker run escalates its own card only. A worker is what every owner command takes for one (bin/worker_env.py: here
+# a marker of the role table, or a card's open run bound to an ancestor of the call, this script's own process); its card is the one
+# the guards' proof names (roles.py prove). The board stub lists FAKE_RUNNING as the running card.
+WM=$(jq -r '.worker_markers[0]' "$FX/docs/hermes-local/roles.json")
+bound() {  # bound <card>: the board record of a card whose open run is bound to this script's process
+  jq -nc --arg c "$1" --arg a "$FAKE_ASSIGNEE" --argjson pid $$ --arg fp "$(python3 -I -c 'import sys; sys.path.insert(0, "/workspace/bin"); import roles; print(roles.fingerprint(int(sys.argv[1])))' $$)" \
+    '{task: {id: $c, assignee: $a, project: "qa-proj", status: "running", body: ""}, runs: [{id: 7, ended_at: null}],
+      events: [{kind: "claimed", run_id: 7, payload: {lock: "h:1"}}, {kind: "worker_bound", run_id: 7, payload: {pid: $pid, claim_lock: "h:1", started_at: $fp}}]}'; }
+n=$(runs); check 3 "W7b-VAL-01: a worker marker is set and the board proves no card for the caller: refused" env "$WM=t_aaaa0911" sh -c "echo hi | $E t_aaaa0911 sonnet review why"
+ok 'grep -q "STL-GRD-604" "$T/err" && [ "$(runs)" = "$n" ] && [ -z "$(q t_aaaa0911)" ]' "W7b-VAL-01: ... with STL-GRD-604, no model call, nothing queued"
+check 3 "W7b-VAL-01: a worker proven on one card names another card: refused" env FAKE_RUNNING=t_aaaa0912 FAKE_SHOW_RAW="$(bound t_aaaa0912)" sh -c "echo hi | $E t_aaaa0913 sonnet review why"
+ok 'grep -q "STL-GRD-604.*t_aaaa0912" "$T/err" && [ "$(runs)" = "$n" ] && [ -z "$(q t_aaaa0913)" ]' "W7b-VAL-01: ... with STL-GRD-604 naming the card it is proven on, no model call, nothing queued (a drain would replay it as the supervisor)"
+check 0 "W7b-VAL-01: a worker (marker set) proven on a card names that card: the call runs" env "$WM=t_aaaa0912" FAKE_RUNNING=t_aaaa0912 FAKE_SHOW_RAW="$(bound t_aaaa0912)" sh -c "echo hi | $E t_aaaa0912 sonnet review why"
+ok '[ "$(runs)" = "$((n + 1))" ]' "W7b-VAL-01: ... one model call"
 setlimit HAIKU_MAX_PER_DAY 0
 check 3 "T13: zeroed HAIKU_MAX_PER_DAY refused" sh -c "echo hi | $E t_aaaa0001 haiku judge zeroed"
 pf=$(jq -r 'select(.card == "t_aaaa0001") | .prompt_file' "$Q" 2>/dev/null)

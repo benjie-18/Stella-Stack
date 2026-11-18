@@ -419,6 +419,17 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
+      "id": "profile-engine-model-host-step",
+      "owner_phase": "F2",
+      "status": "on",
+      "depends_on": [],
+      "flag": null,
+      "due_phase": "F2b",
+      "replaced_by": "the profile launch asks the resolver (F2b: the engine model of each Hermes profile is set from bin/resolve.py's answer for the profile's role when the profile is applied or launched); until then that model lives in the engine's own config outside the repo and the owner sets it by hand on the host, so a pin, a preset or a data policy does not change it",
+      "global_id": "c9944e0f-c4ce-471a-864c-94d8e2310038",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
       "id": "routing-observed-quota",
       "owner_phase": "F2",
       "status": "on",

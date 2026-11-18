@@ -286,11 +286,16 @@ A model's `limits` object (F2 W7b; free-form, null = none) holds what the caller
 list: the only purposes the model runs for), `max_concurrent` (slots) and `per_day` (calls per UTC day), each a value or a
 string naming the key of the limits store (`.supervisor/limits.env`) that holds it (a key that store does not define refuses
 the call), and `purpose_models` {purpose: the model name the CLI gets for that purpose instead of the id};
-`bin/container-start.sh` reads `output_tokens` for the coding tool's user config, whose model is the first model of the
-enabled local provider. No script names a model, a model's limit or a per-model settings key. The callers of a coding CLI
-(`bin/escalate.sh`, the builder model guard) take the model from the resolver: the escalation script runs the model its caller
-names only when the resolver lists that link `usable` (stub `escalate-caller-names-model`, due F2b), and the guard allows the
-model of the first usable link on a connection whose `cli` is its CLI; the F1b mark `worker_run` is gone.
+`bin/container-start.sh` reads `output_tokens` for the coding tool's user config, whose model is the first link the resolver
+lists `usable` on a local connection for the role that runs that tool (the role table's first profile of its worker kind),
+asked at container start about a card with no facts record and no project; no such link, or no answer, leaves a config that
+names no model, and the step fails with the resolver's code. The engine model of each Hermes profile is set outside the repo,
+by hand (stub `profile-engine-model-host-step`, due F2b). No script names a model, a model's limit or a per-model settings key.
+The callers of a coding CLI (`bin/escalate.sh`, the builder model guard) take the model from the resolver: the escalation
+script runs the model its caller names only when the resolver lists that link `usable` (stub `escalate-caller-names-model`,
+due F2b), and the guard allows the model of the first usable link on a connection whose `cli` is its CLI; the F1b mark
+`worker_run` is gone. A call of `bin/escalate.sh` from a worker run (a card proven for the call by `roles.py prove`, or a
+worker marker of the role table set) names that run's own proven card or is refused (`STL-GRD-604`, exit 3, not queued).
 
 ### `.stella/data-policy.json`
 `data_classes[]`, `local_hosts[]` (the host names that count as local; a provider declared local may list only these), a `default` and `projects{}`; each has `mode` (`open`, `local_only`, `allowed_providers`) and
