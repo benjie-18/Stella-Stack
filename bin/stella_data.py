@@ -1105,6 +1105,10 @@ def inside_state(rel, idx):
         return False
 
 
+def agent_links(x):
+    """[(field, link)] of a team agent entry: its link, then each fallback and rung, as written in the data."""
+    return [("link", x["link"])] + [(f"{f}[{i}]", l) for f in ("fallbacks", "escalation_chain") for i, l in enumerate(x.get(f, []))]
+
 def rule_presets(c):
     """The presets (effort modes) against the routing data, the catalog and the role table (F2 D1.9): every class, preset and
     role a preset names exists; no preset turns off a role the workflow requires (always, or under a trigger that can fire:
@@ -1133,7 +1137,9 @@ def rule_presets(c):
             # effort ids are data (routing effort.levels): every link of every assignment and preset names a known one or none
             links = [(f"{idn(a['id'])}: chain[{i}]", l) for a in ra["assignments"] for i, l in enumerate(a["chain"])] + \
                 [(f"preset {kname(pid)}: role {nm(r, table['roles'], 'a key')}: {f}[{i}]", l) for pid, mode in ra["effort_modes"].items()
-                 for r, x in mode.get("roles", {}).items() for f in ("pins", "fallbacks", "escalation_chain") for i, l in enumerate(x.get(f, []))]
+                 for r, x in mode.get("roles", {}).items() for f in ("pins", "fallbacks", "escalation_chain") for i, l in enumerate(x.get(f, []))] + \
+                [(f"preset {kname(pid)}: agent {idn(an, True)}: {f}", l) for pid, mode in ra["effort_modes"].items()
+                 for an, x in mode.get("agents", {}).items() for f, l in agent_links(x)]
             for at, l in links:
                 if "effort" in l["parameters"] and l["parameters"]["effort"] not in levels:
                     P(rid, f"{at}: parameters.effort ({desc(l['parameters']['effort'])}) is not an effort id of the routing data (effort.levels)")
@@ -1171,18 +1177,21 @@ def rule_presets(c):
                         elif r in exempt:
                             P(rid, f"{w} turns off role {idn(r, True)}, which is exempt from the presets and stays on under every one (routing data, exempt_roles)")
                         continue
+                units = [(f"role {idn(r, True)}", r, x, ("pins", "fallbacks", "escalation_chain")) for r, x in known.items() if x["active"]] + \
+                    [(f"agent {idn(an, True)}", None, {**x, "link": [x["link"]]}, ("link", "fallbacks", "escalation_chain")) for an, x in mode.get("agents", {}).items()]   # F2b G: a team agent has no role, so its links are judged for the model alone
+                for who, r, x, fields in units:
                     last = x["last_resort"] if "last_resort" in x else mode.get("last_resort")
-                    for f in ("pins", "fallbacks", "escalation_chain"):   # a rung is judged as a pin (DC-06)
+                    for f in fields:   # a rung is judged as a pin (DC-06)
                         for i, l in enumerate(x.get(f, [])):
                             prov = entry(conn, l["connection"])
                             if prov is None or prov["kind"] != "provider":
                                 continue   # its x-ref (connections, kind provider) refuses it, naming the field
                             # a built-in rung: the owner cannot edit it, so a catalog switch never makes the data invalid; the resolver skips it at run time
-                            miss = model_problems(table, r, prov, l["model"]) if f == "escalation_chain" and mode.get("builtin") else judged(r, last, prov, l["model"])
+                            miss = model_problems(table, r, prov, l["model"]) if r is None or f == "escalation_chain" and mode.get("builtin") else judged(r, last, prov, l["model"])
                             if miss:
-                                P(rid, Coded(CHAIN_FAILS, f"{w}: role {idn(r, True)}: {f}[{i}] fails the role's requirements ({'; '.join(miss)})"))
-                            for m in probe_problems(table, r, prov, l["model"], recs):
-                                P(rid, Probed(CHAIN_FAILS, f"{w}: role {idn(r, True)}: {f}[{i}] fails the role's requirements ({m})"), {PROBED})
+                                P(rid, Coded(CHAIN_FAILS, f"{w}: {who}: {f}[{i}] fails the {'role' if r else 'link'}'s requirements ({'; '.join(miss)})"))
+                            for m in probe_problems(table, r, prov, l["model"], recs) if r is not None else []:
+                                P(rid, Probed(CHAIN_FAILS, f"{w}: {who}: {f}[{i}] fails the role's requirements ({m})"), {PROBED})
                 judged_roles = {r for r in roles - exempt if r in need or not table["roles"][r].get("optional")}   # an optional role fails when asked for, not here; a required one is never optional
                 bare = {r for r in judged_roles if not linked(r)}
                 for code, rs, why in ((OFF_REQUIRED, bare & need, ", which the workflow requires (routing data, workflow.required_roles)"), (CHAIN_FAILS, bare - need, "")):

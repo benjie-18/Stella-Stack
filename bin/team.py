@@ -10,7 +10,9 @@ folder name is in this file.
       generate would write (a hand edit fails, naming the field or "body"); (2) the models the agent's transcripts in the latest
       session ran on are its link's, a fallback's or a rung's (else the agent, the model and the count are named); an agent with no
       transcript is "not seen", no failure; (3) a file with the marker whose agent the preset no longer has is stale (fails); a file
-      without the marker is listed as unmanaged. A failing check writes one alert line. Output is always JSON.
+      without the marker is listed as unmanaged, and fails when its front matter name is a preset agent's. A failing check writes one alert
+      line. Output is always JSON; a sessions folder that is missing or unreadable is a `warnings` entry (and a stderr line), no failure.
+  The preset is read through stella_data.served (data `check` refuses is never used); generate never writes through a symbolic link.
   Latest session = the newest top-level *.jsonl of DIR (--sessions; default: HOME/.claude/projects/<this root with every
   non-alphanumeric turned into a dash>); its transcripts are DIR/<session>/subagents/agent-*.jsonl, matched to an agent by the
   agentType of the agent-*.meta.json beside each.
@@ -42,14 +44,15 @@ class Stop(Exception):
 def preset_agents(name):
     """{agent: entry} of the preset `name`; Stop (REFUSED) when the preset is unknown or has no agents."""
     row = next((r for r in sd.rows() if r["schema"] == "role-assignments" and r["format"] == "json"), None)
-    mode = (sd.load(row["path"])["effort_modes"] if row else {}).get(name)
+    docs = [d for _, d in sd.served([row["id"]])["_rows"][row["id"]][0]] if row else []   # served: data `check` refuses is never used
+    mode = (docs[0]["effort_modes"] if docs else {}).get(name)
     if not mode or not mode.get("agents"):
         raise Stop(REFUSED, f"preset {sd.idn(name)} is not a preset with agents")
     return mode["agents"]
 
 def folders(out=None):
     idx = sd.load(sd.INDEX)
-    return os.path.join(sd.ROOT, out or idx["agents_dir"]), os.path.join(sd.ROOT, idx["team_bodies"])
+    return os.path.join(sd.ROOT, out) if out else sd.safe(idx["agents_dir"]), sd.safe(idx["team_bodies"])   # an index path stays inside the root, links followed
 
 def render(preset, name, e, bodies):
     """The file generate writes for one agent, as text."""
@@ -74,23 +77,30 @@ def cmd_generate(a):
     ag = preset_agents(a.preset)
     out, bodies = folders(a.out)
     files = {n: render(a.preset, n, e, bodies) for n, e in ag.items()}   # all rendered before anything is written
+    links = [n for n in files if os.path.islink(os.path.join(out, n + ".md"))]
+    if links:   # all or none: nothing is written when one agent file is a link
+        raise Stop(REFUSED, f"agent file {sd.idn(links[0])} is a symbolic link; generate never writes through one")
     el.preflight()
     os.makedirs(out, exist_ok=True)
     for n, t in files.items():
-        with open(os.path.join(out, n + ".md"), "w", encoding="utf-8") as f:
+        try:
+            fd = os.open(os.path.join(out, n + ".md"), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)   # never through a link
+        except OSError:
+            raise Stop(REFUSED, f"agent file {sd.idn(n)} cannot be written (not a plain file)") from None
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(t)
     el.append(el.build("team.generated", f"agent files of preset {a.preset}", new={"preset": a.preset, "agents": sorted(files)}))
     print(json.dumps({"preset": a.preset, "written": sorted(files)}))
     return 0
 
 def latest_models(sessions):
-    """({agentType: Counter of logged models}, the latest session's name or None) of the newest top-level session file."""
+    """({agentType: Counter of logged models}, the latest session's name or None, a warning or None) of the newest top-level session file."""
     try:
         tops = [e for e in os.scandir(sessions) if e.is_file() and e.name.endswith(".jsonl")]
     except OSError:
-        return {}, None
+        return {}, None, "the sessions folder is missing or unreadable, so no agent could be matched to a session (every agent reads not seen)"
     if not tops:
-        return {}, None
+        return {}, None, None
     top = max(tops, key=lambda e: e.stat().st_mtime)
     sub, got = os.path.join(sessions, top.name[:-6], "subagents"), collections.defaultdict(collections.Counter)
     for t in sorted(os.listdir(sub)) if os.path.isdir(sub) else []:
@@ -109,7 +119,7 @@ def latest_models(sessions):
                         got[kind][m] += 1
         except (OSError, ValueError, KeyError, TypeError):
             continue   # a transcript with no readable meta belongs to no agent
-    return got, top.name
+    return got, top.name, None
 
 def agrees(logged, e):
     """Whether a logged model id is the agent's link, a fallback or a rung: a catalog model id is a whole dash-separated token of it.
@@ -120,8 +130,9 @@ def agrees(logged, e):
 def cmd_check(a):
     ag = preset_agents(a.preset)
     out, bodies = folders()
+    # shortcut: the default sessions folder is Claude Code's layout for this root, guessed from the path; upgrade when it moves or an install names it in data
     sess = a.sessions or os.path.join(os.path.expanduser("~"), ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", sd.ROOT))
-    models, latest = latest_models(sess)
+    models, latest, warn = latest_models(sess)
     res, bad = [], []
     for n, e in ag.items():
         want, probs = render(a.preset, n, e, bodies), []
@@ -145,10 +156,16 @@ def cmd_check(a):
     for f in sorted(os.listdir(out)) if os.path.isdir(out) else []:
         if f.endswith(".md") and f[:-3] not in ag:
             with open(os.path.join(out, f), encoding="utf-8", errors="replace") as fh:
-                (stale if MARK in fh.read() else unmanaged).append(f[:-3])
+                text = fh.read()
+            (stale if MARK in text else unmanaged).append(f[:-3])
+            twin = split(text)[0].get("name", "").strip("\"' ")   # Claude Code keys agents by name, not by file name
+            if twin in ag:
+                bad.append({"code": DIFFERS, "problem": f"file {sd.idn(f[:-3])} declares the name of preset agent {sd.idn(twin)} and is not that agent's generated file"})
     bad += [{"code": DIFFERS, "problem": f"agent {n}: its file is stale (generated, but the preset has no such agent)"} for n in stale]
-    doc = {"preset": a.preset, "ok": not bad, "latest_session": latest, "agents": res, "stale": stale, "unmanaged": unmanaged}
+    doc = {"preset": a.preset, "ok": not bad, "latest_session": latest, "agents": res, "stale": stale, "unmanaged": unmanaged, "warnings": [warn] if warn else []}
     print(json.dumps(doc))
+    if warn:
+        print("warning: " + warn, file=sys.stderr)
     if bad:
         b = bad[0]
         el.say(b["code"], "; ".join(x["problem"] for x in bad[:3]) + (f" (and {len(bad) - 3} more)" if len(bad) > 3 else ""), alert=True)
