@@ -193,12 +193,15 @@ ok '[ "$(rc pj4)" = 0 ] && J pj4 "$HARD" && J pj4 ".policy == \"project\"" && [ 
   "5g its exact global id is the project (the same exclusion); an id that matches no listed project follows the default policy"
 # W3-CRT-01 reopened: an id that is no project key by the data policy schema's own key pattern is refused: an invisible character
 # (zero-width space, BOM), a full-width letter, a look-alike letter, a combining mark (bytes spelled out, so no locale is needed),
-# another case, an empty id. The pattern is the schema's: a root whose schema allows upper case resolves that id (default policy).
+# another case, a blank id. The pattern is the schema's: a root whose schema allows upper case resolves that id (default policy).
+# An empty id is no project at all (what a caller with no card gives, the model guard for one): the default policy.
 n0=$(alerts "$C_UNKNOWN"); i=0
-for v in $'qa-private\xe2\x80\x8b' $'\xef\xbb\xbfqa-private' $'\xef\xbd\x91a-private' $'qa-privat\xd0\xb5' $'qa-private\xcc\x81' Qa-New ""; do i=$((i+1)); rs h "pk$i" --role "$NR" --project "$v"; done
+for v in $'qa-private\xe2\x80\x8b' $'\xef\xbb\xbfqa-private' $'\xef\xbd\x91a-private' $'qa-privat\xd0\xb5' $'qa-private\xcc\x81' Qa-New " "; do i=$((i+1)); rs h "pk$i" --role "$NR" --project "$v"; done
 allclosed() { local k; for k; do closed "$k" "$C_UNKNOWN" || return 1; done; }
 ok 'allclosed pk1 pk2 pk3 pk4 pk5 pk6 pk7 && [ $(( $(alerts "$C_UNKNOWN") - n0 )) = 7 ]' \
-  "5h a project id that does not match the schema's project key pattern fails closed with $C_UNKNOWN: invisible, full-width, look-alike and combining variants of the private id, another case, an empty id"
+  "5h a project id that does not match the schema's project key pattern fails closed with $C_UNKNOWN: invisible, full-width, look-alike and combining variants of the private id, another case, a blank id"
+rs h pk0 --role "$NR" --project ""
+ok '[ "$(rc pk0)" = 0 ] && J pk0 ".policy == \"default\" and .project == \"\""' "5j an empty project id is no project: the default policy"
 mk hp h; SCH=$T/hp/.stella/schemas/data-policy.schema.json
 jq '.properties.projects.propertyNames.pattern = "^[A-Za-z0-9][A-Za-z0-9._:-]*$"' "$SCH" >"$SCH.n" && mv "$SCH.n" "$SCH"
 rs hp pk8 --role "$NR" --project Qa-New; rs hp pk9 --role "$NR" --project QA-Private

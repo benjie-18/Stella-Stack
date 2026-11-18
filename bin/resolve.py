@@ -131,7 +131,7 @@ def _data(project):
     gids = {v["global_id"]: k for k, v in reversed(projects.items()) if isinstance(v.get("global_id"), str)}   # the first row of a global_id wins
 
     def alias(p):
-        if not isinstance(p, str) or p in projects:
+        if not isinstance(p, str) or not p or p in projects:   # None or "": no project (what a caller with no card gives), the default policy
             return p
         if p in gids:
             return gids[p]
