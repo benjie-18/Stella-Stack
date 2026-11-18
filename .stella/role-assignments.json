@@ -9,6 +9,7 @@
       "no_silent_fallback": false,
       "label": "Standard",
       "builtin": true,
+      "cross_family_review": true,
       "based_on": null,
       "class_order": [
         [
@@ -56,6 +57,7 @@
       "no_silent_fallback": false,
       "label": "Eco",
       "builtin": true,
+      "cross_family_review": true,
       "based_on": null,
       "class_order": [
         "local",
@@ -94,6 +96,7 @@
       "no_silent_fallback": true,
       "label": "Max",
       "builtin": true,
+      "cross_family_review": true,
       "based_on": null,
       "class_order": [
         "frontier",
@@ -132,6 +135,7 @@
       "no_silent_fallback": true,
       "label": "Local only",
       "builtin": true,
+      "cross_family_review": true,
       "based_on": null,
       "class_order": [
         "local"

@@ -157,7 +157,7 @@ ok '[ "$(jq -r ".files[] | select(.id == \"data-files\") | .owner_only" "$ROOT/.
 # G3 cross-file rules
 mk g3a; ed g3a role-assignments.json '.assignments[0].role = "ghost"'
 ok 'refuses g3a check connections && grep -q "role-assignments" "$T/o" && grep -q "assignable role" "$T/o" && ! grep -q ghost "$T/o"' "51 check <id> also prints the cross-file problems"
-CAPS='.models |= map(.capabilities += {tool_calling: true, vision: true, context_tokens: 1048576})'   # W1-RT-01: a chain is judged by its model's advertised capabilities, and the shipped subscription models advertise none
+CAPS='.models |= map(.capabilities += {tool_calling: true, vision: true, context_tokens: 1048576})'   # the catalog's word only: since F2b item C a chain is judged by probe records (none here: possibly serving)
 OPEN="(.entries[] | select(.id == \"claude-subscription\")) |= (.allowed_roles = $AR | .data_policy.data_classes_allowed = [\"public\",\"internal\",\"client\"] | .terms_ok = true | $CAPS)"   # the subscription provider allowing every role and class, its terms recorded as allowing this use (F1b D6), its models advertising what a role may require
 mk g3b; ed g3b connections.json "$OPEN"; ed g3b data-policy.json '.projects["cx"] = {mode:"local_only",allowed_providers:[]}'; ed g3b data-policy.json ".projects.cx += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ed g3b role-assignments.json '.assignments += [{id:"zz",scope:{level:"card",card:"c1"},role:"builder",effort_mode:"standard",chain:[{connection:"claude-subscription",model:"haiku",parameters:{}}]}]'; ed g3b role-assignments.json ".assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
@@ -171,6 +171,11 @@ ok 'refuses g3d check' "55 the fallback role of the role table cannot be assigne
 mk g3e; ed g3e connections.json "$OPEN"; ed g3e connections.json '(.entries[] | select(.id == "claude-subscription")).enabled = false'
 ed g3e role-assignments.json '.assignments += [.assignments[0] | .id = "zz" | .role = "reviewer" | .chain = [{connection:"claude-subscription",model:"haiku",parameters:{}}]]'; ed g3e role-assignments.json ".assignments[-1] += {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses g3e check' "56 a chain naming a disabled provider is refused"
+mk cf1; ed cf1 routing.json '.cross_family.reviewer_roles += ["qa-no-role"]'
+mk cf2; ed cf2 routing.json '.cross_family.reviewer_roles += [.cross_family.builder_role]'
+mk cf3; ed cf3 role-assignments.json '.effort_modes |= map_values(.cross_family_review = 1)'
+ok 'refuses cf1 check && grep -q "^STL-CFG-310 .*cross_family.reviewer_roles\[[0-9]*\]: .*not an assignable role" "$T/o" && ! grep -q qa-no-role "$T/o" && refuses cf2 check && grep -q "cross_family.builder_role is also one of" "$T/o" && refuses cf3 check' \
+  "57a F2b C: check refuses a cross_family role that is not in the role table (the value not printed), a builder that is also a reviewer, and a cross_family_review that is no boolean"
 mk g3f; echo '{"schema_version":1,"id":"zz-ext","kind":"skill","summary":"s","hosts":[],"secrets":[],"tools":[],"allowed_roles":[],"risk_class":"read","enabled":true,"status":"proposed","source":"x"}' >"$T/g3f/.stella/extensions/zz-ext.json"; ed g3f extensions/zz-ext.json ". + {$(ids)}"   # F1b D1: the fake record carries its own two ids
 ok 'refuses g3f check && grep -q zz-ext "$T/o"' "57 an extension that is switched on without being approved is refused"
 mk g3g; ed g3g features.json '(.entries[] | select(.id == "generated-team-files")).status = "on"'

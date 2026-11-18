@@ -563,7 +563,7 @@
       "id": "resolve",
       "kind": "command",
       "summary": "The ordered chain of model links a role may use right now, and why (presets, data policy, grants, card facts, health)",
-      "keywords": ["resolve", "model", "routing", "preset", "chain", "link", "fallback", "grant"],
+      "keywords": ["resolve", "model", "routing", "preset", "chain", "link", "fallback", "grant", "probe", "tokens", "cross-family"],
       "inputs": "a role, a project, optionally a card, task tier, driver and task id, and a rung N of the role's escalation chain (--rung; host-side callers only, refused in a worker environment)",
       "outputs": "JSON; exit 1 with a catalog code when no link is usable, a card app is refused or an id is unknown; every chain entry carries its effort; with --rung N >= 1: rung {requested, served, last, link, skipped[]}, STL-MDL-731 when no rung is left (escalate to the owner), and the CLI writes one trusted event line per skipped rung (STL-MDL-732) and one when the walk is exhausted",
       "allowed_roles": ["dispatcher", "builder", "reviewer"],

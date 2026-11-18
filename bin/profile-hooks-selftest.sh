@@ -205,7 +205,7 @@ ok '[ "$(GIT_TEST_ASSUME_DIFFERENT_OWNER=1 hterm $T/plant-g $G "git diff --outpu
 # is refused too: the builder's default model is not Sonnet (~/.claude/settings.json "model": "opus").
 M=$D/builder/model-guard.py
 # F2 W7b: the worker model is the resolver's answer, not a mark in the catalog. The fixture root is the shipped data with what the
-# owner records on the host: the CLI-login connection usable for the guard's role (terms, the role, advertised capabilities), a
+# owner records on the host: the CLI-login connection usable for the guard's role (terms, the role, its models' probe records), a
 # selected preset of every link class, and an owner pin of the worker model the rows below spell (MGW). The role is asked with no
 # card here (the card proof is the role tool's, tested there).
 MGW=sonnet; MGFX=$T/mgfx; mkdir -p "$MGFX/docs"; cp -r /workspace/.stella "$MGFX/"; cp -r /workspace/docs/hermes-local "$MGFX/docs/"
@@ -214,6 +214,11 @@ MGP=$(jq -r '.roles as $R | [.profiles | to_entries[] | select(($R[.value.role].
 fxed() { jq "${@:2}" "$MGFX/.stella/$1" >"$MGFX/.stella/$1.n" && mv "$MGFX/.stella/$1.n" "$MGFX/.stella/$1"; }   # fxed <data file> <jq args and filter>
 fxed connections.json --arg r "$MGR" --argjson dc "$(jq -c .data_classes "$MGFX/.stella/data-policy.json")" '(.entries[] | select(.type == "cli-login")) |= (.terms_ok = true | .allowed_roles += [$r]
   | .data_policy.data_classes_allowed = $dc | .models[] |= (.capabilities = {tool_calling: true, json_mode: true, context_tokens: 1048576, vision: true, streaming: true} | .probe_source = "advertised"))'
+pr="$MGFX/$(jq -r .probe_records "$MGFX/.stella/data-files.json")"; mkdir -p "$(dirname "$pr")"   # F2b item C: routing reads what a link can do from its probe record only
+jq --arg i "$(jq -r .install_id "$MGFX/$(jq -r '.files[] | select(.schema == "install") | .path' "$MGFX/.stella/data-files.json")")" --arg o "$(jq -r '.probe.output_shapes[-1]' "$MGFX/.stella/routing.json")" \
+  '{schema_version: 1, records: [.entries[] | select(.type == "cli-login") | .id as $c | .models[] | {global_id: "00000000-0000-4000-8000-000000000000", install_id: $i, connection: $c,
+    model: .id, version: "qa", probed_at: "2026-01-01T00:00:00Z", family: null, tool_calling: true, parallel_tool_calls: null, json: true, vision: true, output_shape: $o,
+    context: {advertised: null, effective: 1048576, short_score: 1, points: []}, code: null}]}' "$MGFX/.stella/connections.json" >"$pr"
 fxed routing.json --arg r "$MGR" '.card_roles -= [$r]'
 fxed role-assignments.json --arg r "$MGR" --arg m "$MGW" --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$(jq -r .install_id "$MGFX/.stella/install.json")" \
   --argjson k "$(jq -c '[.link_classes[].id]' "$MGFX/.stella/routing.json")" --arg c "$(jq -r '[.entries[] | select(.type == "cli-login") | .id][0]' "$MGFX/.stella/connections.json")" \

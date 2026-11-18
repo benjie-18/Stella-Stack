@@ -27,7 +27,7 @@ chmod +x "$T/bin/"*
 export PATH="$T/bin:$PATH" ESCALATE_SUP_DIR="$T/sup" FALLBACK_CONFIG="$T/no-such-fallback-config.json"   # no reroute unless a test writes one
 # F2 W7b: escalate.sh asks the resolver, which refuses the CLI-login connection on the shipped data (no terms recorded). The whole
 # run uses a fixture root (STELLA_ROOT): the shipped data with what the owner records on the host: that connection usable for the
-# caller's role (terms, the role, advertised capabilities) and a selected preset of every link class; the board stub answers the
+# caller's role (terms, the role; its models' probe records) and a selected preset of every link class; the board stub answers the
 # caller (the first profile of the first card role) and a project, and every card id this file uses has a clean facts record.
 # The model ids and their limits are the shipped catalog's (limits.env keys named in each model's `limits`).
 FX=$T/fx; mkdir -p "$FX/docs"; cp -r /workspace/.stella "$FX/"; cp -r /workspace/docs/hermes-local "$FX/docs/"
@@ -48,6 +48,18 @@ CLIC=$(jq -r '[.entries[] | select(.type == "cli-login") | .id][0]' "$FX/.stella
 lk() { jq -c --arg c "$CLIC" '[.[] | {connection: $c, model: ., parameters: {}}]' <<<"$1"; }   # lk '["m1", ...]': a chain of that connection's models
 fxed connections.json --argjson r "$(jq -nc --arg a "$CR" --arg b "${RA:-}" --arg c "${RB:-}" '[$a, $b, $c]')" --argjson dc "$(jq -c .data_classes "$FX/.stella/data-policy.json")" '(.entries[] | select(.type == "cli-login")) |= (.terms_ok = true | .allowed_roles += $r
   | .data_policy.data_classes_allowed = $dc | .models[] |= (.capabilities = {tool_calling: true, json_mode: true, context_tokens: 1048576, vision: true, streaming: true} | .probe_source = "advertised"))'
+PRX=$FX/$(jq -r .probe_records "$FX/.stella/data-files.json"); mkdir -p "$(dirname "$PRX")"   # F2b item C: routing reads what a link can do from its probe record only
+jq --arg c "$CLIC" --arg i "$(jq -r .install_id "$FX/$(jq -r '.files[] | select(.schema == "install") | .path' "$FX/.stella/data-files.json")")" --arg o "$(jq -r '.probe.output_shapes[-1]' "$FX/.stella/routing.json")" \
+  '{schema_version: 1, records: [.entries[] | select(.id == $c) | .models[] | {global_id: "00000000-0000-4000-8000-000000000000", install_id: $i, connection: $c, model: .id,
+    version: "qa", probed_at: "2026-01-01T00:00:00Z", family: null, tool_calling: true, parallel_tool_calls: null, json: true, vision: true, output_shape: $o,
+    context: {advertised: null, effective: 1048576, short_score: 1, points: []}, code: null}]}' "$FX/.stella/connections.json" >"$PRX"
+mkdir -p "$(dirname "$SH/${PRX#"$FX"/}")"
+# the shipped root as a host that probed its local models (as the catalog advertises them), so the W7b case below meets the shipped rungs
+jq --arg i "$(jq -r '.records[0].install_id // empty' "$PRX")" --arg o "$(jq -r '.probe.output_shapes[-1]' "$SH/.stella/routing.json")" \
+  '{schema_version: 1, records: [.entries[] | select(.kind == "provider" and .locality == "local") | .id as $c | .models[] | {global_id: "00000000-0000-4000-8000-000000000000",
+    install_id: $i, connection: $c, model: .id, version: "qa", probed_at: "2026-01-01T00:00:00Z", family: null, tool_calling: .capabilities.tool_calling, parallel_tool_calls: null,
+    json: .capabilities.json_mode, vision: .capabilities.vision, output_shape: $o, context: {advertised: .capabilities.context_tokens, effective: (.capabilities.context_tokens // 0),
+    short_score: 1, points: []}, code: null}]}' "$SH/.stella/connections.json" >"$SH/${PRX#"$FX"/}"
 fxed role-assignments.json --argjson k "$(jq -c '[.link_classes[].id]' "$FX/.stella/routing.json")" --arg cr "$CR" --arg a "${RA:-}" --arg b "${RB:-}" \
   --argjson ca "$(lk '["haiku"]')" --argjson cc "$(lk '["sonnet", "opus"]')" --argjson cb "$(lk '["opus"]')" '.effort_modes["qa-all"] = {allowed_localities: ["local", "cloud"], no_silent_fallback: false, class_order: $k,
     roles: {($a): {active: true, escalation_chain: $ca}, ($cr): {active: true, escalation_chain: $cc}, ($b): {active: true, escalation_chain: $cb}}} | .selection.global = "qa-all"'

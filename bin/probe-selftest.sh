@@ -161,6 +161,10 @@ SEED=$(python3 -I -c 'import random
 print(next(s for s in range(1, 10000) if (lambda r: r.random() < 0.5 <= r.random())(random.Random(s))))')
 addmodel qa-rep; addmodel qa-bad
 world "$(printf '%s\n' $MODELS qa-rep qa-bad | jq -Rsc 'split("\n")[:-1]')" "" "$(jq -c --argjson a "$(trt qa-rep "{\"answers\":[\"not json at all\",$(jq -Rn --arg a "$GOOD" '$a')],\"seed\":$SEED}")" --argjson b "$(trt qa-bad '{"answers":["{\"ok\": true}"]}')" '. + [$a, $b]' <<<"$TRAITS")"
+# route.py call refuses a link whose probed effective context does not hold the prompt (F2b item C): the two links get a record (the newest, so it speaks for them)
+jq --arg i "$IID" --arg o "$(jq -r '.probe.output_shapes[-1]' "$RT")" '.records += [("qa-rep", "qa-bad") | {global_id: "00000000-0000-4000-8000-000000000000", install_id: $i,
+  connection: "qa-p", model: ., version: "qa-helper", probed_at: "2026-01-01T00:00:00Z", family: null, tool_calling: true, parallel_tool_calls: null, json: true,
+  vision: false, output_shape: $o, context: {advertised: null, effective: 1048576, short_score: 1, points: []}, code: null}]' "$PF" >"$PF.n" && mv "$PF.n" "$PF"
 hp h1 qa-rep; hp h2 qa-bad
 ok '[ "$(rc h1)" = 0 ] && J h1 --argjson g "$GOOD" "(.text | fromjson) == \$g" && [ "$(cnt qa-rep)" = 2 ]' "S16 the helper: an answer that is not JSON gets one repair retry; the valid answer is the result"
 ok '[ "$(rc h2)" != 0 ] && [ "$(cnt qa-bad)" = 2 ] && J h2 ".code == \"STL-MDL-736\" and ((.text // null) == null)"' "S17 the helper: JSON that breaks the schema, also after the retry: STL-MDL-736, no text"

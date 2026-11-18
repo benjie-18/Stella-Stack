@@ -11,7 +11,7 @@ CLI (host only: every command refuses in a worker environment, STL-CFG-312; the 
       --schema FILE (F2b B): the answer must be JSON that meets the object schema in FILE, which gets a short `reasoning` string as its first
       property. The link's newest probe record (bin/probe.py) names the output shape: the schema goes at that wire-shape pointer; with none
       (or no record) it goes in the prompt. A wrong answer gets routing probe.repair_retries repair retries, then STL-MDL-736: never a guessed value.
-  route.py attempt --role R --project P [--card C] [--tier T] [--driver D] --task ID [--json]
+  route.py attempt --role R --project P [--card C] [--tier T] [--driver D] --task ID [--tokens N] [--json]
       for a worker CLI's launcher: ONE link (the next the task may use) and the task's failure_history; it calls no model and
       never switches inside an attempt.
   route.py result --task ID --link <connection>/<model> --outcome ok|<trigger id>
@@ -26,10 +26,11 @@ A step (one pick of a link, the same for call and attempt), in this order:
      down (this task's failure, another task's, a launcher's report) and also back to an earlier link that is usable again. A
      switch past failover.max_switches_per_task stops the task (STL-MDL-723); a task with no switch left stays on its last link
      while that one can be used.
-  3. call only: a link with no wire shape cannot be called here; a switch is mid-task, so the link must allow it (`mid_task` of the
-     chain), its advertised context window must hold the conversation (stub routing-advertised-context, named in `stubs`) and a
-     pending tool call must stay on the same wire shape; else the switch is refused (STL-MDL-722, one event line) and the next
-     link is judged.
+  3. call only: a link with no wire shape cannot be called here, nor one whose probed effective context (its newest probe record,
+     stella_data.probed; no record or none: it does not hold) is below the conversation, on the first pick too; a switch is
+     mid-task, so the link must also allow it (`mid_task` of the chain) and a pending tool call must stay on the same wire shape;
+     else the link is refused (a switch: STL-MDL-722, one event line) and the next link is judged. The resolver is asked with the conversation's size (call: the prompt's estimate, on
+     every pick; attempt: --tokens when the launcher gives it), so a link whose effective context is below it is never in the chain.
   4. a link that needs a grant is never skipped: with a card and a module `consent`, consent.gate(ctx, link) -> {status: granted |
      waiting | queued, code?, request_id?} decides; with no card or no such module the task stops with STL-MDL-719 and one inbox
      alert, and no approval request is raised. A task that waits exits 3.
@@ -37,7 +38,10 @@ A step (one pick of a link, the same for call and attempt), in this order:
      pick, than the chain's first link that is not excluded (a head that cools down or needs a grant is that bar; only an
      excluded head is skipped): one inbox alert and one event line with the routing data's consent.alert_code_notice, whatever
      the grant.
-  6. one trusted event line: `routing.switch` (STL-MDL-721) from the link left, else `routing.pick` with the resolver's reason.
+  6. one trusted event line: `routing.switch` (STL-MDL-721) from the link left, else `routing.pick` with the resolver's reason; for
+     a review role (the answer's cross_family), one `routing.cross-family-waiver` line (STL-MDL-737) before it when the answer is
+     waived or the link is of the builder's family or of none known (a switch back to the builder's family too). A line that
+     cannot be written stops the task with the event log's code before any model is called.
 A failure becomes a trigger by the wire shape's `errors` rows (status, body pattern; first match wins); the transport says timeout
 (the whole call has one wall-clock deadline of CALL_TIMEOUT seconds: name lookup, connect, status line, headers and body, however
 the bytes arrive) and server_error (no answer, no connection, an
@@ -91,7 +95,7 @@ PROBE_FAILED = "STL-MDL-736"   # a structured-output call that got no valid answ
 UNEXPECTED = "STL-CFG-310"   # an error this tool did not foresee: one coded line with the error's type, never its text
 TIMEOUT_KEY = "CALL_TIMEOUT"   # the settings registry key: the seconds one model call may take
 TIMED_OUT, DOWN, MALFORMED = "timeout", "server_error", "malformed_tool_call"   # triggers no errors row of a wire shape can say
-CONTEXT_STUB = "routing-advertised-context"   # the features entry the context check rests on until F2b's probe
+WAIVER = "STL-MDL-737"   # a review role on a link of no other family than the builder's (the resolver's cross_family)
 USABLE, NEEDS_GRANT, EXCLUDED, GRANTED = "usable", "needs_grant", "excluded", "granted"   # the resolver's and the consent gate's words
 KEYS = set()   # the keys read in this run and their JSON-escaped forms: masked in the output wherever they stand, glued to other characters too
 TIME = "%Y-%m-%dT%H:%M:%SZ"
@@ -241,7 +245,7 @@ def cleared_event(a, keys, detail):
 
 def ctx_of(a):
     """What the resolver and the consent gate are asked with."""
-    return {k: getattr(a, k) for k in ("role", "project", "card", "tier", "driver", "task")}
+    return {k: getattr(a, k, None) for k in ("role", "project", "card", "tier", "driver", "task", "tokens")}
 
 
 # ---- one step: the next link the task uses ----
@@ -257,18 +261,19 @@ def next_link(chain, st, ts, rt, t, skip):
     return c[0] if c else None
 
 
-def unfit(a, link, left, cat, tokens):
+def unfit(a, link, left, cat, tokens, recs):
     """Why the engine loop cannot use this link now (None: it can). Without `left` (the link the task leaves) this is no switch:
-    the task's first link, or the link it last used."""
-    prov, mod = model_of(cat, link)
+    the task's first link, or the link it last used. recs: the probe records (stella_data.probe_records)."""
+    prov, _ = model_of(cat, link)
     if not prov.get("protocol"):
         return "its connection has no wire shape (a worker CLI drives it, between attempts)"
+    eff = ((sd.probed(recs, prov["id"], link["model"]) or {}).get("context") or {}).get("effective")
+    if (eff or 0) < tokens:   # the first pick too; no record, or no effective context probed: it does not hold (C-DC-04)
+        return f"its probed effective context ({'not probed' if eff is None else eff} tokens) does not hold the conversation (about {tokens} tokens)"
     if not left:
         return None
     if link.get("mid_task") is not True:
         return "the link may not be switched to in the middle of a task (between attempts only)"
-    if (mod["capabilities"].get("context_tokens") or 0) < tokens:
-        return f"its advertised context window does not hold the conversation (about {tokens} tokens)"
     if a.pending_tool_call and prov["protocol"] != (sd.entry(cat, left.split("/", 1)[0]) or {}).get("protocol"):
         return "a tool call is pending and the link speaks another wire shape, so the call's state does not carry over"
     return None
@@ -277,7 +282,7 @@ def unfit(a, link, left, cat, tokens):
 def advance(a, doc, rt, cat, refused, tokens=None):
     """The next link of the task after every gate of a step (module text), or Stop. tokens: the conversation's size for the engine
     loop's mid-task checks; None for an attempt (a worker CLI switches between attempts only)."""
-    chain, rank = doc["chain"], {c["id"]: c["privacy_rank"] for c in rt["link_classes"]}
+    chain, rank, recs = doc["chain"], {c["id"]: c["privacy_rank"] for c in rt["link_classes"]}, sd.probe_records(rt)
     while True:
         with state() as st:
             ts = task_of(st, a.task)
@@ -289,7 +294,7 @@ def advance(a, doc, rt, cat, refused, tokens=None):
         if link is None:
             why = "; ".join(dict.fromkeys(str(e.get("reason")) for e in chain if e.get("reason"))) or "the chain is empty"
             raise Stop(*((STOPPED, f"task {a.task} has no link left after {len(hist)} failed") if hist else (NO_LINK, f"role {a.role}: {why}")))
-        why = unfit(a, link, left, cat, tokens) if tokens is not None else None
+        why = unfit(a, link, left, cat, tokens, recs) if tokens is not None else None
         if why:
             refused.append({"link": key, "code": MID_REFUSED if left else NO_LINK, "reason": why})
             if left:
@@ -314,6 +319,12 @@ def advance(a, doc, rt, cat, refused, tokens=None):
             code, problem = rt["consent"]["alert_code_notice"], f"task {a.task} uses link {key} (class {link.get('link_class')}), less private than {was}"
             alert(code, problem)
             event("routing.notice", a, code, new={"link": key, "link_class": link.get("link_class")}, detail=problem)
+        cf = doc.get("cross_family") if isinstance(doc.get("cross_family"), dict) else None   # a review role: the waiver goes next to its pick or switch
+        fam = (sd.probed(recs, link["connection"], link["model"]) or {}).get("family")   # the probe record's, as the resolver judged it
+        if cf and (cf.get("status") != "met" or fam in (None, cf.get("builder_family"))):
+            event("routing.cross-family-waiver", a, WAIVER, new={"link": key, "family": fam},
+                  detail=f"card {a.card}, role {a.role}, preset {(doc.get('preset') or {}).get('id')}, builder family {cf.get('builder_family')}, served family "
+                         f"{fam}: " + str(cf.get("reason") if cf.get("status") != "met" else "the task moved to a link of no other known family than the builder's")[:300])
         if left:
             h = hist[-1] if hist and isinstance(hist[-1], dict) else {}   # a history entry is read as data: any shape
             own = h.get("link") == left and isinstance(h.get("trigger"), str)
@@ -537,12 +548,12 @@ def invalid(text, schema):
 def cmd_call(a):
     prompt = sys.stdin.buffer.read().decode("utf-8", "replace")   # bytes that are not UTF-8 (a tool's binary output) are replaced, whatever the locale
     rt, cat, protos, local = data()
+    a.tokens = tokens = len(prompt.encode()) // 4 + 1   # shortcut: about four bytes a token (the probe's own estimate), upgrade when a wire shape counts tokens
     doc = resolved(a, rt, True)
     timeout = timeout_of()
     schema = with_reasoning(json.load(open(a.schema))) if a.schema else None   # an unreadable file ends in main()'s coded line
-    tokens = len(prompt.encode()) // 4 + 1   # shortcut: about four bytes a token, upgrade with F2b's probe (CONTEXT_STUB)
     a.refused = refused = []
-    stubs = list(dict.fromkeys([*(doc.get("stubs") or []), CONTEXT_STUB]))
+    stubs = list(doc.get("stubs") or [])
     while True:
         link = advance(a, doc, rt, cat, refused, tokens)
         prov, _ = model_of(cat, link)
@@ -632,6 +643,7 @@ def main(argv):
             p.add_argument("--" + k, required=req)
         p.add_argument("--json", action="store_true")
     sub.choices["call"].add_argument("--pending-tool-call", action="store_true")
+    sub.choices["attempt"].add_argument("--tokens", type=int, help="the task's size in tokens: a link whose probed effective context is below it is not in the chain")
     sub.choices["call"].add_argument("--schema", help="a JSON Schema file: the answer must be JSON that meets it (one short `reasoning` property is added first)")
     p = sub.add_parser("result")
     for k in ("task", "link", "outcome"):

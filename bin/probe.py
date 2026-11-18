@@ -56,23 +56,24 @@ def path():
     return el.path(sd.load(sd.INDEX)[KEY])   # refused when it is, or passes through, a symbolic link
 
 
-def problems(doc):
-    """What is wrong with a records document: its schema, an output_shape the routing data does not list, a record key twice."""
+def problems(doc, rt=None):
+    """What is wrong with a records document: its schema, an output_shape the routing data does not list, a record key twice.
+    rt: the routing document when the caller holds it (a cross-file rule of `check` must not read the routing data again)."""
     errs = sd.validate_doc(doc, sd.schema_of("probes"))
     if errs:
         return errs
-    known, seen = set(sd.routing()["probe"]["output_shapes"]), set()
+    known, seen = set((rt or sd.routing())["probe"]["output_shapes"]), set()
     for i, r in enumerate(doc["records"]):
-        k = (r["connection"], r["model"], r["version"])
+        k = (r["install_id"], r["connection"], r["model"], r["version"])   # a record of another install is no duplicate: readers ignore it
         if r["output_shape"] not in known:
             errs.append(f"records[{i}]: output_shape {r['output_shape']!r} is not one of routing probe.output_shapes")
         if k in seen:
-            errs.append(f"records[{i}]: the version is recorded twice for this connection and model")
+            errs.append(f"records[{i}]: the version is recorded twice for this connection and model (of one install)")
         seen.add(k)
     return errs
 
 
-def load():
+def load(rt=None):
     """(the whole document, None) or (None, the problem): a missing file is an empty one."""
     try:
         with open(path(), "rb") as f:
@@ -81,13 +82,13 @@ def load():
         return {"schema_version": 1, "records": []}, None
     except (OSError, ValueError, RecursionError, sd.DataError, el.EventError) as e:
         return None, f"the records file cannot be read ({type(e).__name__})"
-    errs = problems(doc)
+    errs = problems(doc, rt)
     return (None, errs[0]) if errs else (doc, None)
 
 
-def records():
+def records(rt=None):
     """The valid records of this install; none when the file is unreadable or invalid (fail closed)."""
-    doc, _ = load()
+    doc, _ = load(rt)
     iid = sd.install_id() if doc else None
     return [r for r in doc["records"] if r["install_id"] == iid] if doc else []
 

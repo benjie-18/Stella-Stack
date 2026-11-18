@@ -18,6 +18,7 @@ j() { jq -r "$1" "$2"; }
 IX=$ROOT/.stella/data-files.json
 p() { jq -r --arg s "$1" '[.files[] | select(.schema == $s and .format == "json") | .path][0]' "$IX"; }   # <schema>: its file
 RJREL=$(j .role_table "$IX"); RJ=$ROOT/$RJREL; RT=$ROOT/$(p routing); POL=$ROOT/$(p data-policy); FACTS=$(j .card_facts "$IX"); STATE=$(j .routing_state "$IX")
+PF=$(j .probe_records "$IX"); SHIPPED=$(jq -c '[.entries[].id]' "$ROOT/$(p connections)"); OSN=$(j '.probe.output_shapes[-1]' "$RT")
 mk() {  # <name> [<from name>]: a scratch root with a copy of the data, the role table and its hooks (or of another scratch root)
   rm -rf "${T:?}/$1"
   if [ -n "${2:-}" ]; then cp -r "$T/$2" "$T/$1"; return; fi
@@ -25,11 +26,20 @@ mk() {  # <name> [<from name>]: a scratch root with a copy of the data, the role
 }
 ed() { local f; f="$T/$1/$(p "$2")"; jq "${@:3}" "$f" >"$f.n" && mv "$f.n" "$f"; }   # <root> <schema> <jq args and filter>
 edt() { local f="$T/$1/$RJREL"; jq "${@:2}" "$f" >"$f.n" && mv "$f.n" "$f"; }        # <root> <jq args and filter>: the role table
+probes() {  # <root>: one probe record per model of the root's own fake connections (ids the shipped catalog lacks), mirroring the capabilities the
+  # fixture gives the model: what a link can do is read from its record, never from the catalog (F2b item C). A root holding .qa-own-probes keeps its own.
+  local f="$T/$1/$PF"; [ -e "$T/$1/.qa-own-probes" ] && return; mkdir -p "$(dirname "$f")"
+  jq --arg i "$IID" --arg o "$OSN" --argjson s "$SHIPPED" '{schema_version: 1, records: [.entries[] | select(.kind == "provider") | .id as $c | select($s | index($c) | not)
+    | .models[] | (.capabilities // {}) as $k | {global_id: "00000000-0000-4000-8000-000000000000", install_id: $i, connection: $c, model: .id, version: "qa",
+      probed_at: "2026-01-01T00:00:00Z", family: null, tool_calling: $k.tool_calling, parallel_tool_calls: null, json: $k.json_mode, vision: $k.vision,
+      output_shape: $o, context: {advertised: $k.context_tokens, effective: ($k.context_tokens // 0), short_score: 1, points: []}, code: null}]}' \
+    "$T/$1/$(p connections)" >"$f.n" 2>/dev/null && { cmp -s "$f.n" "$f" && rm -f "$f.n" || mv "$f.n" "$f"; } || rm -f "$f.n"
+}
 passes() {  # <root>: the fixture is valid data (else the first problems are shown)
-  STELLA_ROOT=$T/$1 python3 -I -B "$SD" check >"$T/o/check" 2>&1 || { head -n 3 "$T/o/check" | cut -c1-300 >&2; return 1; }
+  probes "$1"; STELLA_ROOT=$T/$1 python3 -I -B "$SD" check >"$T/o/check" 2>&1 || { head -n 3 "$T/o/check" | cut -c1-300 >&2; return 1; }
 }
 rs() {  # <root> <name> <args>...: resolve; stdout o/<name>.json, stderr .err, exit code .rc (RSX: another copy of the resolver)
-  STELLA_ROOT=$T/$1 python3 -I -B "${RSX:-$RS}" resolve "${@:3}" --json >"$T/o/$2.json" 2>"$T/o/$2.err"; echo $? >"$T/o/$2.rc"
+  probes "$1"; STELLA_ROOT=$T/$1 python3 -I -B "${RSX:-$RS}" resolve "${@:3}" --json >"$T/o/$2.json" 2>"$T/o/$2.err"; echo $? >"$T/o/$2.rc"
 }
 rc() { cat "$T/o/$1.rc"; }
 J() { [ -s "$T/o/$1.json" ] && jq -e "${@:2}" "$T/o/$1.json" >/dev/null 2>&1; }      # <name> <jq args, filter>: holds on the answer
@@ -357,7 +367,7 @@ ok '[ "$(rc ro5)" = 0 ] && J ro5 "$HARD" && [ ! -e "$T/ro0/$FACTS" ] && [ ! -e "
 
 # ---- 13: role_view(role, project, card): the one copy of the rule resolve() reads ----
 rv() {  # <root> <name> <role> <project> [<card>]: o/<name>.json = {view, differs: what resolve() says otherwise ([] = they agree; null: resolve() refuses)}
-  STELLA_ROOT=$T/$1 python3 -I -B - "$BIN" "${@:3}" >"$T/o/$2.json" 2>"$T/o/$2.err" <<'P'
+  probes "$1"; STELLA_ROOT=$T/$1 python3 -I -B - "$BIN" "${@:3}" >"$T/o/$2.json" 2>"$T/o/$2.err" <<'P'
 import json, sys
 sys.path.insert(0, sys.argv[1])
 import resolve as r
@@ -460,5 +470,44 @@ ok '[ "$(rc f2)" = 1 ] && J f2 ".chain == [] and .rung.served == null and (.code
 for v in -1 x 1.5; do rs rg "u$v" --role "$NR" --project qa-proj --rung "$v"; done
 ok '[ "$(rc u-1)" = 2 ] && [ "$(rc ux)" = 2 ] && [ "$(rc u1.5)" = 2 ]' "14j --rung that is not a non-negative integer is a usage error (exit 2)"
 ok '[ "$(sha256sum "$RS")" = "$sum0" ] && ! grep -q "qa-" "$RS"' "14k the walk and the fake effort levels needed no change to the resolver's file, which names no fake id"
+
+# ---- 15: probe data (F2b item C): rule 4, --tokens, the needs-class trigger and cross-family review read the probe records only ----
+own() {  # <root> <JSON array of [connection, model, overrides]>: the root's probe records, each meeting every requirement unless overridden
+  touch "$T/$1/.qa-own-probes"; mkdir -p "$(dirname "$T/$1/$PF")"
+  jq -n --arg i "$IID" --arg o "$OSN" --argjson l "$2" '{schema_version: 1, records: [$l[] | {global_id: "00000000-0000-4000-8000-000000000000", install_id: $i,
+    connection: .[0], model: .[1], version: "qa", probed_at: "2026-01-01T00:00:00Z", family: null, tool_calling: true, parallel_tool_calls: null, json: true,
+    vision: true, output_shape: $o, context: {advertised: null, effective: 1048576, short_score: 1, points: []}, code: null} + .[2]]}' >"$T/$1/$PF"
+}
+mk pr base; own pr '[]'; rs pr p0 --role "$NR" --project qa-proj
+ok '[ "$(rc p0)" = 1 ] && J p0 ".code == \"$C_NOLINK\" and ([.chain[] | select(.connection == (\"qa-local\", \"qa-front\", \"qa-free\")) | select(.status != \"excluded\" or .code != \"$C_UNMET\" or (.reason | test(\"not probed\") | not))] | length == 0)"' \
+  "15a C rule 4: no probe record meets no requirement (not probed): every link that passes rules 1 to 3 is excluded $C_UNMET though the catalog advertises every capability"
+mk pr2 pr; ed pr2 connections '(.entries[] | select(.id == "qa-local") | .models[0].capabilities) += {tool_calling: false, context_tokens: 1}'
+own pr2 '[["qa-local", "qa-local-m1", {}], ["qa-local", "qa-local-m2", {"tool_calling": false}]]'; rs pr2 p1 --role "$NR" --project qa-proj
+ok 'passes pr2 && J p1 "$(ent qa-local qa-local-m1) | .[0].status == \"usable\"" && J p1 "$(ent qa-local qa-local-m2) | .[0].code == \"$C_UNMET\" and (.[0].reason | test(\"probe record\"))"' \
+  "15b the record decides, never the catalog: a model advertised with no tool calling and a 1-token window is usable by its record, one advertised able is excluded by its record"
+own pr2 '[["qa-local", "qa-local-m1", {"context": {"advertised": null, "effective": 50000, "short_score": 1, "points": []}}], ["qa-front", "qa-front-m1", {"context": {"advertised": null, "effective": 0, "short_score": 1, "points": []}}]]'
+ed pr2 role-assignments '.effort_modes["qa-all"].class_order |= .'; rs pr2 t0 --role "$NR" --project qa-proj; rs pr2 t1 --role "$NR" --project qa-proj --tokens 60000; rs pr2 tu --role "$NR" --project qa-proj --tokens -3
+ok 'J t0 "$(ent qa-local qa-local-m1) | .[0].status == \"usable\"" && J t1 "$(ent qa-local qa-local-m1) | .[0].code == \"$C_UNMET\" and (.[0].reason | test(\"50000\") and test(\"60000\"))" && [ "$(rc tu)" = 2 ]' \
+  "15c --tokens N excludes a link whose probed effective context is below N ($C_UNMET, both sizes named); without it nothing changes; a negative N is a usage error"
+mk pn pr; preset pn qa-need '{class_order: [$l], needs_class: $x, last_resort: null}'; own pn '[["qa-front", "qa-front-m1", {}], ["qa-front", "qa-front-m2", {}]]'; rs pn n0 --role "$NR" --project qa-proj
+own pn '[["qa-front", "qa-front-m1", {}], ["qa-front", "qa-front-m2", {}], ["qa-local", "qa-local-m1", {"tool_calling": false}], ["qa-local", "qa-local-m2", {"tool_calling": false}]]'
+rs pn n1 --role "$NR" --project qa-proj; rs pn n2 --role "$NR" --project qa-proj --tokens 99999999
+ok 'J n0 ".chain[0].link_class == \"$LOCAL\"" && J n1 ".chain[0].link_class == \"$FRONT\" and ([.chain[] | select(.status == \"usable\")][0].link_class == \"$FRONT\")" && J n2 ".chain[0].link_class == \"$FRONT\""' \
+  "15d C-DC-02 the needs-class trigger counts an unprobed link as possibly serving (the order stays) and a failing record as not serving (the needs class first); --tokens never moves it"
+VR=$(jq -r --arg c "$CR" '[.[] | select(. != $c)][0]' <<<"$CARDR")
+U='[.chain[] | select(.status == "usable") | .model]'   # the usable links, in chain order
+mk cf pr; edt cf '.worker_markers = ["STUB_WORKER_MARK"]'; ed cf routing --arg b "$CR" --arg v "$VR" '.cross_family = {builder_role: $b, reviewer_roles: [$v]}'; ed cf role-assignments '.effort_modes["qa-all"].cross_family_review = true'
+own cf '[["qa-front", "qa-front-m1", {"family": "qa-fa"}], ["qa-front", "qa-front-m2", {"family": "qa-fb"}], ["qa-free", "qa-free-m1", {"family": "qa-fb"}]]'
+n0=$(evn cf true); rs cf c1 --role "$VR" --project qa-proj --card qa-card; rs cf cb --role "$CR" --project qa-proj --card qa-card; n1=$(evn cf true)
+ok 'passes cf && [ "$(rc c1)" = 0 ] && J c1 ".cross_family.status == \"met\" and .cross_family.builder_family == \"qa-fa\" and .cross_family.served_family == \"qa-fb\" and $U[0:3] == [\"qa-front-m2\", \"qa-front-m1\", \"qa-free-m1\"]" &&
+  J cb "has(\"cross_family\") | not" && [ "$n1" = "$n0" ]' \
+  "15e cross-family: the reviewer's other-family link moves first inside its class (never across classes: qa-free stays later), met, no event line; the builder's answer has no cross_family"
+ed cf role-assignments '.effort_modes["qa-all"].cross_family_review = false'; rs cf c2 --role "$VR" --project qa-proj --card qa-card; n2=$(evn cf true)
+STUB_WORKER_MARK=1 rs cf c3 --role "$VR" --project qa-proj --card qa-card; n3=$(evn cf true)
+ok 'J c2 ".cross_family.status == \"waived\" and .cross_family.logged == true and $U[0:2] == [\"qa-front-m1\", \"qa-front-m2\"]" && [ $((n2 - n1)) = 1 ] && [ "$(evn cf ".type == \"routing.cross-family-waiver\" and .code == \"STL-MDL-737\"")" = 1 ] &&
+  J c3 ".cross_family.status == \"waived\" and .cross_family.logged == false" && [ "$n3" = "$n2" ]' \
+  "15f a preset without cross_family_review: waived, one trusted routing.cross-family-waiver line (STL-MDL-737), the order kept; in a worker environment logged false and no line"
+ok '! J p0 ".stubs | index(\"routing-advertised-capabilities\") or index(\"routing-advertised-context\")" && ! grep -q "advertised-capabilities\|advertised-context" "$RS"' \
+  "15g C-DC-06 no answer and no resolver code rests on the advertised-capability or advertised-context stubs"
 
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

@@ -30,6 +30,10 @@
             "minLength": 1,
             "maxLength": 128
           },
+          "cross_family_review": {
+            "type": "boolean",
+            "description": "True: under this preset a reviewer role of routing.json cross_family resolves to another model family than the builder where the chain allows it (F2b item C). False or absent: every such answer is a waiver, logged."
+          },
           "builtin": {
             "type": "boolean",
             "description": "True: a built-in preset. The apply tool refuses every candidate that changes or removes it, or that marks another preset this way; only the weekly model check (F2c) and a signed release (E1) update it."

@@ -259,6 +259,16 @@
       "uniqueItems": true,
       "description": "The card roles that build (the QA loop's builder escalation applies to them only): each built-in preset ships an escalation_chain for every one. `check` refuses a role that is not a card role (card_roles)."
     },
+    "cross_family": {
+      "type": "object",
+      "properties": {
+        "builder_role": {"type": "string", "minLength": 1},
+        "reviewer_roles": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "uniqueItems": true}
+      },
+      "required": ["builder_role", "reviewer_roles"],
+      "additionalProperties": false,
+      "description": "Cross-family review (F2b item C, body B2): under a preset whose cross_family_review is true, the resolver answers a role of reviewer_roles on a card with links of another model family (the probe records' family) than the first usable link of builder_role for the same card first, reordered only inside one class-order item; else, or when that is not reachable, the answer is a waiver (cross_family.status waived) that the host-side caller logs as routing.cross-family-waiver (STL-MDL-737). `check` refuses a role that is not an assignable role of the role table, and a builder_role that is also a reviewer role. Absent: no role is judged for cross-family review."
+    },
     "escalation": {
       "type": "object",
       "properties": {

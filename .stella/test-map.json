@@ -2944,8 +2944,8 @@
     },
     {
       "globs": [".stella/connections.json", ".stella/data-policy.json", ".stella/role-assignments.json", ".stella/routing.json"],
-      "targets": ["box", "escalate", "profile-hooks", "reviewer-claude"],
-      "why": "F2 W7b: the escalate, profile-hooks, box and reviewer-claude selftests build resolver fixture roots from these (from reach; reviewer-claude is a superset for the three routing data files)."
+      "targets": ["box", "container-start", "escalate", "profile-hooks", "reviewer-claude"],
+      "why": "F2 W7b: the escalate, profile-hooks, box and reviewer-claude selftests build resolver fixture roots from these (from reach; reviewer-claude is a superset for the three routing data files). F2b item C: container-start reads the link's probe record through bin/probe.py, which reads the routing data."
     },
     {
       "globs": [
