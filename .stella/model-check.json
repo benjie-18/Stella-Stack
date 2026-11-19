@@ -11,5 +11,56 @@
     "min_pass_rate": 1.0
   },
   "event_chunk": 100,
-  "read_cap_bytes": 8388608
+  "read_cap_bytes": 8388608,
+  "weekly": {
+    "setting": "MODEL_CHECK_BUILTIN",
+    "engine_tool": "bin/model_check.py",
+    "pick_fields": [
+      "pins",
+      "fallbacks",
+      "escalation_chain"
+    ],
+    "pick_keys": [
+      "connection",
+      "model"
+    ],
+    "accept": [
+      "better",
+      "non_inferior"
+    ],
+    "cheaper_tokens": {
+      "input": 1000000,
+      "output": 1000000,
+      "cache_write": 0,
+      "cache_read": 0,
+      "reasoning": 0
+    },
+    "pick_id_prefix": "mc",
+    "pricing_source": "model list of connection {connection}, read by the weekly model check on {date}",
+    "changelog": "weekly model check pick {pick}: {role} {field}[{index}] {old} -> {new} ({reason})",
+    "reasons": {
+      "better": "ranks higher on the role's benchmark",
+      "non_inferior": "cheaper and not worse on the role's benchmark beyond the margin",
+      "newer": "a newer version of the same family on the same connection, with probe capabilities at least the current pick's (no benchmark data)",
+      "reversal": "rollback of an earlier pick",
+      "link_class": "its link class or reach differs from the pick it would replace",
+      "privacy": "its connection's data policy differs from the current one (it could be weaker)",
+      "host": "its connection has a host the owner has not approved",
+      "connection": "its connection is switched off, not a provider, or not in the preset's class order for the role",
+      "link": "the link judge refuses it for the role",
+      "unlisted": "the connection's model list does not show it",
+      "no_probe": "it has no probe record for the version the model list shows",
+      "probe_unmet": "its probe record does not meet the role's requirements",
+      "stale": "its probe record is older than stale_catalog_days",
+      "worse": "it ranks lower on the role's benchmark",
+      "inconclusive": "the benchmark comparison is inconclusive",
+      "not_newer": "no benchmark data, and it is not a newer version of the same family with capabilities at least the current pick's",
+      "fetch_failed": "the connection's model list could not be read",
+      "no_list": "the connection has no model list (no wire shape)",
+      "no_grant": "a custom preset with no model_check grant in force",
+      "setting_off": "the owner setting for built-in presets is off",
+      "no_candidate": "no candidate passed",
+      "not_in_catalog": "the model list shows a model the connections catalog does not list (never a candidate)"
+    }
+  }
 }

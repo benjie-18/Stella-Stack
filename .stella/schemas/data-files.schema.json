@@ -184,6 +184,11 @@
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The budget state (F2c C, schema budget-state): thresholds already alerted, holds with their approval request, card estimates and actuals, anomaly episodes already alerted. Written on the host only, by bin/budget.py; a protected state path, not a data file."
+    },
+    "model_check_state": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The weekly model check's state (F2c F; schema model-check-state): the paused flag and when each connection's model list was last read. Written on the host by bin/model_check.py only; a protected state path, not a data file; never the source of a pick or a rollback (the trusted event line is)."
     }
   },
   "required": [
@@ -209,7 +214,8 @@
     "event_writer_id",
     "files",
     "spans",
-    "budget_state"
+    "budget_state",
+    "model_check_state"
   ],
   "additionalProperties": false
 }

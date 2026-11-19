@@ -368,5 +368,6 @@
     }
   ],
   "spans": ".supervisor/logs/spans.jsonl",
-  "budget_state": ".supervisor/state/budget-state.json"
+  "budget_state": ".supervisor/state/budget-state.json",
+  "model_check_state": ".supervisor/state/model-check-state.json"
 }

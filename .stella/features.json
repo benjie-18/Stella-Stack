@@ -402,17 +402,6 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
-      "id": "builtin-preset-updater",
-      "owner_phase": "F2",
-      "status": "on",
-      "depends_on": [],
-      "flag": null,
-      "due_phase": "F2c",
-      "replaced_by": "the weekly model check (F2c): the one engine path that updates a built-in preset, with a changelog line and rollback; until then no path changes a built-in preset (the apply tool refuses every candidate that does)",
-      "global_id": "35e660aa-0e06-419d-96a4-02a119cf7514",
-      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
-    },
-    {
       "id": "triage-classifier",
       "owner_phase": "F2b",
       "status": "off",

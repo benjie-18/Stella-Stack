@@ -869,6 +869,23 @@
       },
       "global_id": "15b80dd3-709c-463f-8ae7-261511fa4af2",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "model-check",
+      "kind": "command",
+      "summary": "The weekly model check (owner/engine command, host only): picks model links for preset roles from probe records, benchmark results with trusted lines and prices applied before the run, never from news, web text or model output; refuses any pick that widens exposure (link class, data policy, host, connection), lacks a probe record or ranks lower; applies each pick through the apply tool's engine exception (built-in presets while the owner setting MODEL_CHECK_BUILTIN is on, custom presets with a model_check grant), one event line and alert per pick, rollback from the trusted line, pricing refresh, pause and resume. Rules are data in .stella/model-check.json weekly.",
+      "keywords": ["model check", "weekly", "built-in preset", "model pick", "rollback", "pricing refresh", "engine", "benchmark", "probe"],
+      "inputs": "run [--dry-run] --json | status --json | rollback <pick id> --json | resume --json | check --json",
+      "outputs": "JSON (run: {picks, refused, skipped, ignored, failing, pricing}; status: {state, picks}; rollback: {rollback, pick}; resume: {resumed}; check: {ok, problems}); exit 1 with a catalog code (STL-MDL-761 pick not applied, 762 paused now, 763 paused, 764 the apply tool refused the engine pick, 765 rollback refused, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/model_check.py",
+      "triage": {"result": "shipped"},
+      "global_id": "8af2c40b-6c3a-4df3-ae1e-a1342a996db5",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }
