@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "about": "No-progress patterns for the trusted tool stream (F3 item S, body B10). bin/stuck.py scan/watch read it. Thresholds per role; a role not listed gets default.",
+  "poll_s": 2,
+  "stop": {
+    "argv": [
+      "{python}",
+      "{bin}/adapter.py",
+      "stop",
+      "--run",
+      "{run}",
+      "--reason",
+      "stuck"
+    ]
+  },
+  "block": {
+    "argv": [
+      "hermes",
+      "kanban",
+      "block",
+      "{card}",
+      "--kind",
+      "{kind}",
+      "{reason}"
+    ],
+    "kind": "stuck",
+    "reason": "stuck: {pattern} ({detail}); run {run} stopped, evidence in the run-block event line"
+  },
+  "default": {
+    "repeat_action": 4,
+    "repeat_error": 3,
+    "alternate": 6,
+    "edit_revert": 2,
+    "tokens_no_diff": 200000
+  },
+  "roles": {}
+}

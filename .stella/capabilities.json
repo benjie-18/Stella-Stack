@@ -1187,6 +1187,33 @@
       },
       "global_id": "323e4275-99e9-4dff-a72b-fa76e64bbab1",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "stuck",
+      "kind": "command",
+      "summary": "Stuck detection (host only): scan a run's trusted tool stream for no-progress patterns (same action and result repeated, same error repeated, two actions alternating, an edit followed by its revert, tokens spent with no diff change) with per-role thresholds from .stella/stuck.json; watch a run and on a match stop it (adapter stop), write one trusted run-block event line with the matching events, and block the card through the data-configured block command",
+      "keywords": [
+        "stuck",
+        "loop",
+        "no progress",
+        "repeat",
+        "revert",
+        "watch",
+        "block"
+      ],
+      "inputs": "scan FILE [--role R] [--json] | watch --run R --card C [--role R] [--events FILE]",
+      "outputs": "scan: {stuck, role, matches[{pattern, detail, evidence}]}; watch: {run, blocked, pattern, reason}; exit 1 with a catalog code (STL-ESC-250..253, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/stuck.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "ce4efc61-e4a1-44a1-83fa-825e982deeff",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

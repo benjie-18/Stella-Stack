@@ -414,6 +414,18 @@
       "id_field": "schema_version",
       "global_id": "8ac17a6d-0fd1-4e62-8212-50451cd945f7",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "stuck",
+      "path": ".stella/stuck.json",
+      "schema": "stuck",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "5e9af096-2b81-4bc4-9c0d-0034ef868e0c",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ],
   "spans": ".supervisor/logs/spans.jsonl",
