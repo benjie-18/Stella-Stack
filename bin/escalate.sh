@@ -13,9 +13,12 @@
 #   crossing grant (else the resolver skips it). One trusted event line per rung run, written after its limits passed (event_log.py);
 #   if it cannot be written, nothing runs.
 #   Only the supervisor runs this script: a call from a worker run is refused (STL-GRD-604, exit 3, not queued).
-#   The model's limits are its catalog `limits` object: `purposes` (the only purposes it runs for), `max_concurrent` (slots),
-#   `per_day` (calls per UTC day), each a value or the name of the limits.env key that holds it, and `purpose_models`
-#   {purpose: the model name the CLI gets for that purpose instead of the id}.
+#   The model's `limits` object keeps `purposes` (the only purposes it runs for) and `purpose_models` {purpose: the model name the CLI
+#   gets for that purpose instead of the id}. Its slots (`max_concurrent`, and the connection's `concurrency_limit`), calls per UTC day
+#   (`per_day`), observed limits and plan share are the usage ledger's (bin/ledger.py, F2c): the resolver answers a link over one with
+#   a cooldown (walked as a limit), the CLI call runs under `ledger.py hold` (a slot taken at the call and held by the CLI process, so
+#   it ends with it), and each CLI call is one usage record (a limit its output shows is observed by the ledger). No lock file or
+#   date counter of this script's own is kept.
 # Exit: 0 ok, 2 usage or a refusal (a setting's registry default, the catalog or the routing data unreadable: STL-CFG-310; no
 # purpose row or bad rung state: STL-MDL-747; the resolver refused the environment or its data, gave no answer it can read, or the
 # event line failed; the log or a state file of the call is a link; nothing run), 3 over a limit with no next rung that runs, or a
@@ -286,26 +289,8 @@ cli=$(jq -r '.cli | strings' <<<"$link" 2>/dev/null)
 if lim purposes; then [[ " $L " == *" $purpose "* ]] || nogo LIMIT 3 "$model (rung $served of role $role) is allowed only for: $L (not queued)"; fi
 cli_model=$(jq -r --arg p "$purpose" --arg m "$model" '(.limits.purpose_models[$p]? | strings) // $m' <<<"$link")
 
-mkey=${model//[^A-Za-z0-9._-]/_}   # the model id as a file name of the state folder
-if lim max_concurrent; then
-  got=""
-  for i in $(seq 1 "$L" 2>/dev/null); do
-    lk="$STATE/$mkey.$i.lock"; nolink "$lk" || continue
-    exec 8>>"$lk"
-    flock -n 8 && { got=1; break; }
-  done
-  [ -n "$got" ] || { walk LIMIT "no $model slot free (max_concurrent=$L)"; continue; }
-fi
-if lim per_day; then
-  counter="$STATE/$mkey-$(date -u +%F).count"
-  lk="$STATE/$mkey.lock"; { nolink "$lk" && nolink "$counter"; } || limit "the lock or counter of the daily limit in the state folder is a link"
-  exec 7>>"$lk"
-  flock 7
-  n=$(cat "$counter" 2>/dev/null || echo 0)
-  [ "$n" -lt "$L" ] 2>/dev/null || { flock -u 7; walk LIMIT "$model daily limit reached ($n/$L for $(date -u +%F))"; continue; }
-  echo $((n + 1)) >"$counter"
-  flock -u 7
-fi
+# The limits of the link (slots, per day, observed limit, plan share) are the usage ledger's (bin/ledger.py): the resolver has judged them
+# (a link over one is a cooldown, STL-MDL-724, walked above), and the CLI call below takes its slots through `ledger.py hold`.
 # One trusted event line per served rung (E-DC-05), once its limits passed, just before it runs (E-CVER-07): card, purpose, role,
 # rung, from (the role's rung-0 head, asked through the import, which writes no log) and to. A line that cannot be written: nothing runs.
 evcode=$(python3 -I -c 'import sys; sys.path.insert(0, "/workspace/bin"); import resolve, event_log as el
@@ -323,15 +308,20 @@ except Exception as e:
     sys.exit(1)' "$card" "$purpose" "$role" "$ask" "$served" "$conn" "$model" "$project" "$driver" "${reason:0:300}" "$skipped" 2>/dev/null) \
   || gone EVENT_LOG 2 "${evcode:-STL-CFG-318} the trusted event line of rung $served of role $role could not be written: the model is not run"
 
+used=   # set below when the CLI call went out
 fb=$([ -n "$wq" ] && echo true || echo false)   # a rung after a walk is a fallback
 log START null
 if [ "${ESCALATE_FORCE_POOL_EXHAUSTED:-}" = 1 ]; then
   out="" err="You've hit your session limit (forced by ESCALATE_FORCE_POOL_EXHAUSTED)" rc=1
 elif [ -n "$cli" ]; then
-  out=$(timeout "$CALL_TIMEOUT" claude -p --model "$cli_model" --output-format json \
-    --max-budget-usd "$MAX_BUDGET_USD" "$@" <"$prompt" 2>"$prompt.err")
+  t0=$(date +%s%3N)
+  out=$(python3 -I /workspace/bin/ledger.py hold --connection "$conn" --model "$model" --holder "escalate.sh $card" -- \
+    timeout "$CALL_TIMEOUT" claude -p --model "$cli_model" --output-format json --max-budget-usd "$MAX_BUDGET_USD" "$@" <"$prompt" 2>"$prompt.err")
   rc=$?
   err=$(cat "$prompt.err"); rm -f "$prompt.err"
+  # a refused hold (no slot free, daily limit used, a limit observed) answers {code, problem, kind} on stdout and runs nothing: the next rung
+  [ "$(jq -r '.code? // empty' <<<"$out" 2>/dev/null)" != STL-LIM-412 ] || { walk LIMIT "$(jq -r '.problem | tostring | .[:200]' <<<"$out")"; continue; }
+  used=1 ms=$(( $(date +%s%3N) - t0 ))
 else   # the rung the resolver served, asked again by route.py as every caller asks it (it judges, calls and fails over)
   out=$(timeout "$CALL_TIMEOUT" python3 -I /workspace/bin/route.py call --role "$role" --project "$project" --card "$card" ${driver:+--driver "$driver"} \
     --rung "$served" --task "escalate-$card-$$-$served" --json <"$prompt" 2>"$prompt.err")
@@ -343,6 +333,19 @@ pm=""
 for p in "${POOL_PATTERNS[@]}"; do [[ "$out$err" == *"$p"* ]] && { pm="matched '$p'"; break; }; done
 # route.py's STL-MDL-723: the rung's link failed with a failover trigger and is cooling, no other link of the rung is left
 [ -n "$pm$cli" ] || [ "$rc" != 1 ] || [ "$(jq -r '.code? // empty' <<<"$out" 2>/dev/null)" != STL-MDL-723 ] || pm="route.py: $(jq -r '.problem | tostring | .[:200]' <<<"$out")"
+if [ -n "${used:-}" ]; then   # the CLI call went out (route.py records its own): one usage record, the plan share its output shows, a limit its text shows
+  if [ -n "$pm" ]; then outcome=limit; elif [ "$rc" = 124 ]; then outcome=timeout
+  elif [ "$rc" = 0 ] && jq -e '.is_error == false' <<<"$out" >/dev/null 2>&1; then outcome=ok; else outcome=error; fi
+  tok=$(jq -c '{input: (.usage.input_tokens // 0), output: (.usage.output_tokens // 0), cache_write: (.usage.cache_creation_input_tokens // 0), cache_read: (.usage.cache_read_input_tokens // 0)}' <<<"$out" 2>/dev/null) || tok='{}'
+  printf '%s\n%s\n' "$out" "$err" | python3 -I -c 'import json, sys; sys.path.insert(0, "/workspace/bin"); import ledger
+conn, model, role, project, card, outcome, tok, ms = sys.argv[1:]; text = sys.stdin.read()
+ledger.record({"connection": conn, "model": model, "role": role, "project": project, "card": card, "session": f"escalate.sh {card}", "outcome": outcome,
+               "tokens": json.loads(tok or "{}"), "latency_ms": int(ms), "plan_share": ledger.plan_share_from(conn, text)})
+if outcome == "limit":
+    ledger.observe_cli_text(conn, None, text)' "$conn" "$model" "$role" "$project" "$card" "$outcome" "$tok" "$ms" >/dev/null 2>"$prompt.led" \
+    || log WARN null "" false null "the usage ledger did not take this call's record: $(head -c 200 "$prompt.led" | tr '\n' ' ')"
+  rm -f "$prompt.led"
+fi
 if [ -n "$pm" ]; then
   log POOL_EXHAUSTED "$rc" none "$fb" null "$pm"
   walk POOL_EXHAUSTED "pool exhausted at $(date -u +%FT%TZ) ($pm)"; continue
