@@ -101,7 +101,7 @@ def scan(events, th):
                 hit("alternate", f"two actions alternating {n} times", res[i:i + n])
                 break
     if "edit_revert" in th or "tokens_no_diff" in th:
-        chain, reverts, just, tokens, span = [], 0, False, 0, []   # chain: the distinct consecutive diff digests
+        chain, reverts, just, tokens, span, prev = [], 0, False, 0, [], None   # chain: the distinct consecutive diff digests
         for e in events:
             if e.get("type") == "usage":
                 tokens += sum(v for v in (e.get("tokens") or {}).values() if isinstance(v, int))
@@ -115,8 +115,9 @@ def scan(events, th):
                 if back:
                     reverts += 1
                     if reverts >= th.get("edit_revert", 10**9) and not any(f["pattern"] == "edit_revert" for f in found):
-                        hit("edit_revert", f"the diff went back to an earlier state {reverts} times", [e])
+                        hit("edit_revert", f"the diff went back to an earlier state {reverts} times", [prev, e])
                 chain.append(d)
+                prev = e
                 tokens, span = 0, []
             elif not chain:
                 chain.append(d)
