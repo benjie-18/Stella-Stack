@@ -197,6 +197,9 @@
     "team": {
       "mark": "hermetic"
     },
+    "cost": {
+      "mark": "hermetic"
+    },
     "failover": {
       "mark": "hermetic"
     },
@@ -3029,6 +3032,7 @@
         "resolver"
       ],
       "why": "F2 W3: the resolver selftest (the chain and every rule's code, the fake-entry test, card apps, read-only, in scratch roots) and every file it can reach: the resolver, the data files and schemas a resolve reads through the data tool's check (from reading: the index names them), the data tool and what it names (bin/test-map.py reach)"
-    }
+    },
+    {"globs": [".claude/settings.json", ".stella/connections.json", ".stella/data-files.json", ".stella/features.json", ".stella/install.json", ".stella/protocols.json", ".stella/routing.json", ".stella/schemas/event.schema.json", ".stella/schemas/probes.schema.json", ".stella/settings.json", ".supervisor/limits.env", "SUPERVISOR.md", "bin/alert-catalog.sh", "bin/alert.sh", "bin/alert_catalog.py", "bin/apply-hermes-local.sh", "bin/approvals.py", "bin/consent.py", "bin/credentials.py", "bin/devices.py", "bin/escalation-complete.sh", "bin/escalation-discord.sh", "bin/escalation-on-block.sh", "bin/escalation-on-claim.sh", "bin/escalation-on-complete.sh", "bin/escalation-thread.sh", "bin/event_log.py", "bin/event_untrusted.py", "bin/kanban-board.sh", "bin/kanban-guard.sh", "bin/mock_provider.py", "bin/owner-config.sh", "bin/owner_auth.py", "bin/owner_config.py", "bin/probe.py", "bin/register-escalation-hook.sh", "bin/register-toolsets.sh", "bin/resolve.py", "bin/role-guard.py", "bin/roles.py", "bin/route.py", "bin/settings.py", "bin/stella-apply.py", "bin/stella_data.py", "bin/triage.py", "bin/worker_env.py", "docs/alert-codes.md", "docs/hermes-local/alert-catalog.json", "docs/hermes-local/board.md", "docs/hermes-local/roles.json", "bin/cost.py", "bin/cost-selftest.sh", ".stella/pricing.json", ".stella/schemas/pricing.schema.json", ".stella/schemas/protocols.schema.json", ".stella/schemas/data-files.schema.json"], "targets": ["cost"], "why": "F2c B: the cost selftest copies bin, .stella and docs into a scratch root and runs cost.py (the pricing table, spans, rollups, OTLP export to a loopback listener, usage_of over the mock's answers); it reaches the data tool, the resolver's route.py and credentials (from reach, the targets test-map.py check named)"}
   ]
 }

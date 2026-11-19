@@ -58,9 +58,9 @@ for _ in $(seq 50); do [ -s "$T/listen.out" ] && break; sleep 0.1; done
 LP=$(cat "$T/listen.out"); [ -n "$LP" ] || fixture "the listener did not start"
 LO=127.0.0.1; export NO_PROXY=$LO no_proxy=$LO
 ed connections.json --arg g "$(uuid)" --arg g2 "$(uuid)" --arg g3 "$(uuid)" --arg h "$LO" --argjson p "$LP" --arg k "$KN" --argjson m "$(mdl qa-m)" --argjson n "$(mdl qa-n)" \
-  ".entries += [$TPL + {id: \"qa-p\", label: \"qa-p\", enabled: true, global_id: \$g, models: [\$m, \$n], secrets: [], hosts: []} | del(.protocol),
-   $CLI + {id: \"qa-cli\", label: \"qa-cli\", enabled: true, global_id: \$g2, models: [\$m]},
-   $TPL + {id: \"qa-otlp\", kind: \"app\", subkind: \"otlp-export\", label: \"qa-otlp\", enabled: true, locality: \"local\", global_id: \$g3, models: [], secrets: [\$k], hosts: [{host: \$h, port: \$p, purpose: \"traces\"}]} | del(.protocol)]"
+  ".entries += [($TPL + {id: \"qa-p\", label: \"qa-p\", enabled: true, global_id: \$g, models: [\$m, \$n], secrets: [], hosts: []} | del(.protocol)),
+   ($CLI + {id: \"qa-cli\", label: \"qa-cli\", enabled: true, global_id: \$g2, models: [\$m]}),
+   ($TPL + {id: \"qa-otlp\", kind: \"app\", subkind: \"otlp-export\", label: \"qa-otlp\", enabled: true, global_id: \$g3, models: [], secrets: [\$k], hosts: [{host: \$h, port: \$p, purpose: \"traces\"}]} | del(.protocol, .link_class))]"
 python3 -I -B "$R/bin/stella_data.py" check >"$T/o/fx" 2>&1 || fixture "the scratch data does not pass check: $(head -c 400 "$T/o/fx")"
 PRC=$R/$(ix '.files[] | select(.id == "pricing") | .path')
 SP=$R/$(ix .spans)
@@ -178,7 +178,7 @@ seen = {"cache_read": 0, "cache_write": 0, "reasoning": 0}
 for sid, e in shapes.items():
     post(os.environ["CTL"], {"models": {sid: ["t1"]}, "faults": [], "traits": [{"shape": sid, "model": "t1", "cache_read": 40, "cache_write": 7, "reasoning": 5}]})
     body = {"model": "t1", "messages": [{"role": "user", "content": "hi"}], "contents": [{"parts": [{"text": "hi"}]}], "max_tokens": 5}
-    got = post(f"http://{os.environ["LO"]}:{os.environ["MPORT"]}/{sid}" + e["request"]["path"].replace("{model}", "t1"), body)
+    got = post("http://" + os.environ["LO"] + ":" + os.environ["MPORT"] + "/" + sid + e["request"]["path"].replace("{model}", "t1"), body)
     u = cost.usage_of(e, got)
     ex = e["response"].get("usage_extra") or {}
     want = {"input": 1, "output": 1, **{k: (v if k in ex else 0) for k, v in (("cache_write", 7), ("cache_read", 40), ("reasoning", 5))}}
