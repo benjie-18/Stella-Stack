@@ -6,9 +6,17 @@
       "id": "write-boundary",
       "kind": "write_boundary",
       "writable": [
-        "{worktree}"
+        "{worktree}",
+        "{run_tmp}"
       ],
-      "about": "a worker writes only inside its worktree"
+      "devices": [
+        "/dev/null",
+        "/dev/stdout",
+        "/dev/stderr",
+        "/dev/tty",
+        "/dev/fd/*"
+      ],
+      "about": "a worker writes only inside its worktree and the run's temporary folder ({run_tmp}: the TMPDIR the CLI runs with); a shell write may also name a devices path"
     },
     {
       "id": "protected-paths",
@@ -22,6 +30,8 @@
       "kind": "secret_read",
       "deny": [
         ".env*",
+        "*.env",
+        "*.env.*",
         "*.pem",
         "*.key",
         "~/.hermes/.env",

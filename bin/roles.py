@@ -847,14 +847,20 @@ def protected(d):
             [f"{h}/{c}" for h in homes() for c in d["protected"]["home"]])
 
 
-STELLA = os.path.realpath(os.environ.get("STELLA_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # F3: the tree of the policy data: this file's own, or a scratch root (as the data tool reads it)
+DATA_ROOT = os.path.realpath(os.environ.get("STELLA_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # F3: the tree of the policy data: this file's own, or a scratch root (as the data tool reads it)
 POLICY_KINDS = ("write_boundary", "protected_read", "secret_read", "commit_rule", "dispatcher_only", "model_limits")
 GIT_FORMS = ("global", "sub", "option", "sub_args")   # commit_rule deny_git: where git reads the word (before the subcommand, the subcommand, any option, a subcommand's arguments)
 
 
 def _stella_json(rel):
-    with open(os.path.join(STELLA, rel), encoding="utf-8") as f:
+    with open(os.path.join(DATA_ROOT, rel), encoding="utf-8") as f:
         return json.load(f, object_pairs_hook=_pairs, parse_constant=_const)
+
+
+def _data(rid):
+    """F3: (the document, its path) of the data index row rid in the data tree; a missing row raises StopIteration, an unreadable index RolesError."""
+    rel = next(x["path"] for x in index(load(), DATA_ROOT)["files"] if x.get("id") == rid)
+    return _stella_json(rel), rel
 
 
 def _strs(v, empty=False):
@@ -862,10 +868,11 @@ def _strs(v, empty=False):
 
 
 def policy():
-    """F3 (DC-11, DC-13): the stack policy (.stella/policy.json), shape-checked: one rule of each kind, the secret and commit rules whole.
+    """F3 (DC-11, DC-13): the stack policy (the index row policy), shape-checked: one rule of each kind, the secret and commit rules whole.
     The one loader: the read guards, the OS box, the git guard and the policy tool all read it here. Raises RolesError: every caller fails closed."""
+    rel = "the policy data (index row policy)"
     try:
-        p = _stella_json(".stella/policy.json")
+        p, rel = _data("policy")
         kinds = [r["kind"] for r in p["rules"]]
         if p["schema_version"] != 1 or sorted(kinds) != sorted(POLICY_KINDS):
             raise ValueError("the rules are not exactly one of each kind " + ", ".join(POLICY_KINDS))
@@ -878,8 +885,8 @@ def policy():
         if not (isinstance(g, list) and g and all(isinstance(x, dict) and set(x) - {"why"} and len(set(x) - {"why"}) == 1 and (set(x) - {"why"}) <= set(GIT_FORMS)
                                                  and isinstance(x.get("why"), str) and x["why"] for x in g)):
             raise ValueError("commit_rule deny_git needs entries of one form each (" + ", ".join(GIT_FORMS) + ") and a why")
-    except (OSError, ValueError, KeyError, TypeError, AttributeError, re.error) as e:
-        raise RolesError(f".stella/policy.json: cannot be read ({type(e).__name__}: {e})")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, StopIteration, re.error) as e:
+        raise RolesError(f"{rel}: cannot be read ({type(e).__name__}: {e})")
     return p
 
 
@@ -889,17 +896,18 @@ def policy_rule(kind, p=None):
 
 
 def adapters():
-    """F3: the worker adapter entries of .stella/adapters.json by id (the CLI-specific names: binary, flags, tool map, config shapes).
-    Raises RolesError: callers fail closed."""
+    """F3: the worker adapter entries of the adapter data (the index row adapters) by id (the CLI-specific names: binary, flags, tool map,
+    config shapes). Raises RolesError: callers fail closed."""
+    rel = "the adapter data (index row adapters)"
     try:
-        a = _stella_json(".stella/adapters.json")
+        a, rel = _data("adapters")
         if a["schema_version"] != 1 or not isinstance(a["entries"], list):
             raise ValueError("shape")
         out = {e["id"]: e for e in a["entries"]}
         if len(out) != len(a["entries"]):
             raise ValueError("an adapter id is repeated")
-    except (OSError, ValueError, KeyError, TypeError) as e:
-        raise RolesError(f".stella/adapters.json: cannot be read ({type(e).__name__}: {e})")
+    except (OSError, ValueError, KeyError, TypeError, StopIteration) as e:
+        raise RolesError(f"{rel}: cannot be read ({type(e).__name__}: {e})")
     return out
 
 
