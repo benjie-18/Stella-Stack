@@ -2260,6 +2260,54 @@
       "check": "`python3 bin/prompt.py check --json`; `python3 bin/stella_data.py check`.",
       "related": "F3 item PP; bin/prompt.py, .stella/prompt-profiles.json",
       "resolvable": false
+    },
+    {
+      "code": "STL-ESC-250",
+      "area": "ESC",
+      "severity": "warning",
+      "title": "stuck detection data cannot be used",
+      "message": "Stuck detection could not run: {problem}. A run that loops is not stopped until it is fixed.",
+      "action": "fix the file the message names (.stella/stuck.json) and run the data check. See STL-ESC-250 in docs/alert-codes.md.",
+      "cause": "The stuck data file is missing or breaks its schema.",
+      "check": "`python3 bin/stuck.py scan FILE --role ROLE --json`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item S; bin/stuck.py, .stella/stuck.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-ESC-251",
+      "area": "ESC",
+      "severity": "critical",
+      "title": "a stuck run could not be stopped",
+      "message": "Card {card} looks stuck but its run could not be stopped: {problem}. It keeps using its model and its slot.",
+      "action": "stop the run by hand with the adapter, then read the message. See STL-ESC-251 in docs/alert-codes.md.",
+      "cause": "The adapter stop command failed or could not start.",
+      "check": "`python3 bin/stuck.py scan FILE --role ROLE --json`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item S; bin/stuck.py, .stella/stuck.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-ESC-252",
+      "area": "ESC",
+      "severity": "critical",
+      "title": "a stuck run could not be blocked on its card",
+      "message": "The run for card {card} was stopped as stuck, but the card could not be blocked: {problem}. The board still shows it as running.",
+      "action": "block the card by hand with the reason from the run-block event line. See STL-ESC-252 in docs/alert-codes.md.",
+      "cause": "The block command in .stella/stuck.json failed or could not start.",
+      "check": "`python3 bin/stuck.py scan FILE --role ROLE --json`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item S; bin/stuck.py, .stella/stuck.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-ESC-253",
+      "area": "ESC",
+      "severity": "warning",
+      "title": "stuck detection cannot read a run's tool stream",
+      "message": "Stuck detection could not read the tool stream: {problem}. This run is not watched.",
+      "action": "check the run folder named by the index key adapter_runs. See STL-ESC-253 in docs/alert-codes.md.",
+      "cause": "The stream file is missing or unreadable, or the index has no adapter_runs key.",
+      "check": "`python3 bin/stuck.py scan FILE --role ROLE --json`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item S; bin/stuck.py, .stella/stuck.json",
+      "resolvable": false
     }
   ]
 }
