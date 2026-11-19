@@ -94,7 +94,9 @@
               "policy",
               "run_policy",
               "stuck",
-              "conformance"
+              "conformance",
+              "adapters",
+              "sandbox"
             ],
             "properties": {
               "adapter": {
@@ -114,6 +116,14 @@
                 "pattern": "^[0-9a-f]{64}$"
               },
               "conformance": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "adapters": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "sandbox": {
                 "type": "string",
                 "pattern": "^[0-9a-f]{64}$"
               }

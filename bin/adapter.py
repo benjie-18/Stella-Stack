@@ -184,8 +184,11 @@ def digests(aid, role):
     try:
         t = run_policy.load()
         rp = {**{k: v for k, v in t.items() if k != "roles"}, "roles": {role: t["roles"].get(role)}}
+        import roles
+        top = {k: v for k, v in row_doc(ROW).items() if k != "entries"}   # env_keep, run_env, caps: what every run of every adapter gets (RTF-03)
         return {"adapter": canon(entry(aid)), "policy": canon(policy.render(aid)), "run_policy": canon(rp),
-                "stuck": canon(row_doc("stuck")), "conformance": canon(row_doc("conformance"))}
+                "stuck": canon(row_doc("stuck")), "conformance": canon(row_doc("conformance")),
+                "adapters": canon(top), "sandbox": canon(roles.sandbox(roles.load()))}
     except Stop:
         raise
     except Exception as e:
@@ -667,6 +670,7 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
     import ledger   # the run's lease: the link's slots, taken here and held by the CLI's process (as ledger.py hold does: it cannot run with a worker's env)
     try:
         fds = ledger.acquire(conn, model, f"adapter run {run}")
+        rec["leased"] = True   # the run holds its link's slots: the model proxy takes none again per call (RTF-02)
     except ledger.Refusal as r:
         raise Stop(ledger.LIMITED, r.problem) from None
     except ledger.Stop as r:
@@ -753,10 +757,33 @@ def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None):
     # the stuck watcher (engine side, outside the CLI's process group so a stuck stop does not kill it); a card-less run gets no card block
     watch = subprocess.Popen([sys.executable, "-I", os.path.join(BIN, "stuck.py"), "watch", "--run", run, "--role", rec["role"]] + (["--card", rec["card"]] if rec["card"] else []),
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-    for raw in p.stdout:
-        s.line(raw)
-    rc = p.wait()
-    update(run, ended=now(), exit=rc, final=snapshot(rec), masked=s.hits or {})
+    rc = None
+    try:
+        for raw in p.stdout:
+            try:
+                s.line(raw)
+            except Exception as x:   # one bad line never ends the supervisor (RTF-01): the run is still ended, snapshotted and revoked
+                with contextlib.suppress(Exception):
+                    event("adapter.stream-error", run, rec["role"], adapter=rec["adapter"], card=rec["card"], error=type(x).__name__)
+        rc = p.wait()
+    finally:
+        if rc is None:   # the loop itself failed: end the CLI's group so the run cannot outlive its supervisor
+            with contextlib.suppress(Exception):
+                os.killpg(p.pid, signal.SIGKILL)
+            with contextlib.suppress(Exception):
+                rc = p.wait(timeout=30)
+        try:
+            final = snapshot(rec)
+        except Exception:
+            final = None
+        try:
+            update(run, ended=now(), exit=rc, final=final, masked=s.hits or {})
+        finally:
+            try:
+                tool([os.path.join(BIN, "run_token.py"), "revoke", "--run", run], C["stop"], "revoking the run token")
+            except Exception as x:   # a token left valid is an event, never silent
+                with contextlib.suppress(Exception):
+                    event("adapter.revoke-failed", run, rec["role"], adapter=rec["adapter"], card=rec["card"], code=C["stop"], error=type(x).__name__)
     try:   # the watcher ends on the result line or after its own stop and block; a stream with no result gets the stop grace, then the end
         watch.wait(3 * d.get("stop_grace_s", 10))
     except subprocess.TimeoutExpired:
@@ -765,8 +792,6 @@ def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None):
         r = subprocess.run([sys.executable, "-I", os.path.join(BIN, "run_policy.py"), "output-check", "--role", rec["role"], "--events",
                             os.path.join(runs_dir(), run, EVENTS)], capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
         update(run, output_check=json.loads(r.stdout.strip().splitlines()[-1]))
-    with contextlib.suppress(Exception):
-        tool([os.path.join(BIN, "run_token.py"), "revoke", "--run", run], C["stop"], "revoking the run token")
     with contextlib.suppress(Exception):
         event("adapter.run-ended", run, rec["role"], adapter=rec["adapter"], card=rec["card"], exit=rc)
     return rc

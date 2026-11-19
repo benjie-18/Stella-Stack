@@ -56,6 +56,16 @@ class Refuse(Exception):
         self.status, self.code, self.problem = status, code, problem
 
 
+def run_leased(run):
+    """True while the adapter run that owns this token holds its link's slots itself (one lease per run, RTF-02); anything unreadable: False."""
+    try:
+        with open(os.path.join(el.path(sd.load(sd.INDEX)["adapter_runs"]), f"{run}.json"), encoding="utf-8") as f:
+            r = json.load(f)
+        return isinstance(r, dict) and r.get("leased") is True and r.get("ended") is None
+    except (OSError, ValueError, KeyError, TypeError, sd.DataError):
+        return False
+
+
 def auth_headers(protos):
     """{lower-case header name: [(text before {key}, text after)]} over every protocol: where a client may put its run token."""
     out = {}
@@ -213,7 +223,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if defer and (defer["connection"], defer["model"]) != (prov["id"], rec["model"]):
                 raise Refuse(429, route.BUDGET_HELD, f"run {rec['run']}: the budget is deferred to another link than the run's")
             try:
-                fds = ledger.acquire(prov["id"], rec["model"], f"model proxy run {rec['run']}")
+                fds = [] if run_leased(rec["run"]) else ledger.acquire(prov["id"], rec["model"], f"model proxy run {rec['run']}")
             except ledger.Refusal as r:
                 raise Refuse(429, LIMITED, r.problem) from None
         else:
