@@ -60,7 +60,7 @@ WORKER() { env STUB_WORKER_MARK=1 "$@"; }   # a worker environment (a roles.json
 C() { python3 -I "$R/bin/capabilities.py" "$@"; }
 range='STL-GRD-6(6[0-9]|7[0-4])'
 mapfile -t RL < <(jq -r '.roles | keys[]' "$RJ"); RA=${RL[0]}; RQ=${RL[1]}; RH=${RL[2]}   # allowed, requestable, hidden
-ACLASS=$(jq -r '.actions | keys[0]' "$POL")   # an approval class the approval service knows (owner-auth action classes)
+ACLASS=$(jq -r '[.. | objects | select(has("approval_class")) | .approval_class.enum[]?] | map(select(. != "read"))[0] // empty' "$R/.stella/schemas/approval-request.schema.json")   # an approval class (the approval-request schema's enum), not the skill's own risk class
 SRC=$(ix '[.capability_sources // empty | .. | strings]')
 SK=$(jq -r '[.[] | select((endswith(".json") or startswith(".stella/extensions")) | not)][0] // ".claude/skills"' <<<"${SRC:-[]}")
 MCPF=$(jq -r '[.[] | select(endswith(".mcp.json"))][0] // ".mcp.json"' <<<"${SRC:-[]}")
