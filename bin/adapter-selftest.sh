@@ -3,7 +3,8 @@
 # DC-04, DC-06, DC-10). Every section runs in its own scratch root (bash adapter-selftest.sh <section>); no argument runs them all.
 # Sections -> checks: callers = AC1-callers (list, start, run record with unattended/background, events.jsonl, logs, stop) |
 #   apikey = T-API-NO-KEY, DC-03 | evidence = T-EVIDENCE | stubs = T-STUBS-CLI | terms = T-TERMS | versions = T-VERSIONS |
-#   gates = DC-01, DC-06
+#   gates = DC-01, DC-06 | builder sections (Gate B fix cycle 1): safegit = V2-02, V2-11 | frozen = V2-08, RT3-01 | stopfirst = RT3-06 |
+#   pins = RT3-07 | stream = RT3-04, V2-06 | boxdefault = V2-10
 # The fake CLI is bin/mock_agent.py (contract: design 3b) behind a wrapper on PATH; its adapter is a NEW .stella/adapters.json entry
 # added as DATA in the scratch root only (no code change). The model upstream is bin/mock_provider.py; the api connection's real key
 # is a canary in a folder credentials backend (as bin/model-proxy-selftest.sh plants it); bin/model_proxy.py serves on port 0.
@@ -30,7 +31,7 @@
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 ME=adapter-selftest
-SECTIONS="callers apikey evidence stubs terms versions gates"
+SECTIONS="callers apikey evidence stubs terms versions gates safegit frozen stopfirst pins stream boxdefault"
 if [ $# = 0 ]; then
   f=0; for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || f=$((f+1)); done
   [ $f = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($f sections)"; [ $f = 0 ]; exit
@@ -148,6 +149,7 @@ done_() { local i o; [ -f "$R/bin/adapter.py" ] || return 1; for i in $(seq 80);
 spawned() { local i; for i in $(seq 30); do [ -f "$1/qamark-$2.txt" ] && return 0; sleep 0.5; done; return 1; }
 none_() { sleep 2; [ ! -f "$1/qamark-$2.txt" ]; }
 evfile() { find "$T" -name events.jsonl -path "*$1*" 2>/dev/null | head -n1; }
+evq() { local f; f=$(evfile "$1"); [ -s "$f" ] && jq -c "$2" "$f" 2>/dev/null; }   # builder (fix cycle 1): the run's events.jsonl lines the filter selects
 WT=$CRD/qa-wt; mkwt "$WT" >/dev/null 2>&1
 ok '[ -n "$PORT" ] && [ -n "$PPORT" ] && [ -n "$VER" ] && [ -n "$TE" ] && [ -n "$CRK" ] && [ -n "$AR" ] && jq -e ".entries[] | select(.id == \"qa-fake\")" "$AF" && python3 -I "$R/bin/stella_data.py" check' \
   "precondition: mock upstream, proxy and fake CLI run; the index names a conformance root and adapter_runs; the scratch data with the new adapter entry passes check"
@@ -283,6 +285,148 @@ gates)   # DC-01 engine side only; DC-06 the conformance gate for card runs, the
   OW=$T/outside-wt; mkwt "$OW" >/dev/null 2>&1
   go g2 qa-run-g2 "$OW" qa-api/qa-m1 '[]'
   ok '[ $RC != 0 ] && out g2 | grep >/dev/null -E "STL-GRD-6([45][0-9]|9[0-9])" && none_ "$OW" qa-run-g2' "DC-06 a card-less run outside the conformance scratch root: refused with a code, nothing spawned"
+  ;;
+safegit)   # builder (Gate B fix V2-02, V2-11): git and file reads the engine makes on an agent's worktree run nothing of it and never block
+  ulimit -v 1500000   # an unbounded read of /dev/zero ends in MemoryError, not in a host out of memory
+  W5=$CRD/qa-wt-sg; mkwt "$W5" >/dev/null 2>&1; M=$T/qa-hit; mkdir -p "$M"
+  G() { git -c user.name=qa -c user.email=qa@qa.invalid "$@"; }
+  ( cd "$W5" && mkdir sub && git -C sub init -q && G -C sub commit -q --allow-empty -m sub && git add sub 2>/dev/null && G commit -qm gitlink \
+    && printf '* diff=qax\n' >.gitattributes && G add .gitattributes && G commit -qm attrs ) >/dev/null 2>&1
+  # planted after the commits: the nested repo's fsmonitor (gitlink), the worktree's external diff and textconv, a global fsmonitor (HOME)
+  git -C "$W5/sub" config core.fsmonitor "touch $M/sub-fsmonitor; false"
+  git -C "$W5" config diff.external "$M/ext.sh"; git -C "$W5" config diff.qax.textconv "touch $M/textconv; cat"
+  printf '#!/bin/sh\ntouch %s/external\n' "$M" >"$M/ext.sh"; chmod +x "$M/ext.sh"
+  printf '[core]\n\tfsmonitor = touch %s/global-fsmonitor; false\n' "$M" >"$HOME/.gitconfig"
+  mkfifo "$M/fifo"; ln -s /dev/zero "$W5/a-zero"; ln -s "$M/fifo" "$W5/b-fifo"
+  ok '[ -d "$W5/sub/.git" ] && [ -L "$W5/a-zero" ] && [ "$(ls "$M" | grep -cv -e "^ext.sh$" -e "^fifo$")" = 0 ]' "V2-02 precondition: nested repo with a gitlink, planted fsmonitor/external diff/textconv/global config, untracked links to /dev/zero and a FIFO; no marker yet"
+  go s1 qa-run-sg1 "$W5" qa-api/qa-m1 '[{"op":"edit","path":"README","old":"base","new":"changed"},{"op":"write","path":"qa-sg.txt","text":"x"}]'
+  done_ qa-run-sg1; d=$?
+  ok '[ $RC = 0 ] && [ $d = 0 ]' "V2-11 the run ended (no read of /dev/zero or the FIFO behind a link blocked or exhausted the supervisor)"
+  ok '[ $d = 0 ] && [ "$(ls "$M" | grep -cv -e "^ext.sh$" -e "^fifo$")" = 0 ]' "V2-02 nothing of the worktree ran on the host: no fsmonitor (nested repo, global), external diff or textconv marker ($(ls "$M" | tr '\n' ' '))"
+  ok '[ "$(evq qa-run-sg1 "select(.type == \"tool_result\") | .diff" | grep -cE "^\"[0-9a-f]{64}\"$")" -ge 2 ]' "V2-02 the per-result worktree digests were still computed (safe git, links read as links)"
+  ok 'A evidence --run qa-run-sg1 --json | jq -e "(.files_changed | index(\"README\")) and (.files_changed | index(\"qa-sg.txt\"))"' "V2-02 the frozen evidence still lists the changed and the new file"
+  rm -f "$HOME/.gitconfig"
+  ;;
+frozen)   # builder (Gate B fix V2-08, RT3-01): card evidence is frozen at the run's exit; only commits on the run's own branch count
+  CRF=$(ix '.conformance_records // empty')
+  plantrec() { python3 -I - "$R/bin" qa-fake "$ROLE" "$VER" "$R/$CRF" "$(uuid)" "$IID" <<'PY'
+import datetime, json, os, sys
+sys.path.insert(0, sys.argv[1]); import adapter
+p = sys.argv[5]
+doc = json.load(open(p)) if os.path.exists(p) else {"schema_version": 1, "records": []}
+doc["records"].append({"adapter": sys.argv[2], "version": sys.argv[4], "role": sys.argv[3], "link": "qa-api/qa-m1", "conn_type": "api", "passed": True, "cases": [],
+                       "digests": adapter.digests(sys.argv[2], sys.argv[3]), "at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                       "global_id": sys.argv[6], "install_id": sys.argv[7]})
+os.makedirs(os.path.dirname(p), exist_ok=True); json.dump(doc, open(p, "w"))
+PY
+}
+  verdict() { python3 -I -c 'import sys, json; sys.path.insert(0, sys.argv[1]); import adapter; print(json.dumps(adapter.card_verdict(sys.argv[2])))' "$R/bin" "$1" 2>/dev/null; }
+  plantrec
+  W7=$T/wt-fz1; mkwt "$W7" >/dev/null 2>&1
+  go s1 qa-run-fz1 "$W7" qa-api/qa-m1 '[{"op":"say","text":"no work"}]' --card qa-card-fz1
+  done_ qa-run-fz1; d=$?
+  ( cd "$W7" && echo late >late.txt && git add late.txt && git commit -qm "after the run" ) >/dev/null 2>&1
+  ok '[ $RC = 0 ] && [ $d = 0 ] && [ "$(git -C "$W7" rev-list --count HEAD)" = 2 ] && verdict qa-card-fz1 | jq -e ".[0] == false"' "V2-08 a commit made in the worktree after the run exited 0 with no commit does not count: card_verdict false"
+  ok 'A evidence --run qa-run-fz1 --json | jq -e "(.commits | length) == 0 and (.files_changed | index(\"late.txt\") | not)"' "V2-08 the evidence is the one frozen at exit (no later commit, no later file)"
+  W8=$T/wt-fz2; mkwt "$W8" >/dev/null 2>&1
+  ( cd "$W8" && git checkout -q -b other-card && echo theirs >theirs.txt && git add theirs.txt && git commit -qm "other card's work" && git checkout -q - ) >/dev/null 2>&1
+  OTHER=$(git -C "$W8" rev-parse other-card 2>/dev/null)
+  go s2 qa-run-fz2 "$W8" qa-api/qa-m1 '[{"op":"shell","cmd":"git checkout -q --detach other-card"}]' --card qa-card-fz2
+  done_ qa-run-fz2; d=$?
+  ok '[ $RC = 0 ] && [ $d = 0 ] && [ "$(git -C "$W8" rev-parse HEAD)" = "$OTHER" ] && verdict qa-card-fz2 | jq -e ".[0] == false"' "RT3-01 a card run that moved HEAD to another branch's commit is not accepted"
+  ok 'A evidence --run qa-run-fz2 --json | jq -e --arg o "$OTHER" "(.commits | index(\$o) | not) and .on_branch == false"' "RT3-01 its evidence credits no commit of the other branch and says it left its branch"
+  W9=$T/wt-fz3; mkwt "$W9" >/dev/null 2>&1
+  go s3 qa-run-fz3 "$W9" qa-api/qa-m1 '[{"op":"write","path":"qa-own.txt","text":"x"},{"op":"shell","cmd":"git add qa-own.txt && git commit -q -m own"}]' --card qa-card-fz3
+  done_ qa-run-fz3; d=$?
+  ok '[ $RC = 0 ] && [ $d = 0 ] && verdict qa-card-fz3 | jq -e ".[0] == true" && A evidence --run qa-run-fz3 --json | jq -e "(.commits | length) == 1 and .on_branch == true"' "control: a card run that commits on its own branch is accepted"
+  ;;
+stopfirst)   # builder (Gate B fix RT3-06): stop revokes the run token before it kills, so a process group that does not end leaves no live token
+  ed .stella/adapters.json '.stop_grace_s = 1'
+  W10=$CRD/qa-wt-st; mkwt "$W10" >/dev/null 2>&1
+  SL=qadaemon$RANDOM$RANDOM
+  DAEMON="setsid bash -c \"exec 9>/proc/\$PPID/fd/1; exec -a $SL sleep 120\" </dev/null >/dev/null 2>&1 & echo started"
+  go s1 qa-run-st1 "$W10" qa-api/qa-m1 "$(jq -nc --arg d "$DAEMON" '[{op: "shell", cmd: $d}, {op: "shell", cmd: "sleep 30"}]')"
+  spawned "$W10" qa-run-st1; sleep 2
+  run p1 A stop --run qa-run-st1 --reason qa-stop
+  live() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import run_token
+with run_token.store() as st: print(sum(1 for v in st["tokens"].values() if v.get("run") == sys.argv[2] and not v.get("revoked")))' "$R/bin" qa-run-st1 2>/dev/null; }
+  ok 'pgrep -f "$SL" >/dev/null' "RT3-06 precondition: a tool child in its own session holds the CLI's output open (the group cannot end)"
+  ok '[ "$(live)" = 0 ]' "RT3-06 after stop (exit $RC) the run token is revoked"
+  pkill -f "$SL" 2>/dev/null
+  ;;
+pins)   # builder (Gate B fix RT3-07, adapter half): each CLI gets its generated config in a way a config planted in the worktree cannot override
+  mapfile -t ACT < <(jq -r '.entries[] | select(.status == "active" and (.id | startswith("qa-") | not)) | .id' "$AF")
+  for id in "${ACT[@]}"; do
+    b=$(jq -r --arg i "$id" '.entries[] | select(.id == $i) | .binary' "$AF"); v=$(jq -r --arg i "$id" '.entries[] | select(.id == $i) | .tested_versions[0]' "$AF")
+    printf '#!/bin/sh\nfor x; do case "$x" in --version|-v|version) echo "%s %s"; exit 0;; esac; done\nprintf "%%s\\n" "$@" >"%s/pin-%s.argv"; env -0 >"%s/pin-%s.env"\n' "$b" "$v" "$T" "$id" "$T" "$id" >"$T/pb/$b"; chmod +x "$T/pb/$b"
+  done
+  # each shipped entry as a copy named qa-pin-<id> with unboxed true: no profile names it, so no box (the box is not under test here: V2-10, box selftest)
+  for id in "${ACT[@]}"; do ed .stella/adapters.json --arg i "$id" --arg g "$(uuid)" '.entries += [(.entries[] | select(.id == $i)) + {id: ("qa-pin-" + $i), unboxed: true, global_id: $g}]'; done
+  W11=$CRD/qa-wt-pin; mkwt "$W11" >/dev/null 2>&1
+  ALLOW='{"permission": {"bash": "allow", "edit": "allow", "read": "allow", "external_directory": "allow"}, "permissions": {"allow": ["Bash(*)"], "deny": []}, "hooks": {}}'
+  # every entry's config_files (data): a file glob gets an allow-everything config, a folder one inside it
+  mapfile -t CF < <(jq -r '[.entries[] | select(.status == "active") | .config_files[]?] | unique[]' "$AF")
+  for g in "${CF[@]}"; do f=${g//\*/}; case $f in *.json|*.jsonc) p=$W11/$f;; *) p=$W11/$f/config.json;; esac; mkdir -p "$(dirname "$p")"; printf '%s\n' "$ALLOW" >"$p"; done
+  ok '[ ${#ACT[@]} -ge 2 ] && [ ${#CF[@]} -ge 2 ]' "RT3-07 precondition: the shipped active entries (${ACT[*]}) run as stubs that record their argv and env, in a worktree with their planted config files (${CF[*]})"
+  for id in "${ACT[@]}"; do
+    brief "qa-run-pin-$id" '[]'
+    run "p-$id" A start --adapter "qa-pin-$id" --role "$ROLE" --worktree "$W11" --brief-file "$T/brief-qa-run-pin-$id.md" --link qa-api/qa-m1 --run-id "qa-run-pin-$id" --wait --json
+    SF=$(find "$R/$AR/qa-run-pin-$id/cfg" -maxdepth 1 -type f ! -name 'run-policy.json' ! -name 'mcp.json' ! -name '*.md' | head -n1)
+    PIN=$(jq -c --arg i "$id" '.entries[] | select(.id == $i) | {env: ((.start.env.set // {}) | to_entries | map(select(.value == "{settings_json}")) | map(.key))}' "$AF")
+    ok '[ $RC = 0 ] && [ -s "$T/pin-$id.argv" ] && [ -s "$SF" ] && {
+        { [ "$(jq ".env | length" <<<"$PIN")" -ge 1 ] && for k in $(jq -r ".env[]" <<<"$PIN"); do tr "\0" "\n" <"$T/pin-$id.env" | sed -n "s/^$k=//p" | jq -S . >"$T/pin-$id.got" && jq -S . "$SF" | cmp -s - "$T/pin-$id.got" || exit 1; done; } \
+        || { s=$(grep -A1 -x -- "--setting-sources" "$T/pin-$id.argv" | tail -n1); grep -qx -- "--setting-sources" "$T/pin-$id.argv" && ! tr , "\n" <<<"$s" | grep -qx -e project -e local; }; }' \
+      "RT3-07 $id: its run carries the generated config at the CLI's highest precedence (inline config env from data, or setting sources without project and local) despite the planted worktree configs"
+  done
+  ;;
+stream)   # builder (Gate B fix RT3-04, V2-06 stream half): usage from every assistant message incl. cache tokens, tool results by id, OpenCode text is no result
+  # The lines below are written from the CLIs' documented stream formats (Claude Code stream-json SDK messages; OpenCode run --format json), not captured from a real run.
+  mkdir -p "$R/$AR"
+  python3 -I - "$R/bin" "$WT" "$ROLE" >"$T/o/st.out" 2>"$T/o/st.err" <<'PY'
+import json, os, re, subprocess, sys
+sys.path.insert(0, sys.argv[1]); import adapter
+def feed(aid, run, lines):
+    os.makedirs(os.path.join(adapter.runs_dir(), run), exist_ok=True)
+    base = subprocess.run(["git", "-C", sys.argv[2], "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    s = adapter.Stream(run, {"run": run, "role": sys.argv[3], "worktree": sys.argv[2], "base": base, "notes": None}, adapter.entry(aid), {"output_cap": 4000}, re.compile("(?!)"))
+    for l in lines:
+        s.line(json.dumps(l).encode())
+    return adapter.read_events(run)
+u1 = {"input_tokens": 4, "cache_creation_input_tokens": 41000, "cache_read_input_tokens": 0, "output_tokens": 30}
+cc = feed("claude-code", "qa-st-cc", [
+    {"type": "system", "subtype": "init", "model": "m", "session_id": "s"},
+    {"type": "assistant", "message": {"id": "msg_1", "role": "assistant", "content": [{"type": "tool_use", "id": "tu_1", "name": "Read", "input": {"file_path": "README"}}], "usage": u1}},
+    {"type": "assistant", "message": {"id": "msg_1", "role": "assistant", "content": [{"type": "tool_use", "id": "tu_2", "name": "Bash", "input": {"command": "ls"}}], "usage": u1}},
+    {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu_2", "content": "README", "is_error": False}]}},
+    {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu_1", "content": "base", "is_error": False}]}},
+    {"type": "assistant", "message": {"id": "msg_2", "role": "assistant", "content": [{"type": "text", "text": "done"}], "usage": {"input_tokens": 6, "cache_read_input_tokens": 41030, "output_tokens": 5}}},
+    {"type": "result", "subtype": "success", "result": "done", "usage": {"input_tokens": 10, "cache_creation_input_tokens": 41000, "cache_read_input_tokens": 41030, "output_tokens": 35}}])
+oc = feed("opencode", "qa-st-oc", [
+    {"type": "step_start", "part": {"type": "step-start"}},
+    {"type": "text", "part": {"type": "text", "text": "looking"}},
+    {"type": "tool_use", "part": {"type": "tool", "tool": "read", "callID": "c1", "state": {"status": "completed", "input": {"filePath": "README"}, "output": "base"}}},
+    {"type": "step_finish", "part": {"type": "step-finish", "tokens": {"input": 900, "output": 20}}}])
+print(json.dumps({"cc": cc, "oc": oc}))
+PY
+  cat "$T/o/st.out" "$T/o/st.err" >"$T/o/last"
+  CC=$(jq -c .cc "$T/o/st.out" 2>/dev/null); OC=$(jq -c .oc "$T/o/st.out" 2>/dev/null)
+  ok '[ -n "$CC" ] && jq -e "([.[] | select(.type == \"usage\")][0].tokens.input == 41004) and ([.[] | select(.type == \"usage\")][0].seq < [.[] | select(.type == \"tool_result\")][0].seq)" <<<"$CC"' \
+    "RT3-04 Claude Code: the first usage comes from the first assistant message, cache tokens included (41004), before the first tool result"
+  ok '[ -n "$CC" ] && jq -e "([.[] | select(.type == \"usage\") | .tokens.input] | add) == 82040 and ([.[] | select(.type == \"usage\") | .tokens.output] | add) == 35" <<<"$CC"' \
+    "RT3-04 Claude Code: a message repeated on two lines counts once and the result line's totals are not added again (input 82040, output 35)"
+  ok '[ -n "$CC" ] && jq -e "[.[] | select(.type == \"tool_result\") | [.name, .input]] == [[\"Bash\", {command: \"ls\"}], [\"Read\", {file_path: \"README\"}]]" <<<"$CC"' \
+    "V2-06 Claude Code: parallel tool results are matched to their tool_use by id (Bash then Read), not to the last tool_use"
+  ok '[ -n "$OC" ] && jq -e "([.[] | select(.type == \"result\")] | length) == 0 and ([.[] | select(.type == \"tool_result\" and .name == \"read\")] | length) == 1 and ([.[] | select(.type == \"usage\")][0].tokens.input == 900)" <<<"$OC"' \
+    "V2-06 OpenCode: an assistant text part is no result event; the tool and its usage are read"
+  ;;
+boxdefault)   # builder (Gate B fix V2-10): boxing is the default; an entry without unboxed and without a boxed profile for the role is refused
+  addent qa-boxed 'del(.unboxed)'
+  addent qa-boxed-f '.unboxed = false'
+  for id in qa-boxed qa-boxed-f; do
+    brief "qa-run-bx-$id" '[]'
+    run "b-$id" A start --adapter "$id" --role "$ROLE" --worktree "$WT" --brief-file "$T/brief-qa-run-bx-$id.md" --link qa-api/qa-m1 --run-id "qa-run-bx-$id" --json
+    ok '[ $RC != 0 ] && out "b-$id" | grep -q STL-GRD-649 && none_ "$WT" "qa-run-bx-$id"' "V2-10 $id: no boxed profile for the role and no unboxed true in its data, start refused STL-GRD-649, nothing spawned"
+  done
   ;;
 esac
 finish
