@@ -42,9 +42,9 @@ import event_log as el
 import stella_data as sd
 import worker_env
 
-C = {k: f"STL-GRD-{n}" for k, n in (("data", 640), ("stub", 641), ("binary", 642), ("version", 643), ("untested", 644), ("link", 645),
-                                    ("terms", 646), ("conformance", 647), ("scratch", 648), ("box", 649), ("prepare", 650), ("run", 651),
-                                    ("spawn", 652), ("worktree", 653), ("stop", 654))}
+C = {"data": "STL-GRD-640", "stub": "STL-GRD-641", "binary": "STL-GRD-642", "version": "STL-GRD-643", "untested": "STL-GRD-644", 
+     "link": "STL-GRD-645", "terms": "STL-GRD-646", "conformance": "STL-GRD-647", "scratch": "STL-GRD-648", "box": "STL-GRD-649", 
+     "prepare": "STL-GRD-650", "run": "STL-GRD-651", "spawn": "STL-GRD-652", "worktree": "STL-GRD-653", "stop": "STL-GRD-654"}   # literal: the alert lint finds each sender by its code
 ROW, RUNS, RECORDS, SCRATCH = "adapters", "adapter_runs", "conformance_records", "conformance_scratch"
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
 VERSION = re.compile(r"\d+(?:\.\d+)+[0-9A-Za-z.+-]*")

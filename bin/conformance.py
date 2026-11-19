@@ -39,7 +39,7 @@ import event_log as el
 import stella_data as sd
 import worker_env
 
-C = {k: f"STL-GRD-{n}" for k, n in (("data", 690), ("failed", 691), ("case", 692), ("scratch", 693), ("record", 694), ("canary", 695))}
+C = {"data": "STL-GRD-690", "failed": "STL-GRD-691", "case": "STL-GRD-692", "scratch": "STL-GRD-693", "record": "STL-GRD-694", "canary": "STL-GRD-695"}   # literal: the alert lint finds each sender by its code
 ROW, RECORDS, SCHEMA = "conformance", "conformance_records", "conformance-records"
 SCAN_MAX = 4 << 20   # bytes read of one scanned file; shortcut: a larger file is scanned in its first 4 MiB only, raise when runs write more
 
