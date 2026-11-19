@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "about": "Prompt profiles (F3 PP), read by bin/prompt.py. A profile renders the same sections in the form a model family follows best: section_template ({name}, {title}, {body}), order (long evidence first, instructions and question last), example_placement and reasoning (carried into the render record), parallel_tools_line (the family's instruction to make independent tool calls in parallel, or null). The profile is chosen: --profile, else role_overrides[role], else family_map[the family of the catalog model], else default. A new profile is a data change.",
+  "default": "markdown",
+  "family_map": {
+    "claude": "tags",
+    "qwen": "markdown",
+    "nemotron": "markdown"
+  },
+  "role_overrides": {},
+  "profiles": [
+    {
+      "id": "tags",
+      "section_template": "<{name}>\n{body}\n</{name}>",
+      "titles": {
+        "evidence": "Evidence and context",
+        "brief": "Card brief",
+        "capabilities": "Attached capabilities",
+        "notes": "Working notes",
+        "capability_line": "Capabilities",
+        "instructions": "Role instructions",
+        "question": "Question"
+      },
+      "order": [
+        "evidence",
+        "brief",
+        "capabilities",
+        "notes",
+        "capability_line",
+        "instructions",
+        "question"
+      ],
+      "example_placement": "inside-instructions",
+      "reasoning": {
+        "style": "think-first",
+        "effort": null
+      },
+      "parallel_tools_line": "When several tool calls are independent of each other, make them in the same turn, in parallel.",
+      "global_id": "219d11af-7bd7-49e6-a5d1-5db8028f1fb9",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "markdown",
+      "section_template": "## {title}\n\n{body}",
+      "titles": {
+        "evidence": "Evidence and context",
+        "brief": "Card brief",
+        "capabilities": "Attached capabilities",
+        "notes": "Working notes",
+        "capability_line": "Capabilities",
+        "instructions": "Role instructions",
+        "question": "Question"
+      },
+      "order": [
+        "evidence",
+        "brief",
+        "capabilities",
+        "notes",
+        "capability_line",
+        "instructions",
+        "question"
+      ],
+      "example_placement": "after-instructions",
+      "reasoning": {
+        "style": "plain",
+        "effort": null
+      },
+      "parallel_tools_line": null,
+      "global_id": "1dcbd27e-941c-4cb5-92e4-48e13f74a554",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    }
+  ]
+}

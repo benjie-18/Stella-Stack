@@ -365,6 +365,19 @@
       "record_kind": "setting",
       "global_id": "442de288-ebe4-4a3b-9093-894e2a7a93ea",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "prompt-profiles",
+      "path": ".stella/prompt-profiles.json",
+      "schema": "prompt-profiles",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": "profiles",
+      "id_field": "id",
+      "record_kind": "setting",
+      "global_id": "b6c58f82-4f56-4053-b01b-8ba1f4a60b77",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ],
   "spans": ".supervisor/logs/spans.jsonl",
