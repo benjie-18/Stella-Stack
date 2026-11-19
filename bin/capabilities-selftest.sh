@@ -140,7 +140,8 @@ sources)   # T-SOURCES-UNKNOWN
   ok '[ -z "$bad" ]' "T-SOURCES-UNKNOWN ... from every role (search answers, never shows it; failed:$bad)"
   run d1 C describe qa-unreg-skill --role "$RA" --json
   ok '[ $RC = 1 ] && out d1 | grep >/dev/null -E "$range"' "T-SOURCES-UNKNOWN describe of it fails closed like an unknown id"
-  : >"$AL"; run s2 C search qazebra --role "$RA" --json
+  : >"$AL"; rm -rf "$T/sup/state/page"   # fixture: the alert log and the once-per-entry state record are cleared together
+  run s2 C search qazebra --role "$RA" --json
   ok '[ "$(grep -c qa-unreg-skill "$AL")" = 1 ] && grep qa-unreg-skill "$AL" | grep >/dev/null -E "$range"' "T-SOURCES-UNKNOWN one search raises exactly one alert naming it, with STL-GRD-66x"
   [ -f "$R/$MCPF" ] || echo '{"mcpServers": {}}' >"$R/$MCPF"
   ed "$MCPF" '.mcpServers["qa-unreg-server"] = {command: "true", args: []}'
@@ -196,6 +197,7 @@ PY
   ok '[ $RC = 0 ] && vis h1 qa-host_session gated && vis h1 qa-input_source gated && [ ! -e "$QA_HOST_SEEN" ]' "gap3 with no host request: gated, decide is not called"
   run h2 C search qahost --role "$RA" --run qa-run-3 --host-request "$T/hreq.json" --json
   ok '[ $RC = 0 ] && vis h2 qa-host_session gated && [ -e "$QA_HOST_SEEN" ]' "gap3 decide refuses: still gated"
+  mkdir -p "$R/$(jq -r .adapter_runs "$IX")"; printf '{"run": "qa-run-3", "role": "%s"}\n' "$RA" >"$R/$(jq -r .adapter_runs "$IX")/qa-run-3.json"   # fixture: the run record a load is bound to
   run h3 C load qa-host_session --role "$RA" --run qa-run-3 --host-request "$T/hreq.json" --json
   ok '[ $RC = 1 ] && ! grep -q QA-HOST-DEF "$T/o/h3.out"' "gap3 ... and load is refused"
   touch "$QA_HOST_ALLOW"; rm -f "$QA_HOST_SEEN"
