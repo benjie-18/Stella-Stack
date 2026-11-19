@@ -306,12 +306,14 @@ escalation script (F2b item E) is called `escalate.sh <card-id> <purpose> <reaso
 a rung. The purpose picks the role (routing `escalation.purposes`; no row: STL-MDL-747, exit 2), the card's current rung of
 that role is host-side state (`state/rungs.json` {card: {role: rung}}, 1 when absent; nothing in the script raises it), and
 `resolve.py resolve --role <role> --project <the card's project> --card <card> --rung <rung>` serves the link. It runs only on
-exit 0 with a usable served rung whose connection has the script's CLI (else STL-MDL-746, not queued) and whose model's
-`limits.purposes` holds the purpose (else exit 3, not queued); no other rung is ever asked. A rung in cooldown (724) queues;
+exit 0 with a usable served rung whose model's `limits.purposes` holds the purpose (else exit 3, not queued): on the script's CLI
+when the connection has a `cli` (another CLI: STL-MDL-746, not queued), else through `route.py call --rung <served>` (owner
+decision 2026-11-18). A rung whose limit, cooldown (724) or pool (route.py: 723) is exhausted is left for the next rung the
+resolver judges (D83 via the resolver); with none that runs, the call queues for the first rung's reason;
 no rung left (731) is exit 4, one owner line, an entry in state `owner` that the drain never replays or stales; every other
 refusal is not queued. One trusted `escalate.rung-served` event line per served rung (card, purpose, role, rung asked and
-served, from the role's rung-0 head, to the served link); if it cannot be written nothing runs. A rung is never rerouted to
-the pool-exhausted fallback runner. A queue entry of the old form (a `model`, no `role`) gets state `legacy`: never replayed,
+served, from the role's rung-0 head, to the served link), written after its limits passed; if it cannot be written nothing
+runs. The old fallback runner is never called: the free-cloud gateway is a catalog connection, reached as a rung. A queue entry of the old form (a `model`, no `role`) gets state `legacy`: never replayed,
 listed, removed only by `--drop`. Only the supervisor runs the script: a call from a worker run (a card proven for the call by
 `roles.py prove`, or a worker marker of the role table set) is refused, its own card too (`STL-GRD-604`, exit 3, not queued).
 

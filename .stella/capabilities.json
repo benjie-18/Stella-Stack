@@ -581,7 +581,7 @@
       "kind": "command",
       "summary": "Model call and failover along the resolver's chain: call (the engine loop), attempt (one link for a worker CLI's launcher) and result (how the attempt ended); cooldown, loop guard, mid-task checks, less-private notice, one trusted event line per pick and switch",
       "keywords": ["route", "failover", "model call", "cooldown", "switch", "attempt", "chain"],
-      "inputs": "call|attempt --role R --project P [--card C] [--tier T] [--driver D] --task ID --json (call: prompt on stdin); result --task ID --link <connection>/<model> --outcome ok|<trigger id>",
+      "inputs": "call|attempt --role R --project P [--card C] [--tier T] [--driver D] --task ID --json (call: prompt on stdin; [--rung N]: the chain is the resolver's rung N walk, bin/escalate.sh's call); result --task ID --link <connection>/<model> --outcome ok|<trigger id>",
       "outputs": "JSON {task, link, link_class, text, tool_calls, usage, model, switches, failure_history, refused, stubs}; exit 1 with a catalog code; exit 3 when a link needs a grant",
       "allowed_roles": [],
       "risk_class": "send",

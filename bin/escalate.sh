@@ -1,34 +1,39 @@
 #!/usr/bin/env bash
-# The only sanctioned way to run an escalation model on the coding CLI this script drives: card-scoped, logged, rate-limited.
+# The only sanctioned way to run an escalation model: card-scoped, logged, rate-limited.
 # usage: escalate.sh <card-id> <purpose> <reason...> [--]
 #   prompt on stdin. Anything after -- is refused (exit 2): no caller passes an extra arg. A reason over 8192 characters is refused (exit 2; not on a replay).
 #   The caller names neither a model nor a rung (F2b item E). The purpose picks the role (routing data escalation.purposes
 #   {purpose: role}; no row: STL-MDL-747, exit 2); the rung is the card's current rung for that role (state/rungs.json
 #   {card: {role: rung}}, 1 when absent; nothing here raises it). The resolver (bin/resolve.py resolve --rung, the CLI: it logs the
 #   skipped rungs) answers the rung for that role, the card and its project; the call runs only on its exit 0 with a usable served
-#   rung, and only when that link's connection has this script's CLI (else STL-MDL-746) and its model's limits.purposes holds the
-#   purpose; no other rung is ever asked. One trusted event line per served rung (event_log.py); if it cannot be written, nothing runs.
+#   rung whose model's limits.purposes holds the purpose: a link whose connection has a CLI on this script's CLI (another CLI:
+#   STL-MDL-746), any other link (local, API) through bin/route.py call --rung (owner decision 2026-11-18). A rung whose limit
+#   (slots, per day), cooldown or pool is exhausted (route.py: STL-MDL-723) is left for the next rung the resolver judges (D83's
+#   reroute, through the resolver; one WALK log line each); a rung outside the preset's class order runs only under the owner's
+#   crossing grant (else the resolver skips it). One trusted event line per rung run, written after its limits passed (event_log.py);
+#   if it cannot be written, nothing runs.
 #   Only the supervisor runs this script: a call from a worker run is refused (STL-GRD-604, exit 3, not queued).
 #   The model's limits are its catalog `limits` object: `purposes` (the only purposes it runs for), `max_concurrent` (slots),
 #   `per_day` (calls per UTC day), each a value or the name of the limits.env key that holds it, and `purpose_models`
 #   {purpose: the model name the CLI gets for that purpose instead of the id}.
 # Exit: 0 ok, 2 usage or a refusal (a setting's registry default, the catalog or the routing data unreadable: STL-CFG-310; no
 # purpose row or bad rung state: STL-MDL-747; the resolver refused the environment or its data, gave no answer it can read, or the
-# event line failed; the log or a state file of the call is a link; nothing run), 3 over a limit or a rung the resolver does not
-# serve usable (its code), not on this CLI (STL-MDL-746) or not for this purpose (never retried), 4 no rung left (STL-MDL-731:
-# escalate to the owner), 75 pool exhausted, else the CLI's exit code.
-# Queue (F15, F28, F29): a call refused by a zeroed or exceeded limit (slots, per day) or a rung in cooldown (STL-MDL-724), and every
-# pool-exhausted call is recorded in state/queue.jsonl (card, purpose, role, rung asked) with its prompt file, and raises one #alerts
-# line; the caller still gets 3 or 75. No rung left: recorded in state `owner` (never replayed or staled; only --drop removes it)
-# with one owner line instead. Every other refusal is not queued and its prompt file is removed.
+# event line failed; the log or a state file of the call is a link; nothing run), 3 over a limit with no next rung that runs, or a
+# rung the resolver does not serve usable (its code), not on this CLI (STL-MDL-746) or not for this purpose, 4 no rung left on the
+# first ask (STL-MDL-731: escalate to the owner), 75 pool exhausted with no next rung that runs, else the CLI's or route.py's exit code.
+# Queue (F15, F28, F29): a call whose rung hit a zeroed or exceeded limit (slots, per day), a cooldown (STL-MDL-724) or an exhausted
+# pool, and whose walk found no next rung that runs, is recorded in state/queue.jsonl (card, purpose, role, rung asked) with its
+# prompt file for the first rung's reason, and raises one #alerts line; the caller still gets 3 or 75. No rung left: recorded in
+# state `owner` (never replayed or staled; only --drop removes it) with one owner line instead. Every other refusal is not queued
+# and its prompt file is removed.
 # A queue file that cannot be read, parsed or written is never read as empty and never reported as written: the call is not queued,
 # the caller still gets 3 or 75, the stderr line, the card note and a NOT_QUEUED log line say it was lost, and STL-LIM-405 tells the
 # owner (one alert an hour: the file stays broken until it is fixed). An unreadable settings registry is checked after the
 # usage checks and refuses the call (STL-CFG-310, one alert an hour). Nothing retries a call: bin/escalate-drain.sh (manual)
 # replays a queued one. Beyond QUEUE_MAX queued entries the call is refused unqueued (NOT_QUEUED, one #alerts line an hour).
 # ESCALATE_REPLAY=<id> (set by the drain) never queues or alerts again.
-# Test hook (Stage 6 T15): ESCALATE_FORCE_POOL_EXHAUSTED=1 skips claude and takes the pool-exhausted path. An escalation rung is
-# never rerouted to the pool-exhausted fallback runner (E-DC-07: it is not judged by the resolver): it queues.
+# Test hook (Stage 6 T15): ESCALATE_FORCE_POOL_EXHAUSTED=1 runs no model and takes the pool-exhausted path on every rung. The old
+# fallback runner (bin/omniroute-run.sh) is never called: the free-cloud gateway is a connection, reached as a rung of the chain.
 jq() { env -u HOME jq "$@"; }  # RT-RTA-02: ~/.jq is worker-writable and jq has no flag to skip it
 set -uo pipefail
 # cron/hook callers start with a minimal PATH; append so test stubs earlier in PATH still win.
@@ -201,12 +206,35 @@ prompt="$STATE/prompt-$(date -u +%Y%m%dT%H%M%SZ)-$card-$$.txt"
 cat >"$prompt"
 [ -s "$prompt" ] || { rm -f "$prompt"; refuse USAGE 2 "prompt required on stdin"; }
 
-# The resolver serves the rung (F2b item D; the CLI logs the skipped rungs). It runs only on exit 0 with a usable served rung and no
-# code (E-DC-06); no other rung is ever asked (E-DC-02). A cooldown queues; no rung left goes to the owner; a refusal of the
-# environment or the data, an answer this script cannot read, or an event-log code is exit 2; every other refusal is exit 3. Only the
-# cooldown and the owner keep the prompt.
+# The resolver serves the rung (F2b item D; the CLI logs the skipped rungs). A rung runs only on exit 0 with a usable served rung and
+# no code (E-DC-06): a link whose connection has a CLI on that CLI (this script's only), every other link through bin/route.py call
+# (the path every caller uses; owner decision 2026-11-18). A rung whose limit (slots, per day), cooldown or pool is exhausted is left
+# for the next rung the resolver judges (D83's reroute, through the resolver: no other link is ever sent the prompt); when no next
+# rung runs, the call queues for the first rung's reason. No rung left on the first ask goes to the owner; a refusal of the
+# environment or the data, an answer this script cannot read, or an event-log code is exit 2; every other refusal is exit 3. Only
+# the queue and the owner keep the prompt.
 gone() { rm -f "$prompt"; refuse "$@"; }
-res=$(python3 -I /workspace/bin/resolve.py resolve --role "$role" --project "$project" --card "$card" ${driver:+--driver "$driver"} --rung "$rung" --json 2>"$prompt.err"); rrc=$?
+wq="" wwhy="" wmodel="" ask=$rung
+walk() {  # walk <LIMIT|POOL_EXHAUSTED> <why>: leave the served rung for the next; a queue entry keeps the first rung's reason and model
+  [ -n "$wq" ] || { wq=$1 wwhy=$2 wmodel=$model; }
+  log WALK null none true null "$2; asking rung $((served + 1))"
+  exec 8>&-; ask=$((served + 1))   # the slot of the rung left
+}
+nogo() {  # nogo <refuse args>: the served rung cannot run: refused (prompt removed), or after a walk the call queues as stuck says
+  [ -z "$wq" ] || stuck "$3"
+  gone "$@"
+}
+stuck() {  # stuck <why no next rung runs>: the walk ends; the call queues for the first rung's reason, as it would have without a walk
+  model=$wmodel
+  [ "$wq" = POOL_EXHAUSTED ] || limit "$wwhy; then $1"
+  alert_rc=none
+  queue POOL_EXHAUSTED "$wwhy; then $1"   # the one #alerts line for this call
+  note "escalate.sh POOL_EXHAUSTED: $model ($purpose) for '$reason'. No result. model_used: none, fallback: false. No next rung ran ($1); $qnote. Alert to $ALERT_TARGET exit $alert_rc."
+  echo "escalate.sh: POOL_EXHAUSTED; no next rung ran ($1); $qnote" >&2
+  exit 75
+}
+while :; do
+res=$(python3 -I /workspace/bin/resolve.py resolve --role "$role" --project "$project" --card "$card" ${driver:+--driver "$driver"} --rung "$ask" --json 2>"$prompt.err"); rrc=$?
 rerr=$(head -c 4000 "$prompt.err"); rm -f "$prompt.err"
 IFS=$'\t' read -r rcode served status conn model rwhy < <(jq -r 'select(type == "object") | [.code // "-", (.rung.served // "-" | tostring),
   (.rung.link.status // "-"), (.rung.link.connection // "-"), (.rung.link.model // "-"), ((.reason // "-") | tostring | gsub("[\t\n]"; " ") | .[:300])] | @tsv' <<<"$res" 2>/dev/null)
@@ -214,9 +242,10 @@ skipped=$(jq -r '[.rung.skipped[]? | "rung \(.rung) \(.connection)/\(.model) \(.
 [ "$conn" != - ] || conn=""; [ "$model" != - ] || model=""
 case "${rcode:-}" in
   "") c=$(grep -om1 'STL-[A-Z]*-[0-9]*' <<<"$rerr"); gone RESOLVER 2 "${c:-STL-MDL-710} the resolver gave no answer this script can read (exit $rrc): $(grep -m1 -- "${c:-STL-}" <<<"$rerr" | head -c 300)" ;;
-  -) [ "$rrc" = 0 ] && [ "$served" != - ] && [ "$status" = usable ] && [ -n "$conn" ] && [ -n "$model" ] \
-       || gone RESOLVER 2 "STL-MDL-710 the resolver's answer (exit $rrc) serves no usable rung $rung of role $role and names no code" ;;
+  -) [ "$rrc" = 0 ] && [[ $served =~ ^[1-9][0-9]*$ ]] && [ "$status" = usable ] && [ -n "$conn" ] && [ -n "$model" ] \
+       || gone RESOLVER 2 "STL-MDL-710 the resolver's answer (exit $rrc) serves no usable rung $ask of role $role and names no code" ;;
   STL-MDL-731)
+    [ -z "$wq" ] || stuck "STL-MDL-731 no rung from $ask on: $rwhy${skipped:+; skipped: $skipped}"
     queue OWNER "STL-MDL-731 rung $rung of role $role: $rwhy"
     why="STL-MDL-731 no rung left for card $card ($purpose, role $role, rung $rung): $rwhy${skipped:+; skipped: $skipped}${qnote:+; $qnote}"
     log OWNER 4 none false null "$why"
@@ -224,19 +253,42 @@ case "${rcode:-}" in
     note "escalate.sh OWNER: $why. Escalate to the owner: nothing was run."
     echo "escalate.sh: OWNER: $why" >&2
     exit 4 ;;
-  STL-MDL-724) limit "STL-MDL-724 rung $served of role $role ($conn/$model) is in cooldown: $rwhy (no other rung is tried)" ;;
-  STL-CFG-*|STL-EVT-*) gone RESOLVER 2 "$rcode the resolver refused rung $rung of role $role: $rwhy" ;;
-  *) gone NO_RUNG 3 "$rcode the resolver serves no usable rung $rung of role $role for card $card: $rwhy${skipped:+; skipped: $skipped} (not queued, no other rung is tried)" ;;
+  STL-MDL-724) [[ $served =~ ^[1-9][0-9]*$ ]] || gone RESOLVER 2 "STL-MDL-724 the resolver's cooldown answer names no served rung"
+    walk LIMIT "STL-MDL-724 rung $served of role $role ($conn/$model) is in cooldown: $rwhy"; continue ;;
+  STL-CFG-*|STL-EVT-*) gone RESOLVER 2 "$rcode the resolver refused rung $ask of role $role: $rwhy" ;;
+  *) nogo NO_RUNG 3 "$rcode the resolver serves no usable rung $ask of role $role for card $card: $rwhy${skipped:+; skipped: $skipped} (not queued)" ;;
 esac
-log RUNG null "" false null "rung asked $rung, served $served: $conn/$model${skipped:+; skipped: $skipped}"
-# The served link is data: its connection must have this script's CLI (E-DC-02, its own code); its model's limits are the catalog's.
+log RUNG null "" false null "rung asked $ask, served $served: $conn/$model${skipped:+; skipped: $skipped}"
+# The served link is data: a connection with a CLI must have this script's (STL-MDL-746); its model's limits are the catalog's.
 link=$(jq -c --arg c "$conn" --arg m "$model" '[.entries[] | select(.kind == "provider" and .id == $c) | {cli, limits: ([.models[]? | select(.id == $m) | .limits][0] // {})}][0] // empty' <<<"$catalog" 2>/dev/null)
+[ -n "$link" ] || nogo NO_RUNG 3 "STL-MDL-711 rung $served of role $role is $conn/$model, which the catalog does not list"
 cli=$(jq -r '.cli | strings' <<<"$link" 2>/dev/null)
-[ "$cli" = "$CLI" ] || gone NOT_THIS_CLI 3 "STL-MDL-746 rung $served of role $role is $conn/$model, whose connection runs on ${cli:-no CLI}, not on this script's ($CLI): not run, not queued, no other rung is tried"
-if lim purposes; then [[ " $L " == *" $purpose "* ]] || gone LIMIT 3 "$model (rung $served of role $role) is allowed only for: $L (not queued, no other rung is tried)"; fi
+[ -z "$cli" ] || [ "$cli" = "$CLI" ] || nogo NOT_THIS_CLI 3 "STL-MDL-746 rung $served of role $role is $conn/$model, whose connection runs on $cli, a CLI this script does not drive: not run, not queued"
+if lim purposes; then [[ " $L " == *" $purpose "* ]] || nogo LIMIT 3 "$model (rung $served of role $role) is allowed only for: $L (not queued)"; fi
 cli_model=$(jq -r --arg p "$purpose" --arg m "$model" '(.limits.purpose_models[$p]? | strings) // $m' <<<"$link")
-# One trusted event line per served rung (E-DC-05): card, purpose, role, rung, from (the role's rung-0 head, asked through the
-# import, which writes no log) and to; finding ids are the QA loop's (3c). A line that cannot be written: nothing runs.
+
+mkey=${model//[^A-Za-z0-9._-]/_}   # the model id as a file name of the state folder
+if lim max_concurrent; then
+  got=""
+  for i in $(seq 1 "$L" 2>/dev/null); do
+    lk="$STATE/$mkey.$i.lock"; nolink "$lk" || continue
+    exec 8>>"$lk"
+    flock -n 8 && { got=1; break; }
+  done
+  [ -n "$got" ] || { walk LIMIT "no $model slot free (max_concurrent=$L)"; continue; }
+fi
+if lim per_day; then
+  counter="$STATE/$mkey-$(date -u +%F).count"
+  lk="$STATE/$mkey.lock"; { nolink "$lk" && nolink "$counter"; } || limit "the lock or counter of the daily limit in the state folder is a link"
+  exec 7>>"$lk"
+  flock 7
+  n=$(cat "$counter" 2>/dev/null || echo 0)
+  [ "$n" -lt "$L" ] 2>/dev/null || { flock -u 7; walk LIMIT "$model daily limit reached ($n/$L for $(date -u +%F))"; continue; }
+  echo $((n + 1)) >"$counter"
+  flock -u 7
+fi
+# One trusted event line per served rung (E-DC-05), once its limits passed, just before it runs (E-CVER-07): card, purpose, role,
+# rung, from (the role's rung-0 head, asked through the import, which writes no log) and to. A line that cannot be written: nothing runs.
 evcode=$(python3 -I -c 'import sys; sys.path.insert(0, "/workspace/bin"); import resolve, event_log as el
 card, purpose, role, rung, served, conn, model, project, driver, reason, skipped = sys.argv[1:]
 try:
@@ -249,64 +301,55 @@ try:
         f"card {card}, purpose {purpose}, role {role}, rung asked {rung}, rung served {served}, from {head}, to {conn}/{model}, skipped [{skipped}], reason {reason}")))
 except Exception as e:
     print(getattr(e, "code", "STL-CFG-318"), type(e).__name__)
-    sys.exit(1)' "$card" "$purpose" "$role" "$rung" "$served" "$conn" "$model" "$project" "$driver" "${reason:0:300}" "$skipped" 2>/dev/null) \
-  || gone EVENT_LOG 2 "${evcode:-STL-CFG-318} the trusted event line of rung $served of role $role could not be written: the model is not run, nothing is queued"
+    sys.exit(1)' "$card" "$purpose" "$role" "$ask" "$served" "$conn" "$model" "$project" "$driver" "${reason:0:300}" "$skipped" 2>/dev/null) \
+  || gone EVENT_LOG 2 "${evcode:-STL-CFG-318} the trusted event line of rung $served of role $role could not be written: the model is not run"
 
-mkey=${model//[^A-Za-z0-9._-]/_}   # the model id as a file name of the state folder
-if lim max_concurrent; then
-  got=""
-  for i in $(seq 1 "$L" 2>/dev/null); do
-    lk="$STATE/$mkey.$i.lock"; nolink "$lk" || continue
-    exec 8>>"$lk"
-    flock -n 8 && { got=1; break; }
-  done
-  [ -n "$got" ] || limit "no $model slot free (max_concurrent=$L)"
-fi
-if lim per_day; then
-  counter="$STATE/$mkey-$(date -u +%F).count"
-  lk="$STATE/$mkey.lock"; { nolink "$lk" && nolink "$counter"; } || limit "the lock or counter of the daily limit in the state folder is a link"
-  exec 7>>"$lk"
-  flock 7
-  n=$(cat "$counter" 2>/dev/null || echo 0)
-  [ "$n" -lt "$L" ] 2>/dev/null || { flock -u 7; limit "$model daily limit reached ($n/$L for $(date -u +%F))"; }
-  echo $((n + 1)) >"$counter"
-  flock -u 7
-fi
-
+fb=$([ -n "$wq" ] && echo true || echo false)   # a rung after a walk is a fallback
 log START null
 if [ "${ESCALATE_FORCE_POOL_EXHAUSTED:-}" = 1 ]; then
   out="" err="You've hit your session limit (forced by ESCALATE_FORCE_POOL_EXHAUSTED)" rc=1
-else
+elif [ -n "$cli" ]; then
   out=$(timeout "$CALL_TIMEOUT" claude -p --model "$cli_model" --output-format json \
     --max-budget-usd "$MAX_BUDGET_USD" "$@" <"$prompt" 2>"$prompt.err")
   rc=$?
   err=$(cat "$prompt.err"); rm -f "$prompt.err"
+else   # the rung the resolver served, asked again by route.py as every caller asks it (it judges, calls and fails over)
+  out=$(timeout "$CALL_TIMEOUT" python3 -I /workspace/bin/route.py call --role "$role" --project "$project" --card "$card" ${driver:+--driver "$driver"} \
+    --rung "$served" --task "escalate-$card-$$-$served" --json <"$prompt" 2>"$prompt.err")
+  rc=$?
+  err=$(cat "$prompt.err"); rm -f "$prompt.err"
 fi
 
-for p in "${POOL_PATTERNS[@]}"; do
-  [[ "$out$err" == *"$p"* ]] || continue
-  alert_rc=none
-  log POOL_EXHAUSTED "$rc" none false null "matched '$p'; not rerouted (an escalation rung never goes to the fallback runner)"
-  queue POOL_EXHAUSTED "pool exhausted at $(date -u +%FT%TZ) (matched '$p')"   # the one #alerts line for this call
-  note "escalate.sh POOL_EXHAUSTED: $model ($purpose) for '$reason'. No result. model_used: none, fallback: false. Not rerouted (an escalation rung never is); $qnote. Alert to $ALERT_TARGET exit $alert_rc."
-  echo "escalate.sh: POOL_EXHAUSTED ($p); not rerouted; $qnote" >&2
-  exit 75
-done
+pm=""
+for p in "${POOL_PATTERNS[@]}"; do [[ "$out$err" == *"$p"* ]] && { pm="matched '$p'"; break; }; done
+# route.py's STL-MDL-723: the rung's link failed with a failover trigger and is cooling, no other link of the rung is left
+[ -n "$pm$cli" ] || [ "$rc" != 1 ] || [ "$(jq -r '.code? // empty' <<<"$out" 2>/dev/null)" != STL-MDL-723 ] || pm="route.py: $(jq -r '.problem | tostring | .[:200]' <<<"$out")"
+if [ -n "$pm" ]; then
+  log POOL_EXHAUSTED "$rc" none "$fb" null "$pm"
+  walk POOL_EXHAUSTED "pool exhausted at $(date -u +%FT%TZ) ($pm)"; continue
+fi
 
-model_used=$(jq -r '.modelUsage // {} | keys | join(",")' <<<"$out" 2>/dev/null)
-cost=$(jq -r '.total_cost_usd // "null"' <<<"$out" 2>/dev/null) || cost=null
-# exit 0 counts only with a parseable, non-error result
-[ "$rc" -eq 0 ] && ! jq -e '.is_error == false' <<<"$out" >/dev/null 2>&1 && rc=1
+if [ -n "$cli" ]; then
+  model_used=$(jq -r '.modelUsage // {} | keys | join(",")' <<<"$out" 2>/dev/null)
+  cost=$(jq -r '.total_cost_usd // "null"' <<<"$out" 2>/dev/null) || cost=null
+  # exit 0 counts only with a parseable, non-error result
+  [ "$rc" -eq 0 ] && ! jq -e '.is_error == false' <<<"$out" >/dev/null 2>&1 && rc=1
+else   # route.py's answer, in the shape of a CLI result: the link that served and its text
+  model_used=$(jq -r '.model // .link.model // empty | tostring' <<<"$out" 2>/dev/null) cost=null
+  [ "$rc" -ne 0 ] || out=$(jq -ec --argjson fb "$fb" '{type: "result", is_error: false, fallback: $fb, model_used: (.model // .link.model), link, text}' <<<"$out" 2>/dev/null) || rc=1
+fi
 if [ "$rc" -ne 0 ]; then
   # W5-VER7-01: on a replay the drain leaves these two exit codes queued; the note, the log line and stderr say the same
   ns=FAIL; [ -z "${ESCALATE_REPLAY:-}" ] || [[ $rc != 12[67] ]] || { ns="the model command did not start (exit $rc); left in the queue as $ESCALATE_REPLAY"; err="$ns: $err"; }
-  log FAIL "$rc" "${model_used:-unknown}" false "${cost:-null}" "$(head -c 300 <<<"$out$err")"
-  note "escalate.sh $ns: $model ($purpose) exit $rc for '$reason'. model_used: ${model_used:-unknown}, fallback: false."
+  log FAIL "$rc" "${model_used:-unknown}" "$fb" "${cost:-null}" "$(head -c 300 <<<"$out$err")"
+  note "escalate.sh $ns: $model ($purpose) exit $rc for '$reason'. model_used: ${model_used:-unknown}, fallback: $fb."
   rm -f "$prompt"   # F16: kept only while a queue entry points at it
   printf '%s\n' "$out"; printf '%s\n' "$err" >&2
   exit "$rc"
 fi
-log OK 0 "$model_used" false "$cost"
-note "escalate.sh OK: $model ($purpose) for '$reason'. model_used: $model_used, fallback: false, cost_usd: $cost."
+log OK 0 "$model_used" "$fb" "$cost"
+note "escalate.sh OK: $model ($purpose) for '$reason'. model_used: $model_used, fallback: $fb, cost_usd: $cost."
 rm -f "$prompt"
 printf '%s\n' "$out"
+exit 0
+done
