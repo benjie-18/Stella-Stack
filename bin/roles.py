@@ -859,7 +859,7 @@ def _strs(v, empty=False):
 
 def policy():
     """F3 (DC-11, DC-13): the stack policy (.stella/policy.json), shape-checked: one rule of each kind, the secret and commit rules whole.
-    The one loader: the read guards, box.py, git-guard.py and bin/policy.py all read it here. Raises RolesError: every caller fails closed."""
+    The one loader: the read guards, the OS box, the git guard and the policy tool all read it here. Raises RolesError: every caller fails closed."""
     try:
         p = _stella_json(".stella/policy.json")
         kinds = [r["kind"] for r in p["rules"]]

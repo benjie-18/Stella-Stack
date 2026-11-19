@@ -2,7 +2,7 @@
 # Hermetic self-test for the policy layer (F3 item P; body B3, AC2, AC3; design section 1 with rulings DC-03, DC-11, DC-12).
 # Every section runs in its own scratch root (bash policy-selftest.sh <section>); no argument runs them all.
 # Sections -> checks: regen = AC3-regen | drift = AC3-drift | render = AC2-policy-render | secret = T-SECRET-DATA |
-#                     sandbox = T-SANDBOX-STUB | tokenenv = DC-03 | shape = DC-12
+#                     sandbox = T-SANDBOX-STUB | tokenenv = DC-03 | shape = DC-12 | hook = builder's cases (policy.py hook, DC-13, model flags)
 # Written test-first (F3 wave 1): the CLI contract is design section 1 (policy.py check|generate|drift [--json]); exit codes and the
 # code range STL-GRD-610..619 are asserted, never wording.
 # ASSUMPTIONS (names the design leaves open; a builder who picks otherwise changes the test with a note, not the contract):
@@ -20,7 +20,7 @@
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 ME=policy-selftest
-SECTIONS="regen drift render secret sandbox tokenenv shape"
+SECTIONS="regen drift render secret sandbox tokenenv shape hook"
 if [ $# = 0 ]; then
   f=0; for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || f=$((f+1)); done
   [ $f = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($f sections)"; [ $f = 0 ]; exit
@@ -181,6 +181,38 @@ shape)   # DC-12: a rule kind with neither a config shape nor a hook for an adap
     run "c-$k" P check --json; ok '[ $RC = 1 ] && code "c-$k" && out "c-$k" | grep -qF -- "$A"' "DC-12 adapter $A with no shape and no hook for rule kind $k: check exit 1, STL-GRD-61x, the adapter named"
     cp "$T/ad.keep" "$AD" 2>/dev/null
   done
+  ;;
+hook)   # builder cases (F3 item P): policy.py hook judges one tool call by the same rules; data-driven guards (DC-13, model flags)
+  A=$(jq -r '[.entries[] | select(.policy.hook) | .id][0] // empty' "$AD"); ok '[ -n "$A" ]' "hook precondition: an adapter with a policy hook"
+  TL() { jq -r --arg a "$A" --arg c "$1" '[.entries[] | select(.id == $a) | .tools | to_entries[] | select(.value.class == $c)][0] | "\(.key) \(.value.path // .value.command)"' "$AD"; }
+  read -r WT_ WP <<<"$(TL write)"; read -r RT_ RP <<<"$(TL read)"; read -r ST_ SPP <<<"$(TL shell)"
+  hk() { jq -nc --arg t "$1" --arg p "$2" --arg v "$3" --arg d "$T/wt" '{tool_name: $t, tool_input: ({} | setpath($p | ltrimstr("/") | split("/"); $v)), cwd: $d}' \
+    | P hook --adapter "$A" --worktree "$T/wt" >"$T/o/hk.out" 2>&1; echo $?; }
+  denied() { grep -qE "$1" "$T/o/hk.out"; }
+  ok '[ "$(hk "$WT_" "$WP" "$T/wt/a.txt")" = 0 ] && [ ! -s "$T/o/hk.out" ]' "hook a write inside the worktree: no objection"
+  hk "$WT_" "$WP" "$T/elsewhere/a.txt" >/dev/null; ok 'denied STL-GRD-615' "hook a write outside the worktree: refused with STL-GRD-615"
+  hk "$WT_" "$WP" "../a.txt" >/dev/null; ok 'denied STL-GRD-615' "hook a relative write that climbs out of the worktree: refused"
+  hk "$RT_" "$RP" "$HOME/.ssh/id_x" >/dev/null; ok 'denied STL-GRD-616' "hook a read under a home secret folder of the rule: refused with STL-GRD-616"
+  ok '[ "$(hk "$RT_" "$RP" "$T/wt/.env.example")" = 0 ] && [ ! -s "$T/o/hk.out" ]' "hook an allowed name of the rule is read"
+  hk "$RT_" "$RP" "$T/wt/x.pem" >/dev/null; ok 'denied STL-GRD-616' "hook a file name glob of the rule: refused"
+  PR0=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import roles; print(roles.protected(roles.load())[0][0])' "$R/bin")
+  hk "$RT_" "$RP" "$PR0/x" >/dev/null; ok '[ -n "$PR0" ] && denied STL-GRD-616' "hook a read under a protected repo path of the stack (as the role module anchors it): refused"
+  hk "$ST_" "$SPP" "cat ~/.hermes/auth.json" >/dev/null; ok 'denied STL-GRD-616' "hook a shell command that names a secret path: refused"
+  ok '[ "$(hk "$ST_" "$SPP" "cat .env.example")" = 0 ] && [ ! -s "$T/o/hk.out" ]' "hook a shell command naming only an allowed name: no objection"
+  ok '[ "$(hk qa-unmapped-tool /path "$T/elsewhere/x")" = 0 ] && [ ! -s "$T/o/hk.out" ]' "hook a tool the adapter's tool map does not name: no decision"
+  printf '{not json' | P hook --adapter "$A" --worktree "$T/wt" >"$T/o/hk.out" 2>&1; ok 'denied STL-GRD-617' "hook an unreadable payload: refused (fail closed)"
+  ed .stella/policy.json '(.rules[] | select(.kind == "secret_read") | .deny) += ["*.qahook"]'
+  hk "$RT_" "$RP" "$T/wt/n.qahook" >/dev/null; ok 'denied STL-GRD-616' "hook a glob added to the policy data is refused with no code change"
+  HK=$R/docs/hermes-local/hooks/builder; GG=$T/git-guard.py; MG=$T/model-guard.py
+  for h in "$HK/git-guard.py:$GG" "$HK/model-guard.py:$MG"; do sed "s#/workspace/bin#$R/bin#g" "${h%%:*}" >"${h##*:}"; done
+  term() { jq -nc --arg c "$2" '{tool_name: "terminal", tool_input: {command: $c}}' | python3 -I "$1" >"$T/o/h.out" 2>&1; echo $?; }
+  ok '[ "$(term "$GG" "git gc --prune=now")" = 0 ]' "DC-13 control: git gc passes the git guard before the commit rule names it"
+  ed .stella/policy.json '(.rules[] | select(.kind == "commit_rule") | .deny_git) += [{"sub": "gc", "why": "qa: gc named by the policy"}]'
+  ok '[ "$(term "$GG" "git gc --prune=now")" = 2 ] && grep -qF "qa: gc named by the policy" "$T/o/h.out"' "DC-13 a subcommand added to the policy commit rule is refused by the git guard (its why shown)"
+  ok '[ "$(term "$GG" "git config user.name x")" = 2 ] && [ "$(term "$GG" "git commit -an -m x")" = 2 ] && [ "$(term "$GG" "git add -A")" = 2 ] && [ "$(term "$GG" "git status")" = 0 ]' "DC-13 the shipped commit rule still refuses config, commit -n (grouped), add -A; git status passes"
+  ok '[ "$(term "$MG" "qa-fake-cli -p hi")" = 0 ]' "model flags control: an unknown command name passes the model guard"
+  ed .stella/adapters.json '(.entries[] | select(.model_flags) | .model_flags.names) += ["qa-fake-cli"]'
+  ok '[ "$(term "$MG" "qa-fake-cli -p hi")" = 2 ]' "model flags: a command name added to an adapter's model_flags is judged by the model guard (no model: refused)"
   ;;
 esac
 finish
