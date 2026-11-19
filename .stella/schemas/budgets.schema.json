@@ -85,6 +85,11 @@
       "required": ["min_history", "kinds"],
       "additionalProperties": false
     },
+    "unnamed_keys": {
+      "type": "object",
+      "description": "The key a call that does not name a scope is counted under, per scope (a scope not listed has no such key: a call without it is not counted for that scope). A budget with that key, or the * default of the scope, holds those calls, so a missing project never skips the project cap.",
+      "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 40}
+    },
     "anomalies": {
       "type": "object",
       "properties": {
@@ -123,6 +128,6 @@
       "additionalProperties": false
     }
   },
-  "required": ["schema_version", "approval", "budgets", "estimate", "anomalies"],
+  "required": ["schema_version", "approval", "budgets", "estimate", "anomalies", "unnamed_keys"],
   "additionalProperties": false
 }

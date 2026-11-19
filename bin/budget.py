@@ -18,8 +18,8 @@ link the data policy allows for the project); denied, expired, unanswered, or a 
 note decide nothing. A hold ends with its period (window_days). Anomalies (433): spend_rate, retry_loop, growing_session, outlier_card,
 one alert and one trusted event line per fingerprint. 434 the budget data or state cannot be used (fail closed); 435 input unusable.
 Exit: 0 ok; 1 refused or failed (catalog code and plain message on stderr, JSON on stdout); 2 usage.
-shortcut: spend in a currency other than the cap's is not counted; a hold whose approval request could not be raised stays paused (no retry);
-the defer check reads resolve._data (the resolver's private loader); upgrade when it gets a public one."""
+shortcut: spend in a currency other than the cap's is not counted; an expired request is not renewed (a hold whose request could not be raised is retried at the next check);
+in a worker environment check() only reads: it answers held for a hold or a new cap hit but writes no state, line or alert (the host's check makes the hold); the defer check reads resolve._data (the resolver's private loader); upgrade when it gets a public one."""
 import argparse, datetime, hashlib, json, os, statistics, sys
 
 BIN = os.path.dirname(os.path.abspath(__file__))
@@ -43,12 +43,20 @@ def utcnow():
     return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
 
 # ---- data and state ----
-def load_doc():
+def load_doc(judge=True):
+    """The budgets data, schema-checked and (judge) its problems() empty; else Stop(STL-LIM-434): nothing is checked against data the tool would misread."""
     try:
         row = next(r for r in sd.rows() if r["id"] == ROW)
-        return sd.checked(sd.load(row["path"]), row["path"], row["schema"])
+        doc = sd.checked(sd.load(row["path"]), row["path"], row["schema"])
     except (sd.DataError, StopIteration, KeyError) as e:
         raise Stop(BADDATA, f"the budgets data cannot be used: {str(e)[:160] or 'no row'}")
+    bad = problems(doc) if judge else []
+    if bad:
+        raise Stop(BADDATA, f"the budgets data cannot be used: {bad[0][:160]}")
+    return doc
+
+def scopes():
+    return sd.schema_of("budgets")["properties"]["budgets"]["items"]["properties"]["scope"]["enum"]
 
 def problems(doc):
     """Plain problems the schema cannot say."""
@@ -60,6 +68,7 @@ def problems(doc):
         return [f"the catalog or the approval schema cannot be read: {str(e)[:100]}"]
     if doc["approval"]["class"] not in classes:
         out.append(f"approval.class is one of {', '.join(classes)}")
+    out += [f"unnamed_keys: {sc} is not a scope of the budgets schema" for sc in doc["unnamed_keys"] if sc not in scopes()]
     for b in doc["budgets"]:
         name = f"budget {sd.idn(b['id'])}"
         if (b["scope"], b["key"]) in seen:
@@ -96,7 +105,11 @@ def load_state():
 
 class Session:
     """The budget lock, held for one operation: data, state and ledger read under it, the state written whole on exit when it changed."""
+    def __init__(self, quiet=False):
+        self.quiet = quiet   # check(): in a worker environment nothing is written (see RO)
     def __enter__(self):
+        global RO
+        RO = self.quiet and readonly()
         el.preflight()   # no state change without its trusted event line
         self.lk = el.locked(state_path() + ".lock")
         self.lk.__enter__()
@@ -105,7 +118,7 @@ class Session:
         return self
     def __exit__(self, *a):
         try:
-            if a[0] is None and json.dumps(self.st, sort_keys=True) != self.before:
+            if a[0] is None and not RO and json.dumps(self.st, sort_keys=True) != self.before:
                 import route
                 route.write_whole(state_path(), self.st)
         finally:
@@ -116,8 +129,22 @@ class Session:
         except ledger.Stop as e:
             raise Stop(e.code, e.problem)
 
+RO = False   # set for one check() in a worker environment: no state, trusted line or alert is written
+
+def readonly():
+    try:
+        oa.need_host("the budget state")
+        return False
+    except oa.Refusal:
+        return True
+
 def event(kind, what, new):
-    el.append(el.build(kind, what, new=new))
+    if not RO:
+        el.append(el.build(kind, what, new=new))
+
+def say(code, what):
+    if not RO:
+        el.say(code, what, alert=True)
 
 def when(ts):
     try:
@@ -134,9 +161,11 @@ def period(days, now):
     i = int(now.timestamp()) // sec
     return i, datetime.datetime.fromtimestamp(i * sec, datetime.timezone.utc)
 
-def measures(b, key, recs, start, cap_of):
-    """The measures of budget b for `key` in the period: [{measure, spent, cap, currency}] (cost and plan_share; cap_of raises a cap)."""
-    mine = [r for r in recs if r.get(b["scope"]) == key and (when(r.get("ts")) or start) >= start]
+def measures(b, key, recs, start, cap_of, unnamed=None):
+    """The measures of budget b for `key` in the period: [{measure, spent, cap, currency}] (cost and plan_share; cap_of raises a cap).
+    A record without the scope counts for the scope's unnamed key (the data's unnamed_keys)."""
+    sc, none = b["scope"], (unnamed or {}).get(b["scope"])
+    mine = [dict(r, **{sc: key}) for r in recs if (r.get(sc) if r.get(sc) is not None else none) == key and (when(r.get("ts")) or start) >= start]
     g = cost.rollup(mine, b["scope"]).get(key, {"cost": {}, "plan_share": 0})
     out = []
     if b["hard"] is not None:
@@ -195,7 +224,7 @@ def settle(h):
     a = h["on_approve"]
     if word == "approved" and a["option"] == "raise":
         h.update(status="raised", reason=word, new_cap=round(h["cap"] * (1 + a["raise_percent"] / 100), 10))
-    elif word == "approved" and defer_ok(h["project"], a["connection"], a["model"]):
+    elif word == "approved" and a["option"] == "defer" and (h["scope"] != "project" or defer_ok(h["key"], a["connection"], a["model"])):   # other scopes: judged per caller in check()
         h.update(status="deferred", reason=word, defer_to={"connection": a["connection"], "model": a["model"]})
     else:
         h.update(status="held", reason=("defer-refused" if word == "approved" else word or "unanswered"), defer_to=None)
@@ -212,13 +241,32 @@ def candidates(doc, facts):
             out.append((b, v))
     return out
 
-def check(facts, now=None, session=None):
-    """The verdict for one call whose facts are {scope: name}: held (a hold in force), warn (a soft threshold crossed), or allow."""
+def announce(doc, h, b, m):
+    """One alert, one trusted line and one approval request for a hold that is new or goes back to open."""
+    h["request_id"], why = raise_request(doc, h)
+    what = f"{b['scope']} {sd.idn(h['key'])}: {m['measure']} {m['spent']} reached the cap {m['cap']}; " + (f"approval request {h['request_id']}" if h["request_id"] else f"no approval request could be raised ({why})")
+    say(HOLD, what)
+    event("budget.hold", what, {k: h[k] for k in ("id", "budget", "scope", "key", "measure", "cap", "spent", "request_id")})
+
+def refusal(h, reason, threshold=None):
+    return {"result": "held", "code": HELD, "reason": reason, "threshold": threshold, "defer_to": None, "holds": [h],
+            "problem": f"{h['scope']} {sd.idn(h['key'])} is held at its cap ({reason}); hold {h['id']}, request {h['request_id']}"}
+
+def check(facts, now=None, session=None, link=None):
+    """The verdict for one call whose facts are {scope: name}: held (a hold in force), warn (a soft threshold crossed), or allow.
+    link {connection, model}: the link the call would use; after an approved defer only the defer link is allowed."""
     if session is None:
-        with Session() as s:
-            return check(facts, now, s)
+        with Session(quiet=True) as s:
+            return check(facts, now, s, link)
     now, doc, st, recs = now or utcnow(), session.doc, session.st, session.recs()
+    facts = {**{sc: k for sc, k in doc["unnamed_keys"].items() if facts.get(sc) is None}, **{k: v for k, v in facts.items() if v is not None}}   # a scope the call does not name: its unnamed key
     seen, held, defer, threshold = set(), [], None, None
+    def deferred(h):   # a deferred hold: the caller's project must be allowed the link, else the hold stands for it
+        nonlocal defer
+        if defer_ok(facts.get("project"), h["defer_to"]["connection"], h["defer_to"]["model"]):
+            defer = h["defer_to"]
+        else:
+            held.append(dict(h, status="held", reason="defer-refused", defer_to=None))
     for b, key in candidates(doc, facts):
         idx, start = period(b["window_days"], now)
         for h in st["holds"].values():   # a hold of an earlier period ends with it
@@ -226,25 +274,36 @@ def check(facts, now=None, session=None):
                 h["status"] = "ended"
                 event("budget.hold-resolved", f"hold {h['id']} ended with its period", {"hold": h["id"], "status": "ended", "reason": "period"})
         raised = lambda m, base: max([base] + [x["new_cap"] for x in st["holds"].values() if (x["budget"], x["key"], x["period"], x["measure"], x["status"]) == (b["id"], key, idx, m, "raised")])
-        for m in measures(b, key, recs, start, raised):
+        for m in measures(b, key, recs, start, raised, doc["unnamed_keys"]):
             hid = "h-" + hashlib.sha256("|".join(map(str, (b["id"], key, idx, m["measure"], m["cap"]))).encode()).hexdigest()[:12]
-            if hid not in st["holds"] and m["spent"] >= m["cap"]:
+            fresh = hid not in st["holds"]
+            if fresh and m["spent"] >= m["cap"]:
                 h = st["holds"][hid] = {"id": hid, "budget": b["id"], "scope": b["scope"], "key": key, "project": facts.get("project"), "card": facts.get("card"),
                                         "measure": m["measure"], "period": idx, "cap": m["cap"], "spent": m["spent"], "currency": m["currency"], "on_approve": b["on_approve"],
                                         "status": "held", "reason": "pending", "request_id": None, "defer_to": None, "since": ledger.iso(now)}
-                h["request_id"], why = raise_request(doc, h)
-                what = f"{b['scope']} {sd.idn(key)}: {m['measure']} {m['spent']} reached the cap {m['cap']}; " + (f"approval request {h['request_id']}" if h["request_id"] else f"no approval request could be raised ({why})")
-                el.say(HOLD, what, alert=True)
-                event("budget.hold", what, {k: h[k] for k in ("id", "budget", "scope", "key", "measure", "cap", "spent", "request_id")})
+                announce(doc, h, b, m)
             if hid in st["holds"]:
                 h = st["holds"][hid]
+                if h["status"] == "held" and h["request_id"] is None and not fresh and not RO:   # the request could not be raised before: try again
+                    h["request_id"], _ = raise_request(doc, h)
+                    if h["request_id"]:
+                        event("budget.hold-requested", f"hold {h['id']} has its approval request {h['request_id']}", {"hold": h["id"], "request_id": h["request_id"]})
                 if h["status"] in ("held", "deferred"):
                     settle(h)
                 seen.add(hid)
+                if h["status"] == "deferred":   # the budget is still measured: spend on any link but the defer link past what it was at the approval is a new hold
+                    dl = h["defer_to"]
+                    far = next(x for x in measures(b, key, [r for r in recs if (r.get("connection"), r.get("model")) != (dl["connection"], dl["model"])], start, raised, doc["unnamed_keys"]) if x["measure"] == m["measure"])["spent"]
+                    if h.get("base") is None:
+                        h["base"] = far
+                    elif far > h["base"]:
+                        h.update(status="held", reason="pending", defer_to=None, base=None, spent=far, since=ledger.iso(now))
+                        announce(doc, h, b, dict(m, spent=far))
+                        event("budget.hold-resolved", f"hold {h['id']} is held again: spend passed the cap while deferred", {"hold": h["id"], "status": "held", "reason": "deferred-overspend"})
                 if h["status"] == "held":
                     held.append(h)
                 elif h["status"] == "deferred":
-                    defer = h["defer_to"]
+                    deferred(h)
                 continue
             for pct in sorted(b["soft_percent"]):
                 if m["spent"] >= m["cap"] * pct / 100:
@@ -253,22 +312,26 @@ def check(facts, now=None, session=None):
                     if k not in st["soft"]:
                         st["soft"][k] = ledger.iso(now)
                         what = f"{b['scope']} {sd.idn(key)}: {m['measure']} {m['spent']} passed {pct} percent of the cap {m['cap']}"
-                        el.say(SOFT, what, alert=True)
+                        say(SOFT, what)
                         event("budget.soft", what, {"budget": b["id"], "key": key, "measure": m["measure"], "percent": pct, "spent": m["spent"], "cap": m["cap"]})
     for h in st["holds"].values():   # a hold whose budget is gone still refuses until it is answered
         if h["id"] not in seen and h["status"] in ("held", "deferred") and facts.get(h["scope"]) == h["key"]:
             settle(h)
             if h["status"] == "held":
                 held.append(h)
+            elif h["status"] == "deferred":
+                deferred(h)
     if held:
-        h = held[0]
-        return {"result": "held", "code": HELD, "reason": h["reason"], "threshold": threshold, "defer_to": None, "holds": held,
-                "problem": f"{h['scope']} {sd.idn(h['key'])} is held at its cap ({h['reason']}); hold {h['id']}, request {h['request_id']}"}
+        return refusal(held[0], held[0]["reason"], threshold) | {"holds": held}
+    if defer and link and (link.get("connection"), link.get("model")) != (defer["connection"], defer["model"]):   # a deferred scope: no other link
+        h = next(x for x in st["holds"].values() if x["status"] == "deferred" and x["defer_to"] == defer)
+        return refusal(h, "deferred-link", threshold)
     return {"result": "warn" if threshold is not None else "allow", "threshold": threshold, "defer_to": defer, "holds": []}
 
-def before_call(**facts):
-    """The hook other code calls before a call: the verdict, or Held (its .code is the hold's catalog code) when the scope is held."""
-    r = check(facts)
+def before_call(link=None, **facts):
+    """The hook other code calls before a call: the verdict, or Held (its .code is the hold's catalog code) when the scope is held.
+    A verdict with defer_to is no advice: the call goes to that link only (link names the one it would use; any other is Held)."""
+    r = check(facts, link=link)
     if r["result"] == "held":
         raise Held(r)
     return r
@@ -390,14 +453,13 @@ def hold_list():
 
 # ---- CLI ----
 def main(argv):
-    scopes = sd.schema_of("budgets")["properties"]["budgets"]["items"]["properties"]["scope"]["enum"]
     ap = argparse.ArgumentParser(prog="budget.py", description="Budgets, holds, estimates and anomaly alerts.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("check", "hold", "estimate", "close", "anomalies", "check-data"):
         p = sub.add_parser(name)
         p.add_argument("--json", action="store_true")
         if name == "check":
-            for sc in scopes:
+            for sc in scopes():
                 p.add_argument(f"--{sc}")
         if name == "hold":
             p.add_argument("what", choices=["list"])
@@ -408,7 +470,7 @@ def main(argv):
     a = ap.parse_args(argv)
     try:
         oa.need_host("the budget tool")
-        out = {"check": lambda: check({k: getattr(a, k) for k in scopes if getattr(a, k)}), "hold": hold_list, "anomalies": anomalies,
+        out = {"check": lambda: check({k: getattr(a, k) for k in scopes() if getattr(a, k)}), "hold": hold_list, "anomalies": anomalies,
                "estimate": lambda: estimate(a.kind, a.card), "close": lambda: close(a.card), "check-data": lambda: cmd_data()}[a.cmd]()
         print(json.dumps(out))
         if a.cmd == "check" and out["result"] == "held":
@@ -431,7 +493,7 @@ def main(argv):
 
 def cmd_data():
     try:
-        bad = problems(load_doc())
+        bad = problems(load_doc(False))
     except Stop as x:
         bad = [x.problem]
     return {"ok": not bad, "problems": bad}

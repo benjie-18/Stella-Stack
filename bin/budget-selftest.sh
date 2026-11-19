@@ -63,11 +63,11 @@ last_req() { ls -t "$STORE/requests" | head -1 | sed 's/\.json$//'; }
 
 # ---- planted usage ----
 plant() { # <project> <role> <card> <amount> [minutes ago] [outcome] [input tokens] [session] [plan_share]
-  python3 -I -c 'import json, sys, uuid, datetime
+  python3 -I -c 'import json, os, sys, uuid, datetime
 p, r, c, a, m, o, i, s, ps = sys.argv[2:11]
 ts = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=float(m))).strftime("%Y-%m-%dT%H:%M:%SZ")
 cost = {"amount": float(a), "currency": "QAC", "entry": "qa", "priced": True} if float(a) >= 0 else None
-rec = {"v": 1, "id": str(uuid.uuid4()), "install_id": "i", "ts": ts, "connection": "qa-c", "model": "qa-m", "role": r, "project": p, "card": c, "session": s,
+rec = {"v": 1, "id": str(uuid.uuid4()), "install_id": "i", "ts": ts, "connection": os.environ.get("PC", "qa-c"), "model": os.environ.get("PM", "qa-m"), "role": r, "project": p, "card": c, "session": s,
        "kind": "call", "outcome": o, "status": None, "tokens": {"input": int(i), "output": 10, "cache_write": 0, "cache_read": 0, "reasoning": 0},
        "latency_ms": 5, "batch": False, "cost": cost, "plan_share": None if ps == "null" else float(ps)}
 open(sys.argv[1], "a").write(json.dumps(rec) + "\n")' "$UL" "$1" "${2:-r-any}" "${3:-c-any}" "$4" "${5:-0.2}" "${6:-ok}" "${7:-100}" "${8:-s-$RANDOM$RANDOM}" "${9:-null}"
@@ -213,6 +213,74 @@ ok "echo '$OUT' | jq -e '.new == [] and (.known | length) == 4' && [ \$(nal STL-
 : >"$UL"; plant p-q r-x c-q1 2 ok 100 s-q; plant p-q r-x c-q2 2 ok 200 s-q; plant p-q r-x c-q3 2 error 50 s-q2
 OUT=$(BU anomalies --json)
 ok "echo '$OUT' | jq -e '.new == []'" "T-BUD-ANOM a quiet ledger (short rises, a single failure) raises nothing"
+
+# ---- the red-team fixes (C-RT-01, 02, 08, 09, 10, 13) ----
+: >"$UL"; rm -f "$BS"; : >"$AL"
+ed data-policy.json --arg g "$(uuid)" --arg i "$IID" '.projects["p-strict2"] = {mode: "allowed_providers", allowed_providers: [], global_id: $g, install_id: $i}'
+ed budgets.json --arg c "$LOCAL" --arg m "$LM" '.budgets += [
+  {id: "qa-rdef", scope: "role", key: "r-dfr", window_days: 1, soft_percent: [], hard: {amount: 10, currency: "QAC"}, plan_share_cap: null, on_approve: {option: "defer", raise_percent: null, connection: $c, model: $m}},
+  {id: "qa-d2", scope: "project", key: "p-d2", window_days: 1, soft_percent: [], hard: {amount: 10, currency: "QAC"}, plan_share_cap: null, on_approve: {option: "defer", raise_percent: null, connection: $c, model: $m}},
+  {id: "qa-w", scope: "project", key: "p-w", window_days: 1, soft_percent: [], hard: {amount: 10, currency: "QAC"}, plan_share_cap: null, on_approve: {option: "raise", raise_percent: 50, connection: null, model: null}},
+  {id: "qa-r", scope: "project", key: "p-r", window_days: 1, soft_percent: [], hard: {amount: 10, currency: "QAC"}, plan_share_cap: null, on_approve: {option: "raise", raise_percent: 50, connection: null, model: null}}]'
+# C-RT-01: a role hold made by an allowed project: a project whose policy allows no provider is not told to defer
+plant p-okay r-dfr c-rd 11; BU check --role r-dfr --project p-okay --json >/dev/null 2>&1; XR=$(last_req); answer "$XR" approved >/dev/null 2>&1
+OUT=$(BU check --role r-dfr --project p-okay --json 2>/dev/null)
+ok "echo '$OUT' | jq -e '.result == \"allow\" and .defer_to.connection == \"$LOCAL\"'" "C-RT-01 the project that made the role hold is told to defer to the allowed link"
+OUT=$(BU check --role r-dfr --project p-strict2 --json 2>/dev/null); RC=$?
+ok "[ $RC = 1 ] && echo '$OUT' | jq -e '.result == \"held\" and .reason == \"defer-refused\" and .defer_to == null'" "C-RT-01 a caller whose project policy forbids the link gets the hold, not defer_to"
+# C-RT-02: after a defer the cap is still measured; calls on the defer link go on, spend on any other link holds again
+plant p-d2 r-x c-d2 11; BU check --project p-d2 --json >/dev/null 2>&1; XR=$(last_req); answer "$XR" approved >/dev/null 2>&1
+OUT=$(BU check --project p-d2 --json 2>/dev/null)
+ok "echo '$OUT' | jq -e '.result == \"allow\" and .defer_to.model == \"$LM\"'" "C-RT-02 an approved defer: calls go on with the link to defer to"
+PC=$LOCAL PM=$LM plant p-d2 r-x c-d2 50
+OUT=$(BU check --project p-d2 --json 2>/dev/null); RC=$?
+ok "[ $RC = 0 ] && echo '$OUT' | jq -e '.result == \"allow\"'" "C-RT-02 spend on the defer link itself is not counted against the cap"
+hookl() { python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import budget
+try:
+    budget.before_call(project="p-d2", link={"connection": sys.argv[2], "model": sys.argv[3]}); print("allowed")
+except budget.Held as h:
+    print("held", h.code)' "$R/bin" "$1" "$2"; }
+ok "[ \"\$(hookl $LOCAL $LM)\" = allowed ] && [ \"\$(hookl $OTHER $OM)\" = 'held STL-LIM-432' ]" "C-RT-02 the hook allows the call on the defer link and holds a call on any other link"
+A0=$(nal STL-LIM-431); Q0=$(nreq)
+plant p-d2 r-x c-d2 5
+OUT=$(BU check --project p-d2 --json 2>/dev/null); RC=$?
+ok "[ $RC = 1 ] && echo '$OUT' | jq -e '.result == \"held\"' && [ \$(nal STL-LIM-431) = $((A0+1)) ] && [ \$(nreq) = $((Q0+1)) ]" "C-RT-02 spend past the cap while deferred holds again: one alert, one new request"
+BU check --project p-d2 --json >/dev/null 2>&1
+ok "[ \$(nal STL-LIM-431) = $((A0+1)) ] && [ \$(nreq) = $((Q0+1)) ]" "C-RT-02 the reopened hold alerts once, not at every call"
+# C-RT-09: a worker environment gets the held answer, no exception, no alert of its own; the host's check makes the one hold
+plant p-w r-x c-w 12
+cat >"$T/w.py" <<PY
+import sys; sys.path.insert(0, "$R/bin")
+import budget
+try:
+    print("result:", budget.before_call(project="p-w")["result"])
+except budget.Held as e: print("Held", e.code)
+except BaseException as e: print("other", type(e).__name__)
+PY
+A0=$(nal STL-LIM-431)
+for _ in 1 2 3; do STUB_WORKER_MARK=1 python3 -I "$T/w.py" >>"$T/wout" 2>&1; done
+ok "[ \$(grep -c 'Held STL-LIM-432' $T/wout) = 3 ] && [ \$(nal STL-LIM-431) = $A0 ] && ! grep -q p-w $BS" "C-RT-09 a worker environment: three calls, three held answers, no exception, no alert, no state"
+BU check --project p-w --json >/dev/null 2>&1
+ok "[ \$(nal STL-LIM-431) = $((A0+1)) ] && [ \"\$(STUB_WORKER_MARK=1 python3 -I $T/w.py)\" = 'Held STL-LIM-432' ] && [ \$(nal STL-LIM-431) = $((A0+1)) ]" "C-RT-09 the host's check makes the one hold and the one alert; the worker call stays held, no second alert"
+# C-RT-10: a hold whose request could not be raised is retried at the next check
+plant p-r r-x c-r 12
+Q0=$(nreq); chmod -R a-w "$STORE"; BU check --project p-r --json >/dev/null 2>&1; chmod -R u+w "$STORE"
+ok "BU hold list --json | jq -e '[.holds[] | select(.key == \"p-r\")][0].request_id == null'" "C-RT-10 the store is unwritable: the hold has no request yet"
+BU check --project p-r --json >/dev/null 2>&1
+ok "BU hold list --json | jq -e '[.holds[] | select(.key == \"p-r\")][0].request_id != null' && [ \$(nreq) = $((Q0+1)) ]" "C-RT-10 the next check raises the missing request (one request)"
+# C-RT-08: a call that names no project is its own scope key (from data), so a project budget for it is not skipped
+ed budgets.json '.budgets += [{id: "qa-none", scope: "project", key: "unnamed", window_days: 1, soft_percent: [], hard: {amount: 10, currency: "QAC"}, plan_share_cap: null, on_approve: {option: "raise", raise_percent: 50, connection: null, model: null}}]'
+plant p-x r-x c-n 12; python3 -I -c 'import json, sys
+L = [json.loads(x) for x in open(sys.argv[1])]; L[-1]["project"] = None
+open(sys.argv[1], "w").write("".join(json.dumps(x) + "\n" for x in L))' "$UL"
+OUT=$(BU check --card c-n --json 2>/dev/null); RC=$?
+ok "[ $RC = 1 ] && echo '$OUT' | jq -e '.result == \"held\" and (.holds | map(.key) | index(\"unnamed\") != null)'" "C-RT-08 a call that names no project is held by the budget of the data's unnamed project key"
+ed budgets.json '.budgets |= map(select(.id != "qa-none"))'
+# C-RT-13: the runtime runs the problems check: a raise with no percent fails closed
+ed budgets.json '.budgets += [{id: "qa-bad", scope: "project", key: "p-bad", window_days: 1, soft_percent: [], hard: {amount: 10, currency: "QAC"}, plan_share_cap: null, on_approve: {option: "raise", raise_percent: null, connection: null, model: null}}]'
+OUT=$(BU check --project p-soft --json 2>$T/err); RC=$?
+ok "[ $RC = 1 ] && grep -q STL-LIM-434 $T/err && echo '$OUT' | jq -e '.code == \"STL-LIM-434\"'" "C-RT-13 a budget the problems check rejects fails closed at run time (STL-LIM-434)"
+ed budgets.json '.budgets |= map(select(.id != "qa-bad"))'
 
 # ---- bad data fails closed, no secrets ----
 ed budgets.json '.budgets[0].hard = {amount: -1, currency: "QAC"}'

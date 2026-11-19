@@ -84,6 +84,7 @@ import argparse, contextlib, datetime, http.client, ipaddress, json, re, subproc
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
+import budget
 import cost
 import credentials
 import event_log as el
@@ -102,6 +103,7 @@ if os.path.isfile(os.path.join(BIN, "consent.py")):   # this tool's own folder o
 
 # the alert selftest counts a code as used only when a script holds it as a literal: the notice's code is data (consent.alert_code_notice), shipped as STL-MDL-729
 NO_LINK, UNKNOWN, WAITING, SWITCH, MID_REFUSED, STOPPED = "STL-MDL-710", "STL-MDL-711", "STL-MDL-719", "STL-MDL-721", "STL-MDL-722", "STL-MDL-723"
+BUDGET_HELD = "STL-LIM-432"   # a call refused by a budget hold (bin/budget.py holds the same code)
 PROBE_FAILED = "STL-MDL-736"   # a structured-output call that got no valid answer (bin/probe.py holds the same code for a probe)
 UNEXPECTED = "STL-CFG-310"   # an error this tool did not foresee: one coded line with the error's type, never its text
 LOG_FAILED = "STL-CFG-318"   # a flag line that could not be written: the pick is not used (CRT-04)
@@ -596,10 +598,22 @@ def invalid(text, schema):
     return errs[0][:200] if errs else None
 
 
+def budget_gate(a):
+    """Ask the budgets before any request is sent, for every scope the budget data lists (the call's own argument of that name): the link
+    an approved defer allows (or None); a hold, or budget data or state that cannot be read, stops the call with its catalog code."""
+    try:
+        return budget.before_call(**{sc: getattr(a, sc, None) for sc in budget.scopes()})["defer_to"]
+    except budget.Held as h:
+        raise Stop(h.code, h.result["problem"], alert=False) from None   # the hold's own alert went out once, when it was made
+    except budget.Stop as x:
+        raise Stop(x.code, x.problem, alert=x.alert) from None
+
+
 def cmd_call(a):
     prompt = sys.stdin.buffer.read().decode("utf-8", "replace")   # bytes that are not UTF-8 (a tool's binary output) are replaced, whatever the locale
     rt, cat, protos, local = data()
     a.tokens = tokens = len(prompt.encode()) // 4 + 1   # shortcut: about four bytes a token (the probe's own estimate), upgrade when a wire shape counts tokens
+    defer = budget_gate(a)   # a defer answer is no advice: the call goes to that link only
     doc = resolved(a, rt, True)
     timeout = timeout_of()
     schema = with_reasoning(json.load(open(a.schema))) if a.schema else None   # an unreadable file ends in main()'s coded line
@@ -607,6 +621,9 @@ def cmd_call(a):
     stubs = list(doc.get("stubs") or [])
     while True:
         link = advance(a, doc, rt, cat, refused, tokens)
+        if defer and (link["connection"], link["model"]) != (defer["connection"], defer["model"]):
+            refused.append({"link": resolve.link_key(link), "code": BUDGET_HELD, "reason": "the budget is deferred to another link"})
+            continue
         prov, _ = model_of(cat, link)
         key = None
         if prov["secrets"]:   # shortcut: the entry's first secret is its API key, upgrade when secrets carry a purpose
