@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "about": "Worker adapters (F3): one entry per coding CLI, every CLI-specific name in data. Item P owns id, binary, token_env, model_flags, tools (DC-12: tool name -> read|write|shell|other and the input pointers of its path or command) and policy (target file and owned pointers, one config shape list per policy rule kind, a hook where the CLI runs one, fixed entries, what could not be verified). In a template {name}, {home}, {tail}, {path}, {word}, {sub}, {command}, {binary}, {pattern} are the rule's items, {stack} the stack folder; the secret_read sets are name (every file name glob), prefix (a name glob that starts a word), suffix (a *-glob whose literal end ends a word, so *.key is not .keys()), home, tail (a home glob's last two parts, as the rule's text patterns name it) and allow. Item A owns the run part (label, status, version_cmd, tested_versions, conn_types, protocols, start, cli_login, stream, supports, mcp, unverified) and the top-level run_env, env_keep, output_cap, stop_grace_s; the schema describes each.",
+  "about": "Worker adapters (F3): one entry per coding CLI, every CLI-specific name in data. Item P owns id, binary, token_env, model_flags, config_files (the CLI's own project config names, relative to a project folder: never written in a worktree, RT3-07), tools (DC-12: tool name -> read|write|shell|other and the input pointers of its path or command) and policy (target file and owned pointers, one config shape list per policy rule kind, a hook where the CLI runs one, fixed entries, what could not be verified). In a template {name}, {home}, {tail}, {path}, {word}, {sub}, {command}, {binary}, {pattern} are the rule's items, {stack} the stack folder; the secret_read sets are name (every file name glob), prefix (a name glob that starts a word), suffix (a *-glob whose literal end ends a word, so *.key is not .keys()), home, tail (a home glob's last two parts, as the rule's text patterns name it), file (file_deny: for a read config only) and allow (allow and file_allow). Item A owns the run part (label, status, version_cmd, tested_versions, conn_types, protocols, start, cli_login, stream, supports, mcp, unverified) and the top-level run_env, env_keep, output_cap, stop_grace_s; the schema describes each.",
   "run_env": {
     "adapter": "STELLA_ADAPTER",
     "capabilities_url": "STELLA_CAPABILITIES_URL"
@@ -69,6 +69,11 @@
           "class": "other"
         }
       },
+      "config_files": [
+        "opencode.json",
+        "opencode.jsonc",
+        ".opencode"
+      ],
       "model_flags": {
         "names": [
           "opencode",
@@ -239,6 +244,10 @@
                 "home": [
                   "*/{home}",
                   "*/{home}/*"
+                ],
+                "file": [
+                  "{name}",
+                  "*/{name}"
                 ]
               }
             },
@@ -315,6 +324,29 @@
                   "{path}/*"
                 ]
               }
+            },
+            {
+              "pointer": "/permission/edit",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "config": [
+                  "{name}",
+                  "{name}/*",
+                  "*/{name}",
+                  "*/{name}/*"
+                ]
+              }
+            },
+            {
+              "pointer": "/permission/bash",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "config": [
+                  "*{name}*"
+                ]
+              }
             }
           ]
         },
@@ -323,7 +355,8 @@
           "external_directory gates every tool call (read, edit, write, list, grep, glob, bash) that names a path outside the project folder, not only writes; it is rendered from the write_boundary rule as deny for every path but the run's worktree and run tmp, so a read outside them (the stack's docs, a parent card's worktree) is denied too: the write boundary is stricter here than on the hook CLI",
           "the tool input names (filePath, path, command) come from the CLI binary's strings",
           "whether a ~/ pattern is expanded to the home folder (the protected home folders are written ~/<folder>/* so a project's own .claude or .hermes folder is not hit)",
-          "model_flags are read from `opencode --help` and `opencode run --help` (v2.0.26): --model (and its short form -m, kept in fallback since the CLI has no fallback flag), --agent (an agent of the config may name a model; no value is forbidden), no flag that skips permissions (--auto approves only what is not denied). Every subcommand is in no_model because a run without --model uses the configured default, which container-start pins to the resolver's worker link; the model guard then judges only an explicit --model or -m. @opencode/cli is the npm package name (npx form)"
+          "model_flags are read from `opencode --help` and `opencode run --help` (v2.0.26): --model (and its short form -m, kept in fallback since the CLI has no fallback flag), --agent (an agent of the config may name a model; no value is forbidden), no flag that skips permissions (--auto approves only what is not denied). Every subcommand is in no_model because a run without --model uses the configured default, which container-start pins to the resolver's worker link; the model guard then judges only an explicit --model or -m. @opencode/cli is the npm package name (npx form)",
+          "config_files: OpenCode reads a project opencode.json, opencode.jsonc and .opencode/ (from the working folder up to the git root) above the OPENCODE_CONFIG file (OpenCode config docs, not run here), so the write_boundary rule denies writing them anywhere in the worktree (RT3-07)"
         ]
       },
       "version_cmd": [
@@ -532,6 +565,9 @@
           "class": "other"
         }
       },
+      "config_files": [
+        ".claude/settings*.json"
+      ],
       "policy": {
         "target": {
           "file": "docs/hermes-local/generated/claude-code.settings.json",
@@ -661,7 +697,8 @@
         },
         "unverified": [
           "the hook command is run through a shell that expands ${CLAUDE_PROJECT_DIR} (the hooks guide shows it in a command; not run here)",
-          "a Read deny on ~/.claude or ~/.hermes leaves the CLI's own reads of its config alone (the permissions guide says deny rules apply to Claude's tools)"
+          "a Read deny on ~/.claude or ~/.hermes leaves the CLI's own reads of its config alone (the permissions guide says deny rules apply to Claude's tools)",
+          "config_files: Claude Code reads a project .claude/settings.json and .claude/settings.local.json, which can add or disable hooks (settings docs, not run here); the policy hook refuses writing them in the worktree (RT3-07)"
         ]
       },
       "version_cmd": [

@@ -147,6 +147,15 @@
             "additionalProperties": false,
             "description": "What bin/policy.py renders as forbidden in every CLI's shell and docs/hermes-local/hooks/builder/model-guard.py judges: the CLI's command names, its model, fallback and permission-mode flags, the modes and flags that skip permissions, the flags only a model run takes, the words that run no model, the prefix a model name may carry."
           },
+          "config_files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^/]"
+            },
+            "description": "Item P (RT3-07): the CLI's own project config files and folders (globs relative to a project folder) that would override the generated policy; the write_boundary rule denies writing them anywhere in a worktree."
+          },
           "tools": {
             "type": "object",
             "additionalProperties": {

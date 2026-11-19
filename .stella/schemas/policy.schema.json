@@ -43,6 +43,10 @@
             "minItems": 1,
             "description": "write_boundary: the writable paths; each starts with {worktree} or {run_tmp} (the run's temporary folder, the TMPDIR the CLI runs with) (policy.py check)"
           },
+          "config_from": {
+            "type": "string",
+            "description": "write_boundary: where the CLI config names never written in a worktree live (adapters#/entries/*/config_files)"
+          },
           "devices": {
             "type": "array",
             "items": {
@@ -71,6 +75,22 @@
               "type": "string",
               "minLength": 1
             }
+          },
+          "file_deny": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "secret_read: file name globs judged only against a file path (file tools, an existing file a shell word names), never command text or box binds"
+          },
+          "file_allow": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "secret_read: file names file_deny never refuses (example, sample and template env files)"
           },
           "dirs": {
             "type": "array",

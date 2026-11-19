@@ -33,14 +33,15 @@ def items(kind, p, table, ad, all_ads, worktree):
     """{set name: [vars]} of one rule kind: what an adapter's templates render."""
     r = roles.policy_rule(kind, p)
     if kind == "write_boundary":
-        return {"outside": [{}], "writable": [{"path": p} for p in writable(r, worktree)]}
+        return {"outside": [{}], "writable": [{"path": p} for p in writable(r, worktree)], "config": [{"name": n} for n in config_files(all_ads)]}
     if kind == "protected_read":
         return {"repo": [{"path": x} for x in roles.protected(table)[0]],
                 "home": [{"home": x} for x in table["protected"]["home"]],
                 "owner": [{"name": os.path.basename(x)} for x in table["owner_settings"]]}
     if kind == "secret_read":
         names, homes = [g for g in r["deny"] if "/" not in g], [g[2:] for g in r["deny"] if g.startswith("~/")]
-        return {"name": [{"name": g} for g in names], "home": [{"home": g} for g in homes], "allow": [{"name": g} for g in r["allow"]],
+        return {"name": [{"name": g} for g in names], "home": [{"home": g} for g in homes], "allow": [{"name": g} for g in r["allow"] + r.get("file_allow", [])],
+                "file": [{"name": g} for g in r.get("file_deny", [])],   # judged against file paths only (a read config), never a command line
                 # for a command line: a name glob that starts a word (prefix), one whose literal end ends a word (suffix: *.key, not .keys()),
                 # and the last two parts of a home glob, as the rule's text patterns name them (tail: opencode/auth.json from any folder)
                 "prefix": [{"name": g} for g in names if not g.startswith("*")],
@@ -70,6 +71,17 @@ def run_tmp():
 def writable(rule, worktree):
     """The write_boundary rule's writable paths for a run in worktree (none when no worktree is known)."""
     return [fill(w, {"worktree": worktree, "run_tmp": run_tmp()}) for w in rule["writable"]] if worktree else []
+
+
+def config_files(ads):
+    """RT3-07: every adapter's own project config names (globs relative to a project folder): a worker never writes them."""
+    return sorted({n for a in ads.values() for n in a.get("config_files", [])})
+
+
+def config_hit(x, names):
+    """The config name a path is, or lies under, at any depth (a CLI reads its project config from the folders above its cwd too)."""
+    parts = x.strip("/").split("/")
+    return next((n for n in names for i in range(len(parts)) for j in range(i + 1, len(parts) + 1) if fnmatch.fnmatchcase("/".join(parts[i:j]), n)), None)
 
 
 def fill(t, v):
@@ -369,12 +381,13 @@ def judge(ad, payload, worktree):
     s = roles.policy_rule("secret_read", p)
     wb = roles.policy_rule("write_boundary", p)
     roots = [os.path.realpath(w) for w in writable(wb, worktree)]
+    cfg = config_files(roles.adapters())
     sdirs = [os.path.realpath(d if d.startswith("/") else f"{h}/{d[2:]}") for d in s["dirs"] for h in homes]
     def secret(x, word=False):   # word: a shell word only counts by its file name when that file exists (process.env.HOME is no file)
         b = os.path.basename(x).casefold()
-        if any(fnmatch.fnmatch(b, g) for g in s["allow"]):
+        if any(fnmatch.fnmatch(b, g) for g in s["allow"] + s.get("file_allow", [])):
             return False
-        return ((any(fnmatch.fnmatch(b, g) for g in s["deny"] if "/" not in g) and (not word or os.path.lexists(x)))
+        return ((any(fnmatch.fnmatch(b, g) for g in s["deny"] + s.get("file_deny", []) if "/" not in g) and (not word or os.path.lexists(x)))
                 or any(fnmatch.fnmatch(x, f"{h}/{g[2:]}") or _within(x, f"{h}/{g[2:]}") for h in homes for g in s["deny"] if g.startswith("~/")))
     def protected(x):
         repo, home = roles.protected(table)
@@ -405,6 +418,9 @@ def judge(ad, payload, worktree):
                 bad = next((x for x in ps if outside(x, w, here)), None)
                 if bad:
                     return "STL-GRD-615", f"the command writes to {w} ({bad}), outside the worktree and the run tmp"
+                hit = next((n for x in ps if (n := config_hit(x, cfg))), None)
+                if hit:
+                    return "STL-GRD-615", f"the command writes to {w}, a CLI's own config ({hit}), which would override the generated policy"
         for w, here, names in reads:
             for x in _resolve(w, here, names, cmd)[0]:
                 if "secret_read" in kinds and secret(x, True):
@@ -427,6 +443,8 @@ def judge(ad, payload, worktree):
             return "STL-GRD-615", "no worktree is known for this run, so no write is inside it"
         if outside(x, str(raw), cwd):
             return "STL-GRD-615", f"{raw} is outside the worktree {worktree} and the run tmp"
+        if config_hit(x, cfg):
+            return "STL-GRD-615", f"{raw} is a CLI's own config ({config_hit(x, cfg)}), which would override the generated policy"
     return None
 
 

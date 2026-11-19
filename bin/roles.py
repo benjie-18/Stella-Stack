@@ -878,7 +878,7 @@ def policy():
             raise ValueError("the rules are not exactly one of each kind " + ", ".join(POLICY_KINDS))
         s = policy_rule("secret_read", p)
         if not (_strs(s["deny"]) and _strs(s["allow"], True) and _strs(s["dirs"]) and _strs(s["text"]) and _strs(s["glob_probes"], True)
-                and all(d.startswith(("~/", "/")) for d in s["dirs"])):
+                and _strs(s.get("file_deny", []), True) and _strs(s.get("file_allow", []), True) and all(d.startswith(("~/", "/")) for d in s["dirs"])):
             raise ValueError("secret_read needs deny, dirs (~/ or absolute) and text lists, and allow and glob_probes lists")
         re.compile("|".join(s["text"]))
         g = policy_rule("commit_rule", p)["deny_git"]
