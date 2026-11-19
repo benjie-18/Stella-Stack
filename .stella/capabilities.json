@@ -1308,6 +1308,1227 @@
       },
       "global_id": "daa915f1-f9ad-42b7-89c5-5d7a0cdb0a65",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "adapter-discord",
+      "kind": "command",
+      "summary": "Approval-service channel adapter: delivers a request to its Discord thread and collects the owner answer",
+      "keywords": [
+        "approval",
+        "discord",
+        "channel",
+        "adapter"
+      ],
+      "inputs": "a request JSON on stdin (deliver) or a collect call",
+      "outputs": "a message ref; answer lines",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/adapters/discord.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "338e1918-ac72-4796-810b-e04f06928211",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "adapter-host-cli",
+      "kind": "command",
+      "summary": "Approval-service channel adapter for the host terminal: shows the request and how to answer it",
+      "keywords": [
+        "approval",
+        "host",
+        "terminal",
+        "channel",
+        "adapter"
+      ],
+      "inputs": "a request JSON on stdin",
+      "outputs": "a message ref on stdout; the request on stderr",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/adapters/host-cli.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "115185a6-10fc-4341-b48a-2a978e7ffa84",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "adapter-kanban-resume",
+      "kind": "command",
+      "summary": "Approval-service resume: unblocks the card that waited on an approval, with the decision as the reason",
+      "keywords": [
+        "approval",
+        "resume",
+        "kanban",
+        "unblock",
+        "card"
+      ],
+      "inputs": "card id and decision word",
+      "outputs": "the card unblocked",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/adapters/kanban-resume.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "8a46180b-ffe3-4329-b10d-8baca676b1ec",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "alert-catalog-docs",
+      "kind": "command",
+      "summary": "Write or check the generated alert code page docs/alert-codes.md from the alert catalog",
+      "keywords": [
+        "alert",
+        "catalog",
+        "docs",
+        "codes",
+        "page"
+      ],
+      "inputs": "--docs or --check",
+      "outputs": "docs/alert-codes.md written, or exit 1 when stale",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/alert-catalog.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "3e6fba0c-cd27-4146-bc27-0f46a0f4d0fb",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "alert-explain",
+      "kind": "command",
+      "summary": "Print one alert code's catalog entry for the terminal",
+      "keywords": [
+        "alert",
+        "explain",
+        "code",
+        "catalog"
+      ],
+      "inputs": "an alert code such as STL-ESC-210",
+      "outputs": "the entry as text",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/alert-explain.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "c59fd4e3-0788-4380-8d93-74b1f7888fdf",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "alert",
+      "kind": "command",
+      "summary": "Sourced helpers that render an owner-facing alert line from the catalog and send it to the alerts channel",
+      "keywords": [
+        "alert",
+        "message",
+        "owner",
+        "notify",
+        "catalog"
+      ],
+      "inputs": "a code and key=value pairs",
+      "outputs": "a plain-language line; a line in the alerts log; a channel message",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/alert.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "b94abb3e-a6e5-420e-a2fc-8333d8e9e8dd",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "apply-hermes-local",
+      "kind": "command",
+      "summary": "Re-apply the repo-managed Hermes local config (soul rules, hooks, toolsets) to the Hermes volume",
+      "keywords": [
+        "hermes",
+        "apply",
+        "soul",
+        "config",
+        "volume",
+        "restore"
+      ],
+      "inputs": "none (reads docs/hermes-local)",
+      "outputs": "the Hermes profiles updated",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/apply-hermes-local.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "cc65d406-32c4-4acc-87f8-db1e295f8076",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "approval-sim",
+      "kind": "command",
+      "summary": "Simulation of Hermes's real approval gate with a stub channel",
+      "keywords": [
+        "approval",
+        "simulation",
+        "hermes",
+        "gate"
+      ],
+      "inputs": "none",
+      "outputs": "a pass or fail report",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/approval-sim.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "53d317ba-d223-45a8-8e41-862b5476e94b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "bench",
+      "kind": "command",
+      "summary": "Benchmark suite: list, check, run and measure the tasks in bench/tasks",
+      "keywords": [
+        "benchmark",
+        "bench",
+        "tasks",
+        "metrics",
+        "measure"
+      ],
+      "inputs": "a subcommand (list, check, reset, verify, metrics, run)",
+      "outputs": "task ids, verdicts and metrics JSON",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/bench.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "21554b7a-dd54-45b5-9386-97aa8b4feaa1",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "box-live-probe",
+      "kind": "command",
+      "summary": "Live probe of the OS box: prints PROBE lines for attacks run boxed and unboxed",
+      "keywords": [
+        "box",
+        "probe",
+        "sandbox",
+        "live",
+        "canary"
+      ],
+      "inputs": "a canary path",
+      "outputs": "PROBE lines",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/box-live-probe.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "2291d02f-6110-4869-bd09-312d9b850ef6",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "box",
+      "kind": "command",
+      "summary": "OS box: builds the bubblewrap mounts and argv for one terminal call of a boxed profile",
+      "keywords": [
+        "box",
+        "sandbox",
+        "bubblewrap",
+        "mounts",
+        "isolation"
+      ],
+      "inputs": "a card proof and the sandbox block of the role table",
+      "outputs": "a bwrap argv",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/box.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "57890c95-0b66-4d14-bb5c-58d1c1eeaab2",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "broker-put",
+      "kind": "command",
+      "summary": "Store one secret in the stand-in broker folder, read from the terminal without echo",
+      "keywords": [
+        "broker",
+        "secret",
+        "store",
+        "credential",
+        "token"
+      ],
+      "inputs": "a secret name; the value from the terminal",
+      "outputs": "the secret file at mode 0600; nothing printed",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/broker-put.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "0720c37f-164f-410a-8969-8192d2b42be2",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "check-guard",
+      "kind": "command",
+      "summary": "Pre-tool hook: a worker hands a card on only after it ran the card's own check",
+      "keywords": [
+        "guard",
+        "hook",
+        "check",
+        "review",
+        "complete"
+      ],
+      "inputs": "a hook call on stdin",
+      "outputs": "allow, or exit 2 with a reason",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/check-guard.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "94694e1a-9bff-435f-b258-7ab1ffcfc240",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "claude-review",
+      "kind": "command",
+      "summary": "Review call inside the reviewing profile's box: sends the fixed review prompt to Claude with read-only flags",
+      "keywords": [
+        "review",
+        "claude",
+        "prompt",
+        "read-only"
+      ],
+      "inputs": "the prompt file and export folder named by the environment",
+      "outputs": "the review answer",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/claude-review.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "e5f49501-2ab6-4136-a316-a2298e5624a3",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "commit-guard",
+      "kind": "command",
+      "summary": "Pre-commit hook: a worker commits only in its own card worktree and branch",
+      "keywords": [
+        "commit",
+        "guard",
+        "hook",
+        "worktree",
+        "branch"
+      ],
+      "inputs": "a commit in progress",
+      "outputs": "exit 0, or a refusal with a reason",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/commit-guard.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "5d1e3a00-7690-464a-82fd-bf30d54615c5",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "complete-gate",
+      "kind": "command",
+      "summary": "Pre-tool hook on kanban_complete: required completion metadata for the reviewing role",
+      "keywords": [
+        "complete",
+        "gate",
+        "hook",
+        "review",
+        "metadata"
+      ],
+      "inputs": "a hook call on stdin",
+      "outputs": "allow, or exit 2 with a reason",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/complete-gate.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "c6f0a577-d9ca-492e-92ff-9ecaaac16b6b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "container-start",
+      "kind": "command",
+      "summary": "Container start step: restores user-space config and the crontab from the repo and the Hermes volume",
+      "keywords": [
+        "container",
+        "start",
+        "restore",
+        "cron",
+        "boot"
+      ],
+      "inputs": "none",
+      "outputs": "the user-space config restored; exit 1 names failed steps",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/container-start.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "1203998a-96d6-4478-a47d-c2c319517b99",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalate-drain",
+      "kind": "command",
+      "summary": "Manual drain of the escalation queue: list or replay queued escalations",
+      "keywords": [
+        "escalation",
+        "queue",
+        "drain",
+        "replay"
+      ],
+      "inputs": "--list, --replay ID or --all",
+      "outputs": "queue entries; replayed calls",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalate-drain.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "f733c6e6-7573-406d-8583-26d81b6a816e",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalate",
+      "kind": "command",
+      "summary": "The only sanctioned way to run an escalation model: card-scoped, logged, rate-limited (supervisor only)",
+      "keywords": [
+        "escalate",
+        "escalation",
+        "model",
+        "supervisor",
+        "rung"
+      ],
+      "inputs": "card id, purpose, reason, prompt on stdin",
+      "outputs": "the model answer; one trusted line",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalate.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "c5864459-cb21-4cc3-80eb-0e3df5e362ea",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalation-complete",
+      "kind": "command",
+      "summary": "Report the completion of an escalated card exactly once",
+      "keywords": [
+        "escalation",
+        "complete",
+        "thread",
+        "report"
+      ],
+      "inputs": "a card id",
+      "outputs": "one completion line and thread message",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalation-complete.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "7f3995eb-d0aa-4df1-a82e-8a1534b9f559",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalation-discord",
+      "kind": "command",
+      "summary": "Sourced helpers shared by the escalation scripts: environment, logging and the Discord action call",
+      "keywords": [
+        "escalation",
+        "discord",
+        "helper",
+        "sourced"
+      ],
+      "inputs": "sourced by other scripts",
+      "outputs": "functions",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalation-discord.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "69e25874-68a2-44d0-b0c8-9f8ba4c1427f",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalation-on-block",
+      "kind": "command",
+      "summary": "Hermes hook on a blocked card: opens its escalation thread",
+      "keywords": [
+        "escalation",
+        "hook",
+        "blocked",
+        "thread"
+      ],
+      "inputs": "a hook payload",
+      "outputs": "a thread for the card",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalation-on-block.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "8485227f-f60b-4b05-9f94-50466c9816c2",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalation-on-claim",
+      "kind": "command",
+      "summary": "Hermes hook on a claimed card: marks the escalation reply as being worked on",
+      "keywords": [
+        "escalation",
+        "hook",
+        "claim",
+        "reaction"
+      ],
+      "inputs": "a hook payload",
+      "outputs": "a status reaction",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalation-on-claim.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "9139fdd9-d837-4790-8ba9-808228fb8b12",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalation-on-complete",
+      "kind": "command",
+      "summary": "Hermes hook on a completed card: reports an escalated card's completion",
+      "keywords": [
+        "escalation",
+        "hook",
+        "complete"
+      ],
+      "inputs": "a hook payload",
+      "outputs": "a completion report",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalation-on-complete.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "2ffdcbe2-0021-4aba-9142-9643a7800b9e",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalation-reply-hook",
+      "kind": "command",
+      "summary": "Hermes hook: records a reply in a card's escalation thread against the card and unblocks it",
+      "keywords": [
+        "escalation",
+        "reply",
+        "hook",
+        "unblock"
+      ],
+      "inputs": "a hook payload",
+      "outputs": "a card comment and an unblocked card",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalation-reply-hook.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "7f167754-4752-4f0b-b8f6-88dd693207d0",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalation-reply-poll",
+      "kind": "command",
+      "summary": "Cron poller: records a reply in each blocked card's escalation thread",
+      "keywords": [
+        "escalation",
+        "reply",
+        "poll",
+        "cron",
+        "thread"
+      ],
+      "inputs": "none",
+      "outputs": "card comments and unblocked cards",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalation-reply-poll.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "7c697979-c721-48f1-97ba-11ee64f5133c",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalation-thread",
+      "kind": "command",
+      "summary": "Open or reuse the one escalation thread for a blocked card",
+      "keywords": [
+        "escalation",
+        "thread",
+        "discord",
+        "blocked"
+      ],
+      "inputs": "card id, title and the decision needed",
+      "outputs": "a thread and one supervisor notification",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalation-thread.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "209f1875-cc8f-4bcc-a76d-ec3dfe2c879c",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalations-status",
+      "kind": "command",
+      "summary": "Read-only overview of every escalated card: status, latest event, title and thread URL",
+      "keywords": [
+        "escalation",
+        "status",
+        "overview",
+        "cards",
+        "thread"
+      ],
+      "inputs": "optional --all",
+      "outputs": "a table of escalated cards",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalations-status.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "d21ba7ae-1cc4-4ec6-816a-24014bc75572",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "false-close-guard",
+      "kind": "command",
+      "summary": "Pre-tool hook on kanban_complete: a card completes only after its worker run exited 0 with output",
+      "keywords": [
+        "false",
+        "close",
+        "guard",
+        "hook",
+        "complete",
+        "evidence"
+      ],
+      "inputs": "a hook call on stdin",
+      "outputs": "allow, or exit 2 with a reason",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/false-close-guard.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "f5a9b327-308d-4e5f-b602-6a9f31c9ab59",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "firewall-check",
+      "kind": "command",
+      "summary": "Read-only egress check of the container firewall: one PASS or FAIL line per probe",
+      "keywords": [
+        "firewall",
+        "egress",
+        "check",
+        "probe"
+      ],
+      "inputs": "none (run as root on the host)",
+      "outputs": "PASS and FAIL lines",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/firewall-check.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "1d131b0a-acb0-4263-aa18-a460667f32a3",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "hermes-gateway-loop",
+      "kind": "command",
+      "summary": "Restart loop for the Hermes gateway inside its tmux session",
+      "keywords": [
+        "hermes",
+        "gateway",
+        "restart",
+        "loop"
+      ],
+      "inputs": "none",
+      "outputs": "a running gateway",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/hermes-gateway-loop.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "274a7f10-6407-4831-ad95-237afe32e130",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "kanban-board",
+      "kind": "command",
+      "summary": "Sourced: the one place that names the kanban board and wraps the kanban call",
+      "keywords": [
+        "kanban",
+        "board",
+        "sourced"
+      ],
+      "inputs": "sourced by other scripts",
+      "outputs": "a kanban function",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/kanban-board.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "db16a6df-3173-433b-b5e0-07d3815330b3",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "kanban-guard",
+      "kind": "command",
+      "summary": "Hermes hook on kanban tools: refuses a call that names another board",
+      "keywords": [
+        "kanban",
+        "guard",
+        "hook",
+        "board"
+      ],
+      "inputs": "a hook call on stdin",
+      "outputs": "allow, or exit 2 with a block message",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/kanban-guard.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "2eebb9fc-1189-49a1-bc3f-ec3c0f5c3f2a",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "merge-card",
+      "kind": "command",
+      "summary": "Merge a reviewed card branch into main (the owner's step, never a worker's)",
+      "keywords": [
+        "merge",
+        "card",
+        "branch",
+        "main",
+        "review"
+      ],
+      "inputs": "card id and flags",
+      "outputs": "the branch merged",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/merge-card.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "e909e2db-5545-4e5f-831d-8ab4dac4528b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "model-watch",
+      "kind": "command",
+      "summary": "Model-call watch: flags a running card whose model calls keep failing",
+      "keywords": [
+        "model",
+        "watch",
+        "failing",
+        "card",
+        "watchdog"
+      ],
+      "inputs": "none (reads the board and agent logs)",
+      "outputs": "an alert line",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/model_watch.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "1446fd73-beab-4f09-89ee-26376c2bb233",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "omniroute-ctl",
+      "kind": "command",
+      "summary": "Control of the local OmniRoute gateway: start, stop, status",
+      "keywords": [
+        "omniroute",
+        "gateway",
+        "control",
+        "start",
+        "stop"
+      ],
+      "inputs": "start, stop or status",
+      "outputs": "the gateway state",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/omniroute-ctl.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "2dac1b9e-29e5-4678-bb1c-72ff4eb8cef2",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "omniroute-run",
+      "kind": "command",
+      "summary": "Fallback runner: tries a role's model chain through the gateway, prompt on stdin",
+      "keywords": [
+        "omniroute",
+        "fallback",
+        "run",
+        "model",
+        "chain"
+      ],
+      "inputs": "a prompt on stdin, optional --role",
+      "outputs": "the model answer",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/omniroute-run.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "9566feef-3518-4341-b917-9b0edad6cea7",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "owner-config-sh",
+      "kind": "command",
+      "summary": "Shell reader of the owner config (the one parser is owner_config.py)",
+      "keywords": [
+        "owner",
+        "config",
+        "shell",
+        "reader"
+      ],
+      "inputs": "a key name",
+      "outputs": "a value on stdout",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/owner-config.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "d6546a99-6c57-40bd-bbcf-e1d37b3a1b67",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "owner-config",
+      "kind": "command",
+      "summary": "The one parser of the owner config file",
+      "keywords": [
+        "owner",
+        "config",
+        "parser"
+      ],
+      "inputs": "a key name",
+      "outputs": "a value on stdout",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/owner_config.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "a1084634-f0b7-43fa-876f-9c039faa322d",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "register-escalation-hook",
+      "kind": "command",
+      "summary": "Re-register the escalation shell hooks in every Hermes profile",
+      "keywords": [
+        "register",
+        "escalation",
+        "hook",
+        "profile"
+      ],
+      "inputs": "none",
+      "outputs": "hooks registered in the profiles",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/register-escalation-hook.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "0af5a36a-53df-4509-b007-c240888e6f64",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "register-toolsets",
+      "kind": "command",
+      "summary": "Re-apply each profile's toolsets, disabled skills and config from the role table",
+      "keywords": [
+        "register",
+        "toolsets",
+        "skills",
+        "profile",
+        "roles"
+      ],
+      "inputs": "none (reads the role table)",
+      "outputs": "the Hermes volume updated",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/register-toolsets.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "833884d0-5a10-45cf-baaf-8bcdafe11525",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "role-guard",
+      "kind": "command",
+      "summary": "Fail-closed pre-tool hook: refuses a tool the caller's role may not use",
+      "keywords": [
+        "role",
+        "guard",
+        "hook",
+        "permission"
+      ],
+      "inputs": "a hook call on stdin",
+      "outputs": "allow, or exit 2 with a reason",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/role-guard.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "1cb389a7-8908-4e6a-9492-f3de5a382990",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "selftests",
+      "kind": "command",
+      "summary": "Run the hermetic self-tests, all or by name, in parallel",
+      "keywords": [
+        "selftest",
+        "tests",
+        "run",
+        "suite",
+        "hermetic"
+      ],
+      "inputs": "test names, or --quick",
+      "outputs": "PASS or FAIL lines and a total",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/selftests.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "626a7c57-048e-422c-853f-d85e8cfa38f2",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "watchdog",
+      "kind": "command",
+      "summary": "Build watchdog: runs the project checks, writes the status file and alerts on a failure",
+      "keywords": [
+        "watchdog",
+        "build",
+        "status",
+        "alert",
+        "checks"
+      ],
+      "inputs": "none (cron)",
+      "outputs": "the status file; alert lines",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/watchdog.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "1f954daf-658a-4e23-9a3f-9a7ed13e085a",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "watchdog-settings",
+      "kind": "command",
+      "summary": "Watchdog settings reader: validates the file and answers the gateway verdict",
+      "keywords": [
+        "watchdog",
+        "settings",
+        "gateway",
+        "validate"
+      ],
+      "inputs": "--check or gateway",
+      "outputs": "settings OK, or a JSON verdict",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/watchdog_settings.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "aa0bde88-6c00-4e86-bbc7-27b2b8ad14b0",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "worker-env",
+      "kind": "command",
+      "summary": "The one answer to whether a process runs in a worker environment",
+      "keywords": [
+        "worker",
+        "environment",
+        "guard",
+        "markers"
+      ],
+      "inputs": "none (imported)",
+      "outputs": "a reason or none",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/worker_env.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "15e58572-957f-4e04-96a0-55d81b6ebe36",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "stack-rules",
+      "kind": "skill",
+      "summary": "Standing rules, safety invariants, token discipline and evidence format for any work on the stack",
+      "keywords": [
+        "rules",
+        "invariants",
+        "evidence",
+        "stack",
+        "audit",
+        "build"
+      ],
+      "inputs": "none (loaded as a skill)",
+      "outputs": "the rules text",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": ".claude/skills/stack-rules/SKILL.md",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "7c43e858-11bc-44b3-a5a1-1c90678b43e0",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "playwright",
+      "kind": "mcp_server",
+      "summary": "Headless browser automation MCP server (page snapshots, clicks, forms)",
+      "keywords": [
+        "browser",
+        "playwright",
+        "web",
+        "page",
+        "automation",
+        "mcp"
+      ],
+      "inputs": "tool calls over stdio",
+      "outputs": "page snapshots and action results",
+      "allowed_roles": [],
+      "risk_class": "post",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": ".mcp.json",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "76721c54-12ef-4d4d-b1c1-f9166bc5cee7",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "chrome-devtools",
+      "kind": "mcp_server",
+      "summary": "Headless Chrome DevTools MCP server (inspect, network, performance)",
+      "keywords": [
+        "browser",
+        "chrome",
+        "devtools",
+        "inspect",
+        "network",
+        "mcp"
+      ],
+      "inputs": "tool calls over stdio",
+      "outputs": "page inspection results",
+      "allowed_roles": [],
+      "risk_class": "post",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": ".mcp.json",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "df208367-4a8f-4839-b057-f79ff17b1a92",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

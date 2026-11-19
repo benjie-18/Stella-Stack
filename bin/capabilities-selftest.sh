@@ -2,7 +2,9 @@
 # Hermetic self-test for the capabilities core (F3 item C; body B4, AC4; design section 4 with ruling DC-05).
 # Every section runs in its own scratch root (bash capabilities-selftest.sh <section>); no argument runs them all.
 # Sections -> checks: found = AC4-found | requestable = AC4-requestable | invisible = AC4-invisible | request = AC4-request-approval |
-#                     unknown = AC4-unknown | sources = T-SOURCES-UNKNOWN | registry = T-REGISTRY-COMPLETE (F3 item R, tests first)
+#                     unknown = AC4-unknown | sources = T-SOURCES-UNKNOWN | gaps = item C round 2 (B4 role toolsets, outside install
+#                     escalation, host_session through bin/host_access.py decide; the builder's own cases) |
+#                     registry = T-REGISTRY-COMPLETE (F3 item R, tests first)
 # A fake skill is added to the scratch registry as DATA (a SKILL.md in a skill folder and a registry entry); three roles are taken
 # from the role table: one in allowed_roles, one in requestable_roles, one in neither.
 # Written test-first (F3 wave 1): exit codes, the code range STL-GRD-660..674 and the trusted event log are asserted, never wording.
@@ -21,7 +23,7 @@
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 ME=capabilities-selftest
-SECTIONS="found requestable invisible request unknown sources registry"
+SECTIONS="found requestable invisible request unknown sources gaps registry"
 if [ $# = 0 ]; then
   f=0; for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || f=$((f+1)); done
   [ $f = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($f sections)"; [ $f = 0 ]; exit
@@ -144,6 +146,70 @@ sources)   # T-SOURCES-UNKNOWN
   run s3 C search qa-unreg-server --role "$RA" --json
   ok '[ $RC = 0 ] && ! grep -q qa-unreg-server "$T/o/s3.out"' "T-SOURCES-UNKNOWN an MCP server in a manifest with no registry entry is hidden"
   ok 'grep -q qa-unreg-server "$AL"' "T-SOURCES-UNKNOWN ... and raises an alert naming it"
+  ;;
+gaps)   # item C round 2: three gaps of B4
+  # (1) a role's own platform toolset is searchable by that role only
+  ed "$(ix .role_table)" --arg r "$RA" '.roles[$r].platform_toolsets = {cli: ["qa-toolset"]}'
+  run t1 C search qa-toolset --role "$RA" --json
+  ok '[ $RC = 0 ] && vis t1 qa-toolset available' "gap1 role $RA sees its own toolset as available"
+  run t2 C describe qa-toolset --role "$RA" --json
+  ok '[ $RC = 0 ] && grep -q qa-toolset "$T/o/t2.out"' "gap1 describe of its own toolset works"
+  bad=; for r in "${RL[@]}"; do [ "$r" = "$RA" ] && continue; run "t-$r" C search qa-toolset --role "$r" --json; { [ $RC = 0 ] && ! grep -q qa-toolset "$T/o/t-$r.out"; } || bad="$bad $r"; done
+  ok '[ -z "$bad" ]' "gap1 no other role is shown it (failed:$bad)"
+  run t3 C describe qa-toolset --role "$RH" --json
+  ok '[ $RC = 1 ] && out t3 | grep >/dev/null -E "$range"' "gap1 another role's describe fails closed like an unknown id"
+  # (2) an outside install (entry not approved) is requestable and becomes one approval request, never an install
+  ed .stella/capabilities.json --arg a "$RA" --arg q "$RQ" --arg c "$ACLASS" --arg g "$(uuid)" --arg i "$IID" \
+    '.entries += [{id: "qa-outside-server", kind: "mcp_server", summary: "qaoutside server not installed", keywords: ["qaoutside"], inputs: "none", outputs: "text",
+      allowed_roles: [$a], requestable_roles: [$q], request_approval: $c, risk_class: "read", hosts: [], secrets: [], status: "proposed", source: ".mcp.json",
+      triage: {result: "pending"}, definition: {text: "QA-OUTSIDE-DEF"}, global_id: $g, install_id: $i}]'
+  run o1 C search qaoutside --role "$RQ" --json
+  ok '[ $RC = 0 ] && vis o1 qa-outside-server requestable && jq -e ".[0].install == true" "$T/o/o1.out"' "gap2 the requesting role sees the outside server as requestable (an install)"
+  run o2 C search qaoutside --role "$RA" --json
+  ok '[ $RC = 0 ] && ! grep -q qa-outside-server "$T/o/o2.out"' "gap2 allowed_roles does not make a not-approved entry usable or shown"
+  run o3 C load qa-outside-server --role "$RA" --run qa-run-2 --json
+  ok '[ $RC = 1 ] && ! grep -q QA-OUTSIDE-DEF "$T/o/o3.out"' "gap2 load of the not-installed entry is refused"
+  e0=$(nl "$EV"); run o4 C request qa-outside-server --reason "need it" --role "$RQ" --card qa-card-o --json
+  ok '[ $RC = 0 ] && tail -n +$((e0 + 1)) "$EV" | jq -c "select(.type == \"approval-request\")" | grep >/dev/null qa-card-o' "gap2 the install request is one trusted approval-request line naming the card"
+  ok '[ "$(tail -n +$((e0 + 1)) "$EV" | grep -c qa-card-o)" = 1 ] && [ ! -e "$R/$SK/qa-outside-server" ] && ! grep -q qa-outside-server "$R/$MCPF"' "gap2 exactly one line, and nothing installed (no skill folder, no manifest entry)"
+  e1=$(nl "$EV"); run o5 C request qa-outside-server --reason "no" --role "$RH" --card qa-card-p --json
+  ok '[ $RC = 1 ] && [ "$(nl "$EV")" = "$e1" ]' "gap2 a role that may not request it opens nothing"
+  # (3) host_session / input_source: available only when bin/host_access.py decide allows (a test double of decide, in the scratch root)
+  cat >"$R/bin/host_access.py" <<'PY'
+import json, os
+def decide(q):
+    json.dump(q, open(os.environ["QA_HOST_SEEN"], "w"))
+    if not os.path.exists(os.environ["QA_HOST_ALLOW"]):
+        raise Exception("refused")
+    return {"allowed": True}
+PY
+  export QA_HOST_SEEN=$T/seen.json QA_HOST_ALLOW=$T/allow
+  for k in host_session input_source; do
+    ed .stella/capabilities.json --arg a "$RA" --arg k "$k" --arg g "$(uuid)" --arg i "$IID" \
+      '.entries += [{id: ("qa-" + $k), kind: "tool", summary: "qahost fake host capability", keywords: ["qahost"], inputs: "none", outputs: "text",
+        allowed_roles: [$a], risk_class: $k, hosts: [], secrets: [], status: "approved", source: "qa",
+        triage: {result: "shipped"}, definition: {text: "QA-HOST-DEF"}, global_id: $g, install_id: $i}]'
+  done
+  printf '%s\n' '{"target": {"app": "qa-app", "domain": null}, "action": {"type": "qa-open"}, "confirmation": null}' >"$T/hreq.json"
+  run h1 C search qahost --role "$RA" --run qa-run-3 --json
+  ok '[ $RC = 0 ] && vis h1 qa-host_session gated && vis h1 qa-input_source gated && [ ! -e "$QA_HOST_SEEN" ]' "gap3 with no host request: gated, decide is not called"
+  run h2 C search qahost --role "$RA" --run qa-run-3 --host-request "$T/hreq.json" --json
+  ok '[ $RC = 0 ] && vis h2 qa-host_session gated && [ -e "$QA_HOST_SEEN" ]' "gap3 decide refuses: still gated"
+  run h3 C load qa-host_session --role "$RA" --run qa-run-3 --host-request "$T/hreq.json" --json
+  ok '[ $RC = 1 ] && ! grep -q QA-HOST-DEF "$T/o/h3.out"' "gap3 ... and load is refused"
+  touch "$QA_HOST_ALLOW"; rm -f "$QA_HOST_SEEN"
+  run h4 C search qahost --role "$RA" --run qa-run-3 --host-request "$T/hreq.json" --json
+  ok '[ $RC = 0 ] && vis h4 qa-host_session available && vis h4 qa-input_source available' "gap3 decide allows: available"
+  ok 'jq -e ".role == \"$RA\" and .run == \"qa-run-3\" and .target.app == \"qa-app\" and .action.type == \"qa-open\" and (keys | length) == 6" "$QA_HOST_SEEN"' "gap3 decide got the caller's own facts only: capability, role, run, target, action, confirmation"
+  e0=$(nl "$EV"); run h5 C load qa-host_session --role "$RA" --run qa-run-3 --host-request "$T/hreq.json" --json
+  ok '[ $RC = 0 ] && grep -q QA-HOST-DEF "$T/o/h5.out" && tail -n +$((e0 + 1)) "$EV" | grep >/dev/null qa-host_session' "gap3 load works once decide allowed it, with its trusted line"
+  run h6 C search qahost --role "$RH" --run qa-run-3 --host-request "$T/hreq.json" --json
+  ok '[ $RC = 0 ] && ! grep -q qa-host "$T/o/h6.out"' "gap3 a role outside allowed_roles never sees it, whatever decide says"
+  run h7 C search qahost --role "$RA" --run qa-run-3 --host-request "$T/no-such.json" --json
+  ok '[ $RC = 1 ] && out h7 | grep >/dev/null -E "$range"' "gap3 an unreadable host request file fails closed with a code"
+  # (R) the lint is the tester's (registry section); only the worker refusal is added here
+  run c5 WORKER python3 -I "$R/bin/capabilities.py" lint --json
+  ok '[ $RC != 0 ] && out c5 | grep >/dev/null -E "STL-(CFG-312|GRD-662)"' "R-lint is refused in a worker environment (host command)"
   ;;
 registry)   # T-REGISTRY-COMPLETE
   # the expected set, computed here from the tree (not from the lint): non-selftest executables under bin/ and bin/adapters/, every skill

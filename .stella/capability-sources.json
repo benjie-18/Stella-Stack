@@ -9,6 +9,17 @@
   "extension_folders": [
     ".stella/extensions"
   ],
+  "command_folders": [
+    "bin",
+    "bin/adapters"
+  ],
+  "command_globs": [
+    "*.py",
+    "*.sh"
+  ],
+  "command_exclude": [
+    "*-selftest.sh"
+  ],
   "ranking": {
     "id": 3,
     "keywords": 2,
@@ -21,5 +32,10 @@
     "input_source"
   ],
   "capability_prompt_line": "You have a small core toolset. For anything else, search the capability registry (capabilities search), then load only the definition you need (capabilities load); a capability you may only request needs an approval first.",
-  "semantic_ranking": false
+  "semantic_ranking": false,
+  "toolset_entry": {
+    "kind": "tool",
+    "risk_class": "write",
+    "summary": "Your own toolset {name}: always loaded for this role, never shown to another role"
+  }
 }
