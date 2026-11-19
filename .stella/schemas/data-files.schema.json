@@ -51,6 +51,11 @@
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The capability probe's records (F2b B), one file (schema probes): what bin/probe.py found out about each model version by trying it; written on the host only; a protected state path, not a data file (no role writes it, git never holds it). bin/probe.py check judges it."
     },
+    "spans": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The call spans (F2c B), one JSON line per call with OpenTelemetry GenAI attribute names, appended by bin/cost.py span --write; written on the host only; a protected state path, not a data file. Export to an outside tool is behind the features.json flag otlp-export."
+    },
     "triage_calibration": {
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
@@ -173,6 +178,7 @@
     "routing_state",
     "card_facts",
     "probe_records",
+    "spans",
     "triage_calibration",
     "agents_dir",
     "team_bodies",

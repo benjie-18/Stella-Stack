@@ -114,6 +114,10 @@ for s in protos:
             tctl(s, {"tool_calls": n}); got = ptr(json.loads(call(s, "t1")[1]), r["tool_calls"]); lst = isinstance(r["tool_calls_sample"], list)
             ok(len(got if isinstance(got, list) else [got]) == (n if lst else 1) and "{arguments}" not in json.dumps(got) and "not json" not in json.dumps(got), f"[{s}] tool_calls {n}: well-formed call(s) in one answer")
         tctl(s, {}); ok(not ptr_or_none(json.loads(call(s, "t1")[1]), r["tool_calls"]), f"[{s}] tool_calls unset: no tool call")
+    ex = r.get("usage_extra") or {}   # F2c B: cache_write, cache_read, reasoning tokens show at the shape's own pointers; included counts raise input or output
+    tctl(s, {"cache_write": 7, "cache_read": 40, "reasoning": 5}); u = ptr(json.loads(call(s, "t1")[1]), r["usage"])
+    ok(all(ptr(u, e["pointer"]) == {"cache_write": 7, "cache_read": 40, "reasoning": 5}[k] for k, e in ex.items()), f"[{s}] cache and reasoning traits: each shows at its pointer ({len(ex)} of 3 the shape has)")
+    tctl(s, {}); u = ptr(json.loads(call(s, "t1")[1]), r["usage"]); ok(all(ptr_or_none(u, e["pointer"]) is None for e in ex.values()) and sorted(u.values(), key=str)[:2] == [1, 1], f"[{s}] cache and reasoning traits unset: no extra key, input and output 1")
     tctl(s, {"answers": list("abcd"), "seed": 5}); x = [ptr(json.loads(call(s, "t1")[1]), r["text"]) for _ in range(10)]
     tctl(s, {"answers": list("abcd"), "seed": 5}); y = [ptr(json.loads(call(s, "t1")[1]), r["text"]) for _ in range(10)]
     ok(x == y and len(set(x)) > 1, f"[{s}] seed: answers vary and the same seed repeats them")
