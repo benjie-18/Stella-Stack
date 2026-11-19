@@ -1128,6 +1128,36 @@
       },
       "global_id": "e59ac56f-e59c-4066-9305-a281d04a8254",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "host-access",
+      "kind": "command",
+      "summary": "Decide a host-session or input-source request (host side, pure): the vault, the role's host_operator flag, an attended run, the owner present (indicator, kill switch, route, paired device with biometric), the owner's host access settings (master, routes, apps, domains, input sources, action states and reversible flags, overrides), request finality for irreversible actions and an approved confirmation for ask-first ones",
+      "keywords": [
+        "host",
+        "host session",
+        "input source",
+        "presence",
+        "kill switch",
+        "vault",
+        "ask first",
+        "biometric",
+        "turn",
+        "final"
+      ],
+      "inputs": "a request file {capability, role, run, target {app, domain}, action {type}, confirmation}",
+      "outputs": "allowed (exit 0, JSON with --json) or refused: exit 1 with STL-GRD-620..637, STL-CFG-312 in a worker environment",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/host_access.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "e5261c3a-11cd-48e1-9e13-992e406fa07e",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

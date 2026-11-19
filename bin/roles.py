@@ -49,7 +49,7 @@ SCHEMA_VERSION = 1
 # hold them, and roles-selftest checks they are equal. A key a reader starts to use is added in both in the same change.
 ROLE_KEYS = set(PERMS) | {"workspace", "allowed_overrides", "requirements", "background_review", "optional", "complete_metadata",
                           "complete_needs_review", "workers", "skills_disabled", "platform_toolsets", "config", "git_identity", "hooks",
-                          "runs_unboxed", "catch_all_tools", "global_id", "install_id"}
+                          "runs_unboxed", "catch_all_tools", "host_operator", "global_id", "install_id"}
 HOOK_KEYS = {"matcher", "file", "command", "timeout", "workers", "writes", "catch_all"}   # writes: "refused" = the hook refuses every write; "judged" = a text guard that lets some through
 CATCH_ALL = "^(?!(?:{tools})$).+$"   # T5: the matcher of a catch_all hook; {tools} is filled at render time with the profile's other matchers and the tools of its role's toolsets
 WRITES = ("refused", "judged")
@@ -189,6 +189,8 @@ def validate(d, root=ROOT):
             errs.append(f"role {n}: allowed_overrides must be a list of {', '.join(OVERRIDES)}, each once")
         if "background_review" in r and not isinstance(r["background_review"], bool):
             errs.append(f"role {n}: background_review must be true or false")
+        if "host_operator" in r and not isinstance(r["host_operator"], bool):
+            errs.append(f"role {n}: host_operator must be true or false")
         if "optional" in r and not isinstance(r["optional"], bool):
             errs.append(f"role {n}: optional must be true or false")
         cm = r.get("complete_metadata")   # S3A-03: the metadata pairs a reviewing role's kanban_complete must carry

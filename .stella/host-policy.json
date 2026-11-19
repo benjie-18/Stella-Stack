@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "never_targets": {
+    "apps": [
+      "stella-vault"
+    ],
+    "domains": []
+  }
+}
