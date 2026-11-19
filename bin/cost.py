@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cost accounting (F2c item B), stdlib only: prices a usage record from the dated table .stella/pricing.json, turns it into an
+"""Cost accounting (F2c item B), stdlib only: prices a usage record from the dated table of the data row pricing, turns it into an
 OpenTelemetry GenAI span, rolls records up, and (behind the features.json flag otlp-export, off) exports spans as OTLP/HTTP JSON.
 Usage record and span: the shapes in the F2c design (usage record: one JSON line per call; tokens input, output, cache_write, cache_read,
 reasoning, counted apart; cost {amount, currency, entry, priced}|null).
@@ -24,6 +24,7 @@ import stella_data as sd
 
 UNPRICED, BADTABLE, EXPORT, BADINPUT = "STL-LIM-420", "STL-LIM-421", "STL-LIM-422", "STL-LIM-423"
 SPANS, LEDGER, FLAG, TABLE = "spans", "usage_ledger", "otlp-export", "pricing"   # index keys; the feature flag and the pricing row id (the app's subkind is the flag)
+NS = "stella"   # the attribute namespace of the span design, also the service name
 TYPES = ("input", "output", "cache_write", "cache_read", "reasoning")
 BY = ("card", "project", "role", "model", "connection")
 SAID = set()   # (connection, model) already alerted unpriced in this process
@@ -108,8 +109,8 @@ def span_of(rec):
     attrs = {"gen_ai.operation.name": "chat", "gen_ai.request.model": rec["model"], "gen_ai.provider.name": rec["connection"],
              "gen_ai.usage.input_tokens": t.get("input", 0), "gen_ai.usage.output_tokens": t.get("output", 0),
              "gen_ai.usage.cache_creation.input_tokens": t.get("cache_write", 0), "gen_ai.usage.cache_read.input_tokens": t.get("cache_read", 0),
-             "gen_ai.usage.reasoning.output_tokens": t.get("reasoning", 0), "stella.role": rec.get("role"), "stella.project": rec.get("project"),
-             "stella.card": rec.get("card"), "stella.cost": c["amount"] if c and c.get("priced") else None, "stella.batch": bool(rec.get("batch"))}
+             "gen_ai.usage.reasoning.output_tokens": t.get("reasoning", 0), f"{NS}.role": rec.get("role"), f"{NS}.project": rec.get("project"),
+             f"{NS}.card": rec.get("card"), f"{NS}.cost": c["amount"] if c and c.get("priced") else None, f"{NS}.batch": bool(rec.get("batch"))}
     return {"name": f"chat {rec['model']}", "trace_id": h[:32], "span_id": h[32:48], "start_time_unix_nano": start,
             "end_time_unix_nano": start + int(rec.get("latency_ms") or 0) * 10**6, "status": 1 if rec.get("outcome", "ok") == "ok" else 2,
             "attributes": {k: v for k, v in attrs.items() if v is not None}}
@@ -189,7 +190,7 @@ def _attr(k, v):
             else {"doubleValue": v} if isinstance(v, float) else {"stringValue": str(v)}}
 
 def otlp(spans):
-    return {"resourceSpans": [{"resource": {"attributes": [_attr("service.name", "stella")]}, "scopeSpans": [{"scope": {"name": "stella-cost"}, "spans": [
+    return {"resourceSpans": [{"resource": {"attributes": [_attr("service.name", NS)]}, "scopeSpans": [{"scope": {"name": NS + "-cost"}, "spans": [
         {"traceId": s["trace_id"], "spanId": s["span_id"], "name": s["name"], "kind": 3, "startTimeUnixNano": str(s["start_time_unix_nano"]),
          "endTimeUnixNano": str(s["end_time_unix_nano"]), "status": {"code": s["status"]}, "attributes": [_attr(k, v) for k, v in s["attributes"].items()]}
         for s in spans]}]}]}
