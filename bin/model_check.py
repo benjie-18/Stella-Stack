@@ -303,6 +303,7 @@ def judge_link(W, preset, mode, role, link):
             elif why is None and bench:
                 a = [r for r in bench if r["connection"] == prov["id"] and r["model"] == mid]
                 b = [r for r in bench if r["connection"] == p0["id"] and r["model"] == m0]
+                # shortcut: no regression set is passed (no data store of failed-card tasks yet); pass it to compare.decide when that store exists
                 d = compare.decide(a, b, W.p, cheaper=W.cheaper((prov["id"], mid), (p0["id"], m0)))
                 why = None if d in w["accept"] else "worse" if d == "worse" else "inconclusive"
                 if why is None:

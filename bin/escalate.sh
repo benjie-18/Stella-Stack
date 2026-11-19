@@ -341,6 +341,7 @@ if [ -n "${used:-}" ]; then   # the CLI call went out (route.py records its own)
   printf '%s\n%s\n' "$out" "$err" | python3 -I -c 'import json, sys; sys.path.insert(0, "/workspace/bin"); import ledger
 conn, model, role, project, card, outcome, tok, ms = sys.argv[1:]; text = sys.stdin.read()
 ledger.record({"connection": conn, "model": model, "role": role, "project": project, "card": card, "session": f"escalate.sh {card}", "outcome": outcome,
+               # shortcut: the plan share is read from the whole CLI output, the answer included; read only the CLI usage channel when a cli_usage pattern ships
                "tokens": json.loads(tok or "{}"), "latency_ms": int(ms), "plan_share": ledger.plan_share_from(conn, text)})
 if outcome == "limit":
     ledger.observe_cli_text(conn, None, text)' "$conn" "$model" "$role" "$project" "$card" "$outcome" "$tok" "$ms" >/dev/null 2>"$prompt.led" \

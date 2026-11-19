@@ -135,6 +135,7 @@ def best(entries, scores, ranks):
         f"{link_key(e)} ranks first of {len(order)} (ranked by: not excluded, healthy, score, privacy rank, catalog order): "
         f"status {e['status']}, privacy rank {ranks[e['link_class']]}; scores: {seen}")
 
+# shortcut: ranks from benchmark results and the advertised prior only; no store of closed-card first-pass rates exists yet, add its records to routing_stats then
 def scored(role, models):
     """(link key -> {score, source (benchmark|prior|none), n}, the same with the smaller samples' mean, the problem or None) for the
     role's links. compare.routing_stats does the statistics (the minimum sample is its parameter routing_min_tasks); a benchmark file or
