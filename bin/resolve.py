@@ -76,7 +76,7 @@ UNMET, POLICY, PRIVACY, CROSSING, COOLDOWN = "STL-MDL-715", "STL-MDL-716", "STL-
 EXHAUSTED, RUNG_SKIPPED, WORKER, LOG_FAILED = "STL-MDL-731", "STL-MDL-732", "STL-CFG-312", "STL-CFG-318"   # the rung walk (F2b item D)
 WAIVER = "STL-MDL-737"   # a review role answered with no link of another family than the builder (F2b item C)
 READS = ("role-assignments", "routing", "connections", "data-policy", "grants", "features")   # the schemas a resolve reads
-STUBS = ("routing-observed-quota",)   # features ids every answer rests on
+STUBS = ()   # features ids every answer rests on (the quota stub is gone: the usage ledger answers, F2c item A2)
 STUB_SCORES = "routing-advertised-scores"   # and this one when a group was ranked
 
 
@@ -354,6 +354,23 @@ def resolve(ctx, d=None):
                                                                          else "no link of the class order meets the role's requirements"))
     inorder = flat(order)
 
+    def quota(connection, model):
+        """(reason, until) when the usage ledger says the link cannot be used now: its daily cap is used, a limit is observed, its plan share
+        is at the limit of the data (limit-signals), or no slot is free; None otherwise. Read-only (the ledger creates nothing here)."""
+        import ledger
+        try:
+            st, lim = ledger.status(connection, model), ledger.signals()["plan_share_limit"]
+        except ledger.Stop as x:   # fail closed for this link only: a lock or usage file that cannot be used leaves the link, not every answer
+            return f"the usage ledger cannot be used for the link ({x.code} {x.problem})", None
+        if st["daily"]["cap"] is not None and st["daily"]["used"] >= st["daily"]["cap"]:
+            return f"the link's daily limit is used ({st['daily']['used']} of {st['daily']['cap']} calls); it resets at {st['daily']['resets_at']}", st["daily"]["resets_at"]
+        if st["observed"]:
+            return f"a limit is observed on the link until {st['observed']['until']} ({st['observed']['source']})", st["observed"]["until"]
+        if st["plan_share"] is not None and st["plan_share"] >= lim:
+            return "the plan's share is at its limit", None
+        if st["concurrency"]["free"] is not None and st["concurrency"]["free"] <= 0:
+            return "no free slot", None
+
     def judge(prov, model, rung=False):
         """(status, code, reason, grant, cooldown_until) of one link: the first rule that fails names it. A rung's class may also
         be the preset's needs class or its last resort (rule 5 only); the last resort outside the order still needs a crossing grant."""
@@ -380,8 +397,10 @@ def resolve(ctx, d=None):
             return ("needs_grant", PRIVACY, f"the connection {probs['grant']['text']}", {"kind": "privacy", "data_class": probs["grant"]["data_class"]}, None)
         cool = [u for u in (cooling(f"{prov['id']}/{model}"), cooling(prov["id"])) if u is not None]
         until = next((u for u in cool if u), None)
-        return ("cooldown", COOLDOWN, "the link failed recently and cools down until " + (until or "a time its state entry gives as no date (it counts as ahead)"),
-                None, until) if cool else ("usable", None, None, None, None)
+        if cool:
+            return ("cooldown", COOLDOWN, "the link failed recently and cools down until " + (until or "a time its state entry gives as no date (it counts as ahead)"), None, until)
+        busy = quota(prov["id"], model)
+        return ("cooldown", COOLDOWN, busy[0], None, busy[1]) if busy else ("usable", None, None, None, None)
 
     # ---- the chain
     seen = set()

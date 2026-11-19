@@ -22,7 +22,8 @@ PF=$(j .probe_records "$IX"); SHIPPED=$(jq -c '[.entries[].id]' "$ROOT/$(p conne
 mk() {  # <name> [<from name>]: a scratch root with a copy of the data, the role table and its hooks (or of another scratch root)
   rm -rf "${T:?}/$1"
   if [ -n "${2:-}" ]; then cp -r "$T/$2" "$T/$1"; return; fi
-  mkdir -p "$T/$1/$(dirname "$RJREL")"; cp -r "$ROOT/.stella" "$T/$1/.stella"; cp "$RJ" "$T/$1/$RJREL"; cp -r "$(dirname "$RJ")/hooks" "$T/$1/$(dirname "$RJREL")/hooks"
+  mkdir -p "$T/$1/$(dirname "$RJREL")" "$T/$1/.supervisor"; cp "$ROOT/.supervisor/limits.env" "$T/$1/.supervisor/"; cp -r "$ROOT/.stella" "$T/$1/.stella";   # the limits store: a limit that names a key it lacks is 0 (the ledger)
+  cp "$RJ" "$T/$1/$RJREL"; cp -r "$(dirname "$RJ")/hooks" "$T/$1/$(dirname "$RJREL")/hooks"
 }
 ed() { local f; f="$T/$1/$(p "$2")"; jq "${@:3}" "$f" >"$f.n" && mv "$f.n" "$f"; }   # <root> <schema> <jq args and filter>
 edt() { local f="$T/$1/$RJREL"; jq "${@:2}" "$f" >"$f.n" && mv "$f.n" "$f"; }        # <root> <jq args and filter>: the role table
@@ -116,7 +117,7 @@ ok 'J b "all(.chain[]; (.status == \"usable\" and .code == null and .reason == n
   "1b every link that is not usable carries a catalog code and a plain reason"
 ok 'J b "([.chain[] | .link_class] | unique | length == 3) and .chain[0].link_class == \"$FRONT\" and .chain[-1].link_class == \"$LOCAL\" and ([.chain[] | .connection + \"/\" + .model] | length == (unique | length))"' \
   "1c the catalog's links follow the preset's class order, and no link is listed twice"
-ok 'J b --slurpfile f "$ROOT/$(p features)" ".stubs | length > 0 and (index(\"$SCORESTUB\") == null) and all(. as \$s | \$f[0].entries | any(.id == \$s and .due_phase != null))"' \
+ok 'J b --slurpfile f "$ROOT/$(p features)" ".stubs | (index(\"$SCORESTUB\") == null) and all(. as \$s | \$f[0].entries | any(.id == \$s and .due_phase != null))"' \
   "1d stubs[] names features entries that are stubs (the scores stub only when a group was ranked)"
 python3 -I -B "$RS" resolve --project qa-proj --json >/dev/null 2>"$T/o/us.err"; us=$?
 ok '[ "$us" = 2 ] && grep -qi usage "$T/o/us.err"' "1e a request with no --role is a usage error (exit 2)"
@@ -558,5 +559,28 @@ mk cr5 cf; ed cr5 role-assignments --arg v "$VR" --argjson ch "[$(L qa-front m1)
 n0=$(evn cr5 '.type == "routing.cross-family-waiver"'); rs cr5 v1 --role "$VR" --project qa-proj --card qa-card --rung 1; n1=$(evn cr5 '.type == "routing.cross-family-waiver"')
 ok 'passes cr5 && [ "$(rc v1)" = 0 ] && J v1 ".rung.served == 1 and .cross_family.status == \"waived\" and .cross_family.builder_family == \"qa-fa\" and .cross_family.logged == true" && [ $((n1 - n0)) = 1 ]' \
   "16d CRT-05 a review role served on a rung of the builder's family is judged too: waived, one routing.cross-family-waiver line"
+
+# ---- 17: F2c A2 the usage ledger's quota (daily cap, observed limit, plan share, free slot) and the stub that is gone ----
+LGR() { STELLA_ROOT=$T/$LGROOT python3 -I -B "$BIN/ledger.py" "$@"; }   # the ledger CLI on the scratch root named in LGROOT
+lgrec() { jq -nc --arg c "$1" --arg m "$2" --argjson pl "${3:-null}" '{connection: $c, model: $m, outcome: "ok", plan_share: $pl}' | LGR record --json >/dev/null; }   # <connection> <model> [plan share]
+mk lg base; mkdir -p "$T/lg/.supervisor/logs" "$T/lg/.supervisor/state"; LGROOT=lg
+ed lg connections '(.entries[] | select(.id == "qa-front") | .models[0].limits) = {per_day: 1} | (.entries[] | select(.id == "qa-front") | .models[1].limits) = {max_concurrent: 1}'
+lgrec qa-front qa-front-m1
+rs lg q1 --role "$NR" --project qa-proj
+TOM=$(date -u -d tomorrow +%FT00:00:00Z)
+ok '[ "$(rc q1)" = 0 ] && J q1 --arg c "$C_COOL" --arg t "$TOM" "$(ent qa-front qa-front-m1) | length == 1 and all(.[]; .status == \"cooldown\" and .code == \$c and .cooldown_until == \$t and (.reason | test(\"daily limit\")))" &&
+  J q1 "$(ent qa-front qa-front-m2) | all(.[]; .status == \"usable\")"' "17a a link whose daily cap is used is cooldown ($C_COOL), cooldown_until the ledger's reset (next UTC midnight); the model beside it stays usable"
+ok '[ ! -e "$T/lg/.supervisor/state/ledger-state.json.slots" ] && [ ! -e "$T/lg/.supervisor/state/ledger-state.json" ]' "17b the resolver made no slot folder and no ledger state file (read-only)"
+( exec env STELLA_ROOT=$T/$LGROOT python3 -I -B "$BIN/ledger.py" hold --connection qa-front --model qa-front-m2 -- sleep 30 ) & HP=$!
+for _ in $(seq 100); do [ "$(LGR status --connection qa-front --model qa-front-m2 --json | jq .concurrency.in_use)" = 1 ] && break; sleep 0.1; done
+rs lg q2 --role "$NR" --project qa-proj; kill $HP 2>/dev/null; wait $HP 2>/dev/null
+ok 'J q2 --arg c "$C_COOL" "$(ent qa-front qa-front-m2) | length == 1 and all(.[]; .status == \"cooldown\" and .code == \$c and .reason == \"no free slot\" and .cooldown_until == null)"' "17c a link with no free slot is cooldown ($C_COOL), reason \"no free slot\", cooldown_until null"
+echo "You've hit your usage limit" | LGR observe --connection qa-cli --json >"$T/o/obs.json"; OU=$(jq -r .until "$T/o/obs.json")
+rs lg q3 --role "$NR" --project qa-proj
+ok '[ -n "$OU" ] && [ "$OU" != null ] && J q3 --arg c "$C_COOL" --arg u "$OU" "$(ent qa-cli) | length > 0 and all(.[]; .status == \"cooldown\" and .code == \$c and .cooldown_until == \$u)"' "17d a cli-login link with an observed limit (its CLI's limit text) is cooldown until the observed end"
+mk lg2 base; mkdir -p "$T/lg2/.supervisor/logs" "$T/lg2/.supervisor/state"; LGROOT=lg2; lgrec qa-cli qa-cli-m1 1
+rs lg2 q4 --role "$NR" --project qa-proj
+ok 'J q4 --arg c "$C_COOL" "$(ent qa-cli) | length > 0 and all(.[]; .status == \"cooldown\" and .code == \$c and (.reason | test(\"plan\")))"' "17e a cli-login link whose plan share is at the limit of the data (limit-signals plan_share_limit) is cooldown"
+ok '! jq -e ".entries[] | select(.id == \"routing-observed-quota\")" "$ROOT/$(p features)" >/dev/null && ! grep -q routing-observed-quota "$RS" && J b ".stubs == []"' "17f the routing-observed-quota stub is gone from features.json and from the resolver's answers (T-STUB-QUOTA)"
 
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

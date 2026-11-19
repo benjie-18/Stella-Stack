@@ -380,17 +380,6 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
-      "id": "routing-observed-quota",
-      "owner_phase": "F2",
-      "status": "on",
-      "depends_on": [],
-      "flag": null,
-      "due_phase": "F2c",
-      "replaced_by": "the usage ledger (F2c): quota and cost per connection; until then the only quota routing knows is the limit failover observes (rate-limit and daily-cap errors, kept as cooldowns)",
-      "global_id": "95b91355-8745-4ec0-8bcf-ed04147dea95",
-      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
-    },
-    {
       "id": "routing-advertised-scores",
       "owner_phase": "F2",
       "status": "on",

@@ -717,7 +717,7 @@
       "kind": "tool",
       "summary": "Test rig: a fake coding CLI standing in for a cli-login connection; reports a usage limit, a timeout or a missing model on request",
       "keywords": ["mock", "cli", "usage limit", "test rig"],
-      "inputs": "a prompt on stdin; MOCK_CLI_MODE, MOCK_CLI_SECONDS, MOCK_CLI_CALLS",
+      "inputs": "a prompt on stdin; MOCK_CLI_MODE, MOCK_CLI_SECONDS, MOCK_CLI_CALLS, MOCK_CLI_USAGE (a plan-share usage block on stderr)",
       "outputs": "a result JSON, or a non-zero exit with a message; a calls file with argv and env names",
       "allowed_roles": [],
       "risk_class": "read",
