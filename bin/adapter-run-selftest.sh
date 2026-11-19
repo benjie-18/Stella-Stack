@@ -3,7 +3,7 @@
 # sections 3, 3b, 3c, 7, 8, 9 with rulings DC-06, DC-07). Every section runs in its own scratch root (bash adapter-run-selftest.sh <section>);
 # no argument runs them all.
 # Sections -> checks: lean = AC11-lean | resume = AC11-resume | budget = AC9-output-budget | filter = AC9-filter | stuck = AC9-stuck (full:
-#   stop, block, lease) | attached = AC6-brief, AC6-load-log (end to end through a card run)
+#   stop, block, lease) | attached = AC6-brief, AC6-load-log (end to end through a card run) | builder section (Gate B fix cycle 1): filterseen = V2-09
 # Every run is a real bin/adapter.py start of the fake adapter (a data entry over bin/mock_agent.py, the harness of
 # bin/adapter-selftest.sh): the mock upstream, the model proxy and the capabilities MCP server (bin/capabilities_mcp.py) run on free ports.
 # Written test-first (F3 wave 4): exit codes, files, the trusted event log, events.jsonl and code ranges (STL-LIM-450..459 X) are asserted,
@@ -32,7 +32,7 @@
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 ME=adapter-run-selftest
-SECTIONS="lean resume budget filter stuck attached"
+SECTIONS="lean resume budget filter stuck attached filterseen"
 if [ $# = 0 ]; then
   f=0; for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || f=$((f+1)); done
   [ $f = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($f sections)"; [ $f = 0 ]; exit
@@ -171,12 +171,13 @@ if [ -z "$CRF" ]; then   # A1: until item Q ships the key, the scratch index get
   ed .stella/schemas/data-files.schema.json '.properties.conformance_records = {type: "string"}'
 fi
 # plant <adapter>: a passing conformance record whose digests match the data as it is now (adapter.digests); call it after the last data edit
+# (fixture, Gate B fix V2-03: the gate matches the record's link and connection type, so the record names the api link every card run here uses)
 plant() { python3 -I - "$R/bin" "$1" "$ROLE" "$VER" "$R/$CRF" "$(uuid)" "$IID" <<'PY'
 import datetime, json, os, sys
 sys.path.insert(0, sys.argv[1]); import adapter
 p = sys.argv[5]
 doc = json.load(open(p)) if os.path.exists(p) else {"schema_version": 1, "records": []}
-doc["records"].append({"adapter": sys.argv[2], "version": sys.argv[4], "role": sys.argv[3], "passed": True, "result": "pass", "cases": {},
+doc["records"].append({"adapter": sys.argv[2], "version": sys.argv[4], "role": sys.argv[3], "link": "qa-api/qa-m1", "conn_type": "api", "passed": True, "result": "pass", "cases": {},
                        "digests": adapter.digests(sys.argv[2], sys.argv[3]), "at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                        "global_id": sys.argv[6], "install_id": sys.argv[7]})
 os.makedirs(os.path.dirname(p), exist_ok=True); json.dump(doc, open(p, "w"))
@@ -299,6 +300,24 @@ attached)   # AC6-brief + AC6-load-log end to end: a card with an attached skill
   ok '[ "$(grep -c . <<<"$L")" = 1 ] && jq -e "[.. | strings] as \$s | all((\"qa-card-k1\", \"qa-run-k1\", \"$ROLE\", \"qa-att-skill\"); . as \$v | \$s | index(\$v) != null)" <<<"$L"' \
     "AC6-load-log exactly one trusted capability-load line naming card, run, role and capability"
   ok '[ $d = 0 ] && ! tail -n +$((u0 + 1)) "$UEV" 2>/dev/null | grep -q capability-load' "AC6-load-log ... and none in the untrusted log"
+  ;;
+filterseen)   # builder (Gate B fix V2-09): with a hook-capable CLI the tool result the model sees is the filtered log; a denied command stays denied
+  HK=$(jq -c '[.entries[] | select(.policy.hook)][0].policy.hook' "$AF")
+  ed .stella/adapters.json --argjson f "$FAKE" --argjson h "$HK" --arg g "$(uuid)" \
+    '.entries += [$f + {id: "qa-hook2", global_id: $g} | .supports.hook = true | .policy.hook = $h | .policy.target.owned_pointers += [$h.pointer] | .tools.shell.command = "/command"] | .env_keep += ["STELLA_ROOT"]'
+  # the hook part of the first entry that has one: the policy hook (bin/policy.py under the stack path, the tree copy under bin/selftests.sh) judges
+  # with this root's data because the CLI's env keeps STELLA_ROOT; the log filter hook follows it in the same list
+  LOGCMD='for i in $(seq 400); do if [ $i = 200 ]; then echo "QA-FAIL-LINE: assertion failed in qa_mod"; else printf "qa-noise-%04d step passed\n" $i; fi; done; exit 1'
+  brief qa-run-fs1 "$(jq -nc --arg c "$LOGCMD" '[{op: "shell", command: $c}, {op: "shell", command: "git config --list"}]')"   # the shell input key of the hook's own CLI shape
+  run s1 A start --adapter qa-hook2 --role "$ROLE" --worktree "$WT" --brief-file "$T/brief-qa-run-fs1.md" --link qa-api/qa-m1 --run-id qa-run-fs1 --json
+  done_ qa-run-fs1; d=$?
+  RL=$R/$AR/qa-run-fs1/run.log
+  shells() { jq -cR 'fromjson? | select(.type == "tool_result" and .name == "shell")' "$RL" 2>/dev/null; }
+  SEEN=$(shells | sed -n 1p); DEN=$(shells | sed -n 2p)
+  ok '[ $RC = 0 ] && [ $d = 0 ] && grep -l log_filter "$(cfgdir qa-run-fs1)"/* | grep -v run-policy.json | xargs grep -l "policy.py" | grep -q .' "V2-09 precondition: the run ended and its generated CLI settings hold the policy hook and the log filter hook"
+  ok '[ -n "$SEEN" ] && jq -e ".ok == false and (.output | test(\"denied\") | not)" <<<"$SEEN" && jq -r .output <<<"$SEEN" | grep -q QA-FAIL-LINE && jq -r .output <<<"$SEEN" | grep -q qa-noise-0199 && ! jq -r .output <<<"$SEEN" | grep -qE "qa-noise-0(100|300|390)"' \
+    "V2-09 the tool result the CLI gives the model (its raw output in the run log, before the adapter's own filter) is the filtered log, exit code kept"
+  ok '[ -n "$DEN" ] && jq -e ".ok == false and (.output | test(\"denied\"))" <<<"$DEN"' "V2-09 control: a command the policy denies is still denied under the rewriting hook (judged as asked)"
   ;;
 esac
 finish

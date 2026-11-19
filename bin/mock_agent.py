@@ -2,7 +2,7 @@
 """A fake coding CLI for tests (F3 item A, design 3b), stdlib only. It runs the action list of its prompt file and prints jsonl.
   mock_agent.py --prompt-file F --config C [--model M] [--mcp-config J] [--cwd W]      mock_agent.py --version
 Actions: a JSON list between the prompt lines BEGIN-ACTIONS and END-ACTIONS (the rest of the prompt is ignored):
-  write {path, text} | read {path} | read_notes {path} | edit {path, old, new} | shell {cmd} (bash, in the worktree, with this
+  write {path, text} | read {path} | read_notes {path} | edit {path, old, new} | shell {cmd, or the key its entry's tool map names} (bash, in the worktree, with this
   process's environment) | mcp {tool, args} (JSON-RPC tools/call to the server the --mcp-config file names, with its headers) |
   model_call {prompt} (to the base URL and with the token of the variables its adapters.json entry names, in the entry's first wire
   shape) | env | usage {input, output} | say {text} | repeat {times, actions}.
@@ -12,7 +12,10 @@ Its adapters.json entry is the one the adapter's run_env.adapter variable names.
 the action's class in some adapter's tool map (the last matching map pattern decides; any matching list item denies); a write
 also meets the entry's write_boundary map pointers; when the config holds a hook at the entry's hook pointer whose matcher takes
 the action, the hook command runs with {tool, input, tool_name, tool_input, cwd} on stdin (exit 2, or a "deny" value in its JSON
-answer, denies). A denied action prints a tool_result with ok false and "denied" in its output and is not done.
+answer, denies). A denied action prints a tool_result with ok false and "denied" in its output and is not done. Contract 3b
+addendum (V2-09): every rule and hook judges the action as the model asked it; when no hook denies, a hook answer's updatedInput
+(any depth, the last hook's wins) replaces the input the action is done with, so a rewritten shell command's output is what the
+tool_result (what the model sees) holds.
 Output: {"type":"tool_use","name","input"} {"type":"tool_result","name","ok","output"[,"error" when not ok]} {"type":"usage","input_tokens","output_tokens"}
 {"type":"result","text","exit":0}. Exit 0, or 1 when an action crashes.
 shortcut: pattern semantics are fnmatch on the raw and the absolute value, not each CLI's own; enough for a fake, not a CLI model."""
@@ -65,9 +68,10 @@ def names_of(ctx, cls):
 
 
 def denied(ctx, op, inp):
+    """(why the action is denied or None, the input to do it with)."""
     spec = (ctx.ent.get("tools") or {}).get(op)
     if not spec or spec.get("class") == "other":
-        return None
+        return None, inp
     cls = spec["class"]
     raw = str(get(inp, spec.get("command") if cls == "shell" else spec.get("path")) or "")
     vals = [raw] if cls == "shell" else [raw, os.path.realpath(os.path.join(ctx.cwd, os.path.expanduser(raw)))]
@@ -84,13 +88,13 @@ def denied(ctx, op, inp):
                 if isinstance(v, str) and hit(pat):
                     verdict = v
             if verdict == "deny":
-                return f"{ptr} denies {raw}"
+                return f"{ptr} denies {raw}", inp
         elif isinstance(node, list):
             for item in node:
                 m = re.fullmatch(r"(\w+)\((.*)\)", item) if isinstance(item, str) else None
                 if m and m[1].casefold() in names and hit(m[2]):
-                    return f"{ptr} denies {raw} ({item})"
-    hook = pol.get("hook") or {}
+                    return f"{ptr} denies {raw} ({item})", inp
+    hook, new = pol.get("hook") or {}, None
     for h in get(ctx.config, hook.get("pointer", "")) or [] if hook else []:
         if not isinstance(h, dict) or not re.search(h.get("matcher") or "", op):
             continue
@@ -104,7 +108,21 @@ def denied(ctx, op, inp):
             except ValueError:
                 ans = None
             if r.returncode == 2 or "deny" in leaves(ans):
-                return f"the hook denies {raw}"
+                return f"the hook denies {raw}", inp
+            new = updated(ans) or new
+    return None, new or inp
+
+
+def updated(x):
+    """The first updatedInput object in a hook's answer, else None."""
+    if isinstance(x, dict):
+        if isinstance(x.get("updatedInput"), dict):
+            return x["updatedInput"]
+        x = list(x.values())
+    for v in x if isinstance(x, list) else []:
+        u = updated(v)
+        if u:
+            return u
     return None
 
 
@@ -177,10 +195,11 @@ def act(ctx, a):
     if a.get("step") in getattr(ctx, "done", ()):   # a step the notes read earlier list as done is not done again (resume)
         return
     emit({"type": "tool_use", "name": op, "input": inp})
-    why = denied(ctx, op, inp) if op in ("write", "edit", "read", "read_notes", "shell") else None
+    why, done_inp = denied(ctx, op, inp) if op in ("write", "edit", "read", "read_notes", "shell") else (None, inp)
     if why:
         emit({"type": "tool_result", "name": op, "ok": False, "output": f"denied: {why}", "error": f"denied: {why}"})
         return
+    a = {**a, **done_inp}   # a hook's rewrite (updatedInput) is what is done; the tool_use above shows what was asked
     path = os.path.join(ctx.cwd, os.path.expanduser(str(a.get("path", ""))))
     ok, out = True, ""
     try:
@@ -202,8 +221,8 @@ def act(ctx, a):
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(text.replace(a["old"], a["new"], 1))
             out = f"edited {a['path']}" if ok else f"{a['old']!r} is not in {a['path']}"
-        elif op == "shell":
-            r = subprocess.run(["bash", "-c", str(a["cmd"])], cwd=ctx.cwd, capture_output=True, text=True, errors="replace")
+        elif op == "shell":   # the command at the entry's tool map pointer (default cmd), as the policy judged it
+            r = subprocess.run(["bash", "-c", str(get(a, ((ctx.ent.get("tools") or {}).get("shell") or {}).get("command") or "/cmd"))], cwd=ctx.cwd, capture_output=True, text=True, errors="replace")
             ok, out = r.returncode == 0, (r.stdout + r.stderr)[-OUT_CAP:]
         elif op == "env":
             out = "\n".join(f"{k}={v}" for k, v in sorted(os.environ.items()))

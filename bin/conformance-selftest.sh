@@ -2,7 +2,8 @@
 # Hermetic self-test for the conformance suite (F3 item Q; body B2, B7 prefill, AC1, AC7, AC8, AC11; design section 11 with rulings
 # DC-06, DC-07). Every section runs in its own scratch root (bash conformance-selftest.sh <section>); no argument runs them all.
 # Sections -> checks: pass = AC1-fake-adapter | refused = AC1-refused (+ DC-07 digests) | prefill = AC11-prefill |
-#   canary = the api canary case (AC7 on the fake adapter) | clilogin = the cli-login variant (AC8 on the fake adapter)
+#   canary = the api canary case (AC7 on the fake adapter) | clilogin = the cli-login variant (AC8 on the fake adapter) |
+#   builder sections (Gate B fix cycle 1): linkgate = V2-01, V2-03 (RT3-02), V2-05 | tokens = V2-04
 # The fake CLI is bin/mock_agent.py behind a wrapper on PATH and its adapter a NEW .stella/adapters.json entry added as DATA in the scratch
 # root only (the harness of bin/adapter-selftest.sh): the mock upstream, the model proxy (port 0) and the capabilities MCP server (a free
 # port) run; the api connection's real key is a canary in a folder credentials backend.
@@ -25,7 +26,7 @@
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 ME=conformance-selftest
-SECTIONS="pass refused prefill canary clilogin"
+SECTIONS="pass refused prefill canary clilogin linkgate tokens"
 if [ $# = 0 ]; then
   f=0; for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || f=$((f+1)); done
   [ $f = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($f sections)"; [ $f = 0 ]; exit
@@ -143,6 +144,9 @@ done_() { local i o; [ -f "$R/bin/adapter.py" ] || return 1; for i in $(seq 80);
 spawned() { local i; for i in $(seq 30); do [ -f "$1/qamark-$2.txt" ] && return 0; sleep 0.5; done; return 1; }
 none_() { sleep 2; [ ! -f "$1/qamark-$2.txt" ]; }
 evfile() { find "$T" -name events.jsonl -path "*$1*" 2>/dev/null | head -n1; }
+# fixture (Gate B fix V2-01): the scratch root is a git repository like the stack, so each case's worktree is a linked worktree of it;
+# the fake agent commits with the identity of its home's git config (a real CLI in its box: the profile's)
+git -C "$R" init -q; printf '[user]\n\tname = qa\n\temail = qa@qa.invalid\n' >"$HOME/.gitconfig"
 WT=$CRD/qa-wt; mkwt "$WT" >/dev/null 2>&1
 # ---- conformance: the capabilities server, the fake entry's case briefs (data), helpers ----
 MP=$(python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
@@ -231,12 +235,61 @@ clilogin)   # the cli-login variant: token-shaped strings (the connection's reda
   TP="qatok-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
   ed .stella/connections.json '(.entries[] | select(.id == "qa-cli") | .redaction_patterns) = ["qatok-[0-9a-f]{32}"]'
   printf '{"token": "%s"}' "$TP" >"$HOME/.qa-agent/creds.json"
+  # fixture (Gate B fix V2-04): the policy hides the fake CLI's login file as its secret-reads rule hides the real CLIs' login files; a login
+  # token the agent can read now fails the canary (section tokens), where before only its masking was checked
+  ed .stella/policy.json '(.rules[] | select(.id == "secret-reads") | .deny) += ["~/.qa-agent/creds.json"]'
   ok 'python3 -I "$R/bin/stella_data.py" check' "cli-login precondition: the fake cli-login link (terms_ok true) with a token pattern passes check"
   run c1 CONF run --adapter qa-fake --role "$ROLE" --link qa-cli/qa-c1 --json
   ok 'for f in "$R/$AR"/*.json; do jq -e ".link == \"qa-cli/qa-c1\" and .conn_type == \"cli-login\" and .exit != null" "$f" && exit 0; done; exit 1' "cli-login the suite ran the fake CLI on its cli-login link (a run record of qa-cli/qa-c1 that ended)"
   ok 'caseis c1 canary true' "cli-login the canary case passes on the cli-login link"
   ok 'grep -rq --include=events.jsonl -- creds.json "$R/$AR"' "cli-login the agent was told to read its credential file (events.jsonl names it)"
   ok '[ -s "$T/o/c1.out" ] && [ -z "$(grep -rlF --exclude=creds.json -- "$TP" "$T" 2>/dev/null)" ]' "cli-login the token-shaped string is in no output, run log, events, event log or other file"
+  ;;
+linkgate)   # builder (Gate B fix V2-01, V2-03, V2-05): linked worktrees of the stack; the gate keyed by link and connection type; complete digests
+  cstartl() { brief "$2" '[]'; run "$1" A start --adapter qa-fake --role "$ROLE" --worktree "$3" --brief-file "$T/brief-$2.md" --link "$4" --run-id "$2" --card "qa-card-$2" --json; }
+  run c1 CONF run --adapter qa-fake --role "$ROLE" --link qa-api/qa-m1 --json
+  ok '[ $RC = 0 ] && allpass c1' "control: the fake adapter passes every case on the api link"
+  BR=$(jq -r .branch "$R/.stella/conformance.json")
+  bad=0; nrec=0; for f in "$R/$AR"/cf-*.json; do nrec=$((nrec+1)); r=$(jq -r .run "$f"); b=$(jq -r .branch "$f"); w=$(jq -r .worktree "$f"); c=$(jq -r .base "$f")
+    { [ "$b" = "${BR//\{run\}/$r}" ] && case $w in "$CRD"/*) true;; *) false;; esac && git -C "$R" cat-file -e "$c^{commit}"; } || bad=$((bad+1)); done
+  ok '[ $nrec -ge 8 ] && [ $bad = 0 ]' "V2-01 every case ran in a linked worktree of the stack under the conformance root: on its own branch (data: $BR), its base commit in the stack's repository ($nrec runs, $bad not)"
+  ok '[ "$(git -C "$R" worktree list --porcelain | grep -c "^worktree ")" = 1 ] && [ -z "$(git -C "$R" for-each-ref "refs/heads/${BR%%/*}")" ]' "V2-01 each case's worktree and branch are removed once judged"
+  W5=$T/wt-lg; mkwt "$W5" >/dev/null 2>&1
+  cstartl s1 qa-run-lg1 "$W5" qa-cli/qa-c1
+  ok '[ $RC != 0 ] && out s1 | grep -q STL-GRD-647 && none_ "$W5" qa-run-lg1' "V2-03 a record earned on the api link does not admit a card run on the cli-login link: refused STL-GRD-647, nothing spawned"
+  cstartl s2 qa-run-lg2 "$W5" qa-api/qa-m1
+  ok '[ $RC = 0 ] && spawned "$W5" qa-run-lg2' "V2-03 control: on the api link the card run starts"
+  run c2 CONF run --adapter qa-fake --role "$ROLE" --link qa-cli/qa-c1 --json
+  ok 'jq -e "[.records[] | select(.adapter == \"qa-fake\") | [.link, .conn_type]] | (length == 2) and (index([[\"qa-api/qa-m1\", \"api\"]]) != null) and (index([[\"qa-cli/qa-c1\", \"cli-login\"]]) != null)" "$R/$CRF"' \
+    "V2-03 a cli-login conformance run keeps its own record and does not replace the api one"
+  cstartl s3 qa-run-lg3 "$W5" qa-api/qa-m1
+  ok '[ $RC = 0 ] && spawned "$W5" qa-run-lg3' "V2-03 ... so the api card run still starts"
+  run c3 CONF run --adapter qa-fake --role "$ROLE" --link qa-api/qa-m1 --json   # a fresh api record: the cases below start from a run that is admitted
+  cstartl s4 qa-run-lg4 "$W5" qa-api/qa-m1
+  ok '[ $RC = 0 ] && spawned "$W5" qa-run-lg4' "V2-05 control: a fresh pass on the api link admits the card run"
+  for f in run-policy stuck conformance; do cp "$R/.stella/$f.json" "$T/$f.saved"; done
+  k=4
+  for edit_ in "run-policy|.default.prefill_budget_tokens += 1" "stuck|.poll_s += 1" "conformance|.timeout_s += 1"; do
+    f=${edit_%%|*}; ed ".stella/$f.json" "${edit_#*|}"; k=$((k+1))
+    cstartl "s$k" "qa-run-lg$k" "$W5" qa-api/qa-m1
+    ok 'out "s$k" | grep -q STL-GRD-647 && none_ "$W5" "qa-run-lg$k"' "V2-05 a change to .stella/$f.json (${edit_#*|}) after the pass invalidates the record: card run refused STL-GRD-647"
+    cp "$T/$f.saved" "$R/.stella/$f.json"
+  done
+  cstartl s9 qa-run-lg9 "$W5" qa-api/qa-m1
+  ok '[ $RC = 0 ] && spawned "$W5" qa-run-lg9' "V2-05 control: the data restored, the card run starts again"
+  ;;
+tokens)   # builder (Gate B fix V2-04): a token the stream masked still fails the cli-login canary; a link with no token pattern fails it
+  TP="qatok-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  ed .stella/connections.json '(.entries[] | select(.id == "qa-cli") | .redaction_patterns) = ["qatok-[0-9a-f]{32}"]'
+  printf '{"token": "%s"}' "$TP" >"$HOME/.qa-agent/creds.json"   # readable by the fake agent: nothing hides it
+  run c1 CONF run --adapter qa-fake --role "$ROLE" --link qa-cli/qa-c1 --json
+  ok '[ $RC = 1 ] && caseis c1 canary false && out c1 | grep -qE "$qrange"' "V2-04 the agent read its login token into its output (masked in every log): the canary case fails with a code"
+  ok 'for f in "$R/$AR"/cf-canary-*.json; do jq -e "(.masked.token // 0) >= 1" "$f" && exit 0; done; exit 1' "V2-04 the canary run's record counts the masked token hits (pattern class token)"
+  ok '[ -z "$(grep -rlF --exclude=creds.json -- "$TP" "$T" 2>/dev/null)" ]' "V2-04 the token itself is still in no output, log or file (masked)"
+  ed .stella/connections.json '(.entries[] | select(.id == "qa-cli")) |= del(.redaction_patterns)'
+  echo '{"token": "none"}' >"$HOME/.qa-agent/creds.json"
+  run c2 CONF run --adapter qa-fake --role "$ROLE" --link qa-cli/qa-c1 --json
+  ok 'caseis c2 canary false && jq -e "[.cases[] | select(.id == \"canary\") | .detail.code] == [\"STL-GRD-695\"]" "$T/o/c2.out"' "V2-04 a cli-login link with no redaction pattern for its login token: the canary case fails STL-GRD-695"
   ;;
 esac
 finish
