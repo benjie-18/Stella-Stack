@@ -11,7 +11,8 @@
     "B1",
     "E1",
     "E2",
-    "E3"
+    "E3",
+    "W1"
   ],
   "entries": [
     {
@@ -424,6 +425,17 @@
       "due_phase": "E1",
       "replaced_by": "E1 enforces the sandbox policy of .stella/policy.json (sandbox): a worker CLI's tool subprocesses run with the credential folders hidden, the worktree the only writable path and network only through the egress proxy",
       "global_id": "730cfb35-a5cd-43c7-9530-53b731de4c36",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "graph-first",
+      "owner_phase": "F3",
+      "status": "planned",
+      "depends_on": [],
+      "flag": null,
+      "due_phase": "W1",
+      "replaced_by": "the shared graph built in W1 (query it first, then read only the files it points to); run-policy graph_first is a stub until then",
+      "global_id": "0ac5d514-cdae-4f48-a0ac-67357b0a4321",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

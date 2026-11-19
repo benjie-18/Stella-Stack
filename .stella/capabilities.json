@@ -1246,6 +1246,68 @@
       },
       "global_id": "44065d24-4cfb-425c-b87f-e109c28c5bd1",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "run-policy",
+      "kind": "command",
+      "summary": "Per-role run policy (token-lean tools, budgets, context policy): check the data, show a role's policy, translate it to an adapter's settings (unsupported features listed), compare prefill and output with the role's budget",
+      "keywords": [
+        "run policy",
+        "budget",
+        "prefill",
+        "output",
+        "compaction",
+        "translate",
+        "adapter",
+        "core tools"
+      ],
+      "inputs": "check|show|translate|prefill|output-check --role R [--adapter A] [--tokens N|--file F|--events F] --json",
+      "outputs": "JSON; exit 1 with STL-LIM-450..453 when the policy is unusable or a budget is exceeded",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/run_policy.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "c66e08a2-d94b-49ca-a77a-08ea52a69b11",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "log-filter",
+      "kind": "command",
+      "summary": "Deterministic log filter: trims tool output to the failing lines with context, collapses repeated lines, drops progress noise; never drops a failing line",
+      "keywords": [
+        "log",
+        "filter",
+        "trim",
+        "failing",
+        "stack frames",
+        "progress"
+      ],
+      "inputs": "[--role R], the log on stdin",
+      "outputs": "the filtered log on stdout; exit 1 with STL-LIM-450 when the policy is unusable",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/log_filter.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "daa915f1-f9ad-42b7-89c5-5d7a0cdb0a65",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }
