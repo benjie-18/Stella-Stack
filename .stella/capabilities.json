@@ -2583,6 +2583,33 @@
       },
       "global_id": "cb8536f6-36a3-4a15-b41a-9b726de3a48b",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "conformance",
+      "kind": "command",
+      "summary": "Conformance suite for worker adapters (host only): run each case of .stella/conformance.json as a card-less adapter run in a scratch worktree, judge it from trusted evidence (stream, run log, completion evidence, usage ledger, event log, worktree), record the result with the data digests the adapter start gate checks",
+      "keywords": [
+        "conformance",
+        "adapter",
+        "worker",
+        "coding cli",
+        "canary",
+        "prefill",
+        "gate"
+      ],
+      "inputs": "run --adapter A --role R [--link CONN/MODEL] [--project P] [--json]",
+      "outputs": "JSON record {adapter, version, role, link, conn_type, passed, cases, digests, at, global_id, install_id}; the record at the index key conformance_records; one conformance.run event line; exit 1 with a catalog code (STL-GRD-690..695, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/conformance.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "1c748b6e-7e6b-4d4a-bb82-8aedb1d3a6cb",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }
