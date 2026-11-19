@@ -423,5 +423,6 @@
   "model_proxy_state": ".supervisor/state/model-proxy.json",
   "capability_sources": ".stella/capability-sources.json",
   "adapter_runs": ".supervisor/state/adapter-runs",
-  "host_presence": ".supervisor/state/host-presence.json"
+  "host_presence": ".supervisor/state/host-presence.json",
+  "capabilities_mcp_state": ".supervisor/state/capabilities-mcp.json"
 }

@@ -213,6 +213,11 @@
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The host presence record (F3 item H, DC-10, schema host-presence): route, device and biometric, indicator, kill switch, input-source indicators and request finality. Written on the host only; a protected state path, not a data file. bin/host_access.py decide reads it."
+    },
+    "capabilities_mcp_state": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The capability MCP server's bound address, port, path and pid (F3 item M, bin/capabilities_mcp.py serve); a worker's capabilities.py reads it to reach the server. Written on the host only; not a data file."
     }
   },
   "required": [
@@ -241,7 +246,8 @@
     "budget_state",
     "model_check_state",
     "run_tokens",
-    "model_proxy_state"
+    "model_proxy_state",
+    "capabilities_mcp_state"
   ],
   "additionalProperties": false
 }

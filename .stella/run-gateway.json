@@ -18,5 +18,27 @@
     "forward_query": [
       "alt"
     ]
+  },
+  "mcp": {
+    "bind": "127.0.0.1",
+    "port": 0,
+    "path": "/mcp",
+    "hosts": [
+      "127.0.0.1",
+      "localhost",
+      "::1"
+    ],
+    "auth_header": "authorization",
+    "auth_scheme": "Bearer",
+    "max_body_bytes": 1048576,
+    "timeout_s": 30,
+    "protocol_versions": [
+      "2025-06-18",
+      "2025-03-26"
+    ],
+    "server_info": {
+      "name": "stella-capabilities",
+      "version": "1"
+    }
   }
 }

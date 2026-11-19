@@ -12,7 +12,9 @@ CLI (host side; --role names a role of the role table):
   load ID --role R --run RUN [--card C] [--json]    the definition; one trusted capability-load line (engine side only)
   check-card --role R --card FILE [--json]          every skill / tool of a card JSON must be available to R
   prompt-line [--json]                              the capability line every role prompt carries
-In a worker environment every command is refused (STL-GRD-662): a worker asks the capability server (item M, not built here).
+In a worker environment (DC-05) search / describe / request / load go to the capability server (bin/capabilities_mcp.py) with the
+run token of the environment, without --role, --card or --run (role, card and run come from the token); nothing local is read or
+written. Those flags, check-card and prompt-line are refused there (STL-GRD-662); a server that cannot be reached: STL-GRD-681.
 Exit: 0 ok; 1 refused (catalog code STL-GRD-660..667 on stderr); 2 usage."""
 import argparse, json, os, re, sys
 sys.dont_write_bytecode = True
@@ -189,10 +191,12 @@ def cmd_check_card(a, src, entries):
 def main(argv):
     p = argparse.ArgumentParser(prog="capabilities.py")
     sub = p.add_subparsers(dest="cmd", required=True)
+    need = {}   # flags required on the host; a worker names none of them (DC-05)
     def add(name, *args, **kw):
         s = sub.add_parser(name)
-        for flag, req in args:
-            s.add_argument(flag, required=req, **kw.get(flag, {}))
+        need[name] = [flag for flag, req in args if req]
+        for flag, _ in args:
+            s.add_argument(flag, **kw.get(flag, {}))
         s.add_argument("--json", action="store_true")
         return s
     add("search", ("--role", True), ("--limit", False), **{"--limit": {"type": int}}).add_argument("words", nargs="+")
@@ -203,16 +207,28 @@ def main(argv):
     add("prompt-line")
     a = p.parse_args(argv)
     try:
-        if w := worker_env.reason():   # before reading anything: a worker asks the capability server (item M)
-            raise Refuse(662, w)
-        src = sources()
-        if a.cmd == "prompt-line":
-            out = {"line": src["capability_prompt_line"]}
+        if w := worker_env.reason():   # before reading anything: a worker asks the capability server (DC-05)
+            if a.cmd in ("check-card", "prompt-line") or any(getattr(a, f, None) is not None for f in ("role", "card", "run")):
+                raise Refuse(662, w + "; role, card and run come from the run token, through the capability server")
+            import capabilities_mcp as mcp
+            args = ({"query": " ".join(a.words)} if a.cmd == "search" else {}) | {
+                k: v for k in ("limit", "id", "reason") if (v := getattr(a, k, None)) is not None}
+            try:
+                out = mcp.call(a.cmd, args)
+            except mcp.ClientError as x:
+                sd.say(x.code, x.problem)
+                return 1
         else:
-            if not role_ok(a.role):
+            if missing := [f for f in need[a.cmd] if getattr(a, f[2:]) is None]:
+                p.error("the following arguments are required: " + ", ".join(missing))
+            src = sources()
+            if a.cmd == "prompt-line":
+                out = {"line": src["capability_prompt_line"]}
+            elif not role_ok(a.role):
                 raise Refuse(663, "the role is not in the role table")
-            fn = {"check-card": cmd_check_card}.get(a.cmd) or globals()["cmd_" + a.cmd]
-            out = fn(a, src, registry())
+            else:
+                fn = {"check-card": cmd_check_card}.get(a.cmd) or globals()["cmd_" + a.cmd]
+                out = fn(a, src, registry())
     except Refuse as r:
         sd.say(f"STL-GRD-{r.code}", r.problem, alert=r.alert)
         return 1

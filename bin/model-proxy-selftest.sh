@@ -79,7 +79,7 @@ r = c.getresponse()
 print(json.dumps({"status": r.status, "headers": dict(r.getheaders()), "body": r.read().decode("utf-8", "replace")}))
 PYC
 get() { python3 -I "$T/cli.py" "$LO" "$PORT" GET "$1" '{}' ''; }
-post_ctl() { python3 -I "$T/cli.py" "$LO" "$PORT" POST "$CTL" '{"Content-Type": "application/json"}' "$1" >/dev/null; }
+post_ctl() { python3 -I "$T/cli.py" "$LO" "$PORT" POST "/${CTL#*://*/}" '{"Content-Type": "application/json"}' "$1" >/dev/null; }   # the control URL's path: the mock matches the path only
 calls() { get /_calls | jq -r '.body | fromjson | [.counts[]] | add // 0' 2>/dev/null || echo -1; }
 # ---- the fake api connection on the mock, its key in a folder backend ----
 SHAPE=$(jq -r '.entries[0].id' "$R/.stella/protocols.json"); HDR=$(jq -r '.entries[0].request.headers | keys[0]' "$R/.stella/protocols.json")
@@ -124,7 +124,7 @@ call() {
 st() { jq -r .status "$T/o/$1.json" 2>/dev/null; }
 refused() { local s; s=$(st "$1"); [ -n "$s" ] && [ "$s" != null ] && [ "$s" -ge 400 ] && grep -qE "$2" "$T/o/$1.json"; }
 last_up() { get /_calls | jq -c '.body | fromjson | .requests[-1] | .body |= (if type == "string" then (fromjson? // .) else . end)'; }   # the last request the mock got: {shape, model, headers, body}
-nolog() { ! grep -rqF -- "$1" "$R/.supervisor" "$T/sup" "$T/proxy.out" "$T/proxy.err" "$HOME" 2>/dev/null; }
+nolog() { ! grep -rqF --exclude-dir=qa-keys -- "$1" "$R/.supervisor" "$T/sup" "$T/proxy.out" "$T/proxy.err" "$HOME" 2>/dev/null; }
 ok '[ -n "$PORT" ] && [ -n "$DP" ] && python3 -I "$R/bin/stella_data.py" check' "precondition: the mock and the decoy run, the scratch data (fake connection, folder key backend) passes check"
 TOK=$(mint --run qa-run-1 --role builder --card qa-card-1 --link qa-api/qa-m1)
 

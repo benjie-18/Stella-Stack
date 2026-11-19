@@ -1158,6 +1158,35 @@
       },
       "global_id": "e5261c3a-11cd-48e1-9e13-992e406fa07e",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "capabilities-mcp",
+      "kind": "command",
+      "summary": "The capability MCP server on loopback (host only): MCP over streamable HTTP (JSON-RPC 2.0 POSTs) with the tools search, describe, request and load; the run token is the only credential and role, card and run come from its record (never from the arguments); Host and Origin must name a loopback host; it calls bin/capabilities.py in-process, so load and request write their trusted lines there; a worker's capabilities.py is its thin client",
+      "keywords": [
+        "capability",
+        "mcp",
+        "server",
+        "loopback",
+        "run token",
+        "search",
+        "load",
+        "skill",
+        "discover"
+      ],
+      "inputs": "serve [--port P]   (bind address, port, path, hosts, auth header, body limit, timeout and protocol versions from .stella/run-gateway.json mcp)",
+      "outputs": "{bind, port, path, pid} on stdout and at the index key capabilities_mcp_state; per request a JSON-RPC answer, or an HTTP status >= 400 with a JSON-RPC error whose data.code is the catalog code (STL-GRD-675..679); a refused tool call is a result with isError true (STL-GRD-660..667); exit 1 with STL-GRD-680 or STL-CFG-312 when it cannot serve",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/capabilities_mcp.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "323e4275-99e9-4dff-a72b-fa76e64bbab1",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

@@ -2572,6 +2572,102 @@
       "check": "bin/host_access.py decide --request FILE --json prints the code and problem (STL-GRD-637).",
       "related": "F3 B11, AC10; bin/host_access.py",
       "resolvable": false
+    },
+    {
+      "code": "STL-GRD-675",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a capability server call has no valid run token",
+      "message": "The capability server refused a request with no run token, or with one that is unknown, expired or revoked: {problem}.",
+      "action": "start the run again so it gets a fresh token; nothing for the owner unless it repeats.",
+      "cause": "Only a run's own token opens the capability server, and the role, card and run come from that token. Nothing else of the request was read.",
+      "check": "`python3 bin/stella_data.py check`; the server's state at the index key capabilities_mcp_state; `bash bin/capabilities-mcp-selftest.sh`.",
+      "related": "F3 item M; bin/capabilities_mcp.py, .stella/run-gateway.json (mcp)",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-676",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a capability server call named a foreign host",
+      "message": "The capability server refused a request whose Host or Origin header names no loopback host: {problem}.",
+      "action": "check what sent it: a web page that rebinds a DNS name to loopback is the usual cause.",
+      "cause": "The server answers only requests addressed to a loopback name listed in run-gateway mcp.hosts (protection against DNS rebinding).",
+      "check": "`python3 bin/stella_data.py check`; the server's state at the index key capabilities_mcp_state; `bash bin/capabilities-mcp-selftest.sh`.",
+      "related": "F3 item M; bin/capabilities_mcp.py, .stella/run-gateway.json (mcp)",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-677",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a capability server request was malformed",
+      "message": "The capability server refused a request that is not one JSON-RPC POST on its path within the limits: {problem}.",
+      "action": "fix the client's MCP configuration (URL, method, body size, protocol version).",
+      "cause": "The server takes one JSON-RPC 2.0 object per POST on run-gateway mcp.path, with a plain Content-Length up to mcp.max_body_bytes.",
+      "check": "`python3 bin/stella_data.py check`; the server's state at the index key capabilities_mcp_state; `bash bin/capabilities-mcp-selftest.sh`.",
+      "related": "F3 item M; bin/capabilities_mcp.py, .stella/run-gateway.json (mcp)",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-678",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a capability server method or tool is unknown",
+      "message": "The capability server refused a JSON-RPC method, tool or arguments it does not serve: {problem}.",
+      "action": "list the tools with tools/list and call one with its arguments.",
+      "cause": "The server serves initialize, ping, tools/list and tools/call with the tools search, describe, request and load.",
+      "check": "`python3 bin/stella_data.py check`; the server's state at the index key capabilities_mcp_state; `bash bin/capabilities-mcp-selftest.sh`.",
+      "related": "F3 item M; bin/capabilities_mcp.py, .stella/run-gateway.json (mcp)",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-679",
+      "area": "GRD",
+      "severity": "critical",
+      "title": "the capability server failed",
+      "message": "The capability server failed on a request: {problem}.",
+      "action": "run the check below and read the server's stderr; report it if it repeats.",
+      "cause": "An unexpected failure inside the server; the answer carries only the error type, never its text.",
+      "check": "`python3 bin/stella_data.py check`; the server's state at the index key capabilities_mcp_state; `bash bin/capabilities-mcp-selftest.sh`.",
+      "related": "F3 item M; bin/capabilities_mcp.py, .stella/run-gateway.json (mcp)",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-680",
+      "area": "GRD",
+      "severity": "critical",
+      "title": "the capability server cannot serve",
+      "message": "The capability server did not start: {problem}.",
+      "action": "set run-gateway mcp.bind to a loopback address, free the port, or make the state folder writable.",
+      "cause": "The server listens on loopback only and writes its address to the index key capabilities_mcp_state before it serves.",
+      "check": "`python3 bin/stella_data.py check`; the server's state at the index key capabilities_mcp_state; `bash bin/capabilities-mcp-selftest.sh`.",
+      "related": "F3 item M; bin/capabilities_mcp.py, .stella/run-gateway.json (mcp)",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-681",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "the capability server cannot be reached",
+      "message": "A worker could not reach the capability server: {problem}.",
+      "action": "start the server on the host (`python3 bin/capabilities_mcp.py serve`) and run the worker with its run token.",
+      "cause": "In a worker environment capabilities.py asks the server with the run token of its environment and reads nothing else; the token, the server's state file or the server itself is missing.",
+      "check": "`python3 bin/stella_data.py check`; the server's state at the index key capabilities_mcp_state; `bash bin/capabilities-mcp-selftest.sh`.",
+      "related": "F3 item M; bin/capabilities_mcp.py, .stella/run-gateway.json (mcp)",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-682",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "the capability server gave no usable answer",
+      "message": "The capability server answered a worker's call with no usable result: {problem}.",
+      "action": "run the check below; report it if it repeats.",
+      "cause": "The answer was not a JSON-RPC tool result and carried no catalog code.",
+      "check": "`python3 bin/stella_data.py check`; the server's state at the index key capabilities_mcp_state; `bash bin/capabilities-mcp-selftest.sh`.",
+      "related": "F3 item M; bin/capabilities_mcp.py, .stella/run-gateway.json (mcp)",
+      "resolvable": false
     }
   ]
 }
