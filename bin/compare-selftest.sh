@@ -231,4 +231,14 @@ ok '[ "$(cp_ check --json >/dev/null; echo $?)" = 1 ] && grep -q STL-MDL-752 "$T
 ed model-check.json '.pass_k = 3'
 ok 'python3 -I -B "$R/bin/stella_data.py" check' "E25 the data index judges model-check.json (schema model-check) and the benchmark_results key"
 
+# ---- HC1 item 8: the chunk of digests per event line and the read cap are data (model-check.json) ----
+ed model-check.json '.pass_k = 3 | .event_chunk = 3'
+EV=$R/$(ix .event_log); n0=$(grep -c '"benchmark.recorded"' "$EV")
+cp_ record --file "$T/rows.json" --json >/dev/null
+ok '[ "$(grep -c "\"benchmark.recorded\"" "$EV")" = "$((n0 + 3))" ]' "E26 event_chunk is data: 8 records with a chunk of 3 are three trusted lines, no code change"
+ed model-check.json '.read_cap_bytes = 10'
+ok '[ "$(cp_ compare --a "$T/a.json" --b "$T/b.json" --json >/dev/null; echo $?)" = 1 ] && grep -q STL-MDL-750 "$T/err"' "E27 read_cap_bytes is data: a file above the cap is refused (STL-MDL-750)"
+ed model-check.json '.read_cap_bytes = 8388608 | .event_chunk = 100'
+ok 'cp_ compare --a "$T/a.json" --b "$T/b.json" --json | jq -e ".decision"' "E28 the shipped cap reads the same files"
+
 echo "# compare-selftest: $fails failed"; [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
