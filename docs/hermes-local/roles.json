@@ -56,6 +56,11 @@
     "bin/merge-card.sh"
   ],
   "boundary_paths": [
+    "bin/conformance.py",
+    "bin/stuck.py",
+    ".stella/adapters.json",
+    ".stella/conformance.json",
+    ".stella/policy.json",
     ".stella/host-policy.json",
     "bin/adapter.py",
     "bin/capabilities.py",
