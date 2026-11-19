@@ -103,7 +103,7 @@ check 75 "real pool string, high risk" env FAKE_OUT="Claude AI usage limit reach
 [ "$(last .event)" = QUEUED ] && [ -s "$T/sup/state/queue.jsonl" ] || { echo "FAIL high-risk not queued"; fails=$((fails+1)); }
 check 1 "non-JSON exit 0"      env FAKE_OUT='garbage' sh -c "echo hi | $E t_12345678 review why"
 check 1 "is_error result"       env FAKE_OUT='{"is_error":true,"modelUsage":{}}' sh -c "echo hi | $E t_12345678 review why"
-grep -q "fallback: false. Not rerouted" "$T/sup/comments" || { echo "FAIL no reroute not noted on card"; fails=$((fails+1)); }
+grep -q "fallback: false. No next rung ran" "$T/sup/comments" || { echo "FAIL no next rung ran not noted on card"; fails=$((fails+1)); }   # D83 via the resolver: the walk found none
 
 # Queue (F15, F28, F29, T13, T15): a LIMIT refusal and every POOL_EXHAUSTED write one queue entry and one #alerts line;
 # the caller keeps its exit code. bin/escalate-drain.sh replays an entry once, with limits and pool checked again.
@@ -111,8 +111,50 @@ grep -q "fallback: false. Not rerouted" "$T/sup/comments" || { echo "FAIL no rer
 n=$(runs); check 2 "E: a model named where the purpose goes (no escalation.purposes row): refused" sh -c "echo hi | $E t_aaaa0901 haiku judge why"
 ok 'grep -q "STL-MDL-747 purpose haiku has no row" "$T/err" && [ "$(runs)" = "$n" ] && [ -z "$(q t_aaaa0901)" ] && ! ls "$T/sup/state"/prompt-*-t_aaaa0901-* >/dev/null 2>&1' "E: ... with STL-MDL-747, no model call, nothing queued, no prompt file"
 check 0 "E: control: the same purpose with a row runs" sh -c "echo hi | $E t_aaaa0901 review why"
-n=$(runs); check 3 "W7b: on the shipped data (no terms recorded, no chains for the fixture's roles) no rung runs" env STELLA_ROOT=$SH sh -c "echo hi | $E t_aaaa0902 rescue why"
-ok 'grep -q "STL-MDL-7[0-9][0-9]" "$T/err" && [ "$(runs)" = "$n" ]' "W7b: ... with the resolver's code, no model call"
+# Owner decision 2026-11-18 (D-CVER-01, D83): any served rung runs (a CLI-login link on this script's CLI, any other link through
+# bin/route.py), and a rung whose pool or limit is exhausted is left for the next rung the resolver judges. Shipped-like data: the
+# shipped data plus what the owner records on the host (local models probed; the free-cloud connection enabled for the role and
+# its data classes; a wire shape on both; the mock's address) and the built-in chain of the judge purpose's role (the building
+# role's local rungs, then the free-cloud link). The mock rate-limits the local model: rung 1 fails over, rung 2 (the same link)
+# is cooling, rung 3 (free cloud) answers. Its own state folder (the haiku daily count of the cases above stays theirs).
+SG=$T/sup-g; mkdir -p "$SG"; cp "$T/sup/limits.env" "$SG/"; runsg() { cat "$SG/claude_n" 2>/dev/null || echo 0; }
+SW=$T/shipped-walk; cp -r "$SH" "$SW"; SX=$SW/.stella
+STELLA_ROOT=$SH python3 -I /workspace/bin/mock_provider.py >"$T/mock.out" 2>"$T/mock.err" & MP=$!
+for _ in $(seq 100); do [ -s "$T/mock.out" ] && break; sleep 0.1; done
+PORT=$(jq -r .port "$T/mock.out" 2>/dev/null); CTL=$(jq -r .control "$T/mock.out" 2>/dev/null); LO=$(jq -r '.control | capture("//(?<h>[^:/]+):").h' "$T/mock.out" 2>/dev/null)
+PS=$(jq -r '.entries[0].id' "$SX/protocols.json"); VR=$(jq -r '.escalation.purposes.judge' "$SX/routing.json"); BR=$(jq -r '.builder_roles[0]' "$SX/routing.json")
+FCL=$(jq -r '[.link_classes[] | select(.hosted)] | max_by(.privacy_rank) | .id' "$SX/routing.json")   # the least private hosted class: free cloud
+read -r LC LM < <(jq -r '[.entries[] | select(.kind == "provider" and .locality == "local")][0] | "\(.id) \(.models[0].id)"' "$SX/connections.json")
+read -r FC FM < <(jq -r --arg f "$FCL" '[.entries[] | select(.kind == "provider" and .link_class == $f)][0] | "\(.id) \(.models[0].id)"' "$SX/connections.json")
+sxed() { jq "${@:2}" "$SX/$1" >"$SX/$1.n" && mv "$SX/$1.n" "$SX/$1"; }
+sxed protocols.json '.entries |= map(.request.path = "/" + .id + .request.path | .models_path = "/" + .id + .models_path)'   # the mock serves each shape under its id
+sxed connections.json --arg l "$LC" --arg f "$FC" --arg h "$LO" --argjson p "${PORT:-0}" --arg s "$PS" --arg r "$VR" \
+  '[.entries[] | select(.id == $l)][0].data_policy.data_classes_allowed as $dc   # the free-cloud connection takes the data classes of the local one
+   | (.entries[] | select(.id == $l or .id == $f)) |= (.hosts[0] = {host: $h, port: $p, purpose: "qa mock"} | .protocol //= $s)
+   | (.entries[] | select(.id == $f)) |= (.allowed_roles += [$r] | .data_policy.data_classes_allowed = $dc | .auth_types = ["none"] | .secrets = [])'   # no key: the mock asks none
+sxed data-policy.json --arg h "$LO" '.local_hosts += [$h]'   # the mock's address stands for the local model server's
+sxed role-assignments.json --arg r "$VR" --arg b "$BR" --arg f "$FC" --arg m "$FM" '.selection.global as $g | .effort_modes[$g].roles[$r] = ((.effort_modes[$g].roles[$r] // {active: true})
+  + {escalation_chain: ([.effort_modes[$g].roles[$b].escalation_chain[] | select(.connection != $f)] + [{connection: $f, model: $m, parameters: {}}])})'
+mock() { python3 -I -c 'import sys, urllib.request as u; o = u.build_opener(u.ProxyHandler({}))
+print(o.open(u.Request(sys.argv[1], data=sys.argv[2].encode(), method="POST") if len(sys.argv) > 2 else sys.argv[1], timeout=10).read().decode())' "$@"; }
+mock "$CTL" "$(jq -nc --arg s "$PS" --arg l "$LM" --arg f "$FM" '{models: {($s): [$l, $f]}, faults: [{shape: $s, model: $l, fault: "rate_limit"}]}')" >/dev/null
+n=$(runsg); echo hi | env STELLA_ROOT=$SW ESCALATE_SUP_DIR=$SG NO_PROXY="$LO" "$E" t_aaaa0902 judge why >"$T/walk.out" 2>"$T/walk.err"; wrc=$?
+calls=$(mock "${CTL%/*}/_calls" 2>/dev/null); [ "$wrc" = 0 ] || grep -v setlocale "$T/walk.err" | head -5 | sed 's/^/  why (walk): /'; [ "$wrc" = 0 ] || STELLA_ROOT=$SW python3 -I /workspace/bin/stella_data.py get --json connections 2>&1 >/dev/null | head -5 | sed 's/^/  why (catalog): /'
+ok '[ "$wrc" = 0 ] && jq -e --arg c "$FC" ".link.connection == \$c and .fallback == true and (.text | length > 0)" "$T/walk.out" >/dev/null && [ "$(runsg)" = "$n" ] &&
+  jq -e --arg l "$PS/$LM" --arg f "$PS/$FM" ".counts[\$l] >= 1 and .counts[\$f] == 1" <<<"$calls" >/dev/null &&
+  [ "$(jq -s "[.[] | select(.card == \"t_aaaa0902\" and .event == \"WALK\")] | length" "$SG/escalations.log")" = 2 ]' \
+  "D83 via the resolver, shipped-like data: judge ($VR) rung 1 local is rate-limited, rung 2 (same link) cooling, rung 3 $FC answers through route.py: exit 0 (exit $wrc)"
+kill "$MP" 2>/dev/null
+# Approval: a rung of the preset's last-resort class (outside its class order) needs the owner's crossing grant: without one it is
+# skipped (needs_grant) and no rung is left (STL-MDL-731, exit 4); with one in force the same call runs it.
+GR=$T/fx-gr; cp -r "$FX" "$GR"; CC=$(jq -r --arg c "$CLIC" '.entries[] | select(.id == $c) | .link_class' "$FX/.stella/connections.json")
+jq --arg c "$CC" '.effort_modes["qa-all"] |= (.class_order -= [$c] | .last_resort = $c)' "$FX/.stella/role-assignments.json" >"$GR/.stella/role-assignments.json"
+n=$(runsg); check 4 "approval: the judge rung's class is the last resort and no crossing grant is in force: no rung left" env STELLA_ROOT=$GR ESCALATE_SUP_DIR=$SG sh -c "echo hi | $E t_aaaa0906 judge why"
+ok 'grep -q "STL-MDL-731" "$T/err" && grep -q "STL-MDL-718" "$T/err" && [ "$(runsg)" = "$n" ]' "approval: ... STL-MDL-731 with the skipped rung's STL-MDL-718, no model call"
+jq --arg c "$CC" --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$(jq -r .install_id "$FX/.stella/install.json")" \
+  '.crossing_grants += [{id: "qa-cross", global_id: $g, install_id: $i, preset: "qa-all", to_class: $c, scope: {level: "global"}, granted_at: "2026-01-01T00:00:00Z"}]' "$FX/.stella/grants.json" >"$GR/.stella/grants.json"
+check 0 "approval: with the owner's crossing grant in force the same rung runs" env STELLA_ROOT=$GR ESCALATE_SUP_DIR=$SG sh -c "echo hi | $E t_aaaa0907 judge why"
+ok '[ "$(runsg)" = $((n + 1)) ]' "approval: ... one model call"
 # rung state: a file that cannot be read, or no whole number from 1, is never read as rung 1 (fail closed), and asks no resolver
 printf '{"t_aaaa0905": {"%s": 0}}\n' "$CR" >"$T/sup/state/rungs.json"; n=$(runs)
 check 2 "E: rungs.json names rung 0 for the card and role: refused" sh -c "echo hi | $E t_aaaa0905 review why"
@@ -160,7 +202,7 @@ FAKE_SLEEP=1 $D --replay "$id" >/dev/null 2>&1 & sleep 0.3; $D --replay "$id" >/
 $D --replay "$id" >/dev/null 2>&1
 ok '[ "$(runs)" = $((n + 1)) ] && [ "$(q t_aaaa0001)" = "replayed," ] && [ ! -e "$pf" ] && [ "$(nalerts t_aaaa0001)" = 1 ]' "double replay (two at once, then a third): one run, state replayed, prompt removed, still one alert"
 check 75 "T15: forced pool, low-risk card" env ESCALATE_FORCE_POOL_EXHAUSTED=1 sh -c "echo hi | $E t_aaaa0002 review lowrisk"
-ok '[ "$(q t_aaaa0002)" = "queued," ] && [ "$(nalerts t_aaaa0002)" = 1 ] && grep -B1 "a Sonnet request for card t_aaaa0002" "$T/sup/sends" | grep -q "\[STL-LIM-402\]\*\*$" && jq -s -e "any(.[]; .card == \"t_aaaa0002\" and .event == \"QUEUED\") and any(.[]; .card == \"t_aaaa0002\" and .event == \"POOL_EXHAUSTED\" and (.detail | contains(\"not rerouted\")))" "$T/sup/escalations.log" >/dev/null' "F29, E-DC-07: forced pool exhaustion on a low-risk card: QUEUED, the log says not rerouted, one #alerts line"
+ok '[ "$(q t_aaaa0002)" = "queued," ] && [ "$(nalerts t_aaaa0002)" = 1 ] && grep -B1 "a Sonnet request for card t_aaaa0002" "$T/sup/sends" | grep -q "\[STL-LIM-402\]\*\*$" && jq -s -e "any(.[]; .card == \"t_aaaa0002\" and .event == \"QUEUED\") and any(.[]; .card == \"t_aaaa0002\" and .event == \"POOL_EXHAUSTED\") and any(.[]; .card == \"t_aaaa0002\" and .event == \"WALK\")" "$T/sup/escalations.log" >/dev/null' "F29, D83 via the resolver: forced pool exhaustion on a low-risk card: the next rung is asked (WALK), none runs, QUEUED, one #alerts line"
 jq -c 'if .card == "t_aaaa0002" then .created = "2026-10-01T00:00:00Z" else . end' "$Q" > "$Q.tmp" && mv "$Q.tmp" "$Q"
 check 75 "forced pool, card that is done before the drain" env ESCALATE_FORCE_POOL_EXHAUSTED=1 sh -c "echo hi | $E t_aaaa0003 review done-later"
 n=$(runs); pf2=$(jq -r 'select(.card == "t_aaaa0002") | .prompt_file' "$Q")
