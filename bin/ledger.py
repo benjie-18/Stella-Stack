@@ -1,0 +1,596 @@
+#!/usr/bin/env python3
+"""The usage ledger and limits core (F2c item A1), stdlib only. One place that counts what every link (a connection plus a model) is used
+for and how much of its limits is left. No model, provider, host or number is in this file: links come from the catalog, limits from the
+catalog's `limits` / `concurrency_limit` (a number, or the name of a .supervisor/limits.env key, exactly as bin/escalate.sh reads them: a
+name the file does not define, or a value that is no whole number, is ZERO, so the link serves nothing until it is fixed), the answers and
+CLI texts that mean "limited" from .stella/limit-signals.json and the wire shapes' `errors`.
+Module: record(call, cost=None), status(connection, model=None), acquire/slot(connection, model, holder), observe_limit(...),
+observe_response(...), observe_cli_text(...), plan_share_from(connection, text), report(by). CLI (host only: every command refuses in a
+worker environment, STL-CFG-312; JSON out, --json accepted everywhere):
+  ledger.py record --json                      one call as JSON on stdin; one line appended to the usage file (index key usage_ledger).
+  ledger.py status --connection C [--model M]  {concurrency:{limit,in_use,free}, daily:{cap,used,resets_at}, observed, plan_share, problems}
+  ledger.py hold --connection C --model M [--holder H] -- CMD...   take a slot (the connection's and the model's), then become CMD: the
+        slot is held by the process across every worker, so it is released when CMD ends or is killed. Exit 75 no free slot, 76 daily cap
+        used, 77 an observed limit is active (catalog code STL-LIM-412 on stderr); otherwise CMD's own exit code.
+  ledger.py observe --connection C [--model M] [--status N [--header 'Name: v']...]   the answer body (or, with no --status, a CLI's
+        output) on stdin; prints the observed limit, or null when the answer is no limit.
+  ledger.py report --by card|project|role|model|connection     calls, tokens and cost per key.
+  ledger.py check                              the usage file and the state file against their schemas.
+Slots are flock files under <ledger_state path>.slots/. A daily cap counts the records of the UTC day (a `refused` record is no call).
+Every state change that is no plain call record (a limit observed, a hold refused) is one trusted event line (bin/event_log.py).
+Exit: 0 ok; 1 refused or failed (catalog code and plain message on stderr, {code, problem} on stdout); 2 usage; 75, 76, 77 of hold.
+shortcut: the usage file is read whole on every status, hold and report; upgrade (an index or a daily counter file) when it grows past
+a few hundred thousand lines. shortcut: a daily cap is checked, not reserved: callers that run in parallel past a cap with no slot limit
+can overshoot it by the calls in flight; give the model a max_concurrent to close that."""
+import os, sys
+
+if __name__ == "__main__" and not sys.flags.isolated:   # run directly: PYTHONPATH and the current folder must not decide what is imported
+    try:
+        os.execv(sys.executable, [sys.executable, "-I", *sys.argv])
+    except OSError:   # fail closed: a tool that counts limits does not go on with modules it cannot vouch for
+        sys.exit("STL-CFG-310 ledger.py could not restart itself isolated (python3 -I); nothing was done")
+
+import argparse, contextlib, datetime, email.utils, fcntl, json, re, urllib.parse, uuid
+
+BIN = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, BIN)   # python3 -I does not add the script folder
+import event_log as el
+import stella_data as sd
+import worker_env
+
+UNKNOWN, INVALID, LIMITED, FILE, BADFILE, BADLIMIT, UNEXPECTED = ("STL-LIM-410", "STL-LIM-411", "STL-LIM-412", "STL-LIM-413", "STL-LIM-414",
+                                                                 "STL-LIM-415", "STL-CFG-310")
+EX_SLOT, EX_DAILY, EX_OBSERVED = 75, 76, 77   # hold: no free slot, daily cap used, an observed limit is active
+BY = {"card": "card", "project": "project", "role": "role", "model": "model", "connection": "connection"}
+KEYRE = re.compile(r"[A-Z][A-Z0-9_]*")
+TS = "%Y-%m-%dT%H:%M:%SZ"
+
+
+class Stop(Exception):
+    def __init__(self, code, problem, alert=True):
+        super().__init__(problem)
+        self.code, self.problem, self.alert = code, problem, alert
+
+
+class Refusal(Exception):
+    """A hold the limits refuse: kind slot, daily or observed; exit code and plain reason."""
+    def __init__(self, kind, problem):
+        super().__init__(problem)
+        self.kind, self.problem = kind, problem
+        self.rc = {"slot": EX_SLOT, "daily": EX_DAILY, "observed": EX_OBSERVED}[kind]
+
+
+def utcnow():
+    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+
+
+def iso(dt):
+    return dt.strftime(TS)
+
+
+def when(s):
+    return datetime.datetime.strptime(s, TS).replace(tzinfo=datetime.timezone.utc)
+
+
+def midnight(now):
+    return (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0)
+
+
+# ---- the files ----
+def rel(key):
+    return sd.load(sd.INDEX)[key]
+
+
+def usage_path():
+    return el.path(rel("usage_ledger"))   # refused when it is, or passes through, a symbolic link
+
+
+def state_path():
+    return el.path(rel("ledger_state"))
+
+
+def slots_dir():
+    return el.path(rel("ledger_state") + ".slots")
+
+
+def signals():
+    r = next((r for r in sd.rows() if r["schema"] == "limit-signals"), None)
+    if r is None:
+        raise Stop(BADFILE, "the index has no limit-signals row")
+    return sd.checked(sd.load(r["path"]), r["path"], "limit-signals")
+
+
+def limits_env():
+    """{KEY: value} of the limits store (the index row `limits`), as a shell would source plain KEY=value lines (last wins, a trailing
+    ` # comment` of an unquoted value dropped); {} when the file is missing."""
+    r = next((r for r in sd.rows() if r["id"] == "limits"), None)
+    out = {}
+    try:
+        with open(sd.safe(r["path"]), encoding="utf-8") as f:
+            for line in f:
+                m = re.fullmatch(r"(?:export\s+)?([A-Z][A-Z0-9_]*)=(.*)", line.rstrip("\n"))
+                if m:
+                    v = m[2].strip()
+                    out[m[1]] = v[1:-1] if len(v) > 1 and v[0] == v[-1] and v[0] in "'\"" else re.split(r"\s#", v)[0].strip()
+    except (OSError, TypeError, sd.DataError):
+        pass   # no store: every key it should hold is undefined, so the limit that names one is zero
+    return out
+
+
+def state():
+    """The ledger state document; a missing file is an empty one; a file that cannot be used stops the call (fail closed)."""
+    try:
+        with open(state_path(), "rb") as f:
+            doc = json.loads(f.read(el.MAX_FILE + 1))
+    except FileNotFoundError:
+        return {"schema_version": 1, "observed": []}
+    except (OSError, ValueError, RecursionError, el.EventError) as e:
+        raise Stop(BADFILE, f"the ledger state file cannot be read ({type(e).__name__})")
+    errs = sd.validate_doc(doc, sd.schema_of("ledger-state"))
+    if errs:
+        raise Stop(BADFILE, f"the ledger state file breaks its schema ({errs[0]})")
+    return doc
+
+
+def lines():
+    """([the JSON objects of the usage file], torn): a line that is no JSON object (a writer killed mid-line) is skipped and counted."""
+    try:
+        with open(usage_path(), "rb") as f:
+            data = f.read()
+    except FileNotFoundError:
+        return [], 0
+    except (OSError, el.EventError, ValueError) as e:
+        raise Stop(BADFILE, f"the usage file cannot be read ({type(e).__name__})")
+    out, torn = [], 0
+    for ln in data.split(b"\n"):
+        if not ln.strip():
+            continue
+        try:
+            d = json.loads(ln)
+        except (ValueError, RecursionError):
+            d = None
+        if isinstance(d, dict):
+            out.append(d)
+        else:
+            torn += 1
+    return out, torn
+
+
+# ---- the catalog ----
+def catalog():
+    import route
+    return route.data()
+
+
+def link_of(cat, connection, model):
+    """(connection entry, model entry or None); Stop(410) when the catalog has no such connection, or no such model of it."""
+    prov = sd.entry(cat, connection) if isinstance(connection, str) else None
+    mod = next((m for m in prov["models"] if m["id"] == model), None) if prov and prov["kind"] == "provider" and model is not None else None
+    if not prov or prov["kind"] != "provider" or (model is not None and mod is None):
+        raise Stop(UNKNOWN, f"link {sd.idn(connection)}" + (f"/{sd.idn(model)}" if model is not None else "") + " (the catalog has no such connection and model)")
+    return prov, mod
+
+
+def limit_of(raws, env):
+    """(the tightest of the values, a problem or None): a value is a whole number or the name of a limits.env key; one that cannot be
+    read is 0 (fail closed, as escalate.sh's empty L). None when no value is given."""
+    vals, bad = [], None
+    for r in raws:
+        if r is None:
+            continue
+        v = env().get(r) if isinstance(r, str) and KEYRE.fullmatch(r) else r
+        if isinstance(v, str) and re.fullmatch(r"[0-9]+", v):
+            v = int(v)
+        if type(v) is int and v >= 0:
+            vals.append(v)
+        else:
+            vals.append(0)
+            bad = f"the limit {sd.idn(r) if isinstance(r, str) else 'value'} is not a whole number or a key of the limits store that holds one, so it counts as 0"
+    return (min(vals) if vals else None), bad
+
+
+def scopes(prov, mod, model):
+    """The scopes of a link, the connection's first: [{model: None|id, conc, day, problems}]; each limit is resolved (limit_of)."""
+    cache = []
+    env = lambda: cache[0] if cache else (cache.append(limits_env()) or cache[0])
+    out = []
+    for m, lim, extra in (((None, prov.get("limits") or {}, [prov.get("concurrency_limit")]),) +
+                          (((model, (mod or {}).get("limits") or {}, []),) if model is not None else ())):
+        conc, p1 = limit_of(extra + [lim.get("max_concurrent")], env)
+        day, p2 = limit_of([lim.get("per_day")], env)
+        out.append({"model": m, "conc": conc, "day": day, "problems": [p for p in (p1, p2) if p]})
+    return out
+
+
+# ---- slots ----
+def slot_file(connection, model, i):
+    q = lambda s: urllib.parse.quote(s or "", safe="")   # injective: no two links share a file name
+    return os.path.join(slots_dir(), f"{q(connection)}@{q(model)}.{i}.lock")
+
+
+def open_slot(connection, model, i):
+    try:
+        el.mkdirs(slots_dir())
+        return el.open_file(slot_file(connection, model, i), os.O_RDWR | os.O_CREAT)   # never through a link or a hard-linked file
+    except (OSError, ValueError, el.EventError) as e:
+        raise Stop(FILE, f"a slot lock file of {sd.idn(connection)} cannot be used ({el.why(e)})")
+
+
+def take(connection, model, n):
+    """An open, flocked slot fd of the n of the scope, or None when all are taken."""
+    for i in range(1, n + 1):
+        fd = open_slot(connection, model, i)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except OSError:
+            os.close(fd)
+    return None
+
+
+def in_use(connection, model, n):
+    """How many of the n slots are held now. shortcut: it probes by taking each lock for an instant, so an acquirer arriving at that
+    instant can be told "no free slot" once; upgrade by recording holders in the lock files if that is ever seen."""
+    used = 0
+    for i in range(1, n + 1):
+        fd = open_slot(connection, model, i)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            used += 1
+        os.close(fd)
+    return used
+
+
+def day_used(recs, connection, model, day):
+    return sum(1 for r in recs if r.get("kind") == "call" and r.get("outcome") != "refused" and r.get("connection") == connection
+               and model in (None, r.get("model")) and str(r.get("ts", ""))[:10] == day)
+
+
+def active(doc, connection, model, now):
+    """The observed limit in force for the link (latest end first), or None."""
+    live = [o for o in doc["observed"] if o["connection"] == connection and o["model"] in (None, model) and when(o["until"]) > now]
+    return max(live, key=lambda o: o["until"]) if live else None
+
+
+def acquire(connection, model, holder, now=None):
+    """The open flocked fds of the slots of the link (its connection's and its model's), held until they are closed (or the process
+    ends or is killed). Refusal (an observed limit, a daily cap used, no free slot) is written as one trusted limit.hit line and raised
+    as Refusal; an unknown link is Stop(410)."""
+    now = now or utcnow()
+    _, cat, _, _ = catalog()
+    prov, mod = link_of(cat, connection, model)
+    fds = []
+    try:
+        o = active(state(), connection, model, now)
+        if o:
+            raise Refusal("observed", f"a limit is observed on {sd.idn(connection)}/{sd.idn(model)} until {o['until']} ({o['source']}: {o['reason']})")
+        recs, _ = lines()
+        for s in scopes(prov, mod, model):
+            where = f"{sd.idn(connection)}/{sd.idn(s['model'])}" if s["model"] else f"connection {sd.idn(connection)}"
+            if s["day"] is not None and day_used(recs, connection, s["model"], iso(now)[:10]) >= s["day"]:
+                raise Refusal("daily", f"{where}: the daily limit is used ({s['day']} calls) until {iso(midnight(now))}" + "".join(f"; {p}" for p in s["problems"]))
+            if s["conc"] is not None:
+                fd = take(connection, s["model"], s["conc"])
+                if fd is None:
+                    raise Refusal("slot", f"{where}: no free slot (max concurrent {s['conc']})" + "".join(f"; {p}" for p in s["problems"]))
+                fds.append(fd)
+    except Refusal as r:
+        for fd in fds:
+            os.close(fd)
+        with contextlib.suppress(el.EventError, sd.DataError):   # the refusal stands whether or not its line could be written
+            el.append(el.build("limit.hit", f"{r.kind} limit refused a call of {connection}/{model}", new={
+                "connection": connection, "model": model, "holder": str(holder)[:100], "kind": r.kind}))
+        raise
+    except BaseException:
+        for fd in fds:
+            os.close(fd)
+        raise
+    return fds
+
+
+@contextlib.contextmanager
+def slot(connection, model, holder):
+    fds = acquire(connection, model, holder)
+    try:
+        yield
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+
+# ---- records ----
+def scrubbed(v):
+    if isinstance(v, str):
+        return el.scrub(v)
+    if isinstance(v, dict):
+        return {k: scrubbed(x) for k, x in v.items()}
+    return v
+
+
+def record(call, cost=None):
+    """Append one call record; returns it. The call holds connection, model and what is known of role, project, card, session, outcome,
+    status, tokens, latency_ms, batch, plan_share; cost (already priced, or None) may be a key of the call or the argument. Stop(411)
+    when the record breaks its schema, Stop(410) when the catalog has no such connection and model, nothing written."""
+    if not isinstance(call, dict):
+        raise Stop(INVALID, "a call record is a JSON object")
+    zero = dict.fromkeys(("input", "output", "cache_write", "cache_read", "reasoning"), 0)
+    rec = scrubbed({"v": 1, "id": str(uuid.uuid4()), "install_id": sd.install_id(), "ts": iso(utcnow()), "role": None, "project": None,
+                    "card": None, "session": None, "kind": "call", "status": None, "latency_ms": 0, "batch": False, "cost": None,
+                    "plan_share": None, **call, "tokens": {**zero, **(call.get("tokens") or {})}, **({"cost": cost} if cost is not None else {})})
+    errs = sd.validate_doc(rec, sd.schema_of("usage"))
+    if errs:
+        raise Stop(INVALID, f"the call record breaks the usage schema ({errs[0]})")
+    link_of(catalog()[1], rec["connection"], rec["model"])
+    p = usage_path()
+    with el.locked(p + ".lock"):
+        fd = el.open_file(p, os.O_RDWR | os.O_APPEND | os.O_CREAT)
+        try:
+            size = os.fstat(fd).st_size
+            lead = b"\n" if size and os.pread(fd, 1, size - 1) != b"\n" else b""   # a killed writer's torn line stays its own line
+            data = lead + json.dumps(rec, separators=(",", ":")).encode() + b"\n"
+            if os.write(fd, data) != len(data):
+                os.ftruncate(fd, size)
+                raise Stop(FILE, "the usage file could not be written whole; nothing was recorded")
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    return rec
+
+
+# ---- observed limits ----
+def observe_limit(connection, model, source, until, reason, now=None):
+    """Keep a limit observed on the connection (model None: every model of it) until the UTC time `until` (a datetime); one trusted
+    limit.observed line. An observation of the same source that already lasts longer is kept as it is (None changes, no line).
+    Returns the observation."""
+    now = now or utcnow()
+    link_of(catalog()[1], connection, model)
+    new = {"connection": connection, "model": model, "source": source, "until": iso(until), "reason": el.scrub(str(reason))[:300]}
+    p = state_path()
+    el.preflight()   # no state change without its trusted line
+    with el.locked(p + ".lock"):
+        doc = state()
+        same = [o for o in doc["observed"] if (o["connection"], o["model"], o["source"]) == (connection, model, source) and when(o["until"]) > now]
+        if same and same[0]["until"] >= new["until"]:
+            return same[0]
+        doc["observed"] = [o for o in doc["observed"] if when(o["until"]) > now and o not in same] + [new]
+        import route
+        route.write_whole(p, doc)
+    el.append(el.build("limit.observed", f"limit observed on {connection}/{model or '*'} until {new['until']}", new=new))
+    return new
+
+
+def seconds_of(v, now):
+    """The wait a header value names: seconds, a duration (1m30s, 250ms), an epoch, an ISO time or an HTTP date; None when none fits."""
+    v = str(v).strip()
+    try:
+        n = float(v)
+        return n - now.timestamp() if n > 1e9 else n
+    except ValueError:
+        pass
+    parts = re.findall(r"([0-9]+(?:\.[0-9]+)?)(ms|s|m|h|d)", v)
+    if parts and "".join(a + b for a, b in parts) == v:
+        return sum(float(a) * {"ms": .001, "s": 1, "m": 60, "h": 3600, "d": 86400}[b] for a, b in parts)
+    for parse in (lambda: datetime.datetime.fromisoformat(v.replace("Z", "+00:00")), lambda: email.utils.parsedate_to_datetime(v)):
+        try:
+            t = parse()
+            return ((t if t.tzinfo else t.replace(tzinfo=datetime.timezone.utc)) - now).total_seconds()
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def observe_response(connection, model, status, headers, body, now=None):
+    """Observe the limit an API answer shows, when the wire shape's `errors` classify it as one (rate_limit, daily_cap); the wait is
+    the retry-after header, else the longest reset header, else (daily cap) the next UTC midnight, else the data's default. None when
+    the answer is no limit."""
+    import route
+    now = now or utcnow()
+    _, cat, protos, _ = catalog()
+    prov, _ = link_of(cat, connection, model)
+    proto = protos.get(prov.get("protocol"))
+    if proto is None:
+        raise Stop(UNKNOWN, f"connection {sd.idn(connection)} has no wire shape, so its answers cannot be classified")
+    trigger = route.classify(proto, status, body)
+    if trigger not in ("rate_limit", "daily_cap"):
+        return None
+    sig, h = signals(), {k.lower(): v for k, v in headers.items()}
+    pick = lambda names: [s for s in (seconds_of(h[n], now) for n in names if n in h) if s is not None]
+    ra, rs = pick(sig["headers"]["retry_after"]), pick(sig["headers"]["reset"])
+    if ra:
+        source, wait = "retry_after", max(ra)
+    elif rs:
+        source, wait = "reset_header", max(rs)
+    else:
+        source, wait = trigger, (midnight(now) - now).total_seconds() if trigger == "daily_cap" else sig["default_wait_seconds"]
+    wait = min(max(wait, 1), sig["max_wait_seconds"])
+    return observe_limit(connection, model, source, now + datetime.timedelta(seconds=wait), f"{trigger} (HTTP {status})", now)
+
+
+def cli_of(connection):
+    prov, _ = link_of(catalog()[1], connection, None)
+    return prov.get("cli") if prov["type"] == "cli-login" else None
+
+
+def observe_cli_text(connection, model, text, now=None):
+    """Observe the limit a cli-login CLI's output shows (its patterns, by the connection's `cli`, from the signals data); None when
+    the text is no limit error."""
+    now = now or utcnow()
+    sig, cli = signals(), cli_of(connection)
+    hit = next((i for i, p in enumerate(sig["cli_patterns"].get(cli) or []) if p in text), None)
+    if hit is None:
+        return None
+    return observe_limit(connection, model, "cli_limit_error", now + datetime.timedelta(seconds=sig["default_wait_seconds"]),
+                         f"the CLI's limit error (pattern {hit + 1})", now)
+
+
+def plan_share_from(connection, text):
+    """The fraction of the plan a CLI's usage output shows (the data's cli_usage patterns, group pct); None when none matches."""
+    for p in signals()["cli_usage"].get(cli_of(connection)) or []:
+        m = re.search(p, text)
+        if m and m.groupdict().get("pct"):
+            with contextlib.suppress(ValueError):
+                return float(m["pct"]) / 100
+    return None
+
+
+# ---- status and report ----
+def status(connection, model=None, now=None):
+    now = now or utcnow()
+    _, cat, _, _ = catalog()
+    prov, mod = link_of(cat, connection, model)
+    recs, _ = lines()
+    conc, day, problems = None, None, []
+    for s in scopes(prov, mod, model):
+        problems += s["problems"]
+        if s["conc"] is not None:
+            used = in_use(connection, s["model"], s["conc"])
+            if conc is None or s["conc"] - used < conc["free"]:
+                conc = {"limit": s["conc"], "in_use": used, "free": s["conc"] - used}
+        if s["day"] is not None:
+            u = day_used(recs, connection, s["model"], iso(now)[:10])
+            if day is None or s["day"] - u < day["cap"] - day["used"]:
+                day = {"cap": s["day"], "used": u, "resets_at": iso(midnight(now))}
+    o = active(state(), connection, model, now)
+    share = None
+    if prov["type"] == "cli-login":
+        age = signals()["plan_share_max_age_seconds"]
+        got = [r for r in recs if r.get("connection") == connection and r.get("plan_share") is not None and
+               (now - when(r["ts"])).total_seconds() <= age] if all(isinstance(r.get("ts"), str) for r in recs) else []
+        share = 1 if o and o["source"] == "cli_limit_error" else (max(got, key=lambda r: r["ts"])["plan_share"] if got else None)
+    return {"concurrency": conc or {"limit": None, "in_use": 0, "free": None}, "daily": day or {"cap": None, "used": 0, "resets_at": None},
+            "observed": {k: o[k] for k in ("until", "source", "reason")} if o else None, "plan_share": share, "problems": problems}
+
+
+def report(by):
+    if by not in BY:
+        raise ValueError(by)
+    recs, torn = lines()
+    groups = {}
+    for r in recs:
+        g = groups.setdefault(str(r.get(BY[by]) or "(none)"), {"calls": 0, "errors": 0, "tokens": dict.fromkeys(("input", "output", "cache_write", "cache_read", "reasoning"), 0), "cost": {}, "unpriced": 0})
+        g["calls"] += 1
+        g["errors"] += r.get("outcome") not in ("ok", "refused")
+        for k, v in (r.get("tokens") or {}).items():
+            if k in g["tokens"] and type(v) is int:
+                g["tokens"][k] += v
+        c = r.get("cost")
+        if c and c.get("priced") and isinstance(c.get("amount"), (int, float)):
+            g["cost"][c["currency"]] = round(g["cost"].get(c["currency"], 0) + c["amount"], 10)
+        elif c is not None:
+            g["unpriced"] += 1
+    return {"by": by, "groups": dict(sorted(groups.items())), "torn": torn}
+
+
+def check():
+    recs, torn = lines()
+    errs, seen = [], set()
+    for i, r in enumerate(recs):
+        e = sd.validate_doc(r, sd.schema_of("usage"))
+        if e:
+            errs.append(f"record {i + 1}: {e[0]}")
+        elif r["id"] in seen:
+            errs.append(f"record {i + 1}: its id is used twice")
+        seen.add(r.get("id"))
+    obs = len(state()["observed"])   # Stop when the state file cannot be used
+    signals()
+    return {"ok": not errs, "records": len(recs), "torn": torn, "observed": obs, "problem": errs[0] if errs else None}
+
+
+# ---- the CLI ----
+def say_json(a, doc):
+    print(json.dumps(doc, indent=None if a.json else 1))
+
+
+def cmd_record(a):
+    try:
+        call = json.loads(sys.stdin.read(el.MAX_FILE))
+    except (ValueError, RecursionError):
+        raise Stop(INVALID, "the call record on stdin is not JSON")
+    say_json(a, record(call))
+    return 0
+
+
+def cmd_status(a):
+    say_json(a, status(a.connection, a.model))
+    return 0
+
+
+def cmd_hold(a):
+    cmd = a.command[1:] if a.command[:1] == ["--"] else a.command
+    if not cmd:
+        raise SystemExit(2)
+    try:
+        fds = acquire(a.connection, a.model, a.holder or f"pid {os.getpid()}")
+    except Refusal as r:
+        el.say(LIMITED, r.problem)
+        print(json.dumps({"code": LIMITED, "problem": el.scrub(r.problem), "kind": r.kind}))
+        return r.rc
+    for fd in fds:
+        os.set_inheritable(fd, True)   # the command inherits the locks: they end with it, or when it is killed
+    try:
+        os.execvp(cmd[0], cmd)
+    except OSError as e:
+        raise Stop(UNEXPECTED, f"the command cannot be started ({type(e).__name__})", alert=False)
+
+
+def cmd_observe(a):
+    body = sys.stdin.read(el.MAX_FILE)
+    if a.status is None:
+        got = observe_cli_text(a.connection, a.model, body)
+    else:
+        hs = {}
+        for h in a.header:
+            k, _, v = h.partition(":")
+            hs[k.strip()] = v.strip()
+        got = observe_response(a.connection, a.model, a.status, hs, body)
+    say_json(a, got)
+    return 0
+
+
+def cmd_report(a):
+    say_json(a, report(a.by))
+    return 0
+
+
+def cmd_check(a):
+    out = check()
+    say_json(a, out)
+    if out["problem"]:
+        raise Stop(BADFILE, out["problem"], alert=False)
+    return 0
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="ledger.py", description="Usage ledger and limits (host only).")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    for name, flags in (("record", ()), ("status", ("connection", "model")), ("hold", ("connection", "model", "holder")),
+                        ("observe", ("connection", "model")), ("report", ("by",)), ("check", ())):
+        p = sub.add_parser(name)
+        for f in flags:
+            p.add_argument("--" + f, required=f == "by" or (f == "connection") or (f == "model" and name == "hold"), **({"choices": sorted(BY)} if f == "by" else {}))
+        p.add_argument("--json", action="store_true")
+    sub.choices["observe"].add_argument("--status", type=int)
+    sub.choices["observe"].add_argument("--header", action="append", default=[])
+    sub.choices["hold"].add_argument("command", nargs=argparse.REMAINDER)
+    a = ap.parse_args(argv)
+    try:
+        w = worker_env.reason()
+        if w:
+            raise Stop(sd.Refused.code, f"ledger.py {a.cmd} runs on the host only ({w}); nothing was done")
+        return {"record": cmd_record, "status": cmd_status, "hold": cmd_hold, "observe": cmd_observe, "report": cmd_report, "check": cmd_check}[a.cmd](a)
+    except Stop as x:
+        s = x
+    except el.EventError as e:   # no state change without its trusted line
+        s = Stop(e.code, e.problem)
+    except sd.DataError as e:
+        s = Stop(getattr(e, "code", UNEXPECTED), str(e)[:180])
+    except Exception as e:   # never a traceback, never the error's text (it could repeat a value): the type only
+        s = Stop(UNEXPECTED, f"{type(e).__name__}, an unexpected failure of ledger.py {a.cmd}")
+    print(json.dumps({"code": s.code, "problem": el.scrub(s.problem)}))
+    el.say(s.code, s.problem, alert=s.alert)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

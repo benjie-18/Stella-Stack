@@ -51,6 +51,16 @@
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The capability probe's records (F2b B), one file (schema probes): what bin/probe.py found out about each model version by trying it; written on the host only; a protected state path, not a data file (no role writes it, git never holds it). bin/probe.py check judges it."
     },
+    "usage_ledger": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The usage ledger (F2c A1), JSON lines, append-only (schema usage): one line per model call, written by bin/ledger.py on the host only; a protected state path, not a data file (git never holds it). bin/ledger.py check judges it."
+    },
+    "ledger_state": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The ledger's live state (F2c A1, schema ledger-state): the limits observed on a connection or model, with their expiry; its slot lock files lie in the folder of the same name plus .slots. Written on the host only; a protected state path."
+    },
     "triage_calibration": {
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
@@ -180,6 +190,8 @@
     "probe_records",
     "triage_calibration",
     "benchmark_results",
+    "usage_ledger",
+    "ledger_state",
     "agents_dir",
     "team_bodies",
     "team_preset",

@@ -745,6 +745,37 @@
       "triage": {"result": "shipped"},
       "global_id": "091fbea8-a29e-472b-8535-7ba799f14db9",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "ledger",
+      "kind": "command",
+      "summary": "Usage ledger and limits (host only): appends one record per model call (connection, model, role, project, card, tokens, outcome; secrets scrubbed), counts the daily cap from the records of the UTC day, holds flock slots across every process (hold runs a command inside the slots and frees them when it ends or is killed), keeps limits observed from a 429, rate-limit headers or a CLI's limit error with their expiry (one trusted event line each), and reports status and usage per card, project, role, model or connection. Limits come from the catalog (a value or a limits.env key), the signals from .stella/limit-signals.json.",
+      "keywords": [
+        "ledger",
+        "usage",
+        "limits",
+        "slot",
+        "concurrency",
+        "daily cap",
+        "observed limit",
+        "429",
+        "plan share",
+        "report",
+        "cost"
+      ],
+      "inputs": "record --json (call on stdin) | status --connection C [--model M] --json | hold --connection C --model M [--holder H] -- CMD... | observe --connection C [--model M] [--status N --header 'Name: v'] --json (answer body or CLI output on stdin) | report --by card|project|role|model|connection --json | check --json",
+      "outputs": "JSON (record: the record; status: {concurrency, daily, observed, plan_share, problems}; observe: the observed limit or null; report: {by, groups, torn}; check: {ok, records, torn, observed, problem}); hold becomes CMD, or exits 75 no free slot, 76 daily cap used, 77 observed limit active (STL-LIM-412); exit 1 with a catalog code (STL-LIM-410 unknown link, 411 record refused, 413 file or lock unusable, 414 check failed, 415 limit unreadable, STL-CFG-312 in a worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/ledger.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "707c88d5-230d-44d5-a0e7-e8808c285d03",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

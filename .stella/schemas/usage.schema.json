@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Usage record",
+  "description": "One line of the usage ledger (index key usage_ledger, JSON lines, append-only; F2c A1): one model call. Keyed by connection, model, role, project, card. tokens are whole numbers, 0 when unknown. cost is null for a cli-login call and until bin/cost.py prices it; an unpriced model has cost.priced false. plan_share is the fraction of a cli-login plan's limit its CLI output or limit errors show, null when unknown. Each line is judged alone by this schema.",
+  "type": "object",
+  "properties": {
+    "v": {"const": 1},
+    "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+    "install_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+    "ts": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "connection": {"type": "string", "minLength": 1, "maxLength": 200},
+    "model": {"type": "string", "minLength": 1, "maxLength": 200},
+    "role": {"type": ["string", "null"], "maxLength": 200},
+    "project": {"type": ["string", "null"], "maxLength": 200},
+    "card": {"type": ["string", "null"], "maxLength": 200},
+    "session": {"type": ["string", "null"], "maxLength": 200},
+    "kind": {"const": "call"},
+    "outcome": {"enum": ["ok", "error", "limit", "timeout", "refused"]},
+    "status": {"type": ["integer", "null"], "minimum": 100, "maximum": 599},
+    "tokens": {
+      "type": "object",
+      "properties": {
+        "input": {"type": "integer", "minimum": 0},
+        "output": {"type": "integer", "minimum": 0},
+        "cache_write": {"type": "integer", "minimum": 0},
+        "cache_read": {"type": "integer", "minimum": 0},
+        "reasoning": {"type": "integer", "minimum": 0}
+      },
+      "required": ["input", "output", "cache_write", "cache_read", "reasoning"],
+      "additionalProperties": false
+    },
+    "latency_ms": {"type": "integer", "minimum": 0},
+    "batch": {"type": "boolean"},
+    "cost": {
+      "type": ["object", "null"],
+      "properties": {
+        "amount": {"type": ["number", "null"], "minimum": 0},
+        "currency": {"type": ["string", "null"], "maxLength": 20},
+        "entry": {"type": ["string", "null"], "maxLength": 200},
+        "priced": {"type": "boolean"}
+      },
+      "required": ["amount", "currency", "entry", "priced"],
+      "additionalProperties": false
+    },
+    "plan_share": {"type": ["number", "null"], "minimum": 0}
+  },
+  "required": ["v", "id", "install_id", "ts", "connection", "model", "role", "project", "card", "session", "kind", "outcome", "status", "tokens", "latency_ms", "batch", "cost", "plan_share"],
+  "additionalProperties": false
+}

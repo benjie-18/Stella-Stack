@@ -316,6 +316,78 @@
       "resolvable": false
     },
     {
+      "code": "STL-LIM-410",
+      "area": "LIM",
+      "severity": "warning",
+      "title": "the usage ledger does not know that link",
+      "message": "The usage ledger refused a call or a limit: {problem}. Nothing was recorded or limited for it.",
+      "action": "check the connection and model id in the call against `python3 bin/stella_data.py get connections`; a link the catalog lacks is added by the owner first. See STL-LIM-410 in docs/alert-codes.md.",
+      "cause": "A record, status, slot or observation named a connection or a model the catalog (.stella/connections.json) does not have. The ledger fails closed: it never counts a link it cannot find limits for.",
+      "check": "`python3 bin/ledger.py status --connection <id> [--model <id>] --json`",
+      "related": "F2c item A1; bin/ledger.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-411",
+      "area": "LIM",
+      "severity": "warning",
+      "title": "a usage record was refused",
+      "message": "The usage ledger refused a call record: {problem}. It was not written.",
+      "action": "fix the caller so its record has the fields of .stella/schemas/usage.schema.json (tokens are whole numbers, outcome one of ok, error, limit, timeout, refused). See STL-LIM-411 in docs/alert-codes.md.",
+      "cause": "The record is not JSON, or breaks the usage schema (a negative or fractional token count, an unknown field, a wrong type).",
+      "check": "`python3 bin/ledger.py record --json < call.json`; .stella/schemas/usage.schema.json",
+      "related": "F2c item A1; bin/ledger.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-412",
+      "area": "LIM",
+      "severity": "info",
+      "title": "a link's limit refused a call",
+      "message": "A call of a link was refused by its limits: {problem}. It is not an error: the caller waits or takes the next link.",
+      "action": "nothing, unless it keeps happening: `python3 bin/ledger.py status --connection <id> --model <id> --json` shows the slots, the daily count and the observed limit with the time each ends. See STL-LIM-412 in docs/alert-codes.md.",
+      "cause": "All slots of the link are held (exit 75 of `ledger.py hold`), its daily cap of the UTC day is used (76), or a limit was observed on it and has not expired (77).",
+      "check": "`python3 bin/ledger.py status --connection <id> --model <id> --json`; the limit.hit and limit.observed lines of the event log",
+      "related": "F2c item A1; bin/ledger.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-413",
+      "area": "LIM",
+      "severity": "warning",
+      "title": "a ledger file or lock cannot be used",
+      "message": "The usage ledger cannot use one of its files: {problem}. Calls that need it are refused until it is fixed.",
+      "action": "fix or move aside the file the message names (a slot lock file under the ledger state folder, the usage file, its lock), then run `python3 bin/ledger.py check --json`. See STL-LIM-413 in docs/alert-codes.md.",
+      "cause": "A file is a symbolic link or has a second hard link (no write goes through it), cannot be written whole, or the folder is not writable.",
+      "check": "`python3 bin/ledger.py check --json`; the usage_ledger and ledger_state paths in .stella/data-files.json",
+      "related": "F2c item A1; bin/ledger.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-414",
+      "area": "LIM",
+      "severity": "warning",
+      "title": "the usage ledger files do not check out",
+      "message": "The usage ledger's files do not pass their check: {problem}.",
+      "action": "fix or move aside the line or file the message names (the usage file is protected state: the owner does it), then run `python3 bin/ledger.py check --json` again. See STL-LIM-414 in docs/alert-codes.md.",
+      "cause": "A usage line breaks the usage schema or repeats an id, the ledger state file breaks its schema or cannot be read, or the limit-signals data is unusable. A torn last line (a writer killed mid-write) is skipped and only counted.",
+      "check": "`python3 bin/ledger.py check --json`; `python3 bin/stella_data.py check`",
+      "related": "F2c item A1; bin/ledger.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-415",
+      "area": "LIM",
+      "severity": "warning",
+      "title": "a limit value cannot be read",
+      "message": "A limit of a link cannot be read: {problem}. It counts as 0, so the link serves nothing until it is fixed.",
+      "action": "set the limit in the catalog to a whole number, or define the limits.env key it names with a whole number. See STL-LIM-415 in docs/alert-codes.md.",
+      "cause": "A model's or connection's max_concurrent or per_day names a key .supervisor/limits.env does not define, or its value is not a whole number (the same rule as bin/escalate.sh).",
+      "check": "`python3 bin/ledger.py status --connection <id> --model <id> --json` (problems); .supervisor/limits.env",
+      "related": "F2c item A1; bin/ledger.py",
+      "resolvable": false
+    },
+    {
       "code": "STL-RCV-501",
       "area": "RCV",
       "severity": "warning",
