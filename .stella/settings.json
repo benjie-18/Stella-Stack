@@ -110,6 +110,26 @@
       "code": "STL-CFG-315",
       "global_id": "3c9f7eb0-ed7b-494b-b1d7-a909cfaa7b48",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "key": "MODEL_CHECK_BUILTIN",
+      "label": "Weekly model check updates the built-in presets",
+      "type": "boolean",
+      "validation": {},
+      "scope": "global",
+      "sensitivity": "plain",
+      "default": true,
+      "store": {
+        "data": "limits",
+        "key": "MODEL_CHECK_BUILTIN"
+      },
+      "apply": {
+        "script": "bin/stella-apply.py",
+        "needs_restart": false
+      },
+      "code": "STL-CFG-315",
+      "global_id": "5f9fe802-68da-412d-ae97-848e9068fef3",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

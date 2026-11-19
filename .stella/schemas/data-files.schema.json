@@ -179,6 +179,11 @@
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The call spans (F2c B), one JSON line per call with OpenTelemetry GenAI attribute names, appended by bin/cost.py span --write; written on the host only; a protected state path, not a data file. Export to an outside tool is behind the features.json flag otlp-export."
+    },
+    "model_check_state": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The weekly model check's state (F2c F; schema model-check-state): the paused flag and when each connection's model list was last read. Written on the host by bin/model_check.py only; a protected state path, not a data file; never the source of a pick or a rollback (the trusted event line is)."
     }
   },
   "required": [
@@ -203,7 +208,8 @@
     "untrusted_events",
     "event_writer_id",
     "files",
-    "spans"
+    "spans",
+    "model_check_state"
   ],
   "additionalProperties": false
 }

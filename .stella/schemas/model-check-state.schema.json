@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Model check state",
+  "description": "The weekly model check's state (index key model_check_state; F2c F): whether the check is paused (set when no link of a role could be checked, cleared only by the owner's `model_check.py resume`) and when each connection's model list was last read. Written on the host only, by bin/model_check.py. Never the source of a pick or a rollback: the trusted event line is. A file that cannot be read or does not pass this schema counts as paused (fail closed).",
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "paused": {
+      "type": ["object", "null"],
+      "properties": {
+        "at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+        "reason": {"type": "string", "maxLength": 1000}
+      },
+      "required": ["at", "reason"],
+      "additionalProperties": false
+    },
+    "last_run": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "listed": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+      "description": "Per connection id: when its model list was last read."
+    }
+  },
+  "required": ["schema_version", "paused", "last_run", "listed"],
+  "additionalProperties": false
+}

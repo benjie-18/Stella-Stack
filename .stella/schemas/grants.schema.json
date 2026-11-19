@@ -149,6 +149,25 @@
         ],
         "additionalProperties": false
       }
+    },
+    "model_check_grants": {
+      "type": "array",
+      "x-owner-only": true,
+      "description": "The owner's opt-ins of custom presets into the weekly model check (F2c F): while a grant is in force (stella_data.grant_in_force: started, not ended, not revoked) the check may change the model picks of that preset, through the apply contract. A built-in preset is never named here (it follows the owner setting); never part of crossing_grants. Optional.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]*$"},
+          "global_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+          "install_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+          "preset": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]*$", "x-ref": "role-assignments/effort_modes", "description": "The custom preset (a key of role-assignments.json effort_modes, not built in: `check` refuses that)."},
+          "granted_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+          "expires_at": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+          "revoked_at": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"}
+        },
+        "required": ["id", "global_id", "install_id", "preset", "granted_at"],
+        "additionalProperties": false
+      }
     }
   },
   "required": [

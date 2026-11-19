@@ -79,6 +79,7 @@ class Coded(str):
 
 
 OFF_REQUIRED, CHAIN_FAILS, BUILTIN_EDIT = "STL-MDL-725", "STL-MDL-726", "STL-MDL-727"   # the preset rule's codes (F2 D1.9)
+ENGINE_REFUSED = "STL-MDL-764"   # a candidate of the weekly model check that is no engine pick (F2c F, frozen())
 PROBED = NOROW + "probe records"   # the member of a check line that rests on probe data: no read depends on it, so served() never refuses for it (C-DC-03)
 
 UNPROBED = "STL-MDL-738"   # a link with no probe record picked or listed for a role with requirements (owner ruling 2026-11-18)
@@ -226,7 +227,7 @@ def jload(path, label=None):
 
 
 STATE = ("event_log", "backup_dir", "applied_state", "role_table", "owner_key", "approval_store", "event_writer_state", "routing_state",
-         "card_facts", "probe_records", "triage_calibration", "benchmark_results", "usage_ledger", "ledger_state", "spans", "untrusted_events")   # the index keys that name a path; the last is the agents' stream (untrusted())
+         "card_facts", "probe_records", "triage_calibration", "benchmark_results", "usage_ledger", "ledger_state", "spans", "model_check_state", "untrusted_events")   # the index keys that name a path; the last is the agents' stream (untrusted())
 
 
 def untrusted(idx):
@@ -1350,13 +1351,191 @@ def rule_grants(c):
                 c["P"](rid, f"crossing_grants[{i}]: {m}")
 
 
-def frozen(schema, old, new):
+def rule_mc_grants(c):
+    """A model_check grant names a custom preset: a built-in one follows the owner setting only (F-CVER-06)."""
+    modes = {k: v for _, d in c["whole"].get("role-assignments", []) for k, v in d.get("effort_modes", {}).items()}
+    for rid, d in c["whole"].get("grants", []):
+        for i, g in enumerate(d.get("model_check_grants", [])):
+            if isinstance(modes.get(g["preset"]), dict) and modes[g["preset"]].get("builtin") is True:
+                c["P"](rid, f"model_check_grants[{i}]: preset {kname(g['preset'])} is built in; the owner setting decides for built-in presets, a grant never does")
+
+
+# ---- the weekly model check's engine exception (F2c F): the one way a built-in preset's model picks change ----
+def weekly():
+    """The weekly check's data (model-check.json weekly) as the data index serves it; a DataError when it cannot be used."""
+    import compare
+    try:
+        w = compare.model_params().get("weekly")
+    except compare.Stop as e:
+        raise DataError(e.problem) from None
+    if not isinstance(w, dict):
+        raise DataError("model-check.json has no weekly section")
+    return w
+
+
+def one_doc(schema):
+    """The one document of a schema as a read serves it (validated, every member it depends on clean); a DataError else."""
+    ids = [r["id"] for r in rows() if r["format"] == "json" and r["schema"] == schema]
+    docs = [d for i in ids for _, d in served(ids)["_rows"][i][0]]
+    if len(docs) != 1:
+        raise DataError(f"the index has no single file of schema {schema}")
+    return docs[0]
+
+
+def engine_setting_on(w=None):
+    """Whether the owner setting that lets the weekly check update built-in presets is on: the settings registry entry weekly.setting,
+    read by bin/settings.py's reader (the default when nothing is stored). Anything that cannot be read is off (fail closed)."""
+    try:
+        import settings
+        k = (w or weekly())["setting"]
+        e = next((e for e in settings.registry() if e["key"] == k), None)
+        return e is not None and e["type"] == "boolean" and settings.current(e)[0] is True
+    except Exception:
+        return False
+
+
+def model_check_granted(preset, now=None):
+    """Whether a model_check grant of the grants data for this custom preset is in force (grant_in_force; read now, never cached)."""
+    now = now or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    try:
+        gs = one_doc("grants").get("model_check_grants", [])
+    except DataError:
+        return False
+    return any(g["preset"] == preset and grant_in_force(g, None, now) for g in gs)
+
+
+def pick_of(detail):
+    """(pick id, the pick it reverses or None) an engine apply line's detail names; (None, None) for any other line."""
+    m = re.search(r"(?:^| )engine pick ([a-z0-9-]+)(?: reverses ([a-z0-9-]+))?(?: |$)", detail or "")
+    return (m[1], m[2]) if m else (None, None)
+
+
+def engine_lines():
+    """The trusted apply lines of engine picks (event_log.proof_lines: chained, verified, never an agent's line), oldest first."""
+    import event_log as el
+    wid = load(INDEX)["event_writer_id"]
+    return [d for d in el.proof_lines() if d.get("type") == "apply" and (d.get("who") or {}).get("user") == wid and pick_of(d.get("detail"))[0]]
+
+
+def pick_line(pick):
+    """The trusted event line of one pick; None when no trusted line names it (the state file is never asked, F-CVER-05)."""
+    return next((d for d in reversed(engine_lines()) if pick_of(d.get("detail"))[0] == pick), None)
+
+
+def esc(k):
+    return str(k).replace("~", "~0").replace("/", "~1")
+
+
+def engine_change(old, new, w):
+    """(preset, role, field, index, old link, new link) of the one link a candidate changes, or the text of why it is no pick: only
+    weekly.pick_keys of one link of weekly.pick_fields of one preset differ, plus exactly one appended changelog entry (F-CVER-03)."""
+    keep = lambda d, ks: {k: v for k, v in d.items() if k not in ks} if isinstance(d, dict) else d
+    if not same(keep(old, ("effort_modes",)), keep(new, ("effort_modes",))):
+        return "it changes the document outside the presets"
+    o, n = old["effort_modes"], new["effort_modes"]
+    diff = [k for k in dict.fromkeys([*o, *n]) if not same(o.get(k), n.get(k))]
+    if len(diff) != 1 or not all(isinstance(x.get(diff[0]), dict) for x in (o, n)):
+        return f"it changes {len(diff)} presets or adds or removes one; a pick changes one existing preset"
+    p = diff[0]
+    op, np_ = o[p], n[p]
+    oc, nc = op.get("changelog", []), np_.get("changelog", [])
+    if not (isinstance(oc, list) and isinstance(nc, list) and len(nc) == len(oc) + 1 and same(nc[:-1], oc)):
+        return f"preset {kname(p)}: it does not append exactly one changelog entry"
+    if not same(keep(op, ("changelog", "roles")), keep(np_, ("changelog", "roles"))):
+        return f"preset {kname(p)}: it changes the preset beyond its model picks"
+    ro, rn = op.get("roles", {}), np_.get("roles", {})
+    if not (isinstance(ro, dict) and isinstance(rn, dict) and set(ro) == set(rn)):
+        return f"preset {kname(p)}: it adds or removes a role"
+    changed = []
+    for r in ro:
+        a, b = ro[r], rn[r]
+        if not same(keep(a, w["pick_fields"]), keep(b, w["pick_fields"])):
+            return f"preset {kname(p)} role {kname(r)}: it changes the role beyond its links"
+        for f in w["pick_fields"]:
+            la, lb = (x.get(f, []) if isinstance(x, dict) else None for x in (a, b))
+            if not (isinstance(la, list) and isinstance(lb, list) and len(la) == len(lb)):
+                return f"preset {kname(p)} role {kname(r)}: it adds or removes a link of {f}"
+            for i, (x, y) in enumerate(zip(la, lb)):
+                if not same(keep(x, w["pick_keys"]), keep(y, w["pick_keys"])):
+                    return f"preset {kname(p)} role {kname(r)} {f}[{i}]: it changes the link beyond {', '.join(w['pick_keys'])}"
+                if not same(x, y):
+                    changed.append((p, r, f, i, x, y))
+    if len(changed) != 1:
+        return f"it changes {len(changed)} links; one pick changes one"
+    return changed[0]
+
+
+def reversal_problems(ch, target, w):
+    """A reversal (F-CVER-04): the new link holds the `old` and the live link the `new` of pick target's trusted event line."""
+    p, r, f, i, x, y = ch
+    line = pick_line(target)
+    if line is None:
+        return [f"no trusted event line names pick {target}"]
+    lo, ln = line.get("old") or {}, line.get("new") or {}
+    at = f"/effort_modes/{esc(p)}/roles/{esc(r)}/{f}/{i}/"
+    if not any(at + k in ln for k in w["pick_keys"]):
+        return [f"pick {target} did not change preset {kname(p)} role {kname(r)} {f}[{i}]"]
+    for k in w["pick_keys"]:
+        if at + k in ln or at + k in lo:
+            if not (isinstance(x, dict) and isinstance(y, dict) and x.get(k) == ln.get(at + k) and y.get(k) == lo.get(at + k)):
+                return [f"{f}[{i}].{k}: the live value is not what pick {target} set, or the candidate is not what it replaced"]
+        elif x.get(k) != y.get(k):
+            return [f"{f}[{i}].{k}: pick {target} did not change it"]
+    return []
+
+
+def engine_problems(old, new, engine):
+    """Why a candidate is no engine pick (F-CVER-01), proved again here from data: the shape (engine_change); a reversal of a trusted
+    pick line, or a forward pick that keeps the link class and reach of the link it replaces on an enabled connection with the same data
+    policy, that the link judge accepts for the role, with a real probe record that meets the role, on a built-in preset only with the
+    owner setting on, on a custom preset only with its model_check grant in force."""
+    try:
+        w = weekly()
+        ch = engine_change(old, new, w)
+        if isinstance(ch, str):
+            return [ch]
+        if engine.get("reverses"):
+            return reversal_problems(ch, engine["reverses"], w)
+        p, r, f, i, x, y = ch
+        if old["effort_modes"][p].get("builtin") is True:
+            if not engine_setting_on(w):
+                return [f"preset {kname(p)} is built in and the owner setting {w['setting']} is not on (or cannot be read)"]
+        elif not model_check_granted(p):
+            return [f"preset {kname(p)} is custom and no model_check grant for it is in force"]
+        rt, cat, table = routing(), served([CATALOG])[CATALOG], load(load(INDEX)["role_table"])
+        po, pn = (entry(cat, l.get("connection")) for l in (x, y))
+        if not (po and pn and pn.get("kind") == "provider" and po.get("kind") == "provider"):
+            return [f"{f}[{i}]: a connection of the link is not a provider of the catalog"]
+        if link_class(po, x.get("model"), rt) != link_class(pn, y.get("model"), rt) or reach(po) != reach(pn):
+            return [f"{f}[{i}]: the new link's class or reach differs from the link it replaces"]
+        if pn["id"] != po["id"] and not same(po["data_policy"], pn["data_policy"]):
+            return [f"{f}[{i}]: the new connection's data policy differs from the old one"]
+        lp = link_problems(table, r, pn, y.get("model"))
+        if lp:
+            return [f"{f}[{i}]: {lp[0]}"]
+        rec = probed(probe_records(rt), pn["id"], y.get("model"))
+        miss = unmet(table["roles"].get(r, {}).get("requirements", {}), rec) if rec else None
+        if rec is None or rec.get(BROKEN) or miss:
+            return [f"{f}[{i}]: the new link has no usable probe record" + (f" (it does not meet {', '.join(miss)})" if miss else "")]
+        return []
+    except (DataError, KeyError, TypeError, AttributeError) as e:
+        return [f"the data the exception is proved from cannot be read ({why(e)})"]
+
+
+def frozen(schema, old, new, engine=None):
     """[(code, problem)]: what a candidate `new` of a row of that schema may not change in the document `old` it replaces. The
     apply tool refuses each, a dry run too (a rollback restores bytes and is not judged here). Today: a preset marked builtin
     true on either side that is not the same entry on both (BUILTIN_EDIT): changed in any key, dropped, or made by the
     candidate (a new id, or a custom preset turned into one: the owner could not edit or remove it afterwards). A file that
-    does not parse has no preset to keep."""
-    if schema != "role-assignments" or not all(isinstance(d, dict) and isinstance(d.get("effort_modes"), dict) for d in (old, new)):
+    does not parse has no preset to keep. engine (the weekly model check's apply, given by the apply tool only to its engine caller):
+    the whole change must then be one engine pick (engine_problems, ENGINE_REFUSED), on a built-in or a custom preset alike."""
+    if schema != "role-assignments":
+        return []
+    if engine is not None:
+        ok = all(isinstance(d, dict) and isinstance(d.get("effort_modes"), dict) for d in (old, new))
+        probs = engine_problems(old, new, engine) if ok else ["the current file or the candidate has no presets to compare"]
+        return [(ENGINE_REFUSED, probs[0])] if probs else []
+    if not all(isinstance(d, dict) and isinstance(d.get("effort_modes"), dict) for d in (old, new)):
         return []
     o, n = old["effort_modes"], new["effort_modes"]
     built = lambda m: isinstance(m, dict) and m.get("builtin") is True
@@ -1504,6 +1683,7 @@ RULES = [("data policy and catalog", ("data-policy", "connections"), ("data-poli
          ("routing", ("routing",), ("routing", TABLE), rule_routing),
          ("link classes", ("connections",), ("connections", "routing"), rule_link_classes),
          ("grant scopes", ("grants",), ("grants",), rule_grants),
+         ("model check grants", ("grants",), ("grants", "role-assignments"), rule_mc_grants),
          ("features", ("features",), ("features",), rule_features),
          *((f"{s} allowed_roles", (s,), (s, TABLE), rule_allowed_roles(s)) for s in ("capabilities", "extension", "connections")),
          ("extensions switched on", ("extension",), ("extension",), rule_extensions_on),

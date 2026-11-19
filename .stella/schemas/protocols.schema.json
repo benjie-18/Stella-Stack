@@ -72,7 +72,19 @@
               "field": {"type": "string"},
               "prefix": {"type": "string"},
               "family": {"type": "string", "description": "Item field that holds the model family (used by the mock)."},
-              "version": {"type": "string", "description": "Item field that holds the model version (used by the mock)."}
+              "version": {"type": "string", "description": "Item field that holds the model version (used by the mock)."},
+              "prices": {
+                "type": "object",
+                "description": "Optional (F2c F): where a model list item shows its prices, read by the weekly model check's pricing refresh only. per_million: a pointer inside the item per token type; scale: the factor that turns the shown value into a price per million tokens; currency: the ISO code of the shown prices. An item missing any of them gives no pricing row (never a guess).",
+                "properties": {
+                  "per_million": {"type": "object", "properties": {"input": {"type": "string", "pattern": "^/"}, "output": {"type": "string", "pattern": "^/"}, "cache_write": {"type": "string", "pattern": "^/"}, "cache_read": {"type": "string", "pattern": "^/"}, "reasoning": {"type": "string", "pattern": "^/"}}, "required": ["input", "output", "cache_write", "cache_read", "reasoning"], "additionalProperties": false},
+                  "batch_discount": {"type": "string", "pattern": "^/"},
+                  "scale": {"type": "number", "minimum": 0},
+                  "currency": {"type": "string", "pattern": "^[A-Z]{3}$"}
+                },
+                "required": ["per_million", "scale", "currency"],
+                "additionalProperties": false
+              }
             },
             "required": ["items", "field", "prefix"],
             "additionalProperties": false
