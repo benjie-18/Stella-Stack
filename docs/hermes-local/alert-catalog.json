@@ -1775,7 +1775,7 @@
       "severity": "warning",
       "title": "a comparison was given records it cannot use",
       "message": "bin/compare.py refused its input: {problem}. Nothing was compared and nothing was changed.",
-      "action": "fix the records file (a JSON list of {task, trial, passed, score?}) and run the command again. See STL-MDL-750 in docs/alert-codes.md.",
+      "action": "fix the records file (a JSON list of objects with task, trial, passed and an optional score) and run the command again. See STL-MDL-750 in docs/alert-codes.md.",
       "cause": "compare.py compare or stats was given a file it cannot read, that is not a JSON list, or whose records lack a task, a boolean passed or a score from 0 to 1.",
       "check": "`python3 bin/compare.py compare --a A.json --b B.json --json`.",
       "related": "F2c item E; bin/compare.py, .stella/model-check.json",
@@ -1815,6 +1815,9 @@
       "cause": "The benchmark results file is not valid JSON, is not a document of schema benchmarks, a row given to compare.py record is invalid, or the event log cannot take the trusted benchmark.recorded line.",
       "check": "`python3 bin/compare.py check --json`; `python3 bin/event_log.py --help`.",
       "related": "F2c item E; bin/compare.py, .stella/model-check.json",
+      "resolvable": false
+    },
+    {
       "code": "STL-LIM-420",
       "area": "LIM",
       "severity": "warning",

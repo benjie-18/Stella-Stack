@@ -204,4 +204,4 @@ L bogus 2>/dev/null; RC=$?
 ok "[ $RC = 2 ]" "a usage error exits 2"
 ok "(L status --connection nowhere --json 2>&1 || true) | grep -q STL-LIM-410" "status of an unknown connection fails closed with a code"
 ok "jq -e '.entries[] | select(.id == \"ledger\") | .status == \"approved\"' '$ROOT/.stella/capabilities.json'" "the ledger command is in the capability registry"
-if [ "$fails" -eq 0 ]; then echo "ledger selftest OK"; else echo "ledger selftest FAIL ($fails)"; exit 1; fi
+if [ "$fails" -eq 0 ]; then echo "ledger selftest: 0 failed"; echo "selftest PASS"; else echo "ledger selftest: $fails failed"; echo "selftest FAIL ($fails)"; exit 1; fi
