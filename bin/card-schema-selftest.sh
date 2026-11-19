@@ -11,7 +11,7 @@ IID=$(jq -r .install_id "$ROOT/.stella/install.json"); GID=$(cat /proc/sys/kerne
 U() { cat /proc/sys/kernel/random/uuid; }
 ed() { jq "$2" "$T/r/.stella/$1" >"$T/x" && mv "$T/x" "$T/r/.stella/$1"; }   # <data file> <jq filter>, in the scratch root
 # a fake app (a copy of the first api provider) and fake skills and tools (copies of the first capability): matched by kind (x-ref-where)
-ed connections.json "[.entries[] | select(.kind == \"provider\" and .type == \"api\")][0] as \$p | .entries += [\$p | .id = \"qa-app\" | .kind = \"app\" | .global_id = \"$(U)\"]"
+ed connections.json "[.entries[] | select(.kind == \"provider\" and .type == \"api\")][0] as \$p | .entries += [\$p | .id = \"qa-app\" | del(.protocol) | .kind = \"app\" | .global_id = \"$(U)\"]"
 ed capabilities.json ".entries[0] as \$c | .entries += [(\$c | .id = \"qa-skill\" | .kind = \"skill\" | .global_id = \"$(U)\"), (\$c | .id = \"qa-tool\" | .kind = \"tool\" | .global_id = \"$(U)\"), (\$c | .id = \"qa-tool2\" | .kind = \"tool\" | .global_id = \"$(U)\")]"
 # switched-off app, unapproved skill and tool, and enough valid ids to pass each list bound (every refusal below is for the rule it names, not for an unknown id)
 ed connections.json "[.entries[] | select(.id == \"qa-app\")][0] as \$a | .entries += [\$a | .id = \"qa-app-off\" | .enabled = false | .global_id = \"$(U)\"]"
