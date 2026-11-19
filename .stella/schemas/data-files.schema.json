@@ -218,6 +218,11 @@
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The capability MCP server's bound address, port, path and pid (F3 item M, bin/capabilities_mcp.py serve); a worker's capabilities.py reads it to reach the server. Written on the host only; not a data file."
+    },
+    "conformance_scratch": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The folder under which a card-less adapter run's worktree must lie (F3 item A, DC-06: conformance and test runs; such a run takes no card lease and its evidence is never accepted for a card). Not a state path: the run's CLI writes there."
     }
   },
   "required": [

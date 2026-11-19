@@ -176,6 +176,12 @@ callers)   # AC1-callers: a new data entry starts a run with no code change; run
   ok '[ $RC = 0 ] && ! pgrep -f "$SL" >/dev/null' "AC1-callers stop --run: exit 0 and the CLI's process group is gone"
   ok '[ "$(vfy "$TOK")" = none ]' "AC1-callers stop revoked the run token"
   ok 'tail -n +$((e0 + 1)) "$EV" | grep >/dev/null qa-run-a2' "AC1-callers stop wrote an event line naming the run"
+  # builder case (item A, moved from K): the card's attached skills and tools are listed in the prompt the CLI is given
+  printf '{"skills": ["qa-skill-zz"], "tools": ["qa-tool-zz"]}' >"$T/card-a3.json"
+  go s3 qa-run-a3 "$WT" qa-api/qa-m1 '[]' --card-file "$T/card-a3.json"
+  done_ qa-run-a3; d=$?
+  PF=$(find "$R/$AR/qa-run-a3" -name prompt.md 2>/dev/null | head -n1)
+  ok '[ $d = 0 ] && [ -s "$PF" ] && grep -q qa-skill-zz "$PF" && grep -q qa-tool-zz "$PF"' "A-ATTACHED the prompt the CLI is given lists the card's attached skills and tools"
   ;;
 apikey)   # T-API-NO-KEY and DC-03: the child env holds the run token and the proxy URL, never the key; a worker marker is set
   c0=$(calls)

@@ -473,5 +473,6 @@
   "capability_sources": ".stella/capability-sources.json",
   "adapter_runs": ".supervisor/state/adapter-runs",
   "host_presence": ".supervisor/state/host-presence.json",
-  "capabilities_mcp_state": ".supervisor/state/capabilities-mcp.json"
+  "capabilities_mcp_state": ".supervisor/state/capabilities-mcp.json",
+  "conformance_scratch": ".scratch/conformance"
 }

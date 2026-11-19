@@ -2,6 +2,10 @@
 """False-close guard: Hermes pre_tool_call hook on kanban_complete for every profile whose role and worker kind install it
 (docs/hermes-local/roles.json: the builder role, worker kind opencode; D46) (exit 2 = block).
 
+A card that has an adapter run (bin/adapter.py, found by card id in the index key adapter_runs; F3 DC-01) is judged by that run's
+evidence alone: its newest run must be a card run (a conformance run with no card never counts), have ended with exit 0, made at least
+one commit and written only inside its worktree (adapter.card_verdict, the same evidence `adapter.py evidence` prints). The runs that
+cannot be read block. A card with no adapter run keeps the Hermes-session path:
 A card may complete only if
   1. the worker's session ran `opencode run --standalone --auto ...` in the terminal tool and that call exited 0
      with non-empty output (read from the session store, not from what the worker claims);
@@ -93,6 +97,17 @@ def main():
     except json.JSONDecodeError:
         block("unreadable hook payload")
     if p.get("tool_name") != "kanban_complete":
+        return
+    card = (p.get("tool_input") or {}).get("task_id")
+    try:
+        import adapter   # bin/adapter.py, next to this file
+        got = adapter.card_verdict(card) if isinstance(card, str) and card else None
+    except Exception as e:   # adapter.Stop, an unreadable index or run folder: fail closed
+        block(f"the adapter runs of card {card!r} cannot be read ({type(e).__name__}); report it with kanban_block kind capability")
+    if got is not None:
+        if not got[0]:
+            block(f"the card's adapter run does not show finished work: {got[1]}. Run the card again; if it fails twice, call "
+                  "kanban_block once with kind capability and the error")
         return
     md = (p.get("tool_input") or {}).get("metadata") or {}
     sid = p.get("session_id") or ""
