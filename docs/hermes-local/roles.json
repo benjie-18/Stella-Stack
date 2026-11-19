@@ -56,6 +56,15 @@
     "bin/merge-card.sh"
   ],
   "boundary_paths": [
+    ".stella/host-policy.json",
+    "bin/adapter.py",
+    "bin/capabilities.py",
+    "bin/capabilities_mcp.py",
+    "bin/host_access.py",
+    "bin/log_filter.py",
+    "bin/policy.py",
+    "bin/run_policy.py",
+    "bin/run_token.py",
     "docs/hermes-local/alert-catalog.json",
     "package.json",
     "bin/approvals.py",
