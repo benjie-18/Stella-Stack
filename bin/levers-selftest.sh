@@ -40,7 +40,8 @@ mdl() { echo "{\"id\":\"$1\",\"capabilities\":{\"tool_calling\":true,\"json_mode
 ed connections.json --arg g "$(uuid)" --arg g2 "$(uuid)" --argjson m "$(mdl qa-m)" \
   ".entries += [($TPL + {id: \"qa-batch\", label: \"qa-batch\", enabled: true, global_id: \$g, models: [\$m], secrets: [], hosts: []} | del(.protocol)),
    ($TPL + {id: \"qa-plain\", label: \"qa-plain\", enabled: true, global_id: \$g2, models: [\$m], secrets: [], hosts: []} | del(.protocol))]"
-ed levers.json '.entries += [{id: "qa-batch-row", connection: "qa-batch", batch: true, cache: {kind: "breakpoints", breakpoints: ["after_tools", "after_stable"], lifetimes: [{id: "short", seconds: 60}, {id: "mid", seconds: 600}, {id: "long", seconds: 7200}]}}]'
+II=$(jq -r .install_id "$R/.stella/install.json")
+ed levers.json --arg g "$(uuid)" --arg ii "$II" '.entries += [{global_id: $g, install_id: $ii, id: "qa-batch-row", connection: "qa-batch", batch: true, cache: {kind: "breakpoints", breakpoints: ["after_tools", "after_stable"], lifetimes: [{id: "short", seconds: 60}, {id: "mid", seconds: 600}, {id: "long", seconds: 7200}]}}]'
 python3 -I -B "$R/bin/stella_data.py" check >"$T/o/fx" 2>&1 || fixture "the scratch data does not pass check: $(head -c 400 "$T/o/fx")"
 KIND0=$(jq -r '.batch_kinds[0]' "$R/.stella/levers.json"); [ -n "$KIND0" ] && [ "$KIND0" != null ] || fixture "the shipped levers file lists no batch kind"
 LOCAL=$(jq -r '.entries[] | select(.cache.kind == "server-prefix") | .connection' "$R/.stella/levers.json" | head -1)
@@ -51,7 +52,7 @@ ok 'python3 -I -B "$R/bin/stella_data.py" check && LV check --json | jq -e ".ok 
 ok 'jq -e "(.batch_kinds | length) >= 4 and .fanout.first_token_timeout_s > 0 and (.about | test(\"M1\"))" "$R/.stella/levers.json"' "D2 the file lists the batch kinds, the fan-out timeout, and its about says the scheduler M1 is a test double"
 ok '[ -n "$LOCAL" ] && [ "$LOCAL" != null ]' "D3 a local link has the server-prefix policy kind in the shipped data"
 cp "$R/.stella/levers.json" "$T/levers.bak"
-ed levers.json '.entries += [.entries[0] + {id: "dup"}]'; LV check --json >"$T/o/d4" 2>/dev/null; rc=$?
+ed levers.json --arg g "$(uuid)" '.entries += [.entries[0] + {id: "dup", global_id: $g}]'; LV check --json >"$T/o/d4" 2>/dev/null; rc=$?
 ok '[ $rc = 1 ] && jq -e ".code == \"STL-LIM-440\"" "$T/o/d4"' "D4 a connection with two rows is refused with STL-LIM-440"
 cp "$T/levers.bak" "$R/.stella/levers.json"
 ed levers.json '(.entries[] | select(.id == "qa-batch-row") | .cache.lifetimes) |= reverse'; LV check --json >"$T/o/d5" 2>/dev/null; rc=$?
@@ -243,8 +244,32 @@ assert levers.fanout([{"name": "rules", "stable": True, "value": "r"}], [{"id": 
 assert levers.fanout([{"name": "rules", "stable": True, "value": "r"}], [], send, pol, timeout=1) == []
 E' "F3 one reviewer is just sent; none is an empty list"
 
+# ---- the rules are data: change the file, the behavior follows ----
+irr() { : >"$LED"; for o in 0 30 60 90 120 150 180 210 240 9240; do rec r-a qa-batch "$(date -u -d @$((1763460000 + o)) +%Y-%m-%dT%H:%M:%SZ)" 1 0 0 >>"$LED"; done; }
+irr; ok 'pol qa-batch | jq -e ".lifetime == null and .gap_seconds == 9000"' "R1 the lifetime covers the data's share of the gaps (90 percent: the one long gap of ten decides, no lifetime covers it)"
+cp "$R/.stella/levers.json" "$T/levers.keep"; ed levers.json '.lifetime_gap_percentile = 50'
+ok 'pol qa-batch | jq -e ".lifetime == \"short\" and .gap_seconds == 30"' "R2 the percentile is data: 50 gives the median gap"
+ed levers.json '.layout.order = ["changing", "stable"]'
+ok 'PY <<"E"
+import levers
+t = levers.load()
+r = levers.layout([{"name": "a", "stable": True, "value": "s"}, {"name": "b", "stable": False, "value": "c"}], levers.policy_of(None, t), t)
+assert [p["name"] for p in r["parts"]] == ["b", "a"]
+E' "R3 the part order is data"
+cp "$T/levers.keep" "$R/.stella/levers.json"
+mkdir -p "$T/v1"; echo "{\"parts\":[{\"name\":\"rules\",\"stable\":true,\"text\":\"as of 2026-11-18 10:00\"}]}" >"$T/v1/p1.json"
+LV lint-prefix "$T/v1" --json >"$T/o/v1" 2>/dev/null; rc=$?
+ok '[ $rc = 1 ] && jq -e ".code == \"STL-LIM-442\" and (.problem | test(\"timestamp\"))" "$T/o/v1"' "R4 one prompt with a timestamp in a stable part fails the lint (the volatile patterns are data)"
+ed levers.json '.lint.volatile_patterns = []'; LV lint-prefix "$T/v1" --json >/dev/null 2>&1; rc=$?
+ok '[ $rc = 0 ]' "R5 with the patterns removed from the data the same prompt passes"
+cp "$T/levers.keep" "$R/.stella/levers.json"
+ed levers.json '.lint.volatile_patterns += [{id: "bad", pattern: "("}]'; LV check --json >"$T/o/r6" 2>/dev/null; rc=$?
+ok '[ $rc = 1 ] && jq -e ".code == \"STL-LIM-440\"" "$T/o/r6"' "R6 a pattern that is no regular expression is refused with STL-LIM-440"
+cp "$T/levers.keep" "$R/.stella/levers.json"
+
 # ---- T-CORE-LEVERS: fake entry, codes, CLI contract ----
-ok 'for c in 440 441 442 443 444; do jq -e --arg c "STL-LIM-$c" "[.entries[].code] | index(\$c)" "$R/docs/hermes-local/alert-catalog.json" || exit 1; done' "C1 the codes STL-LIM-440..444 are in the alert catalog"
+ok 'for c in 440 441 442 443 444; do jq -e --arg c "STL-LIM-$c" "[.alerts[].code] | index(\$c)" "$R/docs/hermes-local/alert-catalog.json" || exit 1; done' "C1 the codes STL-LIM-440..444 are in the alert catalog"
+: >"$LED"
 ok 'lane "{\"kind\":\"$KIND0\",\"connection\":\"qa-batch\"}" | jq -e ".batch == true" && pol qa-batch | jq -e ".lifetime != null"' "C2 fake entry: a new connection with a cache policy and a batch flag, added as data only, is used with no code change"
 LV --help >/dev/null 2>&1; rc=$?; ok '[ $rc = 0 ]' "C3 --help exits 0"
 LV >/dev/null 2>&1; rc=$?; ok '[ $rc = 2 ]' "C4 no command is a usage error (exit 2)"

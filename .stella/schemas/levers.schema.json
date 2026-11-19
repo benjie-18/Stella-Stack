@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Cost levers",
+  "description": "The batch lane and the prompt-cache policy per connection that bin/levers.py reads (F2c D). batch_kinds are the job kinds that may wait for a batch answer (an urgent job never does). A cache policy is of kind breakpoints (the provider caches up to the marked positions for one of the lifetimes, shortest first: levers.py picks the shortest that covers the measured gap between calls) or server-prefix (a local model server keeps the prefix itself: no positions, no lifetime). A connection with no row gets default_cache and no batch.",
+  "x-one-document": true,
+  "$defs": {
+    "cache": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "breakpoints",
+            "server-prefix"
+          ]
+        },
+        "breakpoints": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "enum": [
+              "after_tools",
+              "after_stable"
+            ]
+          },
+          "description": "Where a cache breakpoint goes: after the last tool definition, after the last stable part."
+        },
+        "lifetimes": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+                "maxLength": 64,
+                "description": "The provider's name for the lifetime."
+              },
+              "seconds": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "id",
+              "seconds"
+            ],
+            "additionalProperties": false
+          },
+          "description": "The lifetimes the connection offers, shortest first."
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "about": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "batch_kinds": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+        "maxLength": 64
+      }
+    },
+    "default_cache": {
+      "$ref": "#/$defs/cache"
+    },
+    "fanout": {
+      "type": "object",
+      "properties": {
+        "first_token_timeout_s": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Seconds: how long the fan-out waits for the first call's first token before it stops (STL-LIM-443)."
+        }
+      },
+      "required": [
+        "first_token_timeout_s"
+      ],
+      "additionalProperties": false
+    },
+    "entries": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+            "maxLength": 128
+          },
+          "connection": {
+            "type": "string",
+            "x-ref": "connections",
+            "description": "A connection of the catalog."
+          },
+          "batch": {
+            "type": "boolean",
+            "description": "The connection offers discounted batch processing."
+          },
+          "cache": {
+            "$ref": "#/$defs/cache"
+          },
+          "global_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "install_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "id",
+          "connection",
+          "batch",
+          "cache"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "lifetime_gap_percentile": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "description": "Percent of the measured gaps between calls the chosen cache lifetime must cover (nearest rank)."
+    },
+    "layout": {
+      "type": "object",
+      "properties": {
+        "order": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "enum": [
+              "stable",
+              "changing"
+            ]
+          },
+          "description": "Which group of parts comes first (the stable group first, so the cache prefix hits)."
+        },
+        "separator": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "tool_part_prefix": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        }
+      },
+      "required": [
+        "order",
+        "separator",
+        "tool_part_prefix"
+      ],
+      "additionalProperties": false
+    },
+    "lint": {
+      "type": "object",
+      "properties": {
+        "volatile_patterns": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+                "maxLength": 64
+              },
+              "pattern": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              }
+            },
+            "required": [
+              "id",
+              "pattern"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Regular expressions (Python re) that must not match any stable part."
+        }
+      },
+      "required": [
+        "volatile_patterns"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "about",
+    "batch_kinds",
+    "default_cache",
+    "lifetime_gap_percentile",
+    "layout",
+    "lint",
+    "fanout",
+    "entries"
+  ],
+  "additionalProperties": false
+}
