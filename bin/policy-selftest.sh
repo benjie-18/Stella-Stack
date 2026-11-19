@@ -219,7 +219,7 @@ shellhook)   # Gate B fix cycle 1 (V1-01 High, RT1-01; V1-03 run tmp): the hook'
   # secret, write boundary = worktree + run tmp; ~, $HOME, .., cd, relative paths resolved; unparseable fails closed); file tools honour secret dirs
   A=$(jq -r '[.entries[] | select(.policy.hook) | .id][0] // empty' "$AD"); ok '[ -n "$A" ]' "shellhook precondition: an adapter with a policy hook"
   TL() { jq -r --arg a "$A" --arg c "$1" --arg p "$2" '[.entries[] | select(.id == $a) | .tools | to_entries[] | select(.value.class == $c and ($p == "" or (.value.path // .value.command) == $p))][0] | "\(.key) \(.value.path // .value.command)"' "$AD"; }
-  read -r ST_ SPP <<<"$(TL shell "")"; read -r WT_ WP <<<"$(TL write "")"; read -r GT_ GP <<<"$(TL read /path)"
+  read -r ST_ SPP <<<"$(TL shell "")"; read -r WT_ WP <<<"$(TL write "")"; read -r GT_ GP <<<"$(TL read /path)"; read -r RT0 RP0 <<<"$(TL read "")"
   # hc <command> [cwd]: a shell call judged by the hook; hf <tool> <pointer> <path>: a file tool call
   hc() { jq -nc --arg t "$ST_" --arg p "$SPP" --arg v "$1" --arg d "${2:-$T/wt}" '{tool_name: $t, tool_input: ({} | setpath($p | ltrimstr("/") | split("/"); $v)), cwd: $d}' \
     | P hook --adapter "$A" --worktree "$T/wt" >"$T/o/hk.out" 2>&1; echo $?; }
@@ -238,6 +238,8 @@ shellhook)   # Gate B fix cycle 1 (V1-01 High, RT1-01; V1-03 run tmp): the hook'
     hc "$c" "$STK" >/dev/null; ok 'refused STL-GRD-616' "shellhook V1-01 a shell read of a protected or owner path is refused (616): $c"
   done
   hc "cat app.env" >/dev/null; ok 'refused STL-GRD-616' "shellhook V1-01 a shell read of a file the secret name globs name is refused (616)"
+  : >"$T/wt/app.example.env"; : >"$T/wt/app.env.sample"   # fix cycle 2: example env files stay readable, by the shell and the file tools
+  ok 'clean "$(hc "cat app.example.env app.env.sample")" && clean "$(hf "$RT0" "$RP0" "$T/wt/app.example.env")"' "shellhook fix 2: an example/sample env file (app.example.env, app.env.sample) is readable"
   # writes through the shell: every target outside the worktree and the run tmp is refused (615)
   for c in "echo x > $T/elsewhere/f" "echo x >> ../f" "echo x 2>$T/elsewhere/e" "tee $T/elsewhere/f" "cp a $T/elsewhere/" "mv a ../b" "install -m 644 a $T/elsewhere/b" \
            "ln -s a $T/elsewhere/l" "rsync -a a $T/elsewhere/" "dd if=a of=$T/elsewhere/b" "sed -i s/a/b/ $T/elsewhere/f" "truncate -s 0 $T/elsewhere/f" \
@@ -251,6 +253,15 @@ shellhook)   # Gate B fix cycle 1 (V1-01 High, RT1-01; V1-03 run tmp): the hook'
            "git status" "mkdir -p build && cd build && touch x" "cat .env.example" 'node -e "console.log(process.env.HOME)"' "sed -i s/a/b/ sub/f" "dd if=/dev/zero of=sub/z count=1"; do
     ok 'clean "$(hc "$c")"' "shellhook no objection: $c"
   done
+  # RT3-07: a CLI's own project config inside the worktree (any adapter's config_files, at any depth) is never written: it would override the generated policy
+  CF=$(jq -r '[.entries[] | .config_files // [] | .[]] | .[]' "$AD"); ok '[ -n "$CF" ]' "shellhook RT3-07 precondition: the adapters name their own config files (config_files)"
+  for cfn in $CF; do q=${cfn//\*/x}
+    hf "$WT_" "$WP" "$T/wt/$q" >/dev/null; ok 'refused STL-GRD-615' "shellhook RT3-07 a file tool write of a CLI config in the worktree is refused (615): $q"
+    hf "$WT_" "$WP" "$T/wt/sub/$q/inner" >/dev/null; ok 'refused STL-GRD-615' "shellhook RT3-07 ... in a subfolder, or under it (615): sub/$q/inner"
+    hc "echo {} > $q" >/dev/null; ok 'refused STL-GRD-615' "shellhook RT3-07 a shell write of a CLI config in the worktree is refused (615): echo {} > $q"
+    hc "mkdir -p sub && cp a sub/$q" >/dev/null; ok 'refused STL-GRD-615' "shellhook RT3-07 a shell copy onto a CLI config in a subfolder is refused (615): cp a sub/$q"
+  done
+  ok 'clean "$(hf "$WT_" "$WP" "$T/wt/docs/config-notes.md")"' "shellhook RT3-07 control: an ordinary file in the worktree is written"
   # V1-03: the run tmp is writable through the file tools too
   ok 'clean "$(hf "$WT_" "$WP" "$TMPDIR/x.txt")"' "shellhook V1-03 a file tool write into the run tmp: no objection"
   # V1-01: the file tools honour the secret rule's dirs (a search over a folder that holds one)
@@ -302,10 +313,29 @@ print("\n".join(bad)); sys.exit(1 if bad else 0)
 PY
   run k python3 -I "$T/ok.py" "$T/perm.json" bash allow 'python3 -c "print(d.keys())"' 'jq .keywords f.json' 'cat src/x.keyboard.ts' 'node -e "console.log(process.env.HOME)"'
   ok '[ $RC = 0 ]' "ocrender V1-02 ordinary commands are not denied by the key or env rules (.keys(), .keywords, .keyboard, process.env)"
-  run k2 python3 -I "$T/ok.py" "$T/perm.json" bash deny 'cat id.key' 'cat /a/server.key | x' 'cat .hermes/auth.json' 'cat x.pem' 'cat .claude/.credentials.json' 'cat share/opencode/auth.json' 'cat app.env'
+  run k2 python3 -I "$T/ok.py" "$T/perm.json" bash deny 'cat id.key' 'cat /a/server.key | x' 'cat .hermes/auth.json' 'cat x.pem' 'cat .claude/.credentials.json' 'cat share/opencode/auth.json'
   ok '[ $RC = 0 ]' "ocrender V1-02 real key files and relative secret paths are denied in the shell"
   run k3 python3 -I "$T/ok.py" "$T/perm.json" read deny 'app.env' '/w/x.env.local' '/w/id.key'; ok '[ $RC = 0 ]' "ocrender V1-02 *.env and *.env.* reads are denied"
   run k4 python3 -I "$T/ok.py" "$T/perm.json" read allow '/w/.env.example' '/w/.env.sample' '/w/.env.template'; ok '[ $RC = 0 ]' "ocrender V1-02 the example, sample and template names stay readable"
+  run k6 python3 -I "$T/ok.py" "$T/perm.json" read allow '/w/cfg/app.example.env' '/w/app.env.example' '/w/x.sample.env'; ok '[ $RC = 0 ]' "ocrender fix 2: example env files of either spelling stay readable (app.example.env, app.env.example)"
+  ok 'jq -e "[.rules[] | select(.kind == \"secret_read\") | .deny[] | select(test(\"^\\\\*\\\\.env\"))] | length == 0" "$PJ"' "ocrender fix 2: the file-only env globs are not in the shared deny list (the read guards and the box judge command words and folder binds with it)"
+  # RT3-07: the hook-less CLI's own edit rules deny its project config in the worktree (OpenCode reads it above the generated config); the last matching pattern wins
+  cat >"$T/rt307.py" <<'PY'
+import fnmatch, json, sys
+perm, wt = json.load(open(sys.argv[1])), sys.argv[2]
+def verdict(table, path):
+    v = None
+    for pat, x in (table or {}).items():
+        if fnmatch.fnmatchcase(path, pat):
+            v = x
+    return v
+bad = [t for t in sys.argv[3:] if verdict(perm.get("edit"), wt + "/" + t) != "deny"]
+print("\n".join(bad)); sys.exit(1 if bad else 0)
+PY
+  run r307 python3 -I "$T/rt307.py" "$T/perm.json" "$T/wt" opencode.json opencode.jsonc .opencode/plugin/p.js .opencode/agent/a.md sub/opencode.json .claude/settings.local.json
+  ok '[ $RC = 0 ]' "ocrender RT3-07 the render denies editing every CLI's project config in the worktree (opencode.json, .jsonc, .opencode/, .claude/settings*.json)"
+  run r307b python3 -I "$T/ok.py" "$T/perm.json" bash deny 'echo {} > opencode.json' 'cp x .opencode/plugin/p.js' 'tee .claude/settings.local.json'
+  ok '[ $RC = 0 ]' "ocrender RT3-07 the shell is denied commands naming a CLI's project config"
   # V1-03: external_directory allows the worktree and the run tmp, denies the rest
   ok 'jq -e --arg w "$T/wt" --arg t "$TMPDIR" ".external_directory | .[\"*\"] == \"deny\" and .[\$w] == \"allow\" and .[\$w + \"/*\"] == \"allow\" and .[\$t] == \"allow\" and .[\$t + \"/*\"] == \"allow\"" "$T/perm.json"' \
     "ocrender V1-03 external_directory: worktree and run tmp allowed, everything else denied"
