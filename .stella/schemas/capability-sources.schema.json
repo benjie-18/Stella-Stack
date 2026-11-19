@@ -83,6 +83,71 @@
     },
     "semantic_ranking": {
       "type": "boolean"
+    },
+    "command_folders": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+        "maxLength": 256
+      }
+    },
+    "command_globs": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "command_exclude": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "toolset_entry": {
+      "type": "object",
+      "description": "How a role's own platform toolset appears as a search result for that role only (summary: {name} is the toolset name).",
+      "properties": {
+        "kind": {
+          "enum": [
+            "tool",
+            "skill",
+            "mcp_server",
+            "command",
+            "extension"
+          ]
+        },
+        "risk_class": {
+          "enum": [
+            "read",
+            "write",
+            "post",
+            "send",
+            "pay",
+            "delete",
+            "sign_in",
+            "host_session",
+            "input_source"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "kind",
+        "risk_class",
+        "summary"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
@@ -95,7 +160,11 @@
     "request_ttl_s",
     "gated_risk_classes",
     "capability_prompt_line",
-    "semantic_ranking"
+    "semantic_ranking",
+    "command_folders",
+    "command_globs",
+    "command_exclude",
+    "toolset_entry"
   ],
   "additionalProperties": false
 }

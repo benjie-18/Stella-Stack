@@ -16,7 +16,7 @@ In a worker environment (DC-05) search / describe / request / load go to the cap
 run token of the environment, without --role, --card or --run (role, card and run come from the token); nothing local is read or
 written. Those flags, check-card and prompt-line are refused there (STL-GRD-662); a server that cannot be reached: STL-GRD-681.
 Exit: 0 ok; 1 refused (catalog code STL-GRD-660..667 on stderr); 2 usage."""
-import argparse, json, os, re, sys
+import argparse, fnmatch, json, os, re, sys
 sys.dont_write_bytecode = True
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -29,9 +29,12 @@ RUN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
 
 
 class Refuse(Exception):
-    def __init__(self, code, problem, alert=False):
+    def __init__(self, code, problem, alert=False):   # code: a STL-GRD number, or a whole code such as STL-CFG-340
         super().__init__(problem)
         self.code, self.problem, self.alert = code, problem, alert
+
+    def full(self):
+        return self.code if isinstance(self.code, str) else f"STL-GRD-{self.code}"
 
 
 def sources():
@@ -47,19 +50,50 @@ def role_ok(role):
     return role in sd.load(sd.load(sd.INDEX)["role_table"])["roles"]
 
 
-def visibility(e, role, src):
-    """available | requestable | gated | None (hidden or unknown: the same answer)."""
+def host_allows(e, role, a):
+    """Item H's decision for a gated entry: the caller's own run and host request (target, action, confirmation) go to host_access.decide
+    unchanged; no run or request, or any refusal or failure, is no (fail closed). No fact is made up here."""
+    req, run = getattr(a, "host_request", None), getattr(a, "run", None)
+    if not (isinstance(req, dict) and run):
+        return False
+    try:
+        import host_access
+        host_access.decide({"capability": e["id"], "role": role, "run": run} | req)
+        return True
+    except Exception:
+        return False
+
+
+def visibility(e, role, src, a=None):
+    """available | requestable | gated | None (hidden or unknown: the same answer). An entry not yet approved (an outside skill or
+    server) is only ever requestable: a request to install it, never a use."""
+    requestable = role in e.get("requestable_roles", []) and e.get("request_approval")
+    if e["status"] == "proposed":
+        return "requestable" if requestable else None
     if e["status"] != "approved":
         return None
     if role in e["allowed_roles"]:
-        return "gated" if e["risk_class"] in src["gated_risk_classes"] else "available"
-    return "requestable" if role in e.get("requestable_roles", []) and e.get("request_approval") else None
+        return ("available" if host_allows(e, role, a) else "gated") if e["risk_class"] in src["gated_risk_classes"] else "available"
+    return "requestable" if requestable else None
+
+
+def with_toolsets(entries, role, src):
+    """The registry plus the role's own platform toolsets (role table), as entries of that role alone: never in another role's answer,
+    and a registry entry of the same id wins."""
+    rt = sd.load(sd.load(sd.INDEX)["role_table"])["roles"].get(role, {})
+    have, t = {e["id"] for e in entries}, src["toolset_entry"]
+    names = sorted({n for names in rt.get("platform_toolsets", {}).values() for n in names if isinstance(n, str) and ID.fullmatch(n)} - have)
+    return entries + [{"id": n, "kind": t["kind"], "summary": t["summary"].format(name=n), "keywords": [n], "inputs": "", "outputs": "",
+                       "allowed_roles": [role], "risk_class": t["risk_class"], "hosts": [], "secrets": [], "status": "approved",
+                       "source": "role toolset"} for n in names]
 
 
 def shown(e, vis, score=None):
     o = {"id": e["id"], "kind": e["kind"], "summary": e["summary"], "risk_class": e["risk_class"], "visibility": vis}
     if vis == "requestable":
         o["request_approval"] = e["request_approval"]
+        if e["status"] != "approved":
+            o["install"] = True
     if score is not None:
         o["score"] = score
     return o
@@ -110,9 +144,9 @@ def found_ids(src):
     return ids
 
 
-def find(entries, cid, role, src):
-    for e in entries:
-        if e["id"] == cid and (v := visibility(e, role, src)):
+def find(entries, cid, role, src, a=None):
+    for e in with_toolsets(entries, role, src):
+        if e["id"] == cid and (v := visibility(e, role, src, a)):
             return e, v
     raise Refuse(660, "unknown capability")   # hidden and unknown: one message, the id is not echoed
 
@@ -120,8 +154,8 @@ def find(entries, cid, role, src):
 def cmd_search(a, src, entries):
     toks = [t for t in re.split(r"[^a-z0-9]+", " ".join(a.words).casefold()) if t]
     w, hits = src["ranking"], []
-    for e in entries:
-        if not (v := visibility(e, a.role, src)):
+    for e in with_toolsets(entries, a.role, src):
+        if not (v := visibility(e, a.role, src, a)):
             continue
         s = sum(w["id"] * (t in e["id"]) + w["keywords"] * any(t in k.casefold() for k in e["keywords"])
                 + w["summary"] * (t in e["summary"].casefold()) for t in toks)
@@ -135,19 +169,22 @@ def cmd_search(a, src, entries):
 
 
 def cmd_describe(a, src, entries):
-    e, v = find(entries, a.id, a.role, src)
+    e, v = find(entries, a.id, a.role, src, a)
     return shown(e, v) | {k: e[k] for k in ("keywords", "inputs", "outputs", "hosts")}
 
 
 def cmd_request(a, src, entries):
-    e, v = find(entries, a.id, a.role, src)
+    e, v = find(entries, a.id, a.role, src, a)
     if v != "requestable":
         return {"id": e["id"], "visibility": v, "note": "no approval needed"}
     import approvals as ap
+    # An install (status not approved) is an escalation to the owner: one approval request, nothing is installed or enabled here.
+    # shortcut: no extensions-manager triage exists yet (roadmap 4e; .stella/extensions holds manifests only), so every install is escalated; route it there when it ships.
+    what = "install" if e["status"] != "approved" else "request"
     try:
-        rec = ap.request(e["request_approval"], {"op": "capability-request", "target": e["id"], "old_digest": "0" * 64,   # nothing before: a new grant
+        rec = ap.request(e["request_approval"], {"op": f"capability-{what}", "target": e["id"], "old_digest": "0" * 64,   # nothing before: a new grant
                           "new": {"role": a.role, "reason": a.reason[:500]}},
-                         f"capability {e['id']} for role {a.role}: {a.reason[:200]}", a.card, src["request_ttl_s"], requester=a.role)
+                         f"capability {what} {e['id']} for role {a.role}: {a.reason[:200]}", a.card, src["request_ttl_s"], requester=a.role)
     except (ap.Refusal, sd.DataError, ValueError) as ex:
         raise Refuse(664, str(ex)[:180]) from None
     except Exception as ex:   # EventError (a worker environment, a log that cannot be written)
@@ -156,7 +193,7 @@ def cmd_request(a, src, entries):
 
 
 def cmd_load(a, src, entries):
-    e, v = find(entries, a.id, a.role, src)
+    e, v = find(entries, a.id, a.role, src, a)
     if v != "available":
         raise Refuse(665, "the capability is not available to this role" if v == "requestable" else "the capability needs the host check first")
     if not RUN.fullmatch(a.run) or (a.card and not RUN.fullmatch(a.card)):
@@ -182,10 +219,31 @@ def cmd_check_card(a, src, entries):
         assert all(isinstance(i, str) for i in ids)
     except (OSError, ValueError, AttributeError, AssertionError, TypeError):
         raise Refuse(666, "the card file is not readable JSON with lists of ids") from None
-    bad = [i for i in ids if not any(e["id"] == i and visibility(e, a.role, src) == "available" for e in entries)]
+    bad = [i for i in ids if not any(e["id"] == i and visibility(e, a.role, src) == "available" for e in with_toolsets(entries, a.role, src))]
     if bad:
         raise Refuse(666, "not available to the card's role: " + ", ".join(i[:64] for i in bad[:5]))
     return {"ok": True, "checked": ids}
+
+
+def commands(src):
+    """Repo-relative path of every command file of the command folders (selftests excluded by the sources' patterns)."""
+    out = []
+    for d in src["command_folders"]:
+        base = os.path.join(sd.ROOT, d)
+        for n in sorted(os.listdir(base)) if os.path.isdir(base) else ():
+            if os.path.isfile(os.path.join(base, n)) and any(fnmatch.fnmatch(n, g) for g in src["command_globs"]) \
+                    and not any(fnmatch.fnmatch(n, g) for g in src["command_exclude"]):
+                out.append(f"{d}/{n}")
+    return out
+
+
+def cmd_check(a, src, entries):
+    """The completeness lint (item R, body B5): every command file, skill, MCP server and extension of the sources has a registry entry."""
+    cmds = commands(src)
+    missing = [c for c in cmds if c not in {e["source"] for e in entries}] + sorted(found_ids(src) - {e["id"] for e in entries})
+    if missing:
+        raise Refuse("STL-CFG-340", f"{len(missing)} without a registry entry: " + ", ".join(m[:80] for m in missing[:10]) + (" ..." if len(missing) > 10 else ""))
+    return {"ok": True, "commands": len(cmds), "entries": len(entries)}
 
 
 def main(argv):
@@ -199,16 +257,18 @@ def main(argv):
             s.add_argument(flag, **kw.get(flag, {}))
         s.add_argument("--json", action="store_true")
         return s
-    add("search", ("--role", True), ("--limit", False), **{"--limit": {"type": int}}).add_argument("words", nargs="+")
-    add("describe", ("--role", True)).add_argument("id")
+    hr = {"--host-request": {"metavar": "FILE"}}   # gated entries: the run's host request JSON {target, action, confirmation} for host_access.decide
+    add("search", ("--role", True), ("--limit", False), ("--run", False), ("--host-request", False), **{"--limit": {"type": int}} | hr).add_argument("words", nargs="+")
+    add("describe", ("--role", True), ("--run", False), ("--host-request", False), **hr).add_argument("id")
     add("request", ("--role", True), ("--reason", True), ("--card", True)).add_argument("id")
-    add("load", ("--role", True), ("--run", True), ("--card", False)).add_argument("id")
+    add("load", ("--role", True), ("--run", True), ("--card", False), ("--host-request", False), **hr).add_argument("id")
     add("check-card", ("--role", True), ("--card", True))
+    add("check")
     add("prompt-line")
     a = p.parse_args(argv)
     try:
         if w := worker_env.reason():   # before reading anything: a worker asks the capability server (DC-05)
-            if a.cmd in ("check-card", "prompt-line") or any(getattr(a, f, None) is not None for f in ("role", "card", "run")):
+            if a.cmd in ("check-card", "prompt-line", "check") or any(getattr(a, f, None) is not None for f in ("role", "card", "run", "host_request")):
                 raise Refuse(662, w + "; role, card and run come from the run token, through the capability server")
             import capabilities_mcp as mcp
             args = ({"query": " ".join(a.words)} if a.cmd == "search" else {}) | {
@@ -222,15 +282,22 @@ def main(argv):
             if missing := [f for f in need[a.cmd] if getattr(a, f[2:]) is None]:
                 p.error("the following arguments are required: " + ", ".join(missing))
             src = sources()
+            if getattr(a, "host_request", None):
+                try:
+                    a.host_request = json.load(open(a.host_request, encoding="utf-8"))
+                except (OSError, ValueError):
+                    raise Refuse(667, "the host request file is not readable JSON") from None
             if a.cmd == "prompt-line":
                 out = {"line": src["capability_prompt_line"]}
+            elif a.cmd == "check":
+                out = cmd_check(a, src, registry())
             elif not role_ok(a.role):
                 raise Refuse(663, "the role is not in the role table")
             else:
                 fn = {"check-card": cmd_check_card}.get(a.cmd) or globals()["cmd_" + a.cmd]
                 out = fn(a, src, registry())
     except Refuse as r:
-        sd.say(f"STL-GRD-{r.code}", r.problem, alert=r.alert)
+        sd.say(r.full(), r.problem, alert=r.alert)
         return 1
     except (sd.DataError, OSError, KeyError, ValueError) as e:
         sd.say("STL-GRD-667", f"{type(e).__name__}: {str(e)[:160]}")

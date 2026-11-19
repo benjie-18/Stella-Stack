@@ -2370,6 +2370,18 @@
       "resolvable": false
     },
     {
+      "code": "STL-CFG-340",
+      "area": "CFG",
+      "severity": "warning",
+      "title": "the capability registry is incomplete",
+      "message": "A command, skill or MCP server has no entry in the capability registry: {problem}.",
+      "action": "add an entry for each name to .stella/capabilities.json (through an ordinary apply); an owner-only command gets allowed_roles [] and no role can find it.",
+      "cause": "A file in a command folder, a skill folder, an MCP manifest or an extension folder named in .stella/capability-sources.json is not the source or the id of any registry entry, so discovery would not start complete.",
+      "check": "`python3 bin/capabilities.py check --json`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item R; bin/capabilities.py, .stella/capabilities.json, .stella/capability-sources.json",
+      "resolvable": false
+    },
+    {
       "code": "STL-GRD-660",
       "area": "GRD",
       "severity": "warning",
