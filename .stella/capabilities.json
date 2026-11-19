@@ -838,6 +838,37 @@
       },
       "global_id": "c28b59ee-a8ba-4f80-a4a7-65084fca834f",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "budget",
+      "kind": "command",
+      "summary": "Budgets and cost anomalies: per project, card and role budgets from .stella/budgets.json (a * default per scope, a window, soft thresholds in percent, a hard cap in money and/or a plan-share cap) checked against the usage ledger; soft thresholds alert once each (STL-LIM-430); a hard cap makes one hold, one alert (431) and one approval request through bin/approvals.py, and every call of that key is refused (432) until an answer read from the trusted event log (approved: raise the cap or defer to a link the data policy allows; denied, expired or unanswered: paused); an estimate before a card starts and the actual with the difference at close; anomaly detectors (spend rate, retry loop, growing session, outlier card) with one alert (433) and one event line per episode; a before_call hook for other code.",
+      "keywords": [
+        "budget",
+        "cap",
+        "hold",
+        "threshold",
+        "estimate",
+        "anomaly",
+        "spend",
+        "approval",
+        "pause",
+        "defer",
+        "cost"
+      ],
+      "inputs": "check [--project P] [--card C] [--role R] --json | hold list --json | estimate --kind K [--card C] --json | close --card C --json | anomalies --json | check-data --json",
+      "outputs": "JSON (check: {result allow|warn|held, threshold, defer_to, code, holds[]}; hold list: {holds}; estimate: {estimate, basis, samples}; close: {estimate, actual, difference}; anomalies: {new, known}; check-data: {ok, problems}); exit 1 with a catalog code (STL-LIM-432 held, 434 data or state unusable, 435 input unusable); 430, 431 and 433 are alert lines",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/budget.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "15b80dd3-709c-463f-8ae7-261511fa4af2",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

@@ -179,6 +179,11 @@
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The call spans (F2c B), one JSON line per call with OpenTelemetry GenAI attribute names, appended by bin/cost.py span --write; written on the host only; a protected state path, not a data file. Export to an outside tool is behind the features.json flag otlp-export."
+    },
+    "budget_state": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The budget state (F2c C, schema budget-state): thresholds already alerted, holds with their approval request, card estimates and actuals, anomaly episodes already alerted. Written on the host only, by bin/budget.py; a protected state path, not a data file."
     }
   },
   "required": [
@@ -203,7 +208,8 @@
     "untrusted_events",
     "event_writer_id",
     "files",
-    "spans"
+    "spans",
+    "budget_state"
   ],
   "additionalProperties": false
 }
