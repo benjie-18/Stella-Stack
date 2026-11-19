@@ -267,9 +267,12 @@ def box_prefix(role, aid, wt, label, cfg):
             raise Stop(C["box"], f"role {role} has no boxed profile for adapter {aid}, and the adapter's data does not say unboxed: the run is not started")
         home = pwd.getpwuid(os.getuid()).pw_dir
         root = os.environ.get("BOX_HERMES_ROOT") or f"{home}/.hermes"   # as box.merge_exec finds it
-        top = os.path.dirname(os.path.realpath(os.path.join(wt, git(wt, "rev-parse", "--git-common-dir"))))
+        try:   # the board's project roots, as the os-box plugin passes them; the stack's own worktrees come from stack_root
+            proj = [p["repo"] for p in roles.board_projects(roles.board()) if p["repo"]]
+        except Exception:
+            proj = []   # no readable board: only the stack's own linked worktrees can be boxed (fail closed for the rest)
         argv, over = box.box_argv(d, profs[0], {"card": label, "workspace": wt, "branch": git(wt, "rev-parse", "--abbrev-ref", "HEAD")},
-                                  hermes_root=root, home=home, roots=[top])
+                                  hermes_root=root, home=home, roots=proj, stack_root=sd.ROOT)
         return argv + ["--ro-bind", cfg, cfg, "--chdir", wt], over   # the run's config folder, read-only, nothing else of the state
     except Stop:
         raise
