@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "confidence": 0.95,
+  "trials": 5,
+  "pass_k": 3,
+  "margin": 0.05,
+  "min_tasks": 8,
+  "routing_min_tasks": 8,
+  "stale_catalog_days": 14,
+  "regression_set": {
+    "min_pass_rate": 1.0
+  }
+}

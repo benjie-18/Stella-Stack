@@ -11,6 +11,7 @@
   "card_facts": ".supervisor/state/card-facts",
   "probe_records": ".supervisor/state/probes.json",
   "triage_calibration": ".supervisor/state/triage-calibration.json",
+  "benchmark_results": ".supervisor/state/benchmarks.json",
   "agents_dir": ".claude/agents",
   "team_bodies": "docs/build-team",
   "team_preset": "build-team",
@@ -286,6 +287,18 @@
       "list_key": null,
       "id_field": "schema_version",
       "global_id": "790623bf-5381-42cc-9eae-e8c9bbc37391",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "model-check",
+      "path": ".stella/model-check.json",
+      "schema": "model-check",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "7de51cd7-25ed-4307-b588-bb54bf69afc1",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

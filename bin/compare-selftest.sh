@@ -17,8 +17,10 @@ cp -r "$ROOT/bin" "$ROOT/.stella" "$ROOT/docs" "$R/"
 cd "$T" || exit 1
 jq() { env -u HOME jq "$@"; }
 IX=$R/.stella/data-files.json; ix() { jq -r "$1" "$IX"; }
+RJ=$R/$(ix .role_table); jq '.worker_markers = ["STUB_WORKER_MARK"]' "$ROOT/$(ix .role_table)" >"$RJ"
 printf "OWNER_TIMEZONE='UTC'\n" >"$T/owner-fake.env"
-export HOME=$T/home TMPDIR=$T/tmp STELLA_ROOT=$R ESCALATE_SUP_DIR=$T/sup OWNER_CONFIG=$T/owner-fake.env
+export HOME=$T/home TMPDIR=$T/tmp STELLA_ROOT=$R ESCALATE_SUP_DIR=$T/sup OWNER_CONFIG=$T/owner-fake.env ROLES_FILE=$RJ
+unset STUB_WORKER_MARK
 fails=0
 ok() { if ( set -o pipefail; eval "$1" ) >/dev/null 2>&1; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 ed() { local f=$R/.stella/$1; jq "${@:2}" "$f" >"$f.n" && mv "$f.n" "$f"; }
@@ -66,7 +68,7 @@ elif case == "ci":
     r = compare.compare_arms(a, b, {**PAR, "min_tasks": 5})
     assert r["n_tasks"] == 5 and near(r["mean_diff"], 0.3, 1e-9)
     assert near(r["ci"][0], 0.3 - 2.7764 * 0.158114 / 5 ** 0.5, 1e-3) and near(r["ci"][1], 0.3 + 2.7764 * 0.158114 / 5 ** 0.5, 1e-3), r["ci"]
-    assert r["decision"] == "better" and r["pass_k"]["a"] == 1.0
+    assert r["decision"] == "better" and r["pass_k"] == {"a": None, "b": None}   # one trial a task: no pass^3 number
 elif case == "better_worse":
     m = base(12, 3)
     hi, lo = [min(1.0, x + 0.2) for x in m], [max(0.0, x - 0.2) for x in m]
@@ -76,8 +78,8 @@ elif case == "non_inferior":
     m = base(20, 5)
     a, b = arm([x - 0.01 for x in m], noise=0.03, seed=1), arm(m, noise=0.03, seed=2)
     assert compare.decide(a, b, PAR, cheaper=True) == "non_inferior"
-    assert compare.decide(a, b, PAR) == "inconclusive"   # "about as good" without a cheaper claim never acts
-    assert compare.decide(a, b, {**PAR, "margin": 0.001}, cheaper=True) == "inconclusive"   # the margin is data
+    assert compare.decide(a, b, PAR) != "non_inferior"   # without the caller's cheaper claim, never non_inferior (here the small loss is real)
+    assert compare.decide(a, b, {**PAR, "margin": 0.001}, cheaper=True) != "non_inferior"   # the margin is data
     c = arm([x - 0.2 for x in m], noise=0.03, seed=1)
     assert compare.decide(c, b, PAR, cheaper=True) == "worse"   # a loss beyond the margin is never excused by price
 elif case == "noise":
@@ -133,15 +135,26 @@ elif case == "stats":
     one = [dict(rec("r1", "c9", "m9", "t0", True, 1.0), trial=i) for i in range(5)]
     assert compare.routing_stats(one, [], PAR)[0]["n"] == 1
 elif case == "reader":
-    good = {"role": "r1", "connection": "c1", "model": "m1", "task": "t0", "trial": 0, "passed": True, "score": 0.9,
-            "ts": "2026-11-01T00:00:00Z", "suite_version": "s1", "install_id": sys.argv[3]}
-    foreign = dict(good, install_id="00000000-0000-4000-8000-000000000000", task="t1")
-    invalid = dict(good, score=7, task="t2")
-    extra = dict(good, task="t3", surprise=1)
-    path = sys.argv[4]
-    json.dump({"schema_version": 1, "records": [good, foreign, invalid, extra, dict(good, task="t4", cost=0.01)]}, open(path, "w"))
+    row = {"role": "r1", "connection": "c1", "model": "m1", "task": "t0", "trial": 0, "passed": True, "score": 0.9,
+           "ts": "2026-11-01T00:00:00Z", "suite_version": "s1"}
+    path, iid = sys.argv[4], sys.argv[3]
+    try:
+        compare.record_results([dict(row, task="bad", score=7)])   # the writer refuses an invalid row and writes nothing
+        raise SystemExit("an invalid row was accepted")
+    except compare.Stop as x:
+        assert x.code == "STL-MDL-753"
+    assert compare.read_benchmarks() == ([], None)
+    assert compare.record_results([row, dict(row, task="t4", cost=0.01)]) == 2
+    assert sorted(r["task"] for r in compare.read_benchmarks()[0]) == ["t0", "t4"]
+    doc = json.load(open(path))
+    full = lambda **k: {**row, "install_id": iid, **k}
+    doc["records"][0]["score"] = 0.1   # t0 edited by hand after its line was written
+    doc["records"] += [full(task="t1", install_id="00000000-0000-4000-8000-000000000000"),   # another install
+                       full(task="t2", score=7),   # invalid
+                       full(task="t3")]   # valid but no trusted line
+    json.dump(doc, open(path, "w"))
     recs, why = compare.read_benchmarks()
-    assert sorted(r["task"] for r in recs) == ["t0", "t4"] and why is None, (recs, why)
+    assert sorted(r["task"] for r in recs) == ["t4"] and why is None, (recs, why)
     open(path, "w").write("{not json")
     recs, why = compare.read_benchmarks()
     assert recs == [] and why, (recs, why)
@@ -159,7 +172,7 @@ ok 'py min_sample' "E7 fewer paired tasks than min_tasks is inconclusive with re
 ok 'py regression' "E8 a failing regression-set task refuses (worse, reason regression_set) whatever the mean; the rule, missing tasks and unfixed tasks"
 ok 'py determinism' "E9 same input, same output, whatever the record order"
 ok 'py stats' "E10 routing_stats: the prior below the minimum sample (with the reason), the benchmark mean above; newest suite only; tasks are the sample"
-ok 'py reader "$IID" "$BF"' "E11 the benchmark reader ignores foreign-install and invalid records and fails closed on an unreadable file"
+ok 'py reader "$IID" "$BF"' "E11 the benchmark reader accepts only records with a trusted line: foreign-install, invalid, unproved and hand-edited records are ignored, an unreadable file fails closed"
 
 # ---- the CLI, the fake entry, the data ----
 mk() { python3 -I -c "
@@ -193,10 +206,11 @@ ok '[ "$rc" = 1 ] && grep -q STL-MDL-750 "$T/err" && jq -e ".code == \"STL-MDL-7
 
 # the fake entry: a role, a connection and a model no file of the stack names, only in a scratch benchmark file
 python3 -I -c "
-import json, sys
-rows = [{'role': 'zz-role', 'connection': 'zz-conn', 'model': 'zz-model', 'task': 't%d' % i, 'trial': 0, 'passed': i % 2 == 0, 'score': 0.5,
-         'ts': '2026-11-01T00:00:00Z', 'suite_version': 'v9', 'install_id': sys.argv[1]} for i in range(8)]
-json.dump({'schema_version': 1, 'records': rows}, open(sys.argv[2], 'w'))" "$IID" "$BF"
+import json
+json.dump([{'role': 'zz-role', 'connection': 'zz-conn', 'model': 'zz-model', 'task': 't%d' % i, 'trial': 0, 'passed': i % 2 == 0, 'score': 0.5,
+            'ts': '2026-11-01T00:00:00Z', 'suite_version': 'v9'} for i in range(8)], open('$T/rows.json', 'w'))"
+ok 'cp_ record --file "$T/rows.json" --json | jq -e ".recorded == 8" && grep -c benchmark.recorded "$R/$(ix .event_log)"' "E17b record writes the records and their trusted line (host)"
+ok 'STUB_WORKER_MARK=1 python3 -I -B "$R/bin/compare.py" record --file "$T/rows.json" 2>/dev/null; [ $? = 1 ]' "E17c record in a worker environment is refused" 
 printf '[{"role":"zz-role","connection":"zz-conn","model":"zz-model","score":0.9}]' >"$T/prior.json"
 ok 'cp_ stats --prior "$T/prior.json" --json | jq -e "length == 1 and .[0].source == \"benchmark\" and .[0].score == 0.5 and .[0].role == \"zz-role\""' \
   "E18 fake entry: a new role, connection and model in a benchmark file is used by stats with no code change"

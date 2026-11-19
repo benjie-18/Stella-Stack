@@ -728,6 +728,23 @@
       "triage": {"result": "shipped"},
       "global_id": "61fe38f7-5138-45b2-9fc9-4545ca128199",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "compare",
+      "kind": "command",
+      "summary": "Sound comparison of two arms on the same tasks (paired trials, mean difference with a 95% t-interval, pass^k, non-inferiority margin, minimum sample, regression set) and routing stats from benchmark results (benchmark mean over the advertised score only above the minimum sample); record adds benchmark records with their trusted event lines (host only). Parameters are data in .stella/model-check.json.",
+      "keywords": ["compare", "benchmark", "confidence interval", "pass^k", "non-inferior", "regression set", "routing stats", "model check"],
+      "inputs": "compare --a FILE --b FILE [--cheaper] [--regression FILE] --json | stats [--prior FILE] --json | record --file FILE --json | check --json",
+      "outputs": "JSON (compare: {decision better|worse|non_inferior|inconclusive, reason, n_tasks, mean_diff, ci, pass_k}; stats: a list of {role, connection, model, score, source, n, reason}; record: {recorded}; check: {ok, benchmark_records}); exit 1 with a catalog code (STL-MDL-750 bad input, 751 regression set failed, 752 parameters unusable, 753 benchmark results unusable, STL-CFG-312 record in a worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/compare.py",
+      "triage": {"result": "shipped"},
+      "global_id": "091fbea8-a29e-472b-8535-7ba799f14db9",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }
