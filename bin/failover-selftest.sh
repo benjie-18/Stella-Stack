@@ -414,6 +414,17 @@ ok '[ $RC = 0 ] && jq -s -e "any(.[]; .connection == \"st-a\" and .outcome == \"
   jq -e ".links[\"st-a/st-a-m1\"].observed_limit | .source != null and .until != null" "$STATE"' \
   "a limit answer (the wire shape row rate_limit) is one usage record with outcome limit, is observed by the ledger, and the cooldown entry carries that observed limit"
 ok '[ "$(LG status --connection st-a --model st-a-m1 --json | jq -r .observed.source)" != null ]' "the ledger's status shows the observed limit of the link"
+# every usage record is also one span (attribute names from the data row otlp-mapping, not from this test)
+SP=$R/$(ix .spans); OM=$R/$(ix '.files[] | select(.id == "otlp-mapping") | .path')
+an() { jq -r --arg f "$1" '.attributes[] | select(.from == $f) | .name' "$OM"; }   # <record field>: the span attribute the mapping names for it
+# no one wire shape shows all three extra types: one call per link (st-a, st-o are on different shapes), the traits give each answer cache_read 40, cache_write 7, reasoning 5
+fresh; jq -c --slurpfile c "$R/.stella/connections.json" '. + {traits: [$c[0].entries[] | select(.id == "st-a" or .id == "st-o") | .protocol as $p | .models[] | {shape: $p, model: .id, cache_read: 40, cache_write: 7, reasoning: 5}]}' "$T/ctl.json" >"$T/ctl2.json"
+python3 -I "$T/http.py" post "$CTL" "$T/ctl2.json" >/dev/null 2>&1; rm -f "$SP"
+chain st-a/st-a-m1; call sp1; chain st-o/st-o-m1; call sp1b
+ok '[ "$(grep -c . "$SP")" = 2 ] && jq -s -e --arg i "$(an tokens.input)" --arg o "$(an tokens.output)" --arg w "$(an tokens.cache_write)" --arg r "$(an tokens.cache_read)" --arg x "$(an tokens.reasoning)" --arg m "$(an model)" \
+  "all(.[].attributes; (.[\$i] > 0) and (.[\$o] > 0) and .[\$r] == 40 and (.[\$m] | startswith(\"st-\"))) and any(.[].attributes; .[\$w] == 7) and any(.[].attributes; .[\$x] == 5)" "$SP"' "a call is one span with the five token-type attributes and the model (names from otlp-mapping)"
+chain st-a/st-a-m1; fresh "[$(fault st-a/st-a-m1 "$CT")]"; rm -f "$SP"; call sp2
+ok '[ "$(grep -c . "$SP")" = 1 ] && tail -n 1 "$SP" | jq -e --argjson e "$(jq .status_codes.error "$OM")" ".status == \$e"' "a failed call is also one span (status from the mapping's status codes)"
 cat >"$T/srv429.py" <<'P'
 """Selftest server: answers every POST with 429, the header Retry-After: <seconds> and a body that is no daily cap. First stdout line: its port."""
 import http.server, sys

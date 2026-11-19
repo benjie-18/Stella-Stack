@@ -378,6 +378,11 @@ def record(call, cost=None):
             os.fsync(fd)
         finally:
             os.close(fd)
+    try:   # every record is also one span (local file; the OTLP export is a separate command); a span that fails is one alert, the record stands
+        import cost   # lazy: cost.py imports this module
+        cost.write_span(cost.span_of(rec))
+    except Exception as e:
+        el.say(getattr(e, "code", UNEXPECTED), f"a span was not written ({type(e).__name__})", alert=True)
     return rec
 
 
