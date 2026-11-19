@@ -3,6 +3,7 @@
 # Every section runs in its own scratch root (bash policy-selftest.sh <section>); no argument runs them all.
 # Sections -> checks: regen = AC3-regen | drift = AC3-drift | render = AC2-policy-render | secret = T-SECRET-DATA |
 #                     sandbox = T-SANDBOX-STUB | tokenenv = DC-03 | shape = DC-12 | hook = builder's cases (policy.py hook, DC-13, model flags)
+#                     shellhook = Gate B fix V1-01/RT1-01/V1-03 (shell class, dirs, run tmp) | ocrender = Gate B fix V1-02/V1-03/V1-11
 # Written test-first (F3 wave 1): the CLI contract is design section 1 (policy.py check|generate|drift [--json]); exit codes and the
 # code range STL-GRD-610..619 are asserted, never wording.
 # ASSUMPTIONS (names the design leaves open; a builder who picks otherwise changes the test with a note, not the contract):
@@ -20,7 +21,7 @@
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 ME=policy-selftest
-SECTIONS="regen drift render secret sandbox tokenenv shape hook"
+SECTIONS="regen drift render secret sandbox tokenenv shape hook shellhook ocrender"
 if [ $# = 0 ]; then
   f=0; for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || f=$((f+1)); done
   [ $f = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($f sections)"; [ $f = 0 ]; exit
@@ -213,6 +214,114 @@ hook)   # builder cases (F3 item P): policy.py hook judges one tool call by the 
   ok '[ "$(term "$MG" "qa-fake-cli -p hi")" = 0 ]' "model flags control: an unknown command name passes the model guard"
   ed .stella/adapters.json '(.entries[] | select(.model_flags) | .model_flags.names) += ["qa-fake-cli"]'
   ok '[ "$(term "$MG" "qa-fake-cli -p hi")" = 2 ]' "model flags: a command name added to an adapter's model_flags is judged by the model guard (no model: refused)"
+  ;;
+shellhook)   # Gate B fix cycle 1 (V1-01 High, RT1-01; V1-03 run tmp): the hook's shell class enforces the file tools' rules (protected,
+  # secret, write boundary = worktree + run tmp; ~, $HOME, .., cd, relative paths resolved; unparseable fails closed); file tools honour secret dirs
+  A=$(jq -r '[.entries[] | select(.policy.hook) | .id][0] // empty' "$AD"); ok '[ -n "$A" ]' "shellhook precondition: an adapter with a policy hook"
+  TL() { jq -r --arg a "$A" --arg c "$1" --arg p "$2" '[.entries[] | select(.id == $a) | .tools | to_entries[] | select(.value.class == $c and ($p == "" or (.value.path // .value.command) == $p))][0] | "\(.key) \(.value.path // .value.command)"' "$AD"; }
+  read -r ST_ SPP <<<"$(TL shell "")"; read -r WT_ WP <<<"$(TL write "")"; read -r GT_ GP <<<"$(TL read /path)"
+  # hc <command> [cwd]: a shell call judged by the hook; hf <tool> <pointer> <path>: a file tool call
+  hc() { jq -nc --arg t "$ST_" --arg p "$SPP" --arg v "$1" --arg d "${2:-$T/wt}" '{tool_name: $t, tool_input: ({} | setpath($p | ltrimstr("/") | split("/"); $v)), cwd: $d}' \
+    | P hook --adapter "$A" --worktree "$T/wt" >"$T/o/hk.out" 2>&1; echo $?; }
+  hf() { jq -nc --arg t "$1" --arg p "$2" --arg v "$3" --arg d "$T/wt" '{tool_name: $t, tool_input: ({} | setpath($p | ltrimstr("/") | split("/"); $v)), cwd: $d}' \
+    | P hook --adapter "$A" --worktree "$T/wt" >"$T/o/hk.out" 2>&1; echo $?; }
+  refused() { grep -qE "$1" "$T/o/hk.out"; }
+  clean() { [ "$1" = 0 ] && [ ! -s "$T/o/hk.out" ]; }
+  STK=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import roles; print(roles.ROOT)' "$R/bin")
+  PR0=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import roles; print(roles.protected(roles.load())[0][0])' "$R/bin")
+  OWN=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import roles; print(roles.owner_settings(roles.load())[0])' "$R/bin")
+  PH=$(jq -r '.protected.home[0]' "$RJ")
+  ok '[ -n "$ST_" ] && [ -n "$WT_" ] && [ -n "$GT_" ] && [ -n "$PR0" ] && [ -n "$OWN" ] && [ -n "$PH" ]' "shellhook precondition: shell, write and search tools in the tool map; a protected path, an owner file, a protected home folder"
+  mkdir -p "$T/elsewhere" "$T/wt/sub"; : >"$T/elsewhere/in.txt"; : >"$T/wt/app.env"
+  # reads through the shell (RT1-01 payloads first: the stack's protected path and owner file named from the stack folder)
+  for c in "cat $PR0/x" "cat $OWN" "cd $(dirname "$OWN") && cat $(basename "$OWN")" "head ~/$PH/x" 'cat $HOME/'"$PH"'/x' "less ../../..$PR0/x"; do
+    hc "$c" "$STK" >/dev/null; ok 'refused STL-GRD-616' "shellhook V1-01 a shell read of a protected or owner path is refused (616): $c"
+  done
+  hc "cat app.env" >/dev/null; ok 'refused STL-GRD-616' "shellhook V1-01 a shell read of a file the secret name globs name is refused (616)"
+  # writes through the shell: every target outside the worktree and the run tmp is refused (615)
+  for c in "echo x > $T/elsewhere/f" "echo x >> ../f" "echo x 2>$T/elsewhere/e" "tee $T/elsewhere/f" "cp a $T/elsewhere/" "mv a ../b" "install -m 644 a $T/elsewhere/b" \
+           "ln -s a $T/elsewhere/l" "rsync -a a $T/elsewhere/" "dd if=a of=$T/elsewhere/b" "sed -i s/a/b/ $T/elsewhere/f" "truncate -s 0 $T/elsewhere/f" \
+           "mkdir $T/elsewhere/d" "touch ~/f" 'rm -rf $HOME/x' "git -C $T/elsewhere commit -m x" "cd $T/elsewhere && touch f" "cp -t $T/elsewhere a" \
+           "sudo tee $T/elsewhere/f" 'echo x > $QA_UNSET_VAR/f' "X=$T/elsewhere; touch \$X/f" "bash -c 'echo x > $T/elsewhere/f'" "echo x > $STK/bin/evil.sh"; do
+    hc "$c" >/dev/null; ok 'refused STL-GRD-615' "shellhook V1-01 a shell write outside the worktree and the run tmp is refused (615): $c"
+  done
+  hc "echo 'unterminated" >/dev/null; ok 'refused "STL-GRD-61[57]"' "shellhook V1-01 a command the hook cannot parse is refused (fail closed)"
+  # no objection: writes inside the worktree or the run tmp, reads of ordinary paths, words that are no path
+  for c in "echo x > out.txt" "echo x > $T/wt/sub/f" "cp $T/elsewhere/in.txt ./copy" 'echo x > $TMPDIR/f' "touch $TMPDIR/t" "ls -la 2>&1 >/dev/null" \
+           "git status" "mkdir -p build && cd build && touch x" "cat .env.example" 'node -e "console.log(process.env.HOME)"' "sed -i s/a/b/ sub/f" "dd if=/dev/zero of=sub/z count=1"; do
+    ok 'clean "$(hc "$c")"' "shellhook no objection: $c"
+  done
+  # V1-03: the run tmp is writable through the file tools too
+  ok 'clean "$(hf "$WT_" "$WP" "$TMPDIR/x.txt")"' "shellhook V1-03 a file tool write into the run tmp: no objection"
+  # V1-01: the file tools honour the secret rule's dirs (a search over a folder that holds one)
+  hf "$GT_" "$GP" "$HOME" >/dev/null; ok 'refused STL-GRD-616' "shellhook V1-01 a search over the home folder (it holds secret folders) is refused (616)"
+  hf "$GT_" "$GP" /proc >/dev/null; ok 'refused STL-GRD-616' "shellhook V1-01 a search over /proc is refused (616)"
+  ok 'clean "$(hf "$GT_" "$GP" "$T/wt")"' "shellhook a search over the worktree: no objection"
+  ;;
+ocrender)   # Gate B fix cycle 1 (V1-02, V1-03, V1-11): the hook-less CLI's rendered rules
+  OC=$(jq -r '[.entries[] | select(.policy and (.policy.hook | not)) | .id][0] // empty' "$AD"); ok '[ -n "$OC" ]' "ocrender precondition: an adapter with a policy part and no hook"
+  run g P generate --adapter "$OC" --worktree "$T/wt" --json; ok '[ $RC = 0 ]' "ocrender generate (exit 0)"
+  jq '.config.permission' "$T/o/g.out" >"$T/perm.json" 2>/dev/null
+  # V1-02: every deny of the hand-written config before F3 (6a3b54b opencode.json) is still denied by the render, probed at word borders
+  cat >"$T/old.json" <<'JSON'
+{"bash": ["claude *--model *", "claude *--model=*", "claude *opusplan*", "claude *--dangerously-skip-permissions*", "claude *--allow-dangerously-skip-permissions*",
+  "claude setup-token*", "claude -p*", "claude *-p *", "claude *--print*", "*owner.env*", "*/.env*", "* .env*", "*.pem*", "*/*.key*", "*.hermes/auth.json*",
+  "*.claude/.credentials*", "*opencode/auth.json*", "*/.ssh/*", "*~/.ssh*", "*/.aws/*", "*~/.aws*", "*.config/gh*"],
+ "edit": ["*owner.env*"],
+ "read": ["*.env", "*.env.*", "*.pem", "*.key", "*/.hermes/auth.json", "*/.claude/.credentials*", "*/.local/share/opencode/auth.json", "*/.ssh/*", "*/.aws/*", "*/.config/gh/*"]}
+JSON
+  cat >"$T/cmp.py" <<'PY'
+import json, re, sys
+old, new = json.load(open(sys.argv[1])), json.load(open(sys.argv[2]))
+rx = lambda g: re.compile("".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in g), re.S)
+def denied(s, m):   # a deny matches and no allow does (whichever wins in the CLI, the probe is then denied)
+    return any(rx(k).fullmatch(s) for k, v in m.items() if v == "deny") and not any(rx(k).fullmatch(s) for k, v in m.items() if v == "allow")
+FILL = {"bash": (["", "cat /a/b/x"], "x", ["", " -n"]), "read": (["", "/a/b/x"], "x", ["x", "x/y"]), "edit": (["", "/a/b/x"], "x", ["x"])}
+bad = []
+for kind, pats in old.items():
+    lead, mid, trail = FILL[kind]
+    for p in pats:
+        parts = p.split("*")
+        for a in lead:
+            for z in trail:
+                s = (a if p.startswith("*") else "") + mid.join(parts[1 if p.startswith("*") else 0:len(parts) - (1 if p.endswith("*") and len(parts) > 1 else 0)]) + (z if p.endswith("*") else "")
+                if not denied(s, new.get(kind) or {}):
+                    bad.append(f"{kind} {p!r}: {s!r} not denied")
+print("\n".join(bad))
+sys.exit(1 if bad else 0)
+PY
+  run c python3 -I "$T/cmp.py" "$T/old.json" "$T/perm.json"; ok '[ $RC = 0 ]' "ocrender V1-02 every pre-F3 deny is still denied by the render (or a stricter one is present)"
+  cat >"$T/ok.py" <<'PY'
+import json, re, sys
+m = json.load(open(sys.argv[1]))[sys.argv[2]]
+rx = lambda g: re.compile("".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in g), re.S)
+d = lambda s: any(rx(k).fullmatch(s) for k, v in m.items() if v == "deny") and not any(rx(k).fullmatch(s) for k, v in m.items() if v == "allow")
+want = sys.argv[3] == "deny"
+bad = [s for s in sys.argv[4:] if d(s) != want]
+print("\n".join(bad)); sys.exit(1 if bad else 0)
+PY
+  run k python3 -I "$T/ok.py" "$T/perm.json" bash allow 'python3 -c "print(d.keys())"' 'jq .keywords f.json' 'cat src/x.keyboard.ts' 'node -e "console.log(process.env.HOME)"'
+  ok '[ $RC = 0 ]' "ocrender V1-02 ordinary commands are not denied by the key or env rules (.keys(), .keywords, .keyboard, process.env)"
+  run k2 python3 -I "$T/ok.py" "$T/perm.json" bash deny 'cat id.key' 'cat /a/server.key | x' 'cat .hermes/auth.json' 'cat x.pem' 'cat .claude/.credentials.json' 'cat share/opencode/auth.json' 'cat app.env'
+  ok '[ $RC = 0 ]' "ocrender V1-02 real key files and relative secret paths are denied in the shell"
+  run k3 python3 -I "$T/ok.py" "$T/perm.json" read deny 'app.env' '/w/x.env.local' '/w/id.key'; ok '[ $RC = 0 ]' "ocrender V1-02 *.env and *.env.* reads are denied"
+  run k4 python3 -I "$T/ok.py" "$T/perm.json" read allow '/w/.env.example' '/w/.env.sample' '/w/.env.template'; ok '[ $RC = 0 ]' "ocrender V1-02 the example, sample and template names stay readable"
+  # V1-03: external_directory allows the worktree and the run tmp, denies the rest
+  ok 'jq -e --arg w "$T/wt" --arg t "$TMPDIR" ".external_directory | .[\"*\"] == \"deny\" and .[\$w] == \"allow\" and .[\$w + \"/*\"] == \"allow\" and .[\$t] == \"allow\" and .[\$t + \"/*\"] == \"allow\"" "$T/perm.json"' \
+    "ocrender V1-03 external_directory: worktree and run tmp allowed, everything else denied"
+  ok 'jq -e "[.rules[] | select(.kind == \"write_boundary\") | .writable[] | select(test(\"worktree\") | not)] | length == 1" "$PJ"' "ocrender V1-03 the write_boundary rule names the run tmp beside the worktree"
+  # V1-11: every name of every CLI with model flags (npx and path forms too) is denied its model flags in each CLI's shell
+  run k5 python3 -I "$T/ok.py" "$T/perm.json" bash deny 'claude-code --model x' 'npx @anthropic-ai/claude-code --model x' 'cd w && claude --model x' '/usr/bin/claude -p x' 'opencode run --model a/b x'
+  ok '[ $RC = 0 ]' "ocrender V1-11 every name and invocation (npx, a path, after cd) of each CLI is denied its model flags"
+  CC=$(jq -r '[.entries[] | select(.policy.hook) | .id][0] // empty' "$AD")
+  run g2 P generate --adapter "$CC" --worktree "$T/wt" --json
+  ok '[ $RC = 0 ] && grep >/dev/null -F "opencode *--model *" "$T/o/g2.out"' "ocrender V1-11 the hook CLI's config denies the other CLI's model flags"
+  ok 'jq -e "[.entries[] | select(.policy) | .model_flags.deny_patterns | length > 0] | all" "$AD"' "ocrender V1-11 every adapter with a policy part has model flags"
+  cp "$AD" "$T/ad.keep"; ed .stella/adapters.json --arg a "$OC" '(.entries[] | select(.id == $a)) |= del(.model_flags)'
+  run c1 P check --json; ok '[ $RC = 1 ] && out c1 | grep >/dev/null "STL-GRD-611" && out c1 | grep >/dev/null -F "$OC"' "ocrender V1-11 an adapter with no model flags: model_limits has nothing to render for it, check fails (611)"
+  cp "$T/ad.keep" "$AD"; ed .stella/adapters.json --arg a "$OC" '(.entries[] | select(.id == $a) | .policy.shapes.dispatcher_only[0].templates) = {"qa_no_such_set": ["x {command}"]}'
+  run c2 P check --json; ok '[ $RC = 1 ] && out c2 | grep >/dev/null "STL-GRD-611"' "ocrender V1-11 a shape that renders nothing does not count as covering its kind (611)"
+  cp "$T/ad.keep" "$AD"
   ;;
 esac
 finish
