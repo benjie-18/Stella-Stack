@@ -279,8 +279,8 @@ Routing fields (F2, all optional): `link_class` on a provider and `models[].link
 `routing.json` (x-ref: an unknown id is refused); `stella_data.link_class(prov, model)` is the one function that names
 a link's class: the model's, else the connection's, else the class `routing.json` `class_defaults` gives a link whose
 `reach()` is local, or an aggregator; any other link has no class and is not routable. `protocol` (an api provider's wire
-shape) is an x-ref to an entry of `.stella/protocols.json`; `models[].score` (advertised suitability, a stub until the F2c
-benchmark) is shape-checked only. `capabilities` are the owner's notes of what a model advertises (and the probe's
+shape) is an x-ref to an entry of `.stella/protocols.json`; `models[].score` (advertised suitability) is the prior of the resolver's
+ranking: a benchmark mean (bin/compare.py `routing_stats`, minimum sample `routing_min_tasks` of `.stella/model-check.json`) replaces it. `capabilities` are the owner's notes of what a model advertises (and the probe's
 `context.advertised`): no routing rule reads them (F2b item C). What a link can do is its capability probe record
 (`stella_data.probed(records, connection, model)`: the newest of `bin/probe.py`'s records of this install, never one dated in
 the future), judged by `stella_data.unmet(requirements, record)`: a null capability meets no requirement, and `min_context_tokens` is

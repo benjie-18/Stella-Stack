@@ -1818,6 +1818,30 @@
       "resolvable": false
     },
     {
+      "code": "STL-MDL-780",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "the resolver cannot use the benchmark results",
+      "message": "The resolver ranked a group of links without the benchmark results: {problem}.",
+      "action": "check the file at the index key benchmark_results and .stella/model-check.json (`python3 bin/compare.py check`); the resolver ranks again from the results once they can be read. See STL-MDL-780 in docs/alert-codes.md.",
+      "cause": "The benchmark results file or its trusted lines cannot be read, or the comparison parameters cannot be used. The resolver falls back to the catalog's advertised scores (the prior); it never refuses and never guesses. One line per resolve.",
+      "check": "`python3 bin/compare.py check --json`; `python3 bin/resolve.py resolve --role <role> --project <project> --json` (decision.reason names each link's score and source).",
+      "related": "F2c item G; bin/resolve.py scored(), bin/compare.py routing_stats",
+      "resolvable": false
+    },
+    {
+      "code": "STL-MDL-781",
+      "area": "MDL",
+      "severity": "info",
+      "title": "a ranking kept the advertised score: sample too small",
+      "message": "A ranking kept the advertised scores for a link whose benchmark sample is below the minimum, and the smaller sample would have changed the first pick: {problem}.",
+      "action": "nothing to do; run the benchmark for the role on that link until it reaches the minimum number of tasks (routing_min_tasks in .stella/model-check.json). See STL-MDL-781 in docs/alert-codes.md.",
+      "cause": "Benchmark results exist for a link but cover fewer tasks than routing_min_tasks, so the routing statistics do not let them override the prior. One line per resolve, only when the first pick would differ.",
+      "check": "`python3 bin/resolve.py resolve --role <role> --project <project> --json` (decision.reason lists each link's score, source and n).",
+      "related": "F2c item G; bin/resolve.py scored(), bin/compare.py routing_stats",
+      "resolvable": false
+    },
+    {
       "code": "STL-LIM-420",
       "area": "LIM",
       "severity": "warning",

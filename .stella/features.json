@@ -380,17 +380,6 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
-      "id": "routing-advertised-scores",
-      "owner_phase": "F2",
-      "status": "on",
-      "depends_on": [],
-      "flag": null,
-      "due_phase": "F2c",
-      "replaced_by": "the role benchmark (F2c) and first-pass rates from closed cards; until then Standard's best-suited choice ranks by the catalog's advertised models[].score",
-      "global_id": "b3571175-897e-420a-b189-c6871e4d3968",
-      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
-    },
-    {
       "id": "triage-classifier",
       "owner_phase": "F2b",
       "status": "off",
