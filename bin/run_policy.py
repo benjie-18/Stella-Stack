@@ -21,6 +21,7 @@ import event_log as el
 import stella_data as sd
 
 BADDATA, PREFILL, OUTPUT, BADINPUT = "STL-LIM-450", "STL-LIM-451", "STL-LIM-452", "STL-LIM-453"
+OVER_EVENT = "run.output_over_budget"
 ROW, ADAPTERS, ROLES = "run-policy", ".stella/adapters.json", "docs/hermes-local/roles.json"
 # adapter supports key -> run-policy field it carries (the CLI features of body B7 and B8)
 FEATURES = {"deferred_tools": "core_tools", "compaction": "compaction", "clear_tool_results": "clear_tool_results", "subagent": "explore_in_subagent",
@@ -156,7 +157,7 @@ def main(argv):
             out = over(PREFILL, "the prefill", n, pol["prefill_budget_tokens"], a.role)
         else:
             pol = effective(t, a.role)
-            n = 0
+            n, run = 0, None
             try:
                 with open(a.events, encoding="utf-8", errors="replace") as f:
                     for line in f:
@@ -165,10 +166,13 @@ def main(argv):
                         except ValueError:
                             continue   # a torn last line of a live stream
                         if isinstance(e, dict) and e.get("type") == "usage":
+                            run = run or e.get("run")
                             n += int((e.get("tokens") or {}).get("output") or 0)
             except (OSError, TypeError, ValueError):
                 raise Stop(BADINPUT, "the events file cannot be read", alert=False)
             out = over(OUTPUT, "the output", n, pol["output_budget_tokens"], a.role)
+            if not out["ok"]:   # the one event line of the flag; a flag, not a stop
+                el.append(el.build(OVER_EVENT, f"run {run}", code=OUTPUT, new={"role": a.role, "used": n, "budget": out["budget"]}, who={"role": a.role}))
         print(json.dumps(out))
         if out.get("ok") is False:   # over budget: flagged, never a stop of the run (that is the caller's choice)
             el.say(out["code"], out["problem"], alert=a.cmd == "output-check")
