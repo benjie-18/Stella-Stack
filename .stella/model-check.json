@@ -54,6 +54,7 @@
       "stale": "its probe record is older than stale_catalog_days",
       "worse": "it ranks lower on the role's benchmark",
       "inconclusive": "the benchmark comparison is inconclusive",
+    "bench_unproved": "the benchmark results cannot be read or a record a trusted line names is gone, so no benchmark data is not proved",
       "not_newer": "no benchmark data, and it is not a newer version of the same family with capabilities at least the current pick's",
       "fetch_failed": "the connection's model list could not be read",
       "no_list": "the connection has no model list (no wire shape)",

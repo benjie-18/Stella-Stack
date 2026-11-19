@@ -283,16 +283,16 @@ ok "refz rv '{\"pick\":\"mc-qa\",\"reverses\":\"$P1\"}'" "F-CVER-04 a reversal a
 setting ""
 # CRT-05 (red team RT-F-05): the proof under the lock runs the planner's own candidate rules (hosts, class order, probe age and version)
 cp "$PF" "$T/c/probes.good"
-jq '.records += [(.records[] | select(.connection == "qa-a" and .model == "qa-m2")) + {connection: "qa-h", model: "qa-h1", version: "1"}]' "$PF" >"$PF.n" && mv "$PF.n" "$PF"   # qa-h1 is probed and meets the role
-jq --arg b "$B1" --arg r "$ROLE" '.effort_modes[$b].roles[$r].escalation_chain[1] |= (.connection = "qa-h" | .model = "qa-h1") | .effort_modes[$b].changelog += [{at: "2026-11-18T00:00:00Z", by: "qa", what: "qa"}]' "$RA" >"$T/c/h1.json"
-ok 'refz h1' "RT-F-05 the engine proof refuses a link on a connection whose host the owner never approved"
-s0=$(sha); python3 -I "$T/other.py" "$R/bin/stella-apply.py" "$T/c/h1.json" - "$R/bin/model_check.py" >"$T/o/sp1" 2>&1; r=$?
-ok '[ $r = 1 ] && grep -q "^STL-MDL-764" "$T/o/sp1" && [ "$(sha)" = "$s0" ]' "RT-F-05 a host script that names the engine tool as argv[0] cannot write a built-in preset link on an unapproved host (rc $r)"
 jq '.records |= map(if .model == "qa-m1" then .probed_at = "2020-01-01T00:00:00Z" else . end)' "$T/c/probes.good" >"$PF"
 ok 'refz e1' "CRT-05 the engine proof refuses a pick whose probe record is older than stale_catalog_days"
 jq '.records |= map(if .model == "qa-m1" then .version = "0" else . end)' "$T/c/probes.good" >"$PF"
 ok 'refz e1' "CRT-05 the engine proof refuses a pick whose probe record is for another version than the model list shows"
 cp "$T/c/probes.good" "$PF"; ok 'passz e1' "CRT-05 control: with the probe records back the same pick passes the proof"
+jq '.records += [(.records[] | select(.connection == "qa-a" and .model == "qa-m2")) + {connection: "qa-h", model: "qa-h1", version: "1"}]' "$PF" >"$PF.n" && mv "$PF.n" "$PF"   # qa-h1 is probed and meets the role
+jq --arg b "$B1" --arg r "$ROLE" '.effort_modes[$b].roles[$r].escalation_chain[1] |= (.connection = "qa-h" | .model = "qa-h1") | .effort_modes[$b].changelog += [{at: "2026-11-18T00:00:00Z", by: "qa", what: "qa"}]' "$RA" >"$T/c/h1.json"
+ok 'refz h1' "RT-F-05 the engine proof refuses a link on a connection whose host the owner never approved"
+s0=$(sha); python3 -I "$T/other.py" "$R/bin/stella-apply.py" "$T/c/h1.json" - "$R/bin/model_check.py" >"$T/o/sp1" 2>&1; r=$?
+ok '[ $r = 1 ] && grep -q "^STL-MDL-764" "$T/o/sp1" && [ "$(sha)" = "$s0" ]' "RT-F-05 a host script that names the engine tool as argv[0] cannot write a built-in preset link on an unapproved host (rc $r)"
 # CRT-04: an engine apply of any other row is refused; of pricing only dated rows appended, existing rows kept, finite non-negative prices
 cat >"$T/frozen2.py" <<'P'
 import json, sys
