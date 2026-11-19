@@ -371,7 +371,8 @@
         "run flags (run, --standalone, --auto, --format json, --model provider/model) are from `opencode run --help` (v2.0.26); a real run was not made here",
         "OPENCODE_CONFIG as the config file variable is from the binary's strings; the provider block (openai-compatible, baseURL, {env:VAR} apiKey) and the mcp remote form follow the OpenCode docs, not run here",
         "the --format json event names and pointers (type, part.tool, part.state.input/output, part.tokens, part.text) are not verified against a real run",
-        "a cli-login run (OpenCode's own provider login) is not tried"
+        "a cli-login run (OpenCode's own provider login) is not tried",
+        "run policy (item X2): opencode run --help (2.0.26) shows no hook, compaction, deferred-tool or subagent flag and no config key for them was verified, so every run-policy feature is unverified or false and translate lists them as unsupported; the brief carries the notes file and the output style for every adapter"
       ],
       "global_id": "b750e496-eb61-407e-91df-ee05aa734c4d",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
@@ -666,7 +667,7 @@
       "supports": {
         "hook": true,
         "deferred_tools": "unverified",
-        "compaction": true,
+        "compaction": "unverified",
         "clear_tool_results": "unverified",
         "subagent": true,
         "script_tools": "unverified",
@@ -692,7 +693,8 @@
         "the flags (-p, --output-format stream-json, --verbose, --model, --settings, --mcp-config, --strict-mcp-config, --permission-mode, --permission-prompts) are from `claude --help` (2.1.328); a real run was not made here",
         "the proxy address and the token variable of start.env follow the Claude Code docs, not run here",
         "the stream-json pointers (message.content items of type tool_use / tool_result, the result line's result and usage) are not verified against a real run",
-        "compaction (--autocompact) and subagents (--agents) are from --help; the other supports flags are not checked"
+        "compaction (--autocompact) and subagents (--agents) are from --help; the other supports flags are not checked",
+        "run policy (item X2): the log filter hook is a second entry in the policy hook's list that rewrites a shell call's command through updatedInput of a PreToolUse hook (hooks guide shape; not run here, and whether a hook that gives updatedInput with no permissionDecision keeps the permission rules is unverified); compaction is unverified because `claude --autocompact` takes a token window, not the policy's percentage, and no settings key for a percentage was verified; subagent is true (`claude --agents`) but no settings template applies explore_in_subagent yet, so it is only listed as supported; deferred_tools, clear_tool_results and working_notes have no verified setting"
       ],
       "global_id": "5444b0a4-6d63-40d6-8631-e27d626a4abd",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"

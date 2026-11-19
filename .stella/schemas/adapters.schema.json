@@ -586,6 +586,10 @@
           "install_id": {
             "type": "string",
             "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "unboxed": {
+            "type": "boolean",
+            "description": "Item X2 (DC-02): true only for an adapter that may run outside the OS box (the fake and test adapters). Absent or false: a run needs a boxed profile of the role for this adapter, else it is refused."
           }
         },
         "required": [

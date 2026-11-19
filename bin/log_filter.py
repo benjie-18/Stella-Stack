@@ -8,7 +8,7 @@ The role's filters (ids from .stella/run-policy.json, default when the role name
 A line matching any trim_to_failing pattern is a failing line and is never dropped or collapsed, whatever the other filters say.
 A log with no failing line is not trimmed. Same input, same output. Exit 0; 1 with the catalog code on stderr when the policy is unusable (no output).
 shortcut: collapse matches identical single lines, not repeated multi-line frame groups, upgrade when a runtime repeats whole groups."""
-import argparse, json, re, sys, os
+import argparse, json, re, shlex, sys, os
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -57,10 +57,28 @@ def apply(t, role, text):
         lines = out
     return "\n".join(lines + ([] if tail is None else [tail]))
 
+def hook(role):
+    """The call {tool_name, tool_input} on stdin; a shell command comes back as `{ cmd; } 2>&1 | filter` with pipefail, so its exit code stays.
+    A call that is not a shell command, or that cannot be read, passes unchanged (no output, exit 0): the filter never blocks a tool."""
+    try:
+        pay = json.load(sys.stdin)
+        inp = dict(pay.get("tool_input") or pay.get("input") or {})
+        cmd = inp["command"]
+        assert isinstance(cmd, str) and cmd.strip()
+    except (ValueError, KeyError, TypeError, AttributeError, AssertionError):
+        return 0
+    f = " ".join(shlex.quote(x) for x in [sys.executable, "-I", os.path.abspath(__file__)] + (["--role", role] if role else []))
+    inp["command"] = f"set -o pipefail; {{ {cmd}\n}} 2>&1 | {f}"
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": inp}}))
+    return 0
+
 def main(argv):
     ap = argparse.ArgumentParser(prog="log_filter.py")
     ap.add_argument("--role", default=None)
+    ap.add_argument("--hook", action="store_true", help="a PreToolUse hook: read the call on stdin, answer with the shell command piped through this filter")
     a = ap.parse_args(argv)
+    if a.hook:
+        return hook(a.role)
     try:
         t = rp.load()
         role = a.role if a.role is not None else json.load(open(os.path.join(rp.sd.ROOT, rp.ROLES), encoding="utf-8"))["fallback_role"]
