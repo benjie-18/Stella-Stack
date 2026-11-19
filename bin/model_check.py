@@ -13,18 +13,21 @@ connection or on another enabled one of the same link class and reach, with the 
 shows; with a probe record for the version the list shows, not older than stale_catalog_days, that meets the role's requirements. With
 benchmark data for the role: compare.decide against the current pick must give a decision of weekly.accept (non_inferior only for a
 cheaper link); worse or inconclusive refuses. With none: only a newer version of the same family on the same connection with probe
-capabilities at least the current pick's. A link whose model list cannot be read is skipped; a role whose every listable link is skipped
+capabilities at least the current pick's, and only when no trusted benchmark line names a record the results file no longer holds and
+the file can be read (else bench_unproved refuses: a damaged, cut or deleted file is never "no data"). A switched-off connection is never
+listed (no key read). A link whose model list cannot be read is skipped; a role whose every listable link is skipped
 fails the run loudly: one alert (STL-MDL-762), the state flag paused (until `resume`), exit 1, nothing changed.
 Apply: each pick is one apply through bin/stella-apply.py (in process, its engine exception: stella_data.frozen proves the pick again
 under the apply lock), with one appended changelog entry, the owner proof of this host, backup, check and one trusted event line (who:
 the engine; the detail names the pick id); one alert (STL-MDL-760) names preset, role, old, new, reason and the rollback command. Then
-the pricing refresh: new dated rows for the catalog's models from the price fields the wire shape's models_list.prices pointers name,
+the pricing refresh (only with the owner setting on): new dated rows for the catalog's models from the price fields the wire shape's models_list.prices pointers name,
 one apply of the pricing row.
 CLI (host only: every command refuses in a worker environment, STL-CFG-312; the output is JSON):
   model_check.py run [--dry-run] [--json]   check, apply the picks (--dry-run: report only, nothing written)
   model_check.py status [--json]            the state and the picks of the trusted event lines
   model_check.py rollback <pick id> [--json]  reverse one pick: a forward apply that puts back the old link of the pick's trusted event line
-        (refused, STL-MDL-765, when no trusted line names it or the live link is no longer what the pick set); allowed with the setting off
+        (refused, STL-MDL-765, when no trusted line names it as a forward pick, a rollback's own id included, or the live link is no
+        longer what the pick set); allowed with the setting off
   model_check.py resume [--json]            clear the paused flag (one trusted event line)
   model_check.py check [--json]             the check's data and its state file are usable
 Exit: 0 ok; 1 refused or failed (catalog code and plain message on stderr, {code, problem} on stdout); 2 usage."""
@@ -163,6 +166,7 @@ class World:
         self.table = sd.load(sd.load(sd.INDEX)["role_table"])
         self.recs = probe.records(self.rt)
         self.bench, self.bench_why = compare.read_benchmarks()
+        self.bench_gap = self.bench_why or bench_gap(self.bench)
         try:
             self.prices = cost.load_table()   # the rows applied before this run: what "cheaper" is judged by (F-CVER-07)
         except cost.Stop:
@@ -178,6 +182,8 @@ class World:
 
     def listing(self, prov):
         """{model id: item} of the connection's model list (once per run), or None when it cannot be read; ids the catalog lacks are dropped."""
+        if not prov.get("enabled"):   # a switched-off connection is never listed: no key is read for it (CRT-07)
+            return None
         if prov["id"] not in self.lists:
             try:
                 items = probe.listing(self.route, prov, self.proto(prov), self.local, probe.key_of(self.route, prov), self.timeout)
@@ -214,6 +220,17 @@ class World:
         return bool(ca and cb and ca["priced"] and cb["priced"] and ca["currency"] == cb["currency"] and ca["amount"] < cb["amount"])
 
 
+def bench_gap(recs):
+    """Why an absence of benchmark records proves nothing (CRT-02), or None: a trusted benchmark line names a record the results file
+    no longer holds as written (the file gone, cut or hand-edited), or the lines cannot be read. A role with no proved record then
+    refuses its candidates; only a role with no record anywhere uses the no-benchmark rule."""
+    try:
+        gone = compare.proved_digests() - {compare.digest(r) for r in recs}
+    except el.EventError as e:
+        return f"the trusted lines cannot be read ({e.code})"
+    return f"{len(gone)} benchmark records a trusted line names are not in the results file as recorded" if gone else None
+
+
 def vkey(v):
     """A version as a sort key: its digit runs as numbers, the rest as text."""
     return [(0, int(x), "") if x.isdigit() else (1, 0, x) for x in re.findall(r"\d+|[^\d]+", str(v))]
@@ -230,20 +247,47 @@ def classes_of(mode, role_row):
     return flat(role_row.get("class_order") or mode.get("class_order"))
 
 
+def eligible(W, mode, role, p0, m0, prov, mid):
+    """(None, its probe record) when model mid of connection prov may replace model m0 of connection p0 for the role of a preset (mode),
+    before any ranking; else (the reason, None). The one copy of these rules: the planner's, and the engine proof's under the apply
+    lock (stella_data.engine_problems)."""
+    same_conn = prov["id"] == p0["id"]
+    cls0, rrow = sd.link_class(p0, m0, W.rt), mode.get("roles", {}).get(role, {})
+    if sd.link_class(prov, mid, W.rt) != cls0 or sd.reach(prov) != sd.reach(p0):
+        return "link_class", None
+    if not prov.get("enabled") or not same_conn and cls0 not in classes_of(mode, rrow):
+        return "connection", None
+    if not same_conn and not sd.same(prov["data_policy"], p0["data_policy"]):
+        return "privacy", None
+    if not same_conn and not W.approved(prov):
+        return "host", None
+    if sd.link_problems(W.table, role, prov, mid):
+        return "link", None
+    if W.proto(prov) is None or W.listing(prov) is None:
+        return "fetch_failed", None
+    if mid not in W.listing(prov):
+        return "unlisted", None
+    rec = W.record(prov, mid, W.listing(prov)[mid])
+    stale = stamp(W.t - datetime.timedelta(days=W.p["stale_catalog_days"]))
+    req = W.table["roles"].get(role, {}).get("requirements", {})
+    why = "no_probe" if rec is None else "stale" if rec["probed_at"] < stale else "probe_unmet" if sd.unmet(req, rec) else None
+    return (why, None) if why else (None, rec)
+
+
 def judge_link(W, preset, mode, role, link):
     """{state: checked|skipped|unlisted, reason, pick: (prov, model, reason) or None, refused: [...]} for one link."""
     w, cat = W.w, W.cat
     p0 = sd.entry(cat, link.get("connection"))
+    if p0 and not p0.get("enabled"):
+        return {"state": "unlisted", "reason": "connection", "pick": None, "refused": []}
     if not p0 or p0.get("kind") != "provider" or W.proto(p0) is None:
         return {"state": "unlisted", "reason": "no_list", "pick": None, "refused": []}
     items0 = W.listing(p0)
     if items0 is None:
         return {"state": "skipped", "reason": "fetch_failed", "pick": None, "refused": []}
-    m0, rrow = link.get("model"), mode.get("roles", {}).get(role, {})
-    cls0, req = sd.link_class(p0, m0, W.rt), W.table["roles"].get(role, {}).get("requirements", {})
+    m0 = link.get("model")
     rec0 = W.record(p0, m0, items0[m0]) if m0 in items0 else None
     bench = [r for r in W.bench if r["role"] == role]
-    stale = stamp(W.t - datetime.timedelta(days=W.p["stale_catalog_days"]))
     ok, refused = [], []
     for prov in cat.values():
         if prov.get("kind") != "provider":
@@ -253,35 +297,16 @@ def judge_link(W, preset, mode, role, link):
             mid = m["id"]
             if same_conn and mid == m0:
                 continue
-            why, item, rec = None, None, None
-            if sd.link_class(prov, mid, W.rt) != cls0 or sd.reach(prov) != sd.reach(p0):
-                why = "link_class"
-            elif not same_conn and not (prov.get("enabled") and cls0 in classes_of(mode, rrow)):
-                why = "connection"
-            elif not same_conn and not sd.same(prov["data_policy"], p0["data_policy"]):
-                why = "privacy"
-            elif not same_conn and not W.approved(prov):
-                why = "host"
-            elif sd.link_problems(W.table, role, prov, mid):
-                why = "link"
-            elif W.proto(prov) is None or W.listing(prov) is None:
-                why = "fetch_failed"
-            elif mid not in W.listing(prov):
-                why = "unlisted"
-            else:
-                item = W.listing(prov)[mid]
-                rec = W.record(prov, mid, item)
-                why = "no_probe" if rec is None else "stale" if rec["probed_at"] < stale else "probe_unmet" if sd.unmet(req, rec) else None
-            if why is None and bench:
-                if W.bench_why:
-                    why = "inconclusive"
-                else:
-                    a = [r for r in bench if r["connection"] == prov["id"] and r["model"] == mid]
-                    b = [r for r in bench if r["connection"] == p0["id"] and r["model"] == m0]
-                    d = compare.decide(a, b, W.p, cheaper=W.cheaper((prov["id"], mid), (p0["id"], m0)))
-                    why = None if d in w["accept"] else "worse" if d == "worse" else "inconclusive"
-                    if why is None:
-                        ok.append((w["accept"].index(d), 0, prov, mid, d))
+            why, rec = eligible(W, mode, role, p0, m0, prov, mid)
+            if why is None and not bench and W.bench_gap:
+                why = "bench_unproved"   # benchmark data that cannot be read or proved never counts as none (CRT-02)
+            elif why is None and bench:
+                a = [r for r in bench if r["connection"] == prov["id"] and r["model"] == mid]
+                b = [r for r in bench if r["connection"] == p0["id"] and r["model"] == m0]
+                d = compare.decide(a, b, W.p, cheaper=W.cheaper((prov["id"], mid), (p0["id"], m0)))
+                why = None if d in w["accept"] else "worse" if d == "worse" else "inconclusive"
+                if why is None:
+                    ok.append((w["accept"].index(d), 0, prov, mid, d))
             elif why is None:
                 if same_conn and rec0 and rec.get("family") and rec["family"] == rec0.get("family") and \
                         vkey(rec["version"]) > vkey(rec0["version"]) and caps_at_least(rec, rec0):
@@ -361,8 +386,8 @@ def apply_pick(W, rid, pk, reverses=None):
         return pk
     pk["applied"] = True
     show = lambda l: "/".join(str(l.get(k)) for k in w["pick_keys"])
-    alert(APPLIED, f"preset {pk['preset']} role {pk['role']} {pk['field']}[{pk['index']}]: {show(pk['old'])} -> {show(pk['new'])} ({pk['text']}); "
-                   f"undo: python3 {w['engine_tool']} rollback {pk['id']}")
+    undo = "" if reverses else f"; undo: python3 {w['engine_tool']} rollback {pk['id']}"   # rollback is one step: a reversal offers none (CRT-03)
+    alert(APPLIED, f"preset {pk['preset']} role {pk['role']} {pk['field']}[{pk['index']}]: {show(pk['old'])} -> {show(pk['new'])} ({pk['text']}){undo}")
     return pk
 
 
@@ -421,7 +446,7 @@ def cmd_run(a):
     if not a.dry_run:
         for pk in picks:
             apply_pick(W, rid, pk)
-        rows = pricing_rows(W)
+        rows = pricing_rows(W) if sd.engine_setting_on(W.w) else []   # the owner setting stops every engine write of shipped data (CRT-04)
         if rows:
             prid, pdoc = doc_of("pricing")
             rc, msg = apply(prid, {**pdoc, "entries": list(pdoc["entries"]) + rows}, new_pick(W.w))

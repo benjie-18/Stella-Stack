@@ -85,8 +85,10 @@ ENGINE = {}   # set in process by the weekly model check only (bin/model_check.p
 def engine():
     """The engine context of this run (None: an ordinary apply). Refused (STL-MDL-764) unless the running script is the engine tool the
     model check data names, the run has no --proof (a remote device never drives the engine) and it is no worker's (F-CVER-01).
-    shortcut: a host process that imports this file and names the engine tool as its argv[0] passes the caller test; the change it can
-    make is still only an engine pick proved again from data (stella_data.engine_problems), upgrade when E1 runs the engine as its own user."""
+    shortcut: a host process that imports this file and names the engine tool as its argv[0] passes the caller test, so the caller test
+    is no control: the control is the proof, run under the apply lock on every engine change (stella_data.frozen: engine_problems runs
+    the planner's own candidate rules, pricing_problems the refresh shape, the owner setting read for both), upgrade when E1 runs the
+    engine as its own user."""
     if not ENGINE:
         return None
     try:

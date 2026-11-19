@@ -452,17 +452,22 @@ first (STL-CFG-313).
 (an owner command, host only), which calls the apply tool in process with an engine context the CLI cannot set. Under the
 apply lock `stella_data.frozen(..., engine)` proves the change again from data (`engine_problems`), for built-in and custom
 presets alike: exactly one link of `model-check.json weekly.pick_fields` of one preset differs, only in `weekly.pick_keys`,
-plus exactly one appended `changelog` entry; a forward pick keeps the link class and reach of the link it replaces, sits on an
-enabled provider with the same data policy that the link judge accepts for the role and has a probe record that meets the role,
-and needs the owner setting `weekly.setting` on (unreadable: off) for a built-in preset or a `model_check_grants` grant in force
+plus exactly one appended `changelog` entry; a forward pick passes the planner's own candidate rules (`model_check.eligible`,
+one copy: link class and reach of the link it replaces, an enabled provider in the preset's class order with the same data
+policy and every host approved, the link judge, a probe record for the version the model list shows, not stale, that meets the
+role), and needs the owner setting `weekly.setting` on (unreadable: off) for a built-in preset or a `model_check_grants` grant in force
 (grants.json; never a built-in preset, never in `crossing_grants`) for a custom one; a reversal (rollback) puts back the `old`
-of the pick's trusted event line where the live link holds its `new`, with the setting off too. The engine context is refused
-(STL-MDL-764) for a caller other than `weekly.engine_tool`, with `--proof`, and in a worker (STL-CFG-312). The event line of an
+of the pick's trusted event line where the live link holds its `new`, with the setting off too; a reversal's own line is never a
+pick to reverse (rollback is one step). The engine context is refused (STL-MDL-764) for a caller other than `weekly.engine_tool`
+(a caller test a host process can pass: the proof is the control), with `--proof`, and in a worker (STL-CFG-312); on the pricing
+row it accepts only appended dated rows with finite, non-negative prices and the setting on, on any other row nothing. The event line of an
 engine apply has `who.user` = the index's `event_writer_id` and a detail naming `engine pick <id>` (and `reverses <id>`); that
 trusted line, never the state file (`model_check_state`, a protected state path, schema model-check-state: the paused flag and
 when each model list was read), is the source of a rollback. Benchmark results count only with their trusted line
-(`compare.read_benchmarks`); "cheaper" is priced from the pricing rows applied before the run; candidates are only models the
-catalog already lists; the check never writes connections.json. The pricing refresh appends dated rows from the model list's
+(`compare.read_benchmarks`); a role with no proved record uses the no-benchmark rule only when the file can be read and no
+trusted line names a record it no longer holds (else `bench_unproved` refuses); a switched-off connection's model list is never
+read; "cheaper" is priced from the pricing rows applied before the run; candidates are only models the
+catalog already lists; the check never writes connections.json. The pricing refresh (only with the owner setting on) appends dated rows from the model list's
 price fields (protocols `models_list.prices` pointers) through the same apply path. `routing_state`, `card_facts`, `probe_records` and `triage_calibration` are protected state paths (`bin/roles.py` STATE_KEYS): no role reads or
 writes them. `probe_records` is the capability probe's file (`bin/probe.py`; schema `.stella/schemas/probes.schema.json`, no data row, never in git): one record per connection, model and model version of what the probe found by trying the link; a reader takes nothing from an invalid file or from a record of another install; `probe.py check` judges it. The probe's settings are `probe` in routing.json. `triage_calibration` is the triage router's fitted threshold (`bin/triage.py fit`; schema `.stella/schemas/triage-calibration.schema.json`, no data row, never in git; when it exists its threshold wins over `triage.threshold`). The router's settings are `triage` in routing.json (role, tiers lowest first, image route, project rule, threshold, samples, min_labels); its optional classifier is the features entry `triage-classifier`, off by default.
 

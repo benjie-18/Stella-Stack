@@ -1418,8 +1418,9 @@ def engine_lines():
 
 
 def pick_line(pick):
-    """The trusted event line of one pick; None when no trusted line names it (the state file is never asked, F-CVER-05)."""
-    return next((d for d in reversed(engine_lines()) if pick_of(d.get("detail"))[0] == pick), None)
+    """The trusted event line of one forward pick; None when no trusted line names it (the state file is never asked, F-CVER-05) or
+    the line is a reversal's own: rollback is one step, so a reversal is never a pick to reverse (CRT-03)."""
+    return next((d for d in reversed(engine_lines()) if pick_of(d.get("detail")) == (pick, None)), None)
 
 
 def esc(k):
@@ -1486,9 +1487,10 @@ def reversal_problems(ch, target, w):
 
 def engine_problems(old, new, engine):
     """Why a candidate is no engine pick (F-CVER-01), proved again here from data: the shape (engine_change); a reversal of a trusted
-    pick line, or a forward pick that keeps the link class and reach of the link it replaces on an enabled connection with the same data
-    policy, that the link judge accepts for the role, with a real probe record that meets the role, on a built-in preset only with the
-    owner setting on, on a custom preset only with its model_check grant in force."""
+    forward pick line, or a forward pick on a built-in preset only with the owner setting on, on a custom preset only with its
+    model_check grant in force, that the planner's own candidate rules accept (model_check.eligible, CRT-05: link class and reach,
+    enabled connection in the preset's class order, data policy, approved hosts, the link judge, a probe record for the version the
+    model list shows, not stale, that meets the role)."""
     try:
         w = weekly()
         ch = engine_change(old, new, w)
@@ -1502,24 +1504,44 @@ def engine_problems(old, new, engine):
                 return [f"preset {kname(p)} is built in and the owner setting {w['setting']} is not on (or cannot be read)"]
         elif not model_check_granted(p):
             return [f"preset {kname(p)} is custom and no model_check grant for it is in force"]
-        rt, cat, table = routing(), served([CATALOG])[CATALOG], load(load(INDEX)["role_table"])
-        po, pn = (entry(cat, l.get("connection")) for l in (x, y))
+        import model_check as mc
+        W = mc.World(mc.params())
+        po, pn = (entry(W.cat, l.get("connection")) for l in (x, y))
         if not (po and pn and pn.get("kind") == "provider" and po.get("kind") == "provider"):
             return [f"{f}[{i}]: a connection of the link is not a provider of the catalog"]
-        if link_class(po, x.get("model"), rt) != link_class(pn, y.get("model"), rt) or reach(po) != reach(pn):
-            return [f"{f}[{i}]: the new link's class or reach differs from the link it replaces"]
-        if pn["id"] != po["id"] and not same(po["data_policy"], pn["data_policy"]):
-            return [f"{f}[{i}]: the new connection's data policy differs from the old one"]
-        lp = link_problems(table, r, pn, y.get("model"))
-        if lp:
-            return [f"{f}[{i}]: {lp[0]}"]
-        rec = probed(probe_records(rt), pn["id"], y.get("model"))
-        miss = unmet(table["roles"].get(r, {}).get("requirements", {}), rec) if rec else None
-        if rec is None or rec.get(BROKEN) or miss:
-            return [f"{f}[{i}]: the new link has no usable probe record" + (f" (it does not meet {', '.join(miss)})" if miss else "")]
-        return []
+        bad, _ = mc.eligible(W, old["effort_modes"][p], r, po, x.get("model"), pn, y.get("model"))
+        return [f"{f}[{i}]: {mc.said(W.w, bad)}"] if bad else []
     except (DataError, KeyError, TypeError, AttributeError) as e:
         return [f"the data the exception is proved from cannot be read ({why(e)})"]
+    except Exception as e:   # the planner's data (catalog, wire shapes, model list, probe records) cannot be read: fail closed
+        return [f"the data the exception is proved from cannot be read ({type(e).__name__})"]
+
+
+def pricing_problems(old, new):
+    """Why an engine apply of the pricing table is no pricing refresh (CRT-04): the owner setting is on, and the candidate only appends
+    rows, each dated, with finite, non-negative prices; no other key and no existing row changes."""
+    import math
+    try:
+        if not engine_setting_on(weekly()):
+            return ["the owner setting for the weekly check is not on (or cannot be read): the engine writes no pricing row"]
+    except DataError as e:
+        return [f"the weekly check's data cannot be read ({why(e)})"]
+    if not all(isinstance(d, dict) and isinstance(d.get("entries"), list) for d in (old, new)):
+        return ["the current file or the candidate has no pricing rows to compare"]
+    oe, ne = old["entries"], new["entries"]
+    rest = lambda d: {k: v for k, v in d.items() if k != "entries"}
+    if not same(rest(old), rest(new)) or len(ne) < len(oe) or not same(ne[:len(oe)], oe):
+        return ["it changes or removes an existing pricing row or a key beyond the rows; the engine only appends rows"]
+    num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0
+    for k, e in enumerate(ne[len(oe):], len(oe)):
+        pm = e.get("per_million") if isinstance(e, dict) else None
+        try:
+            datetime.date.fromisoformat(str(e.get("effective_from"))[:10])
+        except (ValueError, AttributeError):
+            return [f"entries[{k}]: an appended row has no effective_from date"]
+        if not (isinstance(pm, dict) and pm and all(num(v) for v in pm.values()) and num(e.get("batch_discount", 0))):
+            return [f"entries[{k}]: an appended row has a price that is not a finite, non-negative number"]
+    return []
 
 
 def frozen(schema, old, new, engine=None):
@@ -1528,7 +1550,11 @@ def frozen(schema, old, new, engine=None):
     true on either side that is not the same entry on both (BUILTIN_EDIT): changed in any key, dropped, or made by the
     candidate (a new id, or a custom preset turned into one: the owner could not edit or remove it afterwards). A file that
     does not parse has no preset to keep. engine (the weekly model check's apply, given by the apply tool only to its engine caller):
-    the whole change must then be one engine pick (engine_problems, ENGINE_REFUSED), on a built-in or a custom preset alike."""
+    the whole change must then be one engine pick (engine_problems, ENGINE_REFUSED), on a built-in or a custom preset alike; on the
+    pricing table only a pricing refresh (pricing_problems); on any other row nothing (CRT-04)."""
+    if engine is not None and schema != "role-assignments":
+        probs = pricing_problems(old, new) if schema == "pricing" else ["the engine exception changes preset picks and pricing rows only"]
+        return [(ENGINE_REFUSED, probs[0])] if probs else []
     if schema != "role-assignments":
         return []
     if engine is not None:

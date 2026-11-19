@@ -193,13 +193,18 @@ def read_benchmarks():
             return [], "the benchmark results file is not a document with schema_version 1 and records"
         item, iid = sd.schema_of("benchmarks")["properties"]["records"]["items"], sd.install_id()
         mine = [r for r in doc["records"] if not sd.validate_doc(r, item) and r["install_id"] == iid]
-        proved = {x for d in el.proof_lines() if d.get("type") == LINE and isinstance(d.get("new"), dict)
-                  for x in d["new"].get("digests", []) if isinstance(x, str)}
+        proved = proved_digests()
         return [r for r in mine if digest(r) in proved], None
     except FileNotFoundError:
         return [], None
     except (OSError, ValueError, RecursionError, KeyError, sd.DataError, el.EventError) as e:
         return [], f"the benchmark results cannot be read ({type(e).__name__})"
+
+def proved_digests():
+    """The record digests the trusted `benchmark.recorded` lines name (EventError when the lines cannot be read)."""
+    import event_log as el
+    return {x for d in el.proof_lines() if d.get("type") == LINE and isinstance(d.get("new"), dict)
+            for x in d["new"].get("digests", []) if isinstance(x, str)}
 
 def record_results(rows):
     """Append benchmark records (dicts without install_id) to the results file and one trusted line per event_chunk (model-check.json) of them; returns the count.
