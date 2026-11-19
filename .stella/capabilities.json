@@ -913,6 +913,58 @@
       },
       "global_id": "d964b2fd-e04b-4b7a-95ca-f7f34005d836",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "run-token",
+      "kind": "command",
+      "summary": "Per-run tokens (host only): mint one for every run (api and cli-login; the record holds the connection type, DC-04) and print it once; revoke every token of a run. Only the sha256 of a token is stored (index key run_tokens); the prefix is data so leak scanners find one; one trusted event line per mint and revoke with a hash prefix, never the value",
+      "keywords": [
+        "run token",
+        "mint",
+        "revoke",
+        "model proxy",
+        "api link",
+        "per-run"
+      ],
+      "inputs": "mint --run R --role ROLE --card C --link <connection>/<model> [--ttl S] | revoke --run R",
+      "outputs": "mint: the token alone on stdout; revoke: JSON {run, revoked}; exit 1 with a catalog code (STL-MDL-797 token state or gateway data, 799 link or ttl refused, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/run_token.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "802eddad-1b76-409e-8c53-96660f0fa487",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "model-proxy",
+      "kind": "command",
+      "summary": "The loopback model proxy for api links (host only): takes a run token from the protocols' auth headers, refuses an unknown, expired, revoked or non-api token, pins the run's model, runs the budget gate and a ledger slot, swaps in the real key (credentials.get) with the protocol's header template, forwards only the protocol's paths to the connection's catalog host (no redirect, no environment proxy), streams the answer back with the key masked, records usage and cost, one event line per request",
+      "keywords": [
+        "model proxy",
+        "loopback",
+        "run token",
+        "api key",
+        "usage ledger",
+        "budget"
+      ],
+      "inputs": "serve [--port P]   (bind address, default port, body limit and passed headers from .stella/run-gateway.json)",
+      "outputs": "{bind, port, pid} on stdout and at the index key model_proxy_state; per request the upstream answer, or an HTTP status >= 400 with {error {code, message}} (STL-MDL-790..799, the budget's STL-LIM-43x); exit 1 with a catalog code when it cannot serve (STL-MDL-799, STL-CFG-312)",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/model_proxy.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "8e2dfc3f-a601-4158-bb84-b8c2fc708ade",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

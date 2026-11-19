@@ -189,6 +189,16 @@
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The weekly model check's state (F2c F; schema model-check-state): the paused flag and when each connection's model list was last read. Written on the host by bin/model_check.py only; a protected state path, not a data file; never the source of a pick or a rollback (the trusted event line is)."
+    },
+    "run_tokens": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The run token state (F3 item T, bin/run_token.py): sha256 of each token with its run, role, card, link, connection type, expiry and revocation; never a token value. Written on the host only; a state path under the protected repo paths, not a data file."
+    },
+    "model_proxy_state": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The model proxy's bound address, port and pid (F3 item T, bin/model_proxy.py serve). Written on the host only; not a data file."
     }
   },
   "required": [
@@ -215,7 +225,9 @@
     "files",
     "spans",
     "budget_state",
-    "model_check_state"
+    "model_check_state",
+    "run_tokens",
+    "model_proxy_state"
   ],
   "additionalProperties": false
 }

@@ -148,6 +148,10 @@ key)   # T-PROXY-KEY: the key never in a response, log or error; client auth str
   call k6 "$TOK" qa-m1 '{}' "/$SHAPE/v1/qa-not-a-protocol-path"
   ok '[ "$(st k6)" -ge 400 ] && [ "$(calls)" -le $((c0 + 2)) ] && ! grep -q qa-not-a-protocol-path <<<"$(get /_calls)"' "T-PROXY-KEY a path that is not one of the protocol's paths is refused, never forwarded"
   ok 'nolog "$KEY"' "T-PROXY-KEY the key is in no log, state file, event line or proxy output"
+  # builder case (item T): the stream masker, a key split at every byte between two chunks of an answer
+  ok 'python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import model_proxy as mp; k = sys.argv[2]; s = (\"a \" + k + \" b \" + k + \"x\" + k[:5]).encode()
+for c in range(1, len(s)):
+    m = mp.Masker([k]); o = m.feed(s[:c]) + m.feed(s[c:]) + m.feed(b\"\", True); assert o == s.replace(k.encode(), b\"***\"), c" "$R/bin" "$KEY"' "T-PROXY-KEY the key is masked in a streamed answer also when it is split across two chunks"
   ;;
 token)   # T-PROXY-TOKEN: unknown, expired, revoked and cli-login tokens refused with a code; the model pinned to the run's
   ok '[ ${#TOK} -ge 43 ]' "T-PROXY-TOKEN the token holds at least 32 random bytes (urlsafe: 43 characters or more)"
