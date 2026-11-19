@@ -1154,6 +1154,18 @@
     },
     {
       "globs": [
+        ".stella/capability-sources.json",
+        ".stella/schemas/capability-sources.schema.json"
+      ],
+      "targets": [
+        "capabilities",
+        "stella-apply",
+        "stella-data"
+      ],
+      "why": "read by bin/capabilities.py (the index key capability_sources) and checked by stella-data; stella-apply stages every json row and schema"
+    },
+    {
+      "globs": [
         ".stella/capabilities.json",
         ".stella/schemas/capabilities.schema.json"
       ],
