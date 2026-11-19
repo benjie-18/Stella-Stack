@@ -87,6 +87,10 @@ filter)   # AC9-filter: a long failing log reaches the model trimmed to the fail
   ok '[ -s "$T/o/f1.out" ] && [ "$(wc -l <"$T/o/f1.out")" -lt $(( $(wc -l <"$T/long.log") / 20 )) ]' "AC9-filter the output is under 5% of the log's lines"
   ok '[ -s "$T/o/f1.out" ] && ! grep >/dev/null -E "test_case_(17|2900) passed|qa-progress" "$T/o/f1.out"' "AC9-filter passing lines far from the failure and progress noise are dropped"
   ok '[ -s "$T/o/f1.out" ] && { [ "${CTX:-0}" -lt 1 ] || grep >/dev/null QA-CTX-BEFORE "$T/o/f1.out"; }' "AC9-filter the data's context (${CTX:-0} lines) is kept around the failing line"
+  # V1-12: a role table without its fallback role ends in a catalog code and a plain message, never a traceback, and no output as if filtered
+  ed "$(ix .role_table)" 'del(.fallback_role)'
+  run f2 python3 -I "$R/bin/log_filter.py" <"$T/long.log"
+  ok '[ $RC = 1 ] && [ ! -s "$T/o/f2.out" ] && grep >/dev/null -E "STL-[A-Z]{3}-[0-9]{3}" "$T/o/f2.err" && ! grep >/dev/null Traceback "$T/o/f2.err"' "V1-12 log_filter with an unreadable fallback role: exit 1, a catalog code, no traceback, no output"
   ;;
 lean)   # AC11-lean (data and translate part): a role with 30 registered tools starts with only its core set
   TPLC=$(jq -c '[.entries[] | select(.kind == "tool")][0]' "$R/.stella/capabilities.json")

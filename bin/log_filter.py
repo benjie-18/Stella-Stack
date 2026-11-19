@@ -87,6 +87,10 @@ def main(argv):
         print(json.dumps({"code": s.code, "problem": el.scrub(s.problem)}), file=sys.stderr)
         el.say(s.code, s.problem, alert=s.alert)
         return 1
+    except Exception as e:   # an unreadable role table or any other failure: the catalog code and the type, never a traceback, nothing passed on as if filtered
+        print(json.dumps({"code": rp.BADINPUT, "problem": f"{type(e).__name__}, an unexpected failure of log_filter.py"}), file=sys.stderr)
+        el.say(rp.BADINPUT, f"{type(e).__name__}, an unexpected failure of log_filter.py", alert=False)
+        return 1
     sys.stdout.write(out)
     return 0
 
