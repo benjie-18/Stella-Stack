@@ -106,8 +106,8 @@ chain() {  # <connection/model[,status[,link class[,nomid]]]>...: the chain docu
 }
 shape_of() { jq -r --arg c "${1%%/*}" '.entries[] | select(.id == $c) | .protocol' "$R/.stella/connections.json"; }
 fault() { echo "{\"shape\":\"$(shape_of "$1")\",\"model\":\"${1#*/}\",\"fault\":\"$2\"${3:+,$3}}"; }   # <connection/model> <fault> [extra]
-fresh() {  # <faults JSON array>: no failover state, every fake model served with these faults, the call counts remembered
-  rm -f "$STATE"
+fresh() {  # <faults JSON array>: no failover state and no observed limit (the ledger's), every fake model served with these faults, the call counts remembered
+  rm -f "$STATE" "$R/$(ix .ledger_state)"
   jq -c --argjson f "${1:-[]}" '{models: ([.entries[] | select((.id | startswith("st-")) and .protocol != null)] | group_by(.protocol) | map({(.[0].protocol): [.[].models[].id]}) | add), faults: $f}' \
     "$R/.stella/connections.json" >"$T/ctl.json"
   python3 -I "$T/http.py" post "$CTL" "$T/ctl.json" >/dev/null 2>&1; python3 -I "$T/http.py" get "http://$LO:$PORT/_calls" >"$T/c0" 2>/dev/null
@@ -400,6 +400,52 @@ ok '[ $RC = 1 ] && J long ".code == \"STL-MDL-711\" and (.task | length) < 300" 
 jq -n '{links: {}, tasks: ([range(5000) | {key: "old-\(.)", value: {switches: 0, visited: [], history: [], last: null}}] | from_entries)}' >"$STATE"; call prune
 ok '[ $RC = 0 ] && jq -e ".tasks | length < 5000 and has(\"prune\") and has(\"old-4999\") and (has(\"old-0\") | not)" "$STATE"' "the state keeps a bounded number of task entries: a write drops the oldest ones"
 chain st-a/st-a-m1; fresh
+
+# ---- F2c A2: every call is a usage record, a limit answer is observed, a call holds its slot ----
+LG() { python3 -I "$R/bin/ledger.py" "$@"; }
+UL=$R/$(ix .usage_ledger); LS=$R/$(ix .ledger_state)
+ulast() { tail -n 1 "$UL" | jq -e "$@"; }   # the newest usage record
+chain st-a/st-a-m1; fresh; n0=$(grep -c . "$UL" 2>/dev/null || echo 0); call lg1 --card st-card
+ok '[ $RC = 0 ] && [ $(( $(grep -c . "$UL") - n0 )) = 1 ] && ulast --arg r "$ROLE" ".connection == \"st-a\" and .model == \"st-a-m1\" and .role == \$r and .project == \"st-project\" and .card == \"st-card\" and .session == \"lg1\" and .outcome == \"ok\" and .status == 200 and (.tokens | keys == [\"cache_read\", \"cache_write\", \"input\", \"output\", \"reasoning\"]) and (.tokens.input + .tokens.output > 0) and (.latency_ms | type == \"number\")"' \
+  "T-CALLERS-LEDGER: a call is one usage record with its role, project, card, task, status and the five token types the answer shows"
+ok 'ulast ".cost.priced == false" || ulast ".cost == null"' "the record carries its cost field (priced from the pricing table, or unpriced with no guess)"
+chain st-a/st-a-m1 st-b/st-b-m1; fresh "[$(fault st-a/st-a-m1 rate_limit)]"; rm -f "$LS"; call lg2
+ok '[ $RC = 0 ] && jq -s -e "any(.[]; .connection == \"st-a\" and .outcome == \"limit\" and .status == 429) and any(.[]; .connection == \"st-b\" and .outcome == \"ok\")" "$UL" && jq -e ".observed | map(select(.connection == \"st-a\" and .model == \"st-a-m1\")) | length == 1" "$LS" &&
+  jq -e ".links[\"st-a/st-a-m1\"].observed_limit | .source != null and .until != null" "$STATE"' \
+  "a limit answer (the wire shape row rate_limit) is one usage record with outcome limit, is observed by the ledger, and the cooldown entry carries that observed limit"
+ok '[ "$(LG status --connection st-a --model st-a-m1 --json | jq -r .observed.source)" != null ]' "the ledger's status shows the observed limit of the link"
+cat >"$T/srv429.py" <<'P'
+"""Selftest server: answers every POST with 429, the header Retry-After: <seconds> and a body that is no daily cap. First stdout line: its port."""
+import http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        b = b'{"error": {"message": "too many requests"}}'
+        self.send_response(429)
+        self.send_header("Retry-After", sys.argv[2])
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+s = http.server.ThreadingHTTPServer((sys.argv[1], 0), H)
+print(s.server_address[1], flush=True)
+s.serve_forever()
+P
+python3 -I "$T/srv429.py" "$LO" 777 >"$T/srv429.port" 2>/dev/null &
+for i in $(seq 100); do [ -s "$T/srv429.port" ] && break; sleep 0.1; done
+prov st-h "$SHAPE0" 100000; ed connections.json --argjson p "$(head -n1 "$T/srv429.port")" '(.entries[] | select(.id == "st-h") | .hosts[0].port) = $p'; recs
+chain st-h/st-h-m1 st-b/st-b-m1; fresh; rm -f "$LS"; call lg3
+ok '[ $RC = 0 ] && jq -e "[.observed[] | select(.connection == \"st-h\")] | length == 1 and (.[0].source == \"retry_after\") and ((.[0].until | fromdateiso8601) - now | . > 700 and . <= 777)" "$LS"' \
+  "the Retry-After header (its name is data: limit-signals) sets how long the limit is observed (777 s)"
+prov st-q "$SHAPE0" 100000; ed connections.json '(.entries[] | select(.id == "st-q") | .limits) = {max_concurrent: 1}'; recs
+chain st-q/st-q-m1 st-b/st-b-m1; fresh; ( exec python3 -I "$R/bin/ledger.py" hold --connection st-q --model st-q-m1 -- sleep 30 ) & HP=$!
+for _ in $(seq 100); do [ "$(LG status --connection st-q --model st-q-m1 --json | jq .concurrency.in_use)" = 1 ] && break; sleep 0.1; done
+call lg4; kill $HP 2>/dev/null; wait $HP 2>/dev/null
+ok '[ $RC = 0 ] && [ "$(cnt st-q/st-q-m1)" = 0 ] && [ "$(cnt st-b/st-b-m1)" = 1 ] && J lg4 ".link.connection == \"st-b\"" && grep -q "slot limit refused a call of st-q/st-q-m1" "$EV"' \
+  "T-LIM-CONC: a link whose slots another process holds is not called; the next link answers (one limit.hit line)"
+chain st-q/st-q-m1; fresh; call lg5
+ok '[ $RC = 0 ] && [ "$(cnt st-q/st-q-m1)" = 1 ] && [ "$(LG status --connection st-q --model st-q-m1 --json | jq .concurrency.in_use)" = 0 ]' "a call holds its slot while it runs and gives it back after"
 
 rm -f "$R/bin/resolve.py"; call nores
 ok '[ $RC = 1 ] && J nores ".code == \"STL-MDL-710\"" && [ "$(cnt st-a/st-a-m1)" = 0 ]' "with no resolver nothing is routed (STL-MDL-710)"

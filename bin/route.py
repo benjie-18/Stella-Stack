@@ -18,6 +18,11 @@ CLI (host only: every command refuses in a worker environment, STL-CFG-312; the 
   route.py result --task ID --link <connection>/<model> --outcome ok|<trigger id>
       the launcher reports how the attempt ended: a trigger puts the link in cooldown, so the next attempt starts on the next link.
       One trusted event line per change: `routing.cooldown` (set), `routing.cooldown-cleared` (ok cleared one; none when it cleared none).
+Usage ledger (F2c A2, bin/ledger.py): call holds each link's slots for the whole call (every try and repair); a link the ledger refuses (a limit
+observed, a daily cap used, no free slot) is left for the next link. Every request sent (call, and probe through send) is one usage record: the five
+token types of the answer (cost.usage_of), role, project, card and task, outcome, status and latency, its cost priced from the pricing table. An answer
+the wire shape's `errors` classify as a limit is observed by the ledger (the wait from the headers named in the data limit-signals) and the cooldown
+entry's observed_limit holds it.
 A card app the resolver refuses (`apps[]` with a code) stops the task with that code before any link is judged.
 A step (one pick of a link, the same for call and attempt), in this order:
   1. the next link: the first of the chain that is usable or needs a grant, is not in cooldown, did not already fail in this task
@@ -75,12 +80,14 @@ if __name__ == "__main__" and not sys.flags.isolated:   # run directly: PYTHONPA
     except OSError:   # fail closed: a tool that holds keys does not go on with modules it cannot vouch for
         sys.exit("STL-CFG-310 route.py could not restart itself isolated (python3 -I); nothing was called")
 
-import argparse, contextlib, datetime, http.client, ipaddress, json, re, subprocess, threading, urllib.error, urllib.parse, urllib.request
+import argparse, contextlib, datetime, http.client, ipaddress, json, re, subprocess, threading, time, urllib.error, urllib.parse, urllib.request
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
+import cost
 import credentials
 import event_log as el
+import ledger
 import settings
 import stella_data as sd
 import worker_env
@@ -209,6 +216,15 @@ def cooling(st, link, t):
     return False
 
 
+def observed_of(link):
+    """The limit the usage ledger holds for the link now ({until, source, reason}), else None; a ledger that cannot be read gives None (the cooldown stands without it)."""
+    try:
+        o = ledger.active(ledger.state(), link["connection"], link["model"], ledger.utcnow())
+    except (ledger.Stop, el.EventError, sd.DataError):
+        return None
+    return {k: o[k] for k in ("until", "source", "reason")} if o else None
+
+
 def failed(st, rt, task, link, trigger, t):
     """The link (or its connection, by the trigger's scope) goes into cooldown, and the task notes the failure and leaves the link.
     Returns the state key that cools."""
@@ -218,7 +234,7 @@ def failed(st, rt, task, link, trigger, t):
     n = old.get("failures", 0) + 1
     secs = min(tr["cooldown_s"] * 2 ** min(n - 1, 32), tr["max_cooldown_s"])
     st["links"][at] = {"trigger": trigger, "since": old.get("since") or t.strftime(TIME), "until": (t + datetime.timedelta(seconds=secs)).strftime(TIME),
-                       "failures": n, "observed_limit": None}   # observed_limit: stub routing-observed-quota (F2c's usage ledger)
+                       "failures": n, "observed_limit": observed_of(link)}
     ts = task_of(st, task)
     ts["history"].append({"link": key, "trigger": trigger, "at": t.strftime(TIME)})
     ts["visited"] += [key] if key not in ts["visited"] else []
@@ -420,8 +436,8 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 OPENER = urllib.request.build_opener(NoRedirect, urllib.request.ProxyHandler({}))   # no proxy from the environment, ever: the prompt and the key go to the catalog's host
 
 
-def fetch(req, timeout):
-    """(status, raw answer) of one request. One wall-clock deadline covers the whole call (name lookup, connect, status line,
+def fetch(req, timeout, headers=None):
+    """(status, raw answer) of one request; a dict given as headers is filled with the answer's headers. One wall-clock deadline covers the whole call (name lookup, connect, status line,
     headers, body): past it TimeoutError, whatever the server still sends.
     shortcut: a call cut at the deadline leaves its thread behind until that thread's own socket wait ends or the process does, upgrade to a transport that can be cancelled when streaming lands."""
     got = []
@@ -431,8 +447,12 @@ def fetch(req, timeout):
             try:
                 with OPENER.open(req, timeout=timeout) as r:
                     got.append((r.status, r.read(el.MAX_FILE + 1)))
+                    hs = r.headers
             except urllib.error.HTTPError as e:
                 got.append((e.code, e.read(el.MAX_FILE + 1)))
+                hs = e.headers
+            if headers is not None:
+                headers.update(hs.items())
         except Exception as e:   # handed to the caller, which classes it
             got.append(e)
 
@@ -470,7 +490,20 @@ def put(doc, p, v):
     doc[int(last) if isinstance(doc, list) else last] = v
 
 
-def send(prov, proto, link, prompt, key, timeout, local, edit=None):
+def note_call(proto, link, who, outcome, status, tokens, t0, plan_share=None):
+    """One usage record of the call just made (the ledger's schema; its cost priced from the pricing table). A record that cannot be
+    written is one alert, never the end of a call that already went out."""
+    try:
+        call = {"connection": link["connection"], "model": link["model"], "outcome": outcome, "status": status, "tokens": tokens,
+                "latency_ms": int((time.monotonic() - t0) * 1000), "plan_share": plan_share, **(who or {})}
+        rec = ledger.record(call, cost.price({**call, "ts": ledger.iso(ledger.utcnow())}, cost.load_table()))
+    except (ledger.Stop, cost.Stop) as x:
+        el.say(x.code, x.problem, alert=True)
+    except (el.EventError, sd.DataError, OSError) as e:
+        el.say(getattr(e, "code", UNEXPECTED), f"a usage record was not written ({type(e).__name__})", alert=True)
+
+
+def send(prov, proto, link, prompt, key, timeout, local, edit=None, who=None):
     """One request to the link: (answer, None, status) or (None, trigger, status); trigger None with no answer: no row maps the error.
     edit: a function that changes the rendered body (the structured-output schema, the probe's tests) before it is sent.
     No text of an exception or of an error answer leaves here (either could repeat the key)."""
@@ -482,23 +515,31 @@ def send(prov, proto, link, prompt, key, timeout, local, edit=None):
         edit(b)
     req = urllib.request.Request(url_of(prov, link, local, render(rq["path"], dict(vals, model=urllib.parse.quote(link["model"], safe="")))),
                                  data=json.dumps(b).encode(), headers=headers_of(rq, key), method=rq.get("method", "POST"))
+    t0, zero, hs = time.monotonic(), dict.fromkeys(cost.TYPES, 0), {}
     try:
-        status, raw = fetch(req, timeout)   # one deadline for the whole call: a server that drips bytes, in the head or the body, holds no task
+        status, raw = fetch(req, timeout, hs)   # one deadline for the whole call: a server that drips bytes, in the head or the body, holds no task
     except (OSError, http.client.HTTPException, ValueError) as e:
         slow = isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError)
+        note_call(proto, link, who, "timeout" if slow else "error", None, zero, t0)
         return None, TIMED_OUT if slow else DOWN, None
     text = raw.decode("utf-8", "replace")
     if not 200 <= status < 300:
+        limited = None
+        with contextlib.suppress(ledger.Stop, el.EventError, sd.DataError, OSError):   # an answer that is a limit is kept by the ledger (its wait from the headers, in data)
+            limited = ledger.observe_response(link["connection"], link["model"], status, hs, text)
+        note_call(proto, link, who, "limit" if limited else "error", status, zero, t0)
         return None, classify(proto, status, text), status
     try:
         doc = json.loads(text)
     except Exception:   # an answer that cannot be parsed, whatever the reason (a body nested too deeply raises RecursionError, no ValueError)
+        note_call(proto, link, who, "error", status, zero, t0)
         return None, DOWN, status
     text, calls = ptr(doc, rs["text"]), ptr(doc, rs["tool_calls"])
-    if malformed(rs.get("tool_calls_sample"), calls):
-        return None, MALFORMED, status
-    if not text and not calls:   # nothing for the task: no success, so it clears no cooldown
-        return None, DOWN, status
+    got = cost.usage_of(proto, doc)
+    if malformed(rs.get("tool_calls_sample"), calls) or (not text and not calls):   # nothing for the task: no success, so it clears no cooldown
+        note_call(proto, link, who, "error", status, got, t0)
+        return None, MALFORMED if calls and malformed(rs.get("tool_calls_sample"), calls) else DOWN, status
+    note_call(proto, link, who, "ok", status, got, t0)
     lp = ptr(doc, rs["logprobs"]) if rs.get("logprobs") else None   # the per-token items, when the wire shape names a pointer and the answer has them
     return {"text": text, "tool_calls": calls, "usage": ptr(doc, rs["usage"]), "model": ptr(doc, rs["model"]), **({"logprobs": lp} if lp else {})}, None, status
 
@@ -584,19 +625,29 @@ def cmd_call(a):
                 edit = lambda b, w=where: put(b, w, schema)
             else:
                 text = f"{prompt}\n\nAnswer with one JSON object and nothing else. It must follow this JSON Schema:\n{json.dumps(schema)}"
-        for _ in range(rt["failover"]["retry_count"] + 1):
-            ans, trigger, status = send(prov, proto, link, text, key, timeout, local, edit)
-            if ans is not None:
-                break
-        for n in range(rt["probe"]["repair_retries"] + 1 if ans is not None and schema else 0):   # a wrong answer gets the repair retries, then a code: never a guessed value
-            err = invalid(ans["text"], schema)
-            if err is None:
-                break
-            if n == rt["probe"]["repair_retries"]:
-                raise Stop(PROBE_FAILED, f"link {resolve.link_key(link)}: the answer is not JSON that meets the schema ({err}), also after {n} repair retries")
-            ans, trigger, status = send(prov, proto, link, f"{text}\n\nYour answer was:\n{ans['text']}\n\nIt was refused: {err}. Answer again with one JSON object that follows the schema.", key, timeout, local, edit)
-            if ans is None:
-                break
+        who = {"role": a.role, "project": a.project, "card": a.card, "session": a.task}
+        try:   # the call holds the link's slots for its whole duration (every try and repair of it); a link the ledger refuses is left for the next
+            fds = ledger.acquire(link["connection"], link["model"], f"route.py task {a.task}")
+        except ledger.Refusal as r:
+            refused.append({"link": resolve.link_key(link), "code": STOPPED, "reason": r.problem})
+            continue
+        try:
+            for _ in range(rt["failover"]["retry_count"] + 1):
+                ans, trigger, status = send(prov, proto, link, text, key, timeout, local, edit, who)
+                if ans is not None:
+                    break
+            for n in range(rt["probe"]["repair_retries"] + 1 if ans is not None and schema else 0):   # a wrong answer gets the repair retries, then a code: never a guessed value
+                err = invalid(ans["text"], schema)
+                if err is None:
+                    break
+                if n == rt["probe"]["repair_retries"]:
+                    raise Stop(PROBE_FAILED, f"link {resolve.link_key(link)}: the answer is not JSON that meets the schema ({err}), also after {n} repair retries")
+                ans, trigger, status = send(prov, proto, link, f"{text}\n\nYour answer was:\n{ans['text']}\n\nIt was refused: {err}. Answer again with one JSON object that follows the schema.", key, timeout, local, edit, who)
+                if ans is None:
+                    break
+        finally:
+            for fd in fds:
+                os.close(fd)
         with state() as st:
             if ans is not None:
                 cleared = succeeded(st, link)
