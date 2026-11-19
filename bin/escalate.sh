@@ -53,10 +53,6 @@ mkdir -p "$STATE"
 . /workspace/bin/kanban-board.sh   # kanban(): every kanban call names its board (F4)
 . /workspace/bin/owner-config.sh   # once_per_hour, and alert_text (D44) through it
 
-# Rate-limit / pool-exhausted output, verified in claude 2.1.310 (bin/claude.exe strings).
-POOL_PATTERNS=("You've hit your" "You've reached your" "You're out of usage credits" "You're out of extra usage"
-  "Your org is out of usage" "usage limit reached" "rate_limit_error" "Rate limit exceeded")
-
 card="${1:-}" purpose="${2:-}" model="" role="" rung=""   # model, role, rung: set once the data and the resolver answer them
 shift $(( $# < 2 ? $# : 2 ))
 reason=""
@@ -330,7 +326,12 @@ else   # the rung the resolver served, asked again by route.py as every caller a
 fi
 
 pm=""
-for p in "${POOL_PATTERNS[@]}"; do [[ "$out$err" == *"$p"* ]] && { pm="matched '$p'"; break; }; done
+# A limit text is matched only on a failed run (non-zero exit, or a CLI result that is no is_error false): never in the answer of a successful
+# one, whose text a model or a card can make say anything. The patterns are the usage ledger's data (limit-signals cli_patterns of $CLI).
+if [ "$rc" != 0 ] || { [ -n "$cli" ] && ! jq -e '.is_error == false' <<<"$out" >/dev/null 2>&1; }; then
+  n=$(printf '%s\n%s' "$out" "$err" | python3 -I -c 'import sys; sys.path.insert(0, "/workspace/bin"); import ledger; print(ledger.cli_limit_hit(sys.argv[1], sys.stdin.read()) or "")' "$CLI" 2>/dev/null)
+  [ -z "$n" ] || pm="matched limit pattern $n of $CLI (limit-signals cli_patterns)"
+fi
 # route.py's STL-MDL-723: the rung's link failed with a failover trigger and is cooling, no other link of the rung is left
 [ -n "$pm$cli" ] || [ "$rc" != 1 ] || [ "$(jq -r '.code? // empty' <<<"$out" 2>/dev/null)" != STL-MDL-723 ] || pm="route.py: $(jq -r '.problem | tostring | .[:200]' <<<"$out")"
 if [ -n "${used:-}" ]; then   # the CLI call went out (route.py records its own): one usage record, the plan share its output shows, a limit its text shows

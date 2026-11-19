@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fake coding CLI for tests (F2 test rig): stands in for a cli-login connection. Reads a prompt on stdin, prints a result JSON.
-MOCK_CLI_MODE: ok (default) | usage_limit | timeout | model_gone. MOCK_CLI_SECONDS: how long timeout hangs (default 60).
+MOCK_CLI_MODE: ok (default) | ok_limit_text (a successful answer whose text quotes a limit message) | usage_limit | timeout | model_gone. MOCK_CLI_SECONDS: how long timeout hangs (default 60).
 MOCK_CLI_USAGE: a number; every mode then first prints the usage block "plan usage: <n>% of your limit used" on stderr (the plan share a cli-login CLI shows).
 MOCK_CLI_CALLS: a file that gets one JSON line per invocation, written at start: {"argv": [...], "env": [names only]}.
 Any argument is accepted; --model <id> names the model in the model_gone message."""
@@ -25,6 +25,9 @@ if mode == "model_gone":
 if mode == "timeout":
     time.sleep(float(os.environ.get("MOCK_CLI_SECONDS") or 60))
     sys.exit(1)
+if mode == "ok_limit_text":
+    print(json.dumps({"type": "result", "is_error": False, "result": "The handler answers: usage limit reached, then Rate limit exceeded on a 429.", "model": model}))
+    sys.exit(0)
 if mode != "ok":
     print(f"unknown mode {mode}", file=sys.stderr)
     sys.exit(2)

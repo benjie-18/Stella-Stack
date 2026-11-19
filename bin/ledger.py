@@ -16,10 +16,10 @@ worker environment, STL-CFG-312; JSON out, --json accepted everywhere):
         output) on stdin; prints the observed limit, or null when the answer is no limit.
   ledger.py report --by card|project|role|model|connection     calls, tokens and cost per key.
   ledger.py check                              the usage file and the state file against their schemas.
-Slots are flock files under <ledger_state path>.slots/. A daily cap counts the records of the day of the signals data's day_reset clock (an outcome whose outcome_classes say it is no call is left out).
+Slots are open-file-description locks (fcntl F_OFD_SETLK; status asks with F_OFD_GETLK, which takes none) on files under <ledger_state path>.slots/. A daily cap counts the records of the day of the signals data's day_reset clock (an outcome whose outcome_classes say it is no call is left out).
 Every state change that is no plain call record (a limit observed, a hold refused) is one trusted event line (bin/event_log.py).
 Exit: 0 ok; 1 refused or failed (catalog code and plain message on stderr, {code, problem} on stdout); 2 usage; 75, 76, 77 of hold.
-shortcut: the usage file is read whole on every status, hold and report; upgrade (an index or a daily counter file) when it grows past
+shortcut: struct flock is the 64-bit Linux layout (FLOCK). shortcut: the usage file is read whole on every status, hold and report; upgrade (an index or a daily counter file) when it grows past
 a few hundred thousand lines. shortcut: a daily cap is checked, not reserved: callers that run in parallel past a cap with no slot limit
 can overshoot it by the calls in flight; give the model a max_concurrent to close that."""
 import os, sys
@@ -30,7 +30,7 @@ if __name__ == "__main__" and not sys.flags.isolated:   # run directly: PYTHONPA
     except OSError:   # fail closed: a tool that counts limits does not go on with modules it cannot vouch for
         sys.exit("STL-CFG-310 ledger.py could not restart itself isolated (python3 -I); nothing was done")
 
-import argparse, contextlib, datetime, email.utils, fcntl, json, re, urllib.parse, uuid, zoneinfo
+import argparse, contextlib, datetime, email.utils, fcntl, json, math, re, struct, urllib.parse, uuid, zoneinfo
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -167,8 +167,20 @@ def state():
     return doc
 
 
-def lines():
-    """([the JSON objects of the usage file], torn): a line that is no JSON object (a writer killed mid-line) is skipped and counted."""
+def good(d):
+    """A usage line the schema accepts, with a ts that is a real time (the pattern alone lets month 99 through)."""
+    if sd.validate_doc(d, sd.schema_of("usage")):
+        return False
+    try:
+        when(d["ts"])
+    except ValueError:
+        return False
+    return True
+
+
+def lines(valid=True):
+    """([the JSON objects of the usage file], torn): a line that is no JSON object (a writer killed mid-line) or, with `valid`, breaks the
+    usage schema is skipped and counted, with one alert per read (check() reads them all: it reports what the schema says)."""
     try:
         with open(usage_path(), "rb") as f:
             data = f.read()
@@ -184,10 +196,12 @@ def lines():
             d = json.loads(ln)
         except (ValueError, RecursionError):
             d = None
-        if isinstance(d, dict):
+        if isinstance(d, dict) and (not valid or good(d)):
             out.append(d)
         else:
             torn += 1
+    if torn and valid:
+        el.say(BADFILE, f"{torn} line(s) of the usage file are no valid call record: skipped", alert=True)
     return out, torn
 
 
@@ -251,12 +265,20 @@ def open_slot(connection, model, i):
         raise Stop(FILE, f"a slot lock file of {sd.idn(connection)} cannot be used ({el.why(e)})")
 
 
+FLOCK = "hhqqi"   # struct flock: type, whence, start, len, pid (64-bit Linux)
+
+
+def ofd(fd, cmd):
+    """An open-file-description write lock request (F_OFD_SETLK takes it, F_OFD_GETLK only asks): unlike flock, asking never blocks a taker."""
+    return fcntl.fcntl(fd, cmd, struct.pack(FLOCK, fcntl.F_WRLCK, 0, 0, 0, 0))
+
+
 def take(connection, model, n):
     """An open, flocked slot fd of the n of the scope, or None when all are taken."""
     for i in range(1, n + 1):
         fd = open_slot(connection, model, i)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            ofd(fd, fcntl.F_OFD_SETLK)
             return fd
         except OSError:
             os.close(fd)
@@ -264,8 +286,7 @@ def take(connection, model, n):
 
 
 def in_use(connection, model, n):
-    """How many of the n slots are held now. shortcut: it probes by taking each lock for an instant, so an acquirer arriving at that
-    instant can be told "no free slot" once; upgrade by recording holders in the lock files if that is ever seen."""
+    """How many of the n slots are held now, asked with F_OFD_GETLK: it takes no lock, so it never costs a holder its slot."""
     used = 0
     for i in range(1, n + 1):
         try:
@@ -275,10 +296,9 @@ def in_use(connection, model, n):
         except (OSError, ValueError, el.EventError) as e:
             raise Stop(FILE, f"a slot lock file of {sd.idn(connection)} cannot be used ({el.why(e)})")
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            used += 1
-        os.close(fd)
+            used += struct.unpack(FLOCK, ofd(fd, fcntl.F_OFD_GETLK))[0] != fcntl.F_UNLCK
+        finally:
+            os.close(fd)
     return used
 
 
@@ -303,6 +323,7 @@ def acquire(connection, model, holder, now=None):
     now = now or utcnow()
     _, cat, _, _ = catalog()
     prov, mod = link_of(cat, connection, model)
+    connection = prov["id"]   # the global_id is the same link: one key for slots, count and limits
     fds = []
     try:
         o = active(state(), connection, model, now)
@@ -364,7 +385,7 @@ def record(call, cost=None):
     errs = sd.validate_doc(rec, sd.schema_of("usage"))
     if errs:
         raise Stop(INVALID, f"the call record breaks the usage schema ({errs[0]})")
-    link_of(catalog()[1], rec["connection"], rec["model"])
+    rec["connection"] = link_of(catalog()[1], rec["connection"], rec["model"])[0]["id"]
     p = usage_path()
     with el.locked(p + ".lock"):
         fd = el.open_file(p, os.O_RDWR | os.O_APPEND | os.O_CREAT)
@@ -392,7 +413,7 @@ def observe_limit(connection, model, source, until, reason, now=None):
     limit.observed line. An observation of the same source that already lasts longer is kept as it is (None changes, no line).
     Returns the observation."""
     now = now or utcnow()
-    link_of(catalog()[1], connection, model)
+    connection = link_of(catalog()[1], connection, model)[0]["id"]
     new = {"connection": connection, "model": model, "source": source, "until": iso(until), "reason": el.scrub(str(reason))[:signals()["field_limits"]["reason"]]}
     p = state_path()
     el.preflight()   # no state change without its trusted line
@@ -444,7 +465,7 @@ def observe_response(connection, model, status, headers, body, now=None):
     sig, h = signals(), {k.lower(): v for k, v in headers.items()}
     if trigger not in sig["limit_triggers"]:
         return None
-    pick = lambda names: [s for s in (seconds_of(h[n], now) for n in names if n in h) if s is not None]
+    pick = lambda names: [s for s in (seconds_of(h[n], now) for n in names if n in h) if s is not None and math.isfinite(s)]   # nan, inf: no wait named
     ra, rs = pick(sig["headers"]["retry_after"]), pick(sig["headers"]["reset"])
     for src in sig["limit_triggers"][trigger]:
         if src == "retry_after" and ra:
@@ -469,16 +490,21 @@ def cli_of(connection):
     return prov.get("cli") if plan_billed(signals(), prov) else None
 
 
+def cli_limit_hit(cli, text):
+    """The 1-based number of the first limit pattern of the data (cli_patterns of that CLI) the text holds; None when none."""
+    return next((i + 1 for i, p in enumerate(signals()["cli_patterns"].get(cli) or []) if p in text), None)
+
+
 def observe_cli_text(connection, model, text, now=None):
     """Observe the limit a cli-login CLI's output shows (its patterns, by the connection's `cli`, from the signals data); None when
     the text is no limit error."""
     now = now or utcnow()
     sig, cli = signals(), cli_of(connection)
-    hit = next((i for i, p in enumerate(sig["cli_patterns"].get(cli) or []) if p in text), None)
+    hit = cli_limit_hit(cli, text)
     if hit is None:
         return None
     return observe_limit(connection, model, "cli_limit_error", now + datetime.timedelta(seconds=sig["default_wait_seconds"]),
-                         f"the CLI's limit error (pattern {hit + 1})", now)
+                         f"the CLI's limit error (pattern {hit})", now)
 
 
 def plan_share_from(connection, text):
@@ -496,6 +522,7 @@ def status(connection, model=None, now=None):
     now = now or utcnow()
     _, cat, _, _ = catalog()
     prov, mod = link_of(cat, connection, model)
+    connection = prov["id"]
     recs, _ = lines()
     conc, day, problems = None, None, []
     for s in scopes(prov, mod, model):
@@ -541,7 +568,7 @@ def report(by):
 
 
 def check():
-    recs, torn = lines()
+    recs, torn = lines(False)
     errs, seen = [], set()
     for i, r in enumerate(recs):
         e = sd.validate_doc(r, sd.schema_of("usage"))
