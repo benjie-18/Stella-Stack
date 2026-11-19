@@ -181,6 +181,8 @@ AL=$T/sup/logs/alerts.log; a0=$(grep -c "^STL-MDL-738 " "$AL" 2>/dev/null)
 chain st-a/st-a-m1 st-b/st-b-m1; fresh; call norec; a1=$(grep -c "^STL-MDL-738 " "$AL" 2>/dev/null)
 ok '[ $RC = 0 ] && J norec ".link.model == \"st-a-m1\" and .refused == []" && [ "$(cnt st-a/st-a-m1)" = 1 ] && jq -e ".tokens > 0" "$R/ctx.json" && [ $((a1 - ${a0:-0})) = 1 ] && grep "^STL-MDL-738 " "$AL" | tail -1 | grep -qF "st-a/st-a-m1"' \
   "owner ruling 2026-11-18: a link with no probe record may serve (picked and called), flagged by one STL-MDL-738 warning alert naming it; the resolver was asked with the prompt's size (ctx tokens)"
+mv "$AL" "$AL.keep"; mkdir "$AL"; chain st-a/st-a-m1; fresh; call noflag; rmdir "$AL"; mv "$AL.keep" "$AL"
+ok '[ $RC = 1 ] && [ "$(cnt st-a/st-a-m1)" = 0 ] && grep -q "STL-CFG-318" "$T/o/noflag.err"' "CRT-04 an unprobed pick whose STL-MDL-738 alert line cannot be written is not called (STL-CFG-318)"
 chain st-t/st-t-m1 st-b/st-b-m1; fresh; PROMPT=$(head -c 400 /dev/zero | tr '\0' 'w') call small
 ok '[ $RC = 0 ] && J small ".link.model == \"st-b-m1\" and ([.refused[] | .code + \" \" + .link] == [\"STL-MDL-710 st-t/st-t-m1\"])" && [ "$(cnt st-t/st-t-m1)" = 0 ]' \
   "C-DC-04 a link whose probed effective context (16) does not hold the conversation is refused on the first pick too, never called"

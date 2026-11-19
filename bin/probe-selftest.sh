@@ -173,4 +173,23 @@ jq --arg i "$IID" --arg o "$(jq -r '.probe.output_shapes[-1]' "$RT")" '.records 
 hp h1 qa-rep; hp h2 qa-bad
 ok '[ "$(rc h1)" = 0 ] && J h1 --argjson g "$GOOD" "(.text | fromjson) == \$g" && [ "$(cnt qa-rep)" = 2 ]' "S16 the helper: an answer that is not JSON gets one repair retry; the valid answer is the result"
 ok '[ "$(rc h2)" != 0 ] && [ "$(cnt qa-bad)" = 2 ] && J h2 ".code == \"STL-MDL-736\" and ((.text // null) == null)"' "S17 the helper: JSON that breaks the schema, also after the retry: STL-MDL-736, no text"
+# ---- F2b fix round: a bad record never blocks a probe (CRT-01), an echo is no recall (CRT-03), an api link with no wire shape is unreachable (B-VER-02) ----
+jq '.records[0].output_shape = "qa-bogus"' "$T/pf.keep" >"$PF"; pr rp run --connection qa-p --model qa-j --json; pr k2 check --json
+ok '[ "$(rc rp)" = 0 ] && [ "$(rc k2)" = 0 ] && R1 qa-j ".json == true" && [ "$(jq ".records | length" "$PF")" = "$(jq ".records | length" "$T/pf.keep")" ]' \
+  "S18 CRT-01 a probe run repairs a records file with one bad record: the bad record is dropped, the new one kept, the file passes check"
+python3 -I -B -c 'import random, re, sys; sys.path.insert(0, sys.argv[1]); import probe
+p = {"lengths": [200, 400], "needles": 3, "hops": 2, "tolerance": 0.1}
+def follow(prompt):
+    keys, x = dict(re.findall(r"key to code (\w+) is code (\w+)", prompt)), re.findall(r"Start from code (\w+)", prompt)[0]
+    while x in keys:
+        x = keys[x]
+    return {"text": x}, None
+echo = lambda prompt: ({"text": " ".join(re.findall(r"\b[A-Z]{2}[0-9]{4}\b", prompt))}, None)
+a, b = probe.context(None, echo, p, random.Random(1)), probe.context(None, follow, p, random.Random(1))
+sys.exit(0 if a["short_score"] == 0 and b["short_score"] == 1 else 1)' "$R/bin" >"$T/o/echo.out" 2>&1; ke=$?
+ok '[ "$ke" = 0 ]' "S19 CRT-03 an answer that lists the other chains' codes as well scores 0; the chain's last code alone scores 1"
+ed connections.json --argjson m "$(mdl qa-np-m)" ".entries += [$TPL + {id: \"qa-np\", label: \"qa-np\", enabled: true, global_id: \"$(cat /proc/sys/kernel/random/uuid)\", models: [\$m], secrets: [], protocol: null} | del(.protocol)]"
+pr d3 due --json
+ok '[ "$(rc d3)" = 0 ] && jq -e "([.unreachable[] | select(.connection == \"qa-np\" and (.problem | test(\"protocol\")))] | length) == 1 and ([.due[] | select(.connection == \"qa-np\")] | length) == 0" "$T/o/d3.json"' \
+  "S20 B-VER-02 an api connection with no protocol is listed unreachable (the missing field named), never as an unprobeable CLI login"
 echo "# probe-selftest: $fails failed"; [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
