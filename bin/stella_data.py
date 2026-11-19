@@ -82,6 +82,7 @@ OFF_REQUIRED, CHAIN_FAILS, BUILTIN_EDIT = "STL-MDL-725", "STL-MDL-726", "STL-MDL
 PROBED = NOROW + "probe records"   # the member of a check line that rests on probe data: no read depends on it, so served() never refuses for it (C-DC-03)
 
 UNPROBED = "STL-MDL-738"   # a link with no probe record picked or listed for a role with requirements (owner ruling 2026-11-18)
+PROBES_BROKEN, BROKEN = "STL-MDL-739", "broken"   # a probe records file present but unusable (CRT-01); the key of its entry in probe_records()
 
 class Warned(Coded):
     """A check line that is a warning (UNPROBED): `check` prints it, and neither its exit code nor served() counts it."""
@@ -826,14 +827,17 @@ def link_class(prov, model, rt=None):
 
 
 def probe_records(rt=None):
-    """The valid probe records of this install, read by bin/probe.py's reader only (records(): the file of index key
-    probe_records, protected state, records of another install ignored); [] when there are none or they cannot be read (fail
-    closed: no record). rt: the routing document when the caller holds it (a rule of `check` passes its own, never reads again)."""
+    """The valid probe records of this install, read by bin/probe.py's reader only (read(): the file of index key
+    probe_records, protected state, records of another install ignored); [] when there are none (a missing file: a fresh install).
+    A file that is present but cannot be used whole fails closed (CRT-01): its records are not read, and one BROKEN entry makes
+    probed() answer every link with a record that proves nothing. rt: the routing document when the caller holds it (a rule of
+    `check` passes its own, never reads again)."""
     try:
         import probe
-        return probe.records(rt)
-    except Exception:   # shortcut: any trouble reading is "no record" (unmet at run time, possibly serving in check), upgrade if a reader must tell why
-        return []
+        recs, why = probe.read(rt)
+    except Exception as e:
+        recs, why = [], f"the probe records cannot be read ({type(e).__name__})"
+    return recs + [{"connection": None, "model": None, "probed_at": "", BROKEN: why}] if why else recs
 
 
 def probed(recs, connection, model, now=None):
@@ -843,7 +847,10 @@ def probed(recs, connection, model, now=None):
     shortcut: the catalog does not hold the model-list version, so the newest record of any version counts; upgrade when it does."""
     t = (now or datetime.datetime.now(datetime.timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
     got = [r for r in recs if r["connection"] == connection and r["model"] == model and r["probed_at"] <= t]
-    return max(reversed(got), key=lambda r: r["probed_at"]) if got else None   # a tie: the record written last (the file's later one)
+    if got:
+        return max(reversed(got), key=lambda r: r["probed_at"])   # a tie: the record written last (the file's later one)
+    bad = next((r[BROKEN] for r in recs if r.get(BROKEN)), None)   # a broken records file: a record that meets nothing, never "not probed"
+    return bad and {"connection": connection, "model": model, "family": None, "context": {"effective": 0}, BROKEN: f"the probe records file cannot be used ({bad}), so no link counts as probed (bin/probe.py check)"}
 
 
 def unmet(req, rec):
@@ -1065,6 +1072,9 @@ def probes_of(c):
     if "probes" not in c:
         rts = [d for _, d in c["whole"].get("routing", [])]
         c["probes"] = probe_records(rts[0]) if len(rts) == 1 else []
+        for r in c["probes"]:
+            if r.get(BROKEN):
+                c["P"](c["whole"]["routing"][0][0], Probed(PROBES_BROKEN, f"{r[BROKEN]}; bin/probe.py run drops a bad record"), {PROBED})
     return c["probes"]
 
 def rule_assignments(c):

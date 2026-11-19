@@ -1114,11 +1114,23 @@
       "area": "MDL",
       "severity": "warning",
       "title": "a link with no probe record serves a role",
-      "message": "A model link that has no capability probe record was picked or listed for a role with requirements: {problem}. It may serve, but what it can do is not proven.",
+      "message": "A model link that has no capability probe record was picked or listed for a role with requirements, or for a task whose size is given: {problem}. It may serve, but what it can do is not proven.",
       "action": "run `python3 bin/probe.py due` and probe the links it lists (`probe.py run`); a CLI-login link cannot be probed and stays flagged. See STL-MDL-738 in docs/alert-codes.md.",
-      "cause": "The link was never probed (a fresh install, a new model) or cannot be probed (no wire shape). Owner ruling 2026-11-18: such a link may serve a role with requirements, flagged once per pick; `check` lists it as a warning, never as a problem.",
+      "cause": "The link was never probed (a fresh install, a new model) or cannot be probed (a CLI login). Owner ruling 2026-11-18: such a link may serve a role with requirements, or a task whose size is given (resolve --tokens, route.py's prompt size), flagged once per pick; `check` lists it as a warning, never as a problem. A pick whose flag line cannot be written is not served (STL-CFG-318).",
       "check": "`python3 bin/probe.py due --json` (due, unprobeable); `python3 bin/probe.py show --json`; `python3 bin/stella_data.py check` (warning lines).",
       "related": "F2b item C (design-C.md, owner ruling 2026-11-18); bin/stella_data.py needs_probe, bin/route.py, bin/resolve.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-MDL-739",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "the probe records file cannot be used",
+      "message": "The capability probe records file is present but cannot be used: {problem}. Until it is fixed no model link counts as probed, so a role with requirements gets no link.",
+      "action": "run `python3 bin/probe.py check --json` to see the problem; `python3 bin/probe.py run --connection <id> --model <model> --again` drops a bad record and writes a good one; a file that cannot be read at all is fixed or moved aside by the owner. See STL-MDL-739 in docs/alert-codes.md.",
+      "cause": "A record that fails the records schema, a record key twice, an output shape the routing data no longer lists (routing probe.output_shapes edited), or a file that cannot be read (too big, a symbolic link, not JSON). A missing file is no problem (no record: a fresh install). Routing fails closed on it (F2b CRT-01): no link looks unprobed.",
+      "check": "`python3 bin/probe.py check --json`; `python3 bin/stella_data.py check`; the probe_records path in `.stella/data-files.json`.",
+      "related": "F2b item C (CRT-01); bin/stella_data.py probe_records, bin/probe.py read and save",
       "resolvable": false
     },
     {

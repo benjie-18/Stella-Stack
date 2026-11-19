@@ -96,6 +96,7 @@ if os.path.isfile(os.path.join(BIN, "consent.py")):   # this tool's own folder o
 NO_LINK, UNKNOWN, WAITING, SWITCH, MID_REFUSED, STOPPED = "STL-MDL-710", "STL-MDL-711", "STL-MDL-719", "STL-MDL-721", "STL-MDL-722", "STL-MDL-723"
 PROBE_FAILED = "STL-MDL-736"   # a structured-output call that got no valid answer (bin/probe.py holds the same code for a probe)
 UNEXPECTED = "STL-CFG-310"   # an error this tool did not foresee: one coded line with the error's type, never its text
+LOG_FAILED = "STL-CFG-318"   # a flag line that could not be written: the pick is not used (CRT-04)
 TIMEOUT_KEY = "CALL_TIMEOUT"   # the settings registry key: the seconds one model call may take
 TIMED_OUT, DOWN, MALFORMED = "timeout", "server_error", "malformed_tool_call"   # triggers no errors row of a wire shape can say
 WAIVER = "STL-MDL-737"   # a review role on a link of no other family than the builder's (the resolver's cross_family)
@@ -327,7 +328,8 @@ def advance(a, doc, rt, cat, refused, tokens=None):
         lrec = sd.probed(recs, link["connection"], link["model"])
         fam = (lrec or {}).get("family")   # the probe record's, as the resolver judged it
         if sd.needs_probe(req, lrec, getattr(a, "tokens", None)):   # it may serve unproven, flagged once per pick or switch (a task size counts as a requirement)
-            sd.alert_line(sd.UNPROBED, f"task {a.task}, role {a.role}: link {key} has no probe record (run bin/probe.py due)")
+            if sd.alert_line(sd.UNPROBED, f"task {a.task}, role {a.role}: link {key} has no probe record (run bin/probe.py due)") is False:   # CRT-04: never served unflagged
+                raise Stop(LOG_FAILED, f"task {a.task}: link {key} has no probe record and its {sd.UNPROBED} alert line could not be written, so it is not used")
         if cf and (cf.get("status") != "met" or fam in (None, cf.get("builder_family"))):
             event("routing.cross-family-waiver", a, WAIVER, new={"link": key, "family": fam},
                   detail=f"card {a.card or 'none'}, role {a.role}, preset {(doc.get('preset') or {}).get('id')}, builder family {cf.get('builder_family') or 'not known'}, served family "
