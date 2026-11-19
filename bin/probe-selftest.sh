@@ -62,6 +62,8 @@ ADV=32768   # the advertised window of every fake model
 mdl() { echo "{\"id\":\"$1\",\"capabilities\":{\"tool_calling\":true,\"json_mode\":true,\"context_tokens\":$ADV,\"vision\":true,\"streaming\":true},\"probed_at\":null,\"probe_source\":\"advertised\",\"cost\":null,\"limits\":null}"; }
 MODELS="qa-ctx qa-full qa-g qa-plain qa-j qa-due qa-tc"
 addmodel() { ed connections.json --arg c qa-p --argjson m "$(mdl "$1")" '(.entries[] | select(.id == $c) | .models) += [$m]'; }   # <model id>: data only
+SHIPAPI=$(jq -c '[.entries[] | select(.kind == "provider" and .type == "api") | .id]' "$R/.stella/connections.json")   # hermetic: the shipped api links lose their wire shape, so no probe reaches their hosts
+ed connections.json '.entries |= map(if .kind == "provider" and .type == "api" then del(.protocol) else . end)'
 ed connections.json --arg s "$SG" --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg h "$LO" --argjson p "$PORT" --arg k "$KN" \
   ".entries += [$TPL + {id: \"qa-p\", label: \"qa-p\", enabled: true, global_id: \$g, models: [], secrets: [\$k], hosts: [{host: \$h, port: \$p, purpose: \"qa mock\"}], protocol: \$s}]"
 for m in $MODELS; do addmodel "$m"; done
@@ -138,7 +140,7 @@ pr c3 run --connection qa-p --model qa-ctx --again --json
 ok '[ "$(rc c3)" = 0 ] && [ "$(rec qa-ctx | jq length)" = 1 ] && [ "$(evn ".type == \"probe.recorded\"")" = 5 ]' "S6 --again replaces the record of the version and writes one more line"
 pr d1 due --json
 ok 'jq -e "[.due[].model] | index(\"qa-due\") != null and index(\"qa-ctx\") == null" "$T/o/d1.json"' "S7 due lists the link whose version has no record and not the probed one"
-CLIW=$(jq -c '[.entries[] | select(.kind == "provider" and .enabled != false and (.protocol // null) == null) | .id as $c | .models[] | {connection: $c, model: .id}]' "$R/.stella/connections.json")
+CLIW=$(jq -c '[.entries[] | select(.kind == "provider" and .enabled != false and .type == "cli-login") | .id as $c | .models[] | {connection: $c, model: .id}]' "$R/.stella/connections.json")
 ok 'jq -e --argjson w "$CLIW" "(\$w | length > 0) and [.due[] | select(.probeable == false) | {connection, model}] == \$w and ([.due[] | select(.probeable == false) | .version] | all(. == null))" "$T/o/d1.json"' \
   "S7a owner ruling 2026-11-18: due also lists every link with no record whose connection has no wire shape (a CLI login), with version null and probeable false"
 ok 'R1 qa-plain ".context.short_score == 0 and .context.effective == .context.points[0].tokens and .context.effective > 0"' \
@@ -192,4 +194,6 @@ ed connections.json --argjson m "$(mdl qa-np-m)" ".entries += [$TPL + {id: \"qa-
 pr d3 due --json
 ok '[ "$(rc d3)" = 0 ] && jq -e "([.unreachable[] | select(.connection == \"qa-np\" and (.problem | test(\"protocol\")))] | length) == 1 and ([.due[] | select(.connection == \"qa-np\")] | length) == 0" "$T/o/d3.json"' \
   "S20 B-VER-02 an api connection with no protocol is listed unreachable (the missing field named), never as an unprobeable CLI login"
+ok '[ "$(rc d3)" = 0 ] && jq -e --argjson s "$SHIPAPI" "(\$s | length > 0) and ([.due[].connection] | map(select(. as \$c | \$s | index(\$c))) == []) and ([.unreachable[] | select(.connection as \$c | \$s | index(\$c)) | select(.problem | test(\"protocol\"))] | length) == (\$s | length)" "$T/o/d3.json"' \
+  "S21 hermetic: no shipped api connection is due, each is unreachable for its stripped protocol only (their hosts are never contacted)"
 echo "# probe-selftest: $fails failed"; [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
