@@ -9,7 +9,8 @@
     "schema_version",
     "timeout_s",
     "git_identity",
-    "cases"
+    "cases",
+    "branch"
   ],
   "properties": {
     "schema_version": {
@@ -42,6 +43,11 @@
         }
       },
       "description": "The identity of the scratch worktree's own git config (its base commit and the agent's commit in the evidence case)."
+    },
+    "branch": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._{}/-]*\\{run\\}[A-Za-z0-9._{}/-]*$",
+      "description": "Branch of a case's worktree; {run} is the case's run id. It needs a folder part (the box makes refs/heads/<folder> writable, never refs/heads itself)."
     },
     "cases": {
       "type": "array",

@@ -5,24 +5,28 @@ Every CLI-specific name is data (.stella/adapters.json); a new CLI is a new entr
   version --adapter A --json                   runs version_cmd; a version outside tested_versions is flagged (STL-GRD-644)
   start --adapter A --role R --worktree W --brief-file F [--card C] [--card-file J] [--link CONN/MODEL] [--project P] [--run-id R]
         [--wait] --json
-      1 the entry is active, its binary is on PATH, its version is known; 2 with --card a passing conformance record for
-      (adapter, version, role) whose digests match the current data (index key conformance_records, DC-06/07), without one the
-      worktree must lie under the conformance scratch root (index key conformance_scratch) and the run is never evidence for a card;
+      1 the entry is active, its binary is on PATH, its version is known; 2 a run with no card: the worktree must lie under the
+      conformance scratch root (index key conformance_scratch) and the run is never evidence for a card (DC-06);
       3 the link: --link (it must be in the role's chain) or the resolver's first usable one; its connection type must be one of the
       entry's conn_types; cli-login only with the connection's terms_ok true and its cli naming this adapter (the CLI runs on its own
-      login, credential_paths are never read); 4 a run token for every run (bin/run_token.py, DC-04); api: the CLI's base URL is the
+      login, credential_paths are never read); with --card a passing conformance record for (adapter, version, role, link, connection
+      type) whose digests match the current data (index key conformance_records, DC-06/07, V2-03); 4 a run token for every run (bin/run_token.py, DC-04); api: the CLI's base URL is the
       model proxy (index key model_proxy_state) and its token variable holds the run token; 5 the per-run folder (index key
       adapter_runs, outside the worktree and every box-writable mount): the generated policy config (bin/policy.py) with the entry's
       settings template, the MCP config (the capability server's URL and the token header, from the entry's mcp template), the prompt
       (bin/prompt.py render, with the card's attached skills and tools from --card-file); 6 the CLI holds the link's ledger slots (bin/ledger.py acquire, as `ledger.py hold` does), runs in
       the OS box (bin/box.py box_argv) when the role's profile for this adapter is boxed (DC-02), with an environment of env_keep
       names only, sandbox.env_unset removed (the entry's own token variable exempt), every worker marker set (DC-03); its output goes
-      to the run log (redacted, run tokens masked) and, parsed by the entry's stream pointers, to <run>/events.jsonl (design 3c).
+      to the run log (redacted, run tokens masked, each masked hit counted by pattern class into the record's masked) and, parsed by
+      the entry's stream pointers, to <run>/events.jsonl (design 3c). At its exit the record keeps the git evidence (final).
       The run goes on in the background (--wait: in the foreground); the run record is <adapter_runs>/<run>.json.
-  stop --run R [--reason TEXT]                 ends the CLI's process group, revokes the run token, one event line
+  stop --run R [--reason TEXT]                 revokes the run token, then ends the CLI's process group, one event line
   logs --run R [--follow]                      the run log
-  evidence --run R --json                      {exit_code, base, head, commits, files_changed, all_inside_worktree, tool_calls, errors,
-                                               tokens}; bin/false-close-guard.py calls card_verdict() (DC-01)
+  evidence --run R --json                      {exit_code, base, head, branch, on_branch, commits, files_changed, all_inside_worktree,
+                                               tool_calls, errors, tokens}, git as it was at the run's exit (commits: base..the branch the
+                                               run started on); bin/false-close-guard.py calls card_verdict() (DC-01)
+Every git call on a worktree runs with GIT_SAFE in a clean env (git()); untracked files are read without following links, capped
+(read_cap_bytes).
 start, stop, logs and evidence are engine side: they refuse in a worker environment (STL-CFG-312) before reading anything.
 Exit: 0 ok; 1 refused (catalog code STL-GRD-640..654 and its plain message on stderr, {code, problem} on stdout with --json); 2 usage.
 Importers: card_verdict(card), evidence(record), digests(adapter_id, role) (what a conformance record must match)."""
@@ -34,7 +38,7 @@ if __name__ == "__main__" and not sys.flags.isolated:   # run directly: PYTHONPA
     except OSError:
         sys.exit("STL-CFG-310 adapter.py could not restart itself isolated (python3 -I); nothing was started")
 
-import argparse, contextlib, datetime, hashlib, json, pwd, re, select, shutil, signal, subprocess, time, uuid
+import argparse, contextlib, datetime, hashlib, json, pwd, re, select, shutil, signal, stat, subprocess, time, uuid
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)
@@ -50,6 +54,10 @@ ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
 VERSION = re.compile(r"\d+(?:\.\d+)+[0-9A-Za-z.+-]*")
 EVENTS, LOG, CFG = "events.jsonl", "run.log", "cfg"
 TIME = "%Y-%m-%dT%H:%M:%SZ"
+# git on a worktree an agent wrote runs none of its programs (V2-02): no fsmonitor, hook or external diff, no optional locks;
+# a diff also no textconv and no submodule (a nested repo's own config would run on the host)
+GIT_SAFE = ["--no-optional-locks", "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "-c", "diff.external="]
+DIFF_SAFE = ["--no-ext-diff", "--no-textconv", "--ignore-submodules=all"]
 
 
 class Stop(Exception):
@@ -78,8 +86,13 @@ def entry(aid, d=None):
     return e
 
 
-def git(wt, *a, binary=False):
-    r = subprocess.run(["git", "-C", wt, *a], capture_output=True, timeout=120)
+def git(wt, *a, binary=False, inp=None, cfg=()):
+    """git as the engine runs it on any worktree (GIT_SAFE), in a clean env: no caller GIT_* variable, no global, system or XDG config
+    (as the test map tool runs git)."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, HOME=os.devnull, XDG_CONFIG_HOME=os.devnull)
+    r = subprocess.run(["git", *GIT_SAFE, *cfg, "-C", wt, *a], capture_output=True, timeout=120, env=env, input=inp,
+                       **({} if inp is not None else {"stdin": subprocess.DEVNULL}))
     if r.returncode:
         raise Stop(C["worktree"], f"git {a[0]} failed in {wt}: {r.stderr.decode('utf-8', 'replace').strip()[-160:]}")
     return r.stdout if binary else r.stdout.decode("utf-8", "replace").strip()
@@ -160,18 +173,27 @@ def canon(x):
     return hashlib.sha256(json.dumps(x, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def row_doc(rid):
+    return sd.load(next(r["path"] for r in sd.rows() if r["id"] == rid))
+
+
 def digests(aid, role):
-    """sha256 of the adapter entry, its rendered policy and the role's run-policy section: what a conformance record must match."""
+    """sha256 of what a conformance record must match: the adapter entry, its rendered policy, the role's effective run policy (every
+    part but the other roles' sections: default, filters, the role's own), the stuck patterns and the conformance cases (DC-07, V2-05)."""
     import policy, run_policy
     try:
-        return {"adapter": canon(entry(aid)), "policy": canon(policy.render(aid)), "run_policy": canon(run_policy.load()["roles"].get(role))}
+        t = run_policy.load()
+        rp = {**{k: v for k, v in t.items() if k != "roles"}, "roles": {role: t["roles"].get(role)}}
+        return {"adapter": canon(entry(aid)), "policy": canon(policy.render(aid)), "run_policy": canon(rp),
+                "stuck": canon(row_doc("stuck")), "conformance": canon(row_doc("conformance"))}
     except Stop:
         raise
     except Exception as e:
         raise Stop(C["conformance"], f"the digests of adapter {aid} for role {role} cannot be computed ({type(e).__name__})") from None
 
 
-def gate(e, ver, role):
+def gate(e, ver, role, link, ctype):
+    """A passing record of this adapter, version, role, link and connection type whose digests match current data (DC-06/07, V2-03)."""
     rel = sd.load(sd.INDEX).get(RECORDS)
     if not rel:
         raise Stop(C["conformance"], f"no conformance record is kept (index key {RECORDS}), so adapter {e['id']} holds no role yet")
@@ -180,9 +202,9 @@ def gate(e, ver, role):
     except (sd.DataError, KeyError, TypeError):
         raise Stop(C["conformance"], "the conformance records cannot be read") from None
     mine = [r for r in recs if isinstance(r, dict) and r.get("adapter") == e["id"] and r.get("version") == ver and r.get("role") == role
-            and r.get("passed") is True]
+            and r.get("link") == link and r.get("conn_type") == ctype and r.get("passed") is True]
     if not mine:
-        raise Stop(C["conformance"], f"adapter {e['id']} {ver} has no passing conformance record for role {role}")
+        raise Stop(C["conformance"], f"adapter {e['id']} {ver} has no passing conformance record for role {role} on link {link} ({ctype})")
     if not any(r.get("digests") == digests(e["id"], role) for r in mine):
         raise Stop(C["conformance"], f"adapter {e['id']} {ver} passed conformance for role {role} on other data (entry, policy or run policy changed since)")
 
@@ -299,10 +321,30 @@ def get(d, ptr):
     return d
 
 
+def fingerprint(p, cap):
+    """sha256 of an untracked file as the engine reads it (V2-11): a link's target text (never followed), a non-regular file's type,
+    the size and at most cap bytes of a regular one; b"" when it cannot be read."""
+    try:
+        st = os.lstat(p)
+        if stat.S_ISLNK(st.st_mode):
+            return hashlib.sha256(b"link\0" + os.fsencode(os.readlink(p))).digest()
+        fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK) if stat.S_ISREG(st.st_mode) else None
+        if fd is None:
+            return hashlib.sha256(b"type\0%d" % stat.S_IFMT(st.st_mode)).digest()
+        with os.fdopen(fd, "rb") as f:
+            st = os.fstat(f.fileno())
+            return hashlib.sha256(b"%d\0" % st.st_size + (f.read(cap) if stat.S_ISREG(st.st_mode) else b"")).digest()
+    except OSError:
+        return b""
+
+
 class Stream:
+    hits = calls = useen = None   # made on first use: masked hits per pattern class, tool calls by id, usage seen per message
+    rcap = 1 << 20   # bytes read of one untracked file; a run's own from adapters.json read_cap_bytes
+
     def __init__(self, run, rec, e, a, token_rx):
         self.run, self.rec, self.s, self.tools = run, rec, e.get("stream") or {}, e.get("tools") or {}
-        self.cap, self.rx, self.seq, self.last = a["output_cap"], token_rx, 0, None
+        self.cap, self.rx, self.seq, self.last, self.rcap = a["output_cap"], token_rx, 0, None, a.get("read_cap_bytes", Stream.rcap)
         self.role = rec["role"]
         self.pats = sd.value_pats()   # the catalog's value patterns; None (unreadable): every line is masked whole (fail closed)
         try:
@@ -313,15 +355,23 @@ class Stream:
         self.log = open(os.path.join(d, LOG), "a", encoding="utf-8")
         self.ev = open(os.path.join(d, EVENTS), "a", encoding="utf-8")
 
+    def count(self, k, n):
+        if n:
+            self.hits = self.hits or {}
+            self.hits[k] = self.hits.get(k, 0) + n
+
     def red(self, x):
-        """event_log's rules (values under redact keys, the catalog's value patterns, values seen under masked keys) and run tokens."""
+        """event_log's rules (values under redact keys, the catalog's value patterns, values seen under masked keys) and run tokens; each
+        pattern hit is counted by class (run_token, token), so a judge sees a token the masking hid (V2-04)."""
         if isinstance(x, str):
             if self.pats is None:
                 return el.MASK
-            x = self.rx.sub(el.MASK, el.scrub(x))
+            x, n = self.rx.subn(el.MASK, x)
+            self.count("run_token", n)
             for p in self.pats:
-                x = p.sub(el.MASK, x)
-            return x
+                x, n = p.subn(el.MASK, x)
+                self.count("token", n)
+            return el.scrub(x)
         if isinstance(x, dict):
             return {k: el.MASK if self.redk(str(k)) else self.red(v) for k, v in x.items()}
         return [self.red(v) for v in x] if isinstance(x, list) else x
@@ -338,11 +388,9 @@ class Stream:
         wt, h = self.rec["worktree"], hashlib.sha256()
         try:
             notes = self.rec.get("notes")   # the working-notes file changes every turn and says nothing about progress
-            h.update(git(wt, "diff", "--binary", self.rec["base"], "--", ".", *([f":(exclude,literal){notes}"] if notes else []), binary=True))
+            h.update(git(wt, "diff", "--binary", *DIFF_SAFE, self.rec["base"], "--", ".", *([f":(exclude,literal){notes}"] if notes else []), binary=True))
             for f in sorted(x for x in git(wt, "ls-files", "-z", "--others", "--exclude-standard", binary=True).split(b"\0") if x and x.decode("utf-8", "surrogateescape") != notes):
-                h.update(f + b"\0")
-                with contextlib.suppress(OSError), open(os.path.join(wt, f.decode("utf-8", "surrogateescape")), "rb") as fh:
-                    h.update(hashlib.sha256(fh.read()).digest())
+                h.update(f + b"\0" + fingerprint(os.path.join(wt, f.decode("utf-8", "surrogateescape")), self.rcap))
         except Stop:
             return None
         return h.hexdigest()
@@ -370,18 +418,29 @@ class Stream:
             for t in ts if isinstance(ts, list) else [ts]:   # one CLI line may be both a tool use and its result
                 self.one(c, t)
 
+    def tokens(self, c, k):
+        """A usage count: the sum of the ints its pointer (or list of pointers, e.g. input plus cache tokens) finds; None when none is."""
+        ptr = (self.s.get("usage") or {}).get(k)
+        got = [v for v in (get(c, p) for p in (ptr if isinstance(ptr, list) else [ptr])) if type(v) is int]
+        return sum(got) if got else None
+
     def one(self, c, t):
         s = self.s
-        us = s.get("usage") or {}
-        tok = {k: get(c, us.get(k)) for k in ("input", "output")}
         if t == "tool_use":
             name, inp = get(c, s.get("tool_name")), get(c, s.get("tool_input"))
             inp = self.red(inp if isinstance(inp, dict) else {"value": inp})
             self.last = (name, inp)
+            tid = get(c, s.get("tool_id"))
+            if isinstance(tid, str):
+                self.calls = self.calls or {}
+                self.calls[tid] = (name, inp)
             self.put({"type": t, "name": name, "input": inp, "signature": canon([name, inp])})
         elif t == "tool_result":
-            name = get(c, s.get("tool_name")) or (self.last or (None,))[0]
-            inp = (self.last or (None, {}))[1] if (self.last or (None,))[0] == name else {}
+            rid = get(c, s.get("result_id"))
+            known = (self.calls or {}).get(rid) if isinstance(rid, str) else None   # parallel calls: the result names its call
+            last = known or self.last or (None, {})
+            name = get(c, s.get("tool_name")) or last[0]
+            inp = last[1] if last[0] == name else {}
             ok = get(c, s["ok"]) if s.get("ok") else not get(c, s.get("error"))
             out = get(c, s.get("tool_result"))
             self.put({"type": t, "name": name, "input": inp, "ok": ok is True, "output": self.filt(self.red(out if isinstance(out, str) else json.dumps(out))),
@@ -389,7 +448,18 @@ class Stream:
         elif t in ("result", "error"):
             out = get(c, s.get("final_text" if t == "result" else "error"))
             self.put({"type": t, "name": None, "input": {}, "output": self.filt(self.red(out if isinstance(out, str) else json.dumps(out)))})
-        if (t == "usage" or t == "result") and all(type(v) is int for v in tok.values()):
+        elif t == "usage":
+            tok = {k: self.tokens(c, k) for k in ("input", "output")}
+            if not all(type(v) is int for v in tok.values()):
+                return
+            key = get(c, s.get("usage_key"))
+            if isinstance(key, str):   # one message may come on several lines, each with its usage: only what is new counts
+                self.useen = self.useen or {}
+                prev = self.useen.get(key, {})
+                self.useen[key] = {k: max(v, prev.get(k, 0)) for k, v in tok.items()}
+                tok = {k: max(0, v - prev.get(k, 0)) for k, v in tok.items()}
+                if not any(tok.values()):
+                    return
             self.put({"type": "usage", "name": None, "input": {}, "tokens": tok})
 
 
@@ -401,16 +471,27 @@ def read_events(run):
         return []
 
 
-def evidence(rec):
-    """The run's completion evidence: what git and the trusted stream show, never what the agent says."""
-    wt, base = rec["worktree"], rec.get("base")
+def snapshot(rec):
+    """The run's git evidence at its exit, kept in its record (V2-08, RT3-01): HEAD, the branch HEAD is on, the commits from the base to
+    the tip of the branch the run started on, the files changed against the base. Nothing done after the exit counts."""
+    wt, base, br = rec["worktree"], rec.get("base"), rec.get("branch")
     try:
-        head = git(wt, "rev-parse", "HEAD")
-        commits = [c for c in git(wt, "rev-list", f"{base}..{head}").split("\n") if c]
-        files = sorted(set(x for x in git(wt, "diff", "--name-only", base).split("\n") if x)
+        head, on = git(wt, "rev-parse", "HEAD"), git(wt, "rev-parse", "--abbrev-ref", "HEAD")
+        tip = git(wt, "for-each-ref", "--format=%(objectname)", "refs/heads/" + br) if br else ""
+        commits = [c for c in git(wt, "rev-list", f"{base}..{tip}").split("\n") if c] if tip else []
+        files = sorted(set(x for x in git(wt, "diff", "--name-only", *DIFF_SAFE, base).split("\n") if x)
                        | set(x for x in git(wt, "ls-files", "--others", "--exclude-standard").split("\n") if x))
     except Stop:
-        head, commits, files = None, [], []
+        head, on, commits, files = None, "HEAD", [], []
+    return {"head": head, "branch": None if on == "HEAD" else on, "commits": commits, "files": files, "at": now()}
+
+
+def evidence(rec):
+    """The run's completion evidence: what git showed at the run's exit (snapshot) and the trusted stream, never what the agent says.
+    A run with no snapshot (not ended, or its supervisor died) shows no head, commit or file."""
+    wt, base, fin = rec["worktree"], rec.get("base"), rec.get("final") or {}
+    head, commits, files = fin.get("head"), fin.get("commits") or [], fin.get("files") or []
+    on_branch = bool(rec.get("branch")) and fin.get("branch") == rec.get("branch")
     try:
         tools = entry(rec["adapter"]).get("tools") or {}
     except Stop:
@@ -422,7 +503,7 @@ def evidence(rec):
     outside = [p for p in paths if not isinstance(p, str) or not inside(os.path.realpath(os.path.join(real, os.path.expanduser(p))), real)]
     tok = [e.get("tokens") or {} for e in evs if e.get("type") == "usage"]
     return {"run": rec["run"], "card": rec.get("card"), "adapter": rec.get("adapter"), "conformance": rec.get("conformance") is not False,
-            "exit_code": rec.get("exit"), "base": base, "head": head, "commits": commits, "files_changed": files,
+            "exit_code": rec.get("exit"), "base": base, "head": head, "branch": rec.get("branch"), "on_branch": on_branch, "commits": commits, "files_changed": files,
             "all_inside_worktree": not outside, "tool_calls": sum(e.get("type") == "tool_use" for e in evs),
             "errors": sum(e.get("type") == "error" or (e.get("type") == "tool_result" and e.get("ok") is False) for e in evs),
             "tokens": {k: sum(t.get(k) or 0 for t in tok) for k in ("input", "output")}}
@@ -438,7 +519,8 @@ def card_verdict(card):
     why = ("it was a conformance run with no card" if ev["conformance"] else
            "it has not ended" if ev["exit_code"] is None else
            f"it exited {ev['exit_code']}" if ev["exit_code"] != 0 else
-           "it made no commit" if not ev["commits"] else
+           "it did not end on the branch it started on" if not ev["on_branch"] else
+           "it made no commit on its branch" if not ev["commits"] else
            "it wrote outside its worktree" if not ev["all_inside_worktree"] else None)
     return (why is None, f"adapter run {ev['run']}: " + (why or "exit 0, commits inside the worktree"))
 
@@ -477,9 +559,7 @@ def cmd_start(a):
     for k in ("card", "run_id"):
         if getattr(a, k) is not None and not ID.fullmatch(getattr(a, k)):
             raise Stop(C["run"], f"the {k.replace('_', ' ')} is not well formed")
-    if a.card:
-        gate(e, ver, a.role)
-    elif not inside(wt, scratch_root()) or wt == scratch_root():
+    if not a.card and (not inside(wt, scratch_root()) or wt == scratch_root()):
         raise Stop(C["scratch"], "a run with no card runs only in a worktree under the conformance scratch root")
     conn, model, prov = pick_link(a.role, a.link, a.project, a.card)
     ctype = prov.get("type")
@@ -490,6 +570,8 @@ def cmd_start(a):
             raise Stop(C["link"], f"connection {conn} is the login of another CLI")
         if prov.get("terms_ok") is not True:
             raise Stop(C["terms"], f"connection {conn}: the owner has not set terms_ok, so no agent runs on this login")
+    if a.card:
+        gate(e, ver, a.role, f"{conn}/{model}", ctype)
     run = a.run_id or "run-" + uuid.uuid4().hex[:12]
     rdir = os.path.join(runs_dir(), run)
     if os.path.lexists(rec_path(run)) or os.path.lexists(rdir):
@@ -567,17 +649,18 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
     env.update({x: token for x in [e.get("token_env")] + ([env_names[1]] if ctype == "api" else []) if x})
     if ctype == "api" and env_names[0]:
         env[env_names[0]] = proxy
-    env.update(policy.fill((st.get("env") or {}).get("set") or {}, {**v, "settings_file": sfile, "mcp_config": mfile, "prompt_file": pfile}))
+    # settings_json: the generated config itself, for a CLI whose inline config outranks a config planted in the worktree (RT3-07)
+    env.update(policy.fill((st.get("env") or {}).get("set") or {}, {**v, "settings_file": sfile, "settings_json": json.dumps(settings), "mcp_config": mfile, "prompt_file": pfile}))
     re_ = d.get("run_env") or {}
     env.update({k: val for k, val in ((re_.get("adapter"), e["id"]), (re_.get("capabilities_url"), url)) if k and val})
     env.update(box_env)
     cmd = (pre or []) + argv
-    base = git(wt, "rev-parse", "HEAD")
+    base, branch = git(wt, "rev-parse", "HEAD"), git(wt, "rev-parse", "--abbrev-ref", "HEAD")
     import run_token
     rx = re.compile(re.escape(run_token.gateway()["token"]["prefix"]) + r"[A-Za-z0-9_-]+")
     rec = {"schema_version": 1, "run": run, "role": a.role, "card": a.card, "conformance": not a.card, "project": a.project, "adapter": e["id"],
            "version": ver, "tested": tested, "link": link, "conn_type": ctype, "unattended": True, "background": not a.wait,
-           "boxed": pre is not None, "worktree": wt, "base": base, "run_dir": rdir, "pid": None, "pgid": None, "started": now(),
+           "boxed": pre is not None, "worktree": wt, "base": base, "branch": None if branch == "HEAD" else branch, "run_dir": rdir, "pid": None, "pgid": None, "started": now(),
            "ended": None, "exit": None, "stopped": None, "notes": tr["notes"]["path"].replace("{card}", a.card or run),   # the notes file stays out of the progress digest (stuck.py)
            "run_policy": {"applied": tr["applied"], "unsupported": tr["unsupported"], "hook": bool(tr["hook"] and e["policy"].get("hook"))}, "global_id": str(uuid.uuid4()), "install_id": sd.install_id()}
     out = {"run": run, "adapter": e["id"], "version": ver, "tested": tested, "link": link, "conn_type": ctype, "background": not a.wait}
@@ -666,14 +749,14 @@ def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None):
           conn_type=rec["conn_type"], boxed=rec["boxed"], pid=p.pid)
     if w is not None:
         os.write(w, json.dumps({"pid": p.pid}).encode()); os.close(w)
-    s = Stream(run, rec, e, {"output_cap": d.get("output_cap", 4000)}, rx)
+    s = Stream(run, rec, e, {"output_cap": d.get("output_cap", 4000), "read_cap_bytes": d.get("read_cap_bytes", Stream.rcap)}, rx)
     # the stuck watcher (engine side, outside the CLI's process group so a stuck stop does not kill it); a card-less run gets no card block
     watch = subprocess.Popen([sys.executable, "-I", os.path.join(BIN, "stuck.py"), "watch", "--run", run, "--role", rec["role"]] + (["--card", rec["card"]] if rec["card"] else []),
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     for raw in p.stdout:
         s.line(raw)
     rc = p.wait()
-    update(run, ended=now(), exit=rc)
+    update(run, ended=now(), exit=rc, final=snapshot(rec), masked=s.hits or {})
     try:   # the watcher ends on the result line or after its own stop and block; a stream with no result gets the stop grace, then the end
         watch.wait(3 * d.get("stop_grace_s", 10))
     except subprocess.TimeoutExpired:
@@ -693,6 +776,11 @@ def cmd_stop(a):
     rec = read_rec(a.run)
     pg = rec.get("pgid")
     update(a.run, stopped=(a.reason or "stopped")[:200])   # before the kill: whoever sees the run ended also sees why
+    try:   # the token first (RT3-06): a process group that does not end must not keep a live token
+        tool([os.path.join(BIN, "run_token.py"), "revoke", "--run", a.run], C["stop"], "revoking the run token")
+        err = None
+    except Stop as x:
+        err = x
     if rec.get("exit") is None and type(pg) is int:
         grace = doc().get("stop_grace_s", 10)
         for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, grace)):
@@ -709,7 +797,8 @@ def cmd_stop(a):
             break
         else:
             raise Stop(C["stop"], f"the process group of run {a.run} did not end")
-    tool([os.path.join(BIN, "run_token.py"), "revoke", "--run", a.run], C["stop"], "revoking the run token")
+    if err:
+        raise err
     event("adapter.run-stopped", a.run, rec.get("role"), reason=(a.reason or "stopped")[:200], card=rec.get("card"))
     print(json.dumps({"run": a.run, "stopped": True}))
     return 0

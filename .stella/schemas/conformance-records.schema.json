@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Conformance records",
-  "description": "What bin/conformance.py run found (F3 item Q, DC-07): one record per adapter, version and role (a new run replaces the older record of the same three), with the sha256 digests of the adapter entry, its rendered policy and the role's run-policy section the run was made on. bin/adapter.py start's gate reads it. Engine-written state (index key conformance_records), not a data file.",
+  "description": "What bin/conformance.py run found (F3 item Q, DC-07): one record per adapter, version, role, link and connection type (a new run replaces the older record of the same five), with the sha256 digests of the adapter entry, its rendered policy, the role's effective run policy, the stuck patterns and the conformance cases the run was made on. bin/adapter.py start's gate reads it. Engine-written state (index key conformance_records), not a data file.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -92,7 +92,9 @@
             "required": [
               "adapter",
               "policy",
-              "run_policy"
+              "run_policy",
+              "stuck",
+              "conformance"
             ],
             "properties": {
               "adapter": {
@@ -104,6 +106,14 @@
                 "pattern": "^[0-9a-f]{64}$"
               },
               "run_policy": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "stuck": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "conformance": {
                 "type": "string",
                 "pattern": "^[0-9a-f]{64}$"
               }

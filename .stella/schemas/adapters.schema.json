@@ -502,16 +502,44 @@
                 "type": "object",
                 "properties": {
                   "input": {
-                    "$ref": "#/$defs/pointer"
+                    "type": [
+                      "string",
+                      "array"
+                    ],
+                    "pattern": "^(/[^/]*)*$",
+                    "items": {
+                      "$ref": "#/$defs/pointer"
+                    },
+                    "minItems": 1
                   },
                   "output": {
-                    "$ref": "#/$defs/pointer"
+                    "type": [
+                      "string",
+                      "array"
+                    ],
+                    "pattern": "^(/[^/]*)*$",
+                    "items": {
+                      "$ref": "#/$defs/pointer"
+                    },
+                    "minItems": 1
                   }
                 },
-                "additionalProperties": false
+                "additionalProperties": false,
+                "description": "A count is the sum of the integers its pointer, or each pointer of a list, finds (e.g. input plus cache tokens)."
               },
               "final_text": {
                 "$ref": "#/$defs/pointer"
+              },
+              "tool_id": {
+                "$ref": "#/$defs/pointer",
+                "description": "A tool_use's id; result_id: the id its tool_result names. A result is matched to its call by it (parallel calls)."
+              },
+              "result_id": {
+                "$ref": "#/$defs/pointer"
+              },
+              "usage_key": {
+                "$ref": "#/$defs/pointer",
+                "description": "The message id a usage belongs to: a message given on several lines counts once (only what grows is added)."
               }
             },
             "required": [
@@ -617,6 +645,11 @@
         ],
         "additionalProperties": false
       }
+    },
+    "read_cap_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Bytes the engine reads of one untracked file in an agent's worktree for the progress digest (V2-11); links are never followed."
     }
   },
   "required": [

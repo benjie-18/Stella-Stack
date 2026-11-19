@@ -26,6 +26,7 @@
   ],
   "output_cap": 4000,
   "stop_grace_s": 10,
+  "read_cap_bytes": 1048576,
   "entries": [
     {
       "id": "opencode",
@@ -388,7 +389,9 @@
         "env": {
           "token_env": "STELLA_RUN_TOKEN",
           "set": {
-            "OPENCODE_CONFIG": "{settings_file}"
+            "OPENCODE_CONFIG": "{settings_file}",
+            "OPENCODE_CONFIG_CONTENT": "{settings_json}",
+            "OPENCODE_DISABLE_PROJECT_CONFIG": "1"
           }
         },
         "settings": {
@@ -421,7 +424,6 @@
             "tool_use",
             "tool_result"
           ],
-          "text": "result",
           "step_finish": "usage",
           "error": "error"
         },
@@ -466,7 +468,9 @@
         "OPENCODE_CONFIG as the config file variable is from the binary's strings; the provider block (openai-compatible, baseURL, {env:VAR} apiKey) and the mcp remote form follow the OpenCode docs, not run here",
         "the --format json event names and pointers (type, part.tool, part.state.input/output, part.tokens, part.text) are not verified against a real run",
         "a cli-login run (OpenCode's own provider login) is not tried",
-        "run policy (item X2): opencode run --help (2.0.26) shows no hook, compaction, deferred-tool or subagent flag and no config key for them was verified, so every run-policy feature is unverified or false and translate lists them as unsupported; the brief carries the notes file and the output style for every adapter"
+        "run policy (item X2): opencode run --help (2.0.26) shows no hook, compaction, deferred-tool or subagent flag and no config key for them was verified, so every run-policy feature is unverified or false and translate lists them as unsupported; the brief carries the notes file and the output style for every adapter",
+        "RT3-07 adapter half: the generated config also rides in OPENCODE_CONFIG_CONTENT (inline config, the last and highest source in the OpenCode config docs' precedence list) and OPENCODE_DISABLE_PROJECT_CONFIG is set; both names are in the 2.0.26 binary's strings, neither was tried live (running the CLI was refused here), and whether {env:VAR} is substituted in inline config is not checked (OPENCODE_CONFIG keeps the file form)",
+        "stream (V2-06): a text part is no longer a result event (the run's end comes from the run record); tokens.input is taken as reported (whether it includes cached tokens is not checked)"
       ],
       "global_id": "b750e496-eb61-407e-91df-ee05aa734c4d",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
@@ -726,6 +730,8 @@
           "{model}",
           "--settings",
           "{settings_file}",
+          "--setting-sources",
+          "user",
           "--mcp-config",
           "{mcp_config}",
           "--strict-mcp-config",
@@ -751,18 +757,26 @@
         "items": "/message/content",
         "type": "/type",
         "types": {
+          "assistant": "usage",
           "tool_use": "tool_use",
           "tool_result": "tool_result",
           "result": "result"
         },
         "tool_name": "/name",
         "tool_input": "/input",
+        "tool_id": "/id",
+        "result_id": "/tool_use_id",
         "tool_result": "/content",
         "error": "/is_error",
         "usage": {
-          "input": "/usage/input_tokens",
-          "output": "/usage/output_tokens"
+          "input": [
+            "/message/usage/input_tokens",
+            "/message/usage/cache_creation_input_tokens",
+            "/message/usage/cache_read_input_tokens"
+          ],
+          "output": "/message/usage/output_tokens"
         },
+        "usage_key": "/message/id",
         "final_text": "/result"
       },
       "supports": {
@@ -795,7 +809,9 @@
         "the proxy address and the token variable of start.env follow the Claude Code docs, not run here",
         "the stream-json pointers (message.content items of type tool_use / tool_result, the result line's result and usage) are not verified against a real run",
         "compaction (--autocompact) and subagents (--agents) are from --help; the other supports flags are not checked",
-        "run policy (item X2): the log filter hook is a second entry in the policy hook's list that rewrites a shell call's command through updatedInput of a PreToolUse hook (hooks guide shape; not run here, and whether a hook that gives updatedInput with no permissionDecision keeps the permission rules is unverified); compaction is unverified because `claude --autocompact` takes a token window, not the policy's percentage, and no settings key for a percentage was verified; subagent is true (`claude --agents`) but no settings template applies explore_in_subagent yet, so it is only listed as supported; deferred_tools, clear_tool_results and working_notes have no verified setting"
+        "run policy (item X2): the log filter hook is a second entry in the policy hook's list that rewrites a shell call's command through updatedInput of a PreToolUse hook (hooks guide shape; not run here, and whether a hook that gives updatedInput with no permissionDecision keeps the permission rules is unverified); compaction is unverified because `claude --autocompact` takes a token window, not the policy's percentage, and no settings key for a percentage was verified; subagent is true (`claude --agents`) but no settings template applies explore_in_subagent yet, so it is only listed as supported; deferred_tools, clear_tool_results and working_notes have no verified setting",
+        "RT3-07 adapter half: --setting-sources user (from claude --help 2.1.328) leaves out the project and local settings a worktree could plant; the generated --settings file still applies; not run live",
+        "stream (RT3-04, V2-06): usage is read from every assistant message (input plus cache creation and cache read tokens, counted once per message id), tool results are matched to their tool_use by id; written from the stream-json message format, not captured from a real run"
       ],
       "global_id": "5444b0a4-6d63-40d6-8631-e27d626a4abd",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
