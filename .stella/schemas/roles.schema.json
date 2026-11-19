@@ -313,6 +313,10 @@
         "background_review": {
           "type": "boolean"
         },
+        "host_operator": {
+          "type": "boolean",
+          "description": "true: the role may be granted host-session and input-source capabilities (F3 B11; bin/host_access.py decide). Absent or false: never, whatever the registry lists; no role is matched by name."
+        },
         "optional": {
           "type": "boolean",
           "description": "true: no link able to serve this role is not a failure at load, check or preset time; it fails when the role is asked for. Absent or false: the role is required."

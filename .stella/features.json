@@ -396,6 +396,15 @@
       "flag": "otlp-export",
       "global_id": "34f8d89b-3b66-4b0e-8680-63ffccfe7fd7",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "host-access-decide",
+      "owner_phase": "F3",
+      "status": "on",
+      "depends_on": [],
+      "flag": null,
+      "global_id": "96f6e3fd-d130-4b28-848d-b4be5f4b9877",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

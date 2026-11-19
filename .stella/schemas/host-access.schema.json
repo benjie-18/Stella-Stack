@@ -1,46 +1,235 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Host access",
-  "description": "The post-1.0 host operator's switches (F1c B3, App Post-GoLive 'host control and senses'): host access, its routes and each action's state. Owner-only; turning host access on, switching on a route or setting an action to run is identity-critical (the typed confirmation phrase). Ships all off.",
+  "description": "The post-1.0 host operator's switches (F1c B3, App Post-GoLive 'host control and senses' as amended 2026-11-13; F3 B11, DC-08): host access, its routes, apps, domains and input sources, each action's state and reversible flag, and overrides per route or app. Owner-only; every enable flag, state, reversible flag and override is identity-critical (the typed confirmation phrase). Ships all off; bin/host_access.py decide reads it. The Stella vault is never a target whatever this says (.stella/host-policy.json).",
   "x-one-document": true,
   "type": "object",
+  "$defs": {
+    "gid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "iid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    }
+  },
   "properties": {
     "schema_version": {
       "const": 1
     },
     "enabled": {
       "type": "boolean",
-      "description": "Host access as a whole; false = no route and no action is used."
+      "description": "Host access as a whole (the master switch); false = no route and no action is used."
     },
     "routes": {
       "type": "array",
+      "description": "Each voice activation mode, the typed command on the host and each paired device: a toggle each, all off by default.",
       "items": {
         "type": "object",
         "properties": {
-          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
-          "enabled": {"type": "boolean"},
-          "global_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
-          "install_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "voice_ptt",
+              "voice_wake",
+              "voice_toggle",
+              "typed_host",
+              "device"
+            ],
+            "description": "How a request on this route starts and when it is final: a voice kind by its spoken turn (semantic turn detector; push-to-talk at release), typed_host and device once submitted."
+          },
+          "device_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+            "description": "kind device: the paired device of .stella/devices.json this route is (its biometric is required)."
+          },
+          "global_id": {
+            "$ref": "#/$defs/gid"
+          },
+          "install_id": {
+            "$ref": "#/$defs/iid"
+          }
         },
-        "required": ["id", "enabled", "global_id", "install_id"],
+        "required": [
+          "id",
+          "enabled",
+          "kind",
+          "global_id",
+          "install_id"
+        ],
         "additionalProperties": false
       }
     },
     "actions": {
       "type": "array",
+      "description": "A state per action type, each with its reversible flag. Defaults: ask first for delete files, payment, publish, firewall change, secrets exposure and dangerous install; run for the rest. An action not listed is off.",
       "items": {
         "type": "object",
         "properties": {
-          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
-          "state": {"enum": ["off", "ask", "run"], "description": "off = never; ask = ask first (one bound confirmation); run = runs without asking (dangerous actions: identity-critical)."},
-          "global_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
-          "install_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "state": {
+            "enum": [
+              "off",
+              "ask",
+              "run"
+            ],
+            "description": "off = never; ask = ask first (one matching confirmation of the approval service); run = runs without asking."
+          },
+          "reversible": {
+            "type": "boolean",
+            "description": "false: the action runs only once its request is final, and never on a route or app limited to reversible actions."
+          },
+          "global_id": {
+            "$ref": "#/$defs/gid"
+          },
+          "install_id": {
+            "$ref": "#/$defs/iid"
+          }
         },
-        "required": ["id", "state", "global_id", "install_id"],
+        "required": [
+          "id",
+          "state",
+          "reversible",
+          "global_id",
+          "install_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "apps": {
+      "type": "array",
+      "description": "Apps: a toggle each, all off by default; one not listed is off.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "global_id": {
+            "$ref": "#/$defs/gid"
+          },
+          "install_id": {
+            "$ref": "#/$defs/iid"
+          }
+        },
+        "required": [
+          "id",
+          "enabled",
+          "global_id",
+          "install_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "domains": {
+      "type": "array",
+      "description": "Domains: a toggle each, all off by default; one not listed is off.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "global_id": {
+            "$ref": "#/$defs/gid"
+          },
+          "install_id": {
+            "$ref": "#/$defs/iid"
+          }
+        },
+        "required": [
+          "id",
+          "enabled",
+          "global_id",
+          "install_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "input_sources": {
+      "type": "array",
+      "description": "Input-source capabilities (camera, microphone, sensors), by capability id: a toggle each, all off by default; one not listed is off.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "global_id": {
+            "$ref": "#/$defs/gid"
+          },
+          "install_id": {
+            "$ref": "#/$defs/iid"
+          }
+        },
+        "required": [
+          "id",
+          "enabled",
+          "global_id",
+          "install_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "overrides": {
+      "type": "array",
+      "description": "Optional limits per route or per app; an override only narrows (reversible_only: irreversible actions are refused there).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "route": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "app": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "reversible_only": {
+            "type": "boolean"
+          },
+          "global_id": {
+            "$ref": "#/$defs/gid"
+          },
+          "install_id": {
+            "$ref": "#/$defs/iid"
+          }
+        },
+        "required": [
+          "global_id",
+          "install_id"
+        ],
         "additionalProperties": false
       }
     }
   },
-  "required": ["schema_version", "enabled", "routes", "actions"],
+  "required": [
+    "schema_version",
+    "enabled",
+    "routes",
+    "actions"
+  ],
   "additionalProperties": false
 }

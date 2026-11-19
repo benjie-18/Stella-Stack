@@ -365,9 +365,23 @@
       "record_kind": "setting",
       "global_id": "442de288-ebe4-4a3b-9093-894e2a7a93ea",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "host-policy",
+      "path": ".stella/host-policy.json",
+      "schema": "host-policy",
+      "format": "json",
+      "owner_only": false,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "8ac17a6d-0fd1-4e62-8212-50451cd945f7",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ],
   "spans": ".supervisor/logs/spans.jsonl",
   "budget_state": ".supervisor/state/budget-state.json",
-  "model_check_state": ".supervisor/state/model-check-state.json"
+  "model_check_state": ".supervisor/state/model-check-state.json",
+  "adapter_runs": ".supervisor/state/adapter-runs",
+  "host_presence": ".supervisor/state/host-presence.json"
 }

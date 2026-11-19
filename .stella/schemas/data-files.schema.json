@@ -189,6 +189,16 @@
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The weekly model check's state (F2c F; schema model-check-state): the paused flag and when each connection's model list was last read. Written on the host by bin/model_check.py only; a protected state path, not a data file; never the source of a pick or a rollback (the trusted event line is)."
+    },
+    "adapter_runs": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The adapter run records (F3 item A, design section 3): one JSON per run, <dir>/<run>.json {run, role, attended|unattended, background, ...}. Written on the host only, by the adapter; a protected state path, not a data file. bin/host_access.py reads attended and background from it (DC-10)."
+    },
+    "host_presence": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The host presence record (F3 item H, DC-10, schema host-presence): route, device and biometric, indicator, kill switch, input-source indicators and request finality. Written on the host only; a protected state path, not a data file. bin/host_access.py decide reads it."
     }
   },
   "required": [

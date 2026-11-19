@@ -1,6 +1,145 @@
 {
   "schema_version": 1,
   "enabled": false,
-  "routes": [],
-  "actions": []
+  "routes": [
+    {
+      "id": "voice-ptt",
+      "enabled": false,
+      "kind": "voice_ptt",
+      "global_id": "57886aca-17e7-4f76-a102-aef1ae00a8d3",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "voice-wake",
+      "enabled": false,
+      "kind": "voice_wake",
+      "global_id": "585ddd33-b000-44fd-b452-2ea11a93b3af",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "voice-toggle",
+      "enabled": false,
+      "kind": "voice_toggle",
+      "global_id": "d7fb8f6c-a720-4b8f-b460-3a517641c8e0",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "typed-host",
+      "enabled": false,
+      "kind": "typed_host",
+      "global_id": "ed7708e2-ec60-4b73-9bba-cca86b5b6e59",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    }
+  ],
+  "actions": [
+    {
+      "id": "delete-files",
+      "state": "ask",
+      "reversible": false,
+      "global_id": "f1f48cd0-e8ee-497c-972e-3bb02a5bfa80",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "payment",
+      "state": "ask",
+      "reversible": false,
+      "global_id": "bc7cc635-d603-4166-bbfb-88b7acb71ac2",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "publish",
+      "state": "ask",
+      "reversible": false,
+      "global_id": "df784fd5-08ef-4fda-9de1-584e0e38cdfb",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "firewall-change",
+      "state": "ask",
+      "reversible": false,
+      "global_id": "93bcb6c3-d02e-4f81-bfb3-773d2cf62bb7",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "secrets-exposure",
+      "state": "ask",
+      "reversible": false,
+      "global_id": "35521ac8-7a5b-4620-9eea-2e3c363c3692",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "dangerous-install",
+      "state": "ask",
+      "reversible": false,
+      "global_id": "820c67e1-8f42-467a-af12-6092b553ef33",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "open",
+      "state": "run",
+      "reversible": true,
+      "global_id": "42cc3c85-3ec7-4fc7-9375-1192e02e6cef",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "focus",
+      "state": "run",
+      "reversible": true,
+      "global_id": "d5fb1a47-9cdc-456e-8746-2160f7b36232",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "read",
+      "state": "run",
+      "reversible": true,
+      "global_id": "5afb25fb-cfca-49db-bdf2-8eb252a4a607",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "scroll",
+      "state": "run",
+      "reversible": true,
+      "global_id": "dab5881a-d91f-4990-b577-ecbad28d0bc6",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "select",
+      "state": "run",
+      "reversible": true,
+      "global_id": "23e40fb5-820d-4a3c-b87a-52f4f71f43c1",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "toggle",
+      "state": "run",
+      "reversible": true,
+      "global_id": "c69cc1fa-7e9b-4dfe-af1d-8bbd4f66af45",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "type",
+      "state": "run",
+      "reversible": false,
+      "global_id": "f125b556-a867-442c-854b-376197b5c9f6",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "click",
+      "state": "run",
+      "reversible": false,
+      "global_id": "aee19439-8b46-409d-a6b3-f776561d75b3",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "send",
+      "state": "run",
+      "reversible": false,
+      "global_id": "ce87c708-e52b-4e0a-9f5e-f0b09a7d225c",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    }
+  ],
+  "apps": [],
+  "domains": [],
+  "overrides": [],
+  "input_sources": []
 }
