@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "default_wait_seconds": 300,
+  "max_wait_seconds": 172800,
+  "plan_share_max_age_seconds": 86400,
+  "headers": {
+    "retry_after": ["retry-after"],
+    "reset": ["anthropic-ratelimit-requests-reset", "anthropic-ratelimit-tokens-reset", "x-ratelimit-reset-requests", "x-ratelimit-reset-tokens", "x-ratelimit-reset"]
+  },
+  "cli_patterns": {
+    "claude-code": ["You've hit your", "You've reached your", "You're out of usage credits", "You're out of extra usage", "Your org is out of usage", "usage limit reached", "rate_limit_error", "Rate limit exceeded"]
+  },
+  "cli_usage": {
+    "claude-code": []
+  }
+}

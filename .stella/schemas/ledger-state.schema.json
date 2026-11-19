@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ledger state",
+  "description": "The usage ledger's live state (index key ledger_state; F2c A1): the limits observed on a connection or one of its models (model null: every model of the connection). An observation expires by itself at `until` (UTC); bin/ledger.py drops expired ones when it writes. Written on the host only, by bin/ledger.py.",
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "observed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "connection": {"type": "string", "minLength": 1, "maxLength": 200},
+          "model": {"type": ["string", "null"], "maxLength": 200},
+          "source": {"type": "string", "pattern": "^[a-z0-9_]+$", "maxLength": 40},
+          "until": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+          "reason": {"type": "string", "maxLength": 300}
+        },
+        "required": ["connection", "model", "source", "until", "reason"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["schema_version", "observed"],
+  "additionalProperties": false
+}

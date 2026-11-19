@@ -109,7 +109,8 @@ cat >"$T/work.sh" <<'W'
 #!/bin/sh
 touch "$RUNDIR/$$"; sleep "$HOLD"; rm -f "$RUNDIR/$$"
 W
-chmod +x "$T/work.sh"
+printf '#!/bin/sh\ntouch "$RUNDIR/$$"; exec sleep 60\n' >"$T/hang.sh"   # the process itself holds the slot (no child keeps the lock after a kill)
+chmod +x "$T/work.sh" "$T/hang.sh"
 export RUNDIR=$T/run HOLD=6
 ( mx=0; for _ in $(seq 140); do n=$(ls "$RUNDIR" | wc -l); [ "$n" -gt "$mx" ] && mx=$n; sleep 0.1; done; echo $mx >"$T/max" ) &
 SAMP=$!
@@ -120,20 +121,18 @@ ok "[ \$(cat $T/max) = 3 ]" "T-LIM-CONC 8 real worker processes against a limit 
 ok "[ \$(cat $T/rc.* | grep -c '^0\$') = 3 ] && [ \$(cat $T/rc.* | grep -c '^75\$') = 5 ]" "T-LIM-CONC three ran, five got exit 75 (no free slot)"
 ok "[ \$(evn limit.hit) -ge 5 ]" "each refused hold wrote a trusted limit.hit event line"
 ok "L status --connection qa-new --model qa-m1 --json | jq -e '.concurrency.in_use == 0 and .concurrency.free == 3'" "all slots are free once the commands ended"
-export HOLD=60
-L hold --connection qa-new --model qa-m2 -- "$T/work.sh" & HP=$!
+L hold --connection qa-new --model qa-m2 -- "$T/hang.sh" &
 for _ in $(seq 100); do [ -n "$(ls "$RUNDIR")" ] && break; sleep 0.1; done
 ok "L status --connection qa-new --model qa-m2 --json | jq -e '.concurrency.in_use == 1 and .concurrency.free == 0'" "status shows the slot in use while a holder runs"
 L hold --connection qa-new --model qa-m2 -- true 2>/dev/null; RC=$?
 ok "[ $RC = 75 ]" "T-LIM-CONC a second hold on a limit of 1 is refused"
-kill -9 $HP 2>/dev/null; wait $HP 2>/dev/null; pkill -f "$T/work.sh" 2>/dev/null; rm -f "$RUNDIR"/*
+kill -9 $(ls "$RUNDIR"); sleep 0.3; rm -f "$RUNDIR"/*
 ok "L hold --connection qa-new --model qa-m2 -- true" "T-LIM-CONC a killed holder frees its slot"
-export HOLD=60
-L hold --connection qa-two --model qa-x -- "$T/work.sh" & HP=$!
+L hold --connection qa-two --model qa-x -- "$T/hang.sh" &
 for _ in $(seq 100); do [ -n "$(ls "$RUNDIR")" ] && break; sleep 0.1; done
 L hold --connection qa-two --model qa-y -- true 2>/dev/null; RC=$?
 ok "[ $RC = 75 ]" "T-LIM-FAKE a connection's own limit holds across its models (qa-x busy, qa-y refused)"
-kill -9 $HP 2>/dev/null; wait $HP 2>/dev/null; pkill -f "$T/work.sh" 2>/dev/null; rm -f "$RUNDIR"/*
+kill -9 $(ls "$RUNDIR"); sleep 0.3; rm -f "$RUNDIR"/*
 SD=$LS.slots; mkdir -p "$SD"; for f in "$SD"/qa-new@qa-m2.*; do [ -e "$f" ] && { rm -f "$f"; ln -s "$T/home" "$f"; }; done
 L hold --connection qa-new --model qa-m2 -- true 2>$T/err; RC=$?
 ok "[ $RC = 1 ] && grep -q STL-LIM-413 $T/err" "a slot file that is a symbolic link is refused (no write through it), STL-LIM-413"
@@ -200,9 +199,9 @@ rec qa-new qa-m5 ok builder after-kill >/dev/null
 ok "grep -c 'after-kill' '$UL' | grep -qx 1 && L check --json | jq -e '.ok == true and .torn == 1' && L report --by card --json | jq -e '.groups[\"kw\"].calls == $NK'" "a torn last line is skipped and counted; the next record starts on a new line"
 
 # ---- core contract ----
-ok "STUB_WORKER_MARK=1 L status --connection qa-new --json 2>&1 | grep -q STL-CFG-312" "T-CORE-LEDGER a worker environment is refused (STL-CFG-312)"
+ok "(STUB_WORKER_MARK=1 L status --connection qa-new --json 2>&1 || true) | grep -q STL-CFG-312" "T-CORE-LEDGER a worker environment is refused (STL-CFG-312)"
 L bogus 2>/dev/null; RC=$?
 ok "[ $RC = 2 ]" "a usage error exits 2"
-ok "L status --connection nowhere --json 2>&1 | grep -q STL-LIM-410" "status of an unknown connection fails closed with a code"
+ok "(L status --connection nowhere --json 2>&1 || true) | grep -q STL-LIM-410" "status of an unknown connection fails closed with a code"
 ok "jq -e '.entries[] | select(.id == \"ledger\") | .status == \"approved\"' '$ROOT/.stella/capabilities.json'" "the ledger command is in the capability registry"
 if [ "$fails" -eq 0 ]; then echo "ledger selftest OK"; else echo "ledger selftest FAIL ($fails)"; exit 1; fi

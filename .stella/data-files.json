@@ -11,6 +11,8 @@
   "card_facts": ".supervisor/state/card-facts",
   "probe_records": ".supervisor/state/probes.json",
   "triage_calibration": ".supervisor/state/triage-calibration.json",
+  "usage_ledger": ".supervisor/state/usage.jsonl",
+  "ledger_state": ".supervisor/state/ledger-state.json",
   "agents_dir": ".claude/agents",
   "team_bodies": "docs/build-team",
   "team_preset": "build-team",
@@ -286,6 +288,18 @@
       "list_key": null,
       "id_field": "schema_version",
       "global_id": "790623bf-5381-42cc-9eae-e8c9bbc37391",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "limit-signals",
+      "path": ".stella/limit-signals.json",
+      "schema": "limit-signals",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "d7ae956a-da16-41f4-9d4d-d3722f5ba2c2",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

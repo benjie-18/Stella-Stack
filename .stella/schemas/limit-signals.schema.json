@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Limit signals",
+  "description": "How bin/ledger.py reads a live limit (F2c A1), as data: which answer headers carry the wait (retry_after: the seconds or date a server asks the caller to wait; reset: when a quota resets, as seconds, a duration like 1m30s, an epoch or an ISO time; the longest wins), how long a limit with no stated time lasts (default_wait_seconds), the longest wait any header can set (max_wait_seconds), and, per CLI id (a connection's `cli`), the texts of its limit errors (cli_patterns: plain substrings) and the regular expressions that read its usage output (cli_usage: one named group `pct`, the percent of the plan used). A CLI with no usage pattern has no plan share. The classification of an API answer as a limit is the wire shape's `errors` (protocols.json), not this file.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "default_wait_seconds": {"type": "integer", "minimum": 1},
+    "max_wait_seconds": {"type": "integer", "minimum": 1},
+    "plan_share_max_age_seconds": {"type": "integer", "minimum": 1, "description": "A plan share recorded longer ago than this is not shown."},
+    "headers": {
+      "type": "object",
+      "properties": {
+        "retry_after": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9-]+$"}, "uniqueItems": true},
+        "reset": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9-]+$"}, "uniqueItems": true}
+      },
+      "required": ["retry_after", "reset"],
+      "additionalProperties": false
+    },
+    "cli_patterns": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 200}}},
+    "cli_usage": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 200}}}
+  },
+  "required": ["schema_version", "default_wait_seconds", "max_wait_seconds", "plan_share_max_age_seconds", "headers", "cli_patterns", "cli_usage"],
+  "additionalProperties": false
+}
