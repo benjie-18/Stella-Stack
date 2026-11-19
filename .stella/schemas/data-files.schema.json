@@ -203,6 +203,11 @@
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The model proxy's bound address, port and pid (F3 item T, bin/model_proxy.py serve). Written on the host only; not a data file."
+    },
+    "capabilities_mcp_state": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The capability MCP server's bound address, port, path and pid (F3 item M, bin/capabilities_mcp.py serve); a worker's capabilities.py reads it to reach the server. Written on the host only; not a data file."
     }
   },
   "required": [
@@ -231,7 +236,8 @@
     "budget_state",
     "model_check_state",
     "run_tokens",
-    "model_proxy_state"
+    "model_proxy_state",
+    "capabilities_mcp_state"
   ],
   "additionalProperties": false
 }

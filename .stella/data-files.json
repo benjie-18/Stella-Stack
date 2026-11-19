@@ -409,5 +409,6 @@
   "model_check_state": ".supervisor/state/model-check-state.json",
   "run_tokens": ".supervisor/state/run-tokens.json",
   "model_proxy_state": ".supervisor/state/model-proxy.json",
+  "capabilities_mcp_state": ".supervisor/state/capabilities-mcp.json",
   "capability_sources": ".stella/capability-sources.json"
 }
