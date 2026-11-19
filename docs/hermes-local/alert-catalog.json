@@ -2260,6 +2260,54 @@
       "check": "`python3 bin/prompt.py check --json`; `python3 bin/stella_data.py check`.",
       "related": "F3 item PP; bin/prompt.py, .stella/prompt-profiles.json",
       "resolvable": false
+        },
+    {
+      "code": "STL-LIM-450",
+      "area": "LIM",
+      "severity": "warning",
+      "title": "the run policy file cannot be used",
+      "message": "The run policy cannot be used: {problem}. Nothing was filtered or translated.",
+      "action": "fix .stella/run-policy.json (an owner data file) as the message says. See STL-LIM-450 in docs/alert-codes.md.",
+      "cause": "The file is missing, fails its schema, lacks a role of the role table, or a filter pattern does not compile.",
+      "check": "`python3 bin/run_policy.py check`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item X; bin/run_policy.py, bin/log_filter.py, .stella/run-policy.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-451",
+      "area": "LIM",
+      "severity": "warning",
+      "title": "a role's prefill is over its budget",
+      "message": "The first call of a run used more prompt tokens than the role's budget: {problem}.",
+      "action": "trim the role's rules, prompt or core tools, or raise prefill_budget_tokens for the role in .stella/run-policy.json. See STL-LIM-451 in docs/alert-codes.md.",
+      "cause": "System prompt, rules and tool definitions together exceed prefill_budget_tokens.",
+      "check": "`python3 bin/run_policy.py check`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item X; bin/run_policy.py, bin/log_filter.py, .stella/run-policy.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-452",
+      "area": "LIM",
+      "severity": "info",
+      "title": "a role's output is over its budget",
+      "message": "A run wrote more output than the role's budget: {problem}. The run was not stopped.",
+      "action": "look at the run's output; raise output_budget_tokens in .stella/run-policy.json if the budget is too small. See STL-LIM-452 in docs/alert-codes.md.",
+      "cause": "The run's output tokens exceed output_budget_tokens.",
+      "check": "`python3 bin/run_policy.py check`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item X; bin/run_policy.py, bin/log_filter.py, .stella/run-policy.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-453",
+      "area": "LIM",
+      "severity": "info",
+      "title": "run_policy.py was given input it cannot use",
+      "message": "The run policy command could not use its input: {problem}. Nothing was changed.",
+      "action": "give a role and adapter that exist and a readable file. See STL-LIM-453 in docs/alert-codes.md.",
+      "cause": "An adapter, role or file the command was given is missing or unreadable.",
+      "check": "`python3 bin/run_policy.py check`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item X; bin/run_policy.py, bin/log_filter.py, .stella/run-policy.json",
+      "resolvable": false
     }
   ]
 }

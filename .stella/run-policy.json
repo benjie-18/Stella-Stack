@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "about": "Run policy per role (F3 item X; body B7, B8), read by bin/run_policy.py and bin/log_filter.py. default holds every field; a role's entry overrides only the fields it names (every role of docs/hermes-local/roles.json has an entry). core_tools are the capability ids a role starts with loaded, every other tool is found by search. Budgets are in tokens, estimated with token_estimate where no CLI reports usage. filters run in file order on tool output before a model sees it and never drop a line that matches a trim_to_failing pattern. Changing a number or text here is a data change; translate puts it into each adapter's settings where adapters.json says the CLI supports it.",
+  "token_estimate": {
+    "chars_per_token": 4
+  },
+  "markers": {
+    "trimmed": "[... {n} lines trimmed ...]",
+    "repeated": "[... previous line repeated {n} more times ...]"
+  },
+  "output_styles": {
+    "patches_only": "Edit with patches. Never rewrite a whole file.",
+    "structured_findings": "Return compact structured findings (id, severity, place, evidence, fix). No essays.",
+    "verdict_only": "Return the verdict and one line of reason.",
+    "compact": "Answer briefly. No restating the question."
+  },
+  "filters": [
+    {
+      "id": "failing",
+      "kind": "trim_to_failing",
+      "pattern": "(?i)\\b(error|fail(ed|ure|ing)?|traceback|exception|assert(ion)?|panic|fatal|not ok)\\b|^E\\s",
+      "context": 3
+    },
+    {
+      "id": "frames",
+      "kind": "collapse",
+      "pattern": "^\\s+(at |File \"|from )",
+      "context": 0
+    },
+    {
+      "id": "progress",
+      "kind": "drop",
+      "pattern": "\\r|^\\s*(\\d{1,3}%|[#=>.\\-]{8,})|(?i:downloading|fetching|resolving|installing) ",
+      "context": 0
+    }
+  ],
+  "default": {
+    "core_tools": [
+      "capabilities.search",
+      "capabilities.load"
+    ],
+    "prefill_budget_tokens": 6000,
+    "output_budget_tokens": 4000,
+    "compaction": {
+      "at_pct": 70,
+      "keep": [
+        "ids",
+        "numbers",
+        "paths",
+        "open_findings"
+      ]
+    },
+    "clear_tool_results": {
+      "min_free_tokens": 8000
+    },
+    "working_notes": {
+      "path": ".stella/notes/{card}.md",
+      "sections": [
+        "done",
+        "next",
+        "decisions"
+      ]
+    },
+    "explore_in_subagent": false,
+    "graph_first": false,
+    "output_style": "compact",
+    "filters": [
+      "failing",
+      "frames",
+      "progress"
+    ]
+  },
+  "roles": {
+    "dispatcher": {},
+    "builder": {
+      "prefill_budget_tokens": 8000,
+      "output_budget_tokens": 6000,
+      "explore_in_subagent": true,
+      "graph_first": true,
+      "output_style": "patches_only"
+    },
+    "reviewer": {
+      "output_budget_tokens": 3000,
+      "output_style": "structured_findings"
+    },
+    "tester": {
+      "output_budget_tokens": 3000,
+      "output_style": "structured_findings"
+    },
+    "validator": {
+      "output_budget_tokens": 2000,
+      "output_style": "structured_findings"
+    },
+    "verifier": {
+      "output_budget_tokens": 2000,
+      "output_style": "structured_findings"
+    },
+    "red-team": {
+      "output_budget_tokens": 3000,
+      "output_style": "structured_findings"
+    },
+    "router": {
+      "prefill_budget_tokens": 2000,
+      "output_budget_tokens": 300,
+      "output_style": "verdict_only",
+      "filters": []
+    },
+    "voice": {
+      "prefill_budget_tokens": 3000,
+      "output_budget_tokens": 800,
+      "output_style": "compact",
+      "filters": []
+    },
+    "look": {
+      "output_budget_tokens": 1500
+    },
+    "proposer": {},
+    "unlisted": {}
+  }
+}

@@ -11,7 +11,8 @@
     "B1",
     "E1",
     "E2",
-    "E3"
+    "E3",
+    "W1"
   ],
   "entries": [
     {
@@ -395,6 +396,17 @@
       "depends_on": [],
       "flag": "otlp-export",
       "global_id": "34f8d89b-3b66-4b0e-8680-63ffccfe7fd7",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "graph-first",
+      "owner_phase": "F3",
+      "status": "planned",
+      "depends_on": [],
+      "flag": null,
+      "due_phase": "W1",
+      "replaced_by": "the shared graph built in W1 (query it first, then read only the files it points to); run-policy graph_first is a stub until then",
+      "global_id": "0ac5d514-cdae-4f48-a0ac-67357b0a4321",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
