@@ -666,8 +666,8 @@ def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None):
     if w is not None:
         os.write(w, json.dumps({"pid": p.pid}).encode()); os.close(w)
     s = Stream(run, rec, e, {"output_cap": d.get("output_cap", 4000)}, rx)
-    # the stuck watcher (engine side, outside the CLI's process group so a stuck stop does not kill it); a card-less run is blocked under its run id
-    watch = subprocess.Popen([sys.executable, "-I", os.path.join(BIN, "stuck.py"), "watch", "--run", run, "--card", rec["card"] or run, "--role", rec["role"]],
+    # the stuck watcher (engine side, outside the CLI's process group so a stuck stop does not kill it); a card-less run gets no card block
+    watch = subprocess.Popen([sys.executable, "-I", os.path.join(BIN, "stuck.py"), "watch", "--run", run, "--role", rec["role"]] + (["--card", rec["card"]] if rec["card"] else []),
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     for raw in p.stdout:
         s.line(raw)
@@ -691,6 +691,7 @@ def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None):
 def cmd_stop(a):
     rec = read_rec(a.run)
     pg = rec.get("pgid")
+    update(a.run, stopped=(a.reason or "stopped")[:200])   # before the kill: whoever sees the run ended also sees why
     if rec.get("exit") is None and type(pg) is int:
         grace = doc().get("stop_grace_s", 10)
         for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, grace)):
@@ -708,7 +709,6 @@ def cmd_stop(a):
         else:
             raise Stop(C["stop"], f"the process group of run {a.run} did not end")
     tool([os.path.join(BIN, "run_token.py"), "revoke", "--run", a.run], C["stop"], "revoking the run token")
-    update(a.run, stopped=(a.reason or "stopped")[:200])
     event("adapter.run-stopped", a.run, rec.get("role"), reason=(a.reason or "stopped")[:200], card=rec.get("card"))
     print(json.dumps({"run": a.run, "stopped": True}))
     return 0

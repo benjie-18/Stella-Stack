@@ -16,7 +16,8 @@ answer, denies). A denied action prints a tool_result with ok false and "denied"
 Output: {"type":"tool_use","name","input"} {"type":"tool_result","name","ok","output"[,"error" when not ok]} {"type":"usage","input_tokens","output_tokens"}
 {"type":"result","text","exit":0}. Exit 0, or 1 when an action crashes.
 shortcut: pattern semantics are fnmatch on the raw and the absolute value, not each CLI's own; enough for a fake, not a CLI model."""
-import argparse, fnmatch, http.client, json, os, re, subprocess, sys, urllib.parse
+import argparse, fnmatch, http.client, json, os, re, subprocess, sys, time, urllib.parse
+PACE_S = 0.15
 
 VERSION = "0.3.0"
 BIN = os.path.dirname(os.path.abspath(__file__))
@@ -232,6 +233,8 @@ def act(ctx, a):
     except (OSError, KeyError, ValueError, http.client.HTTPException) as e:
         ok, out = False, f"{type(e).__name__}: {e}"
     emit({"type": "tool_result", "name": op, "ok": ok, "output": out, **({} if ok else {"error": out})})
+    if op in ("write", "edit"):   # a real CLI is slower than the adapter's per-result worktree digest; without the pause the digests all show the end state
+        time.sleep(PACE_S)
 
 
 def main(argv):
