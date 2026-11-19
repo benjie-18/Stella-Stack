@@ -42,7 +42,7 @@ def _route():
 def load_table():
     """The pricing rows (a list), judged by the data tool (schema, every connection in the catalog); Stop when it is broken."""
     try:
-        return list(sd.served([TABLE])[TABLE].values())
+        return list(sd.served([TABLE]).get(TABLE, {}).values())   # an empty table is not served as a key
     except (sd.DataError, KeyError) as e:
         raise Stop(BADTABLE, f"the pricing table cannot be used: {str(e)[:160]}")
 

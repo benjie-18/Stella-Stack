@@ -3,6 +3,7 @@
   "default_wait_seconds": 300,
   "max_wait_seconds": 172800,
   "plan_share_max_age_seconds": 86400,
+  "plan_share_limit": 1,
   "headers": {
     "retry_after": ["retry-after"],
     "reset": ["anthropic-ratelimit-requests-reset", "anthropic-ratelimit-tokens-reset", "x-ratelimit-reset-requests", "x-ratelimit-reset-tokens", "x-ratelimit-reset"]

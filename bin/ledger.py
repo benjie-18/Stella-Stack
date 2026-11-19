@@ -233,7 +233,12 @@ def in_use(connection, model, n):
     instant can be told "no free slot" once; upgrade by recording holders in the lock files if that is ever seen."""
     used = 0
     for i in range(1, n + 1):
-        fd = open_slot(connection, model, i)
+        try:
+            fd = el.open_file(slot_file(connection, model, i), os.O_RDONLY)   # read-only: a lock file that is not there is held by no one, and a reader makes none (the resolver)
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError, el.EventError) as e:
+            raise Stop(FILE, f"a slot lock file of {sd.idn(connection)} cannot be used ({el.why(e)})")
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:

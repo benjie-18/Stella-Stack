@@ -9,6 +9,7 @@
     "default_wait_seconds": {"type": "integer", "minimum": 1},
     "max_wait_seconds": {"type": "integer", "minimum": 1},
     "plan_share_max_age_seconds": {"type": "integer", "minimum": 1, "description": "A plan share recorded longer ago than this is not shown."},
+    "plan_share_limit": {"type": "number", "minimum": 0.01, "description": "A cli-login link whose plan share (a fraction) is at or above this counts as at its limit: the resolver leaves it (cooldown)."},
     "headers": {
       "type": "object",
       "properties": {
@@ -21,6 +22,6 @@
     "cli_patterns": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 200}}},
     "cli_usage": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 200}}}
   },
-  "required": ["schema_version", "default_wait_seconds", "max_wait_seconds", "plan_share_max_age_seconds", "headers", "cli_patterns", "cli_usage"],
+  "required": ["schema_version", "default_wait_seconds", "max_wait_seconds", "plan_share_max_age_seconds", "plan_share_limit", "headers", "cli_patterns", "cli_usage"],
   "additionalProperties": false
 }
