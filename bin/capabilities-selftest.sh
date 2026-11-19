@@ -4,7 +4,8 @@
 # Sections -> checks: found = AC4-found | requestable = AC4-requestable | invisible = AC4-invisible | request = AC4-request-approval |
 #                     unknown = AC4-unknown | sources = T-SOURCES-UNKNOWN | gaps = item C round 2 (B4 role toolsets, outside install
 #                     escalation, host_session through bin/host_access.py decide; the builder's own cases) |
-#                     registry = T-REGISTRY-COMPLETE (F3 item R, tests first)
+#                     registry = T-REGISTRY-COMPLETE (F3 item R, tests first) |
+#                     cfix = Gate B fix cycle 2 (builder's own cases: V1-07 V1-13 RT2-01 03 04 05 07 09; each fails on the tree before the fix)
 # A fake skill is added to the scratch registry as DATA (a SKILL.md in a skill folder and a registry entry); three roles are taken
 # from the role table: one in allowed_roles, one in requestable_roles, one in neither.
 # Written test-first (F3 wave 1): exit codes, the code range STL-GRD-660..674 and the trusted event log are asserted, never wording.
@@ -23,7 +24,7 @@
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 ME=capabilities-selftest
-SECTIONS="found requestable invisible request unknown sources gaps registry"
+SECTIONS="found requestable invisible request unknown sources gaps registry cfix"
 if [ $# = 0 ]; then
   f=0; for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || f=$((f+1)); done
   [ $f = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($f sections)"; [ $f = 0 ]; exit
@@ -139,7 +140,8 @@ sources)   # T-SOURCES-UNKNOWN
   ok '[ -z "$bad" ]' "T-SOURCES-UNKNOWN ... from every role (search answers, never shows it; failed:$bad)"
   run d1 C describe qa-unreg-skill --role "$RA" --json
   ok '[ $RC = 1 ] && out d1 | grep >/dev/null -E "$range"' "T-SOURCES-UNKNOWN describe of it fails closed like an unknown id"
-  : >"$AL"; run s2 C search qazebra --role "$RA" --json
+  : >"$AL"; rm -rf "$T/sup/state/page"   # fixture: the alert log and the once-per-entry state record are cleared together
+  run s2 C search qazebra --role "$RA" --json
   ok '[ "$(grep -c qa-unreg-skill "$AL")" = 1 ] && grep qa-unreg-skill "$AL" | grep >/dev/null -E "$range"' "T-SOURCES-UNKNOWN one search raises exactly one alert naming it, with STL-GRD-66x"
   [ -f "$R/$MCPF" ] || echo '{"mcpServers": {}}' >"$R/$MCPF"
   ed "$MCPF" '.mcpServers["qa-unreg-server"] = {command: "true", args: []}'
@@ -195,6 +197,7 @@ PY
   ok '[ $RC = 0 ] && vis h1 qa-host_session gated && vis h1 qa-input_source gated && [ ! -e "$QA_HOST_SEEN" ]' "gap3 with no host request: gated, decide is not called"
   run h2 C search qahost --role "$RA" --run qa-run-3 --host-request "$T/hreq.json" --json
   ok '[ $RC = 0 ] && vis h2 qa-host_session gated && [ -e "$QA_HOST_SEEN" ]' "gap3 decide refuses: still gated"
+  mkdir -p "$R/$(jq -r .adapter_runs "$IX")"; printf '{"run": "qa-run-3", "role": "%s"}\n' "$RA" >"$R/$(jq -r .adapter_runs "$IX")/qa-run-3.json"   # fixture: the run record a load is bound to
   run h3 C load qa-host_session --role "$RA" --run qa-run-3 --host-request "$T/hreq.json" --json
   ok '[ $RC = 1 ] && ! grep -q QA-HOST-DEF "$T/o/h3.out"' "gap3 ... and load is refused"
   touch "$QA_HOST_ALLOW"; rm -f "$QA_HOST_SEEN"
@@ -254,6 +257,68 @@ registry)   # T-REGISTRY-COMPLETE
   ed "$MCPF" '.mcpServers["qa-unreg-lint-server"] = {command: "true", args: []}'
   run l6 L
   ok 'lint_fails l6 qa-unreg-lint-server' "T-REGISTRY-COMPLETE a planted unregistered MCP server in a manifest: lint exit 1 naming it with STL-CFG-340..344"
+  ;;
+cfix)   # Gate B fix cycle 2: the builder's own cases
+  L() { python3 -I "$R/bin/capabilities.py" lint --json; }
+  lint_fails() { [ $RC = 1 ] && out "$1" | grep >/dev/null -F -- "$2" && out "$1" | grep >/dev/null -E 'STL-CFG-34[0-4]'; }
+  # RT2-01: a host-side load writes its trusted line only for a run of the adapter run records, with this role and card
+  RUNS=$R/$(jq -r .adapter_runs "$IX"); mkdir -p "$RUNS"
+  e0=$(nl "$EV"); run f1 C load qa-fake-skill --role "$RA" --run qa-no-such-run --card qa-card-f --json
+  ok '[ $RC = 1 ] && out f1 | grep >/dev/null -E "$range" && ! grep -q QA-SKILL-BODY "$T/o/f1.out" && [ "$(nl "$EV")" = "$e0" ]' "RT2-01 load of a self-declared run (no run record): refused with a code, no definition, no trusted line"
+  printf '{"run": "qa-run-f", "role": "%s", "card": "qa-card-f"}\n' "$RA" >"$RUNS/qa-run-f.json"
+  run f2 C load qa-fake-skill --role "$RA" --run qa-run-f --card qa-card-other --json; r2=$RC
+  run f3 C load qa-fake-skill --role "$RQ" --run qa-run-f --json; r3=$RC
+  ok '[ $r2 = 1 ] && [ $r3 = 1 ] && [ "$(nl "$EV")" = "$e0" ] && ! grep -q QA-SKILL-BODY "$T/o/f2.out" "$T/o/f3.out"' "RT2-01 a run record of another card or another role: refused, no line"
+  run f4 C load qa-fake-skill --role "$RA" --run qa-run-f --card qa-card-f --json
+  ok '[ $RC = 0 ] && grep -q QA-SKILL-BODY "$T/o/f4.out" && tail -n +$((e0 + 1)) "$EV" | grep >/dev/null qa-card-f' "RT2-01 control: the run record's own role and card load, with the trusted line"
+  run f5 C load qa-fake-skill --role "$RA" --run qa-run-f --json
+  ok '[ $RC = 0 ] && tail -n 1 "$EV" | grep >/dev/null qa-card-f' "RT2-01 no --card: the line carries the run record's card"
+  # RT2-03: every executable under the command folders, recursively, any name; excludes are case-insensitive
+  i=0; for f in bin/qa-newtool bin/qa-newtool.js bin/qa-sub/deep/qa-newtool.sh bin/QA-UP.SH bin/adapters/qa-newtool; do
+    i=$((i+1)); mkdir -p "$(dirname "$R/$f")"; printf '#!/usr/bin/env bash\ntrue\n' >"$R/$f"; chmod +x "$R/$f"
+    run x$i L; ok 'lint_fails x'$i' "$(basename "$f")"' "RT2-03 an unregistered executable $f: lint exit 1 naming it"
+    rm -f "$R/$f"
+  done
+  rm -rf "$R/bin/qa-sub"
+  printf '#!/usr/bin/env bash\ntrue\n' >"$R/bin/QA-LINT-SELFTEST.SH"; chmod +x "$R/bin/QA-LINT-SELFTEST.SH"
+  run x9 L; ok '[ $RC = 0 ]' "RT2-03 a selftest named in capitals needs no entry (excludes are case-insensitive)"
+  rm -f "$R/bin/QA-LINT-SELFTEST.SH"
+  # RT2-04: an MCP server declared in a CLI config (opencode.json mcp) and a skill folder linked from outside the root
+  ed opencode.json '.mcp = {"qa-evil-server": {type: "local", command: ["true"]}}'
+  run m1 L; ok 'lint_fails m1 qa-evil-server' "RT2-04 an MCP server declared in opencode.json (key mcp): lint exit 1 naming it"
+  mkdir -p "$T/ext/qa-outer"; printf -- '---\nname: qa-outer\n---\nB\n' >"$T/ext/qa-outer/SKILL.md"; ln -s "$T/ext/qa-outer" "$R/$SK/qa-outer"
+  : >"$AL"; run m2 C search qa-outer --role "$RA" --json
+  ok 'grep >/dev/null -F qa-outer "$AL" && ! grep -q qa-outer "$T/o/m2.out"' "RT2-04 a skill folder linked from outside the root stays skipped (not found) but raises the unregistered-entry alert"
+  run m3 L; ok 'lint_fails m3 qa-outer' "RT2-04 ... and the lint names it"
+  rm -f "$R/$SK/qa-outer"
+  # V1-13 / RT2-07: one alert per unregistered entry, not one per search
+  mkdir -p "$R/$SK/qa-unreg-once"; printf -- '---\nname: qa-unreg-once\n---\nB\n' >"$R/$SK/qa-unreg-once/SKILL.md"
+  : >"$AL"; for i in 1 2 3 4 5; do C search qa-fake-skill --role "$RA" --json >/dev/null 2>&1; done
+  ok '[ "$(grep -c qa-unreg-once "$AL")" = 1 ]' "V1-13 five searches with one unregistered skill: exactly one alert line for it"
+  rm -rf "$R/$SK/qa-unreg-once"
+  # RT2-05: check-card and the card hook share one rule: a non-list field is refused, a role's own toolset counts as available to it
+  printf '{"skills": {"qa-fake-skill": 1}}\n' >"$T/c1.json"; run k1 C check-card --role "$RA" --card "$T/c1.json" --json
+  ok '[ $RC = 1 ] && out k1 | grep >/dev/null -E "$range"' "RT2-05 check-card refuses a skills field that is not a list"
+  printf '{"skills": [""]}\n' >"$T/c2.json"; run k2 C check-card --role "$RA" --card "$T/c2.json" --json
+  ok '[ $RC = 1 ]' "RT2-05 check-card refuses an empty id"
+  KT=$(jq -r '[.roles | to_entries[] | select((.value.platform_toolsets // {}) | [.[][]] | length > 0) | {r: .key, t: (.value.platform_toolsets | [.[][]][0])}][0] // empty | "\(.r) \(.t)"' "$RJ")
+  printf '{"tools": ["%s"]}\n' "${KT#* }" >"$T/c3.json"; run k3 C check-card --role "${KT% *}" --card "$T/c3.json" --json
+  ok '[ -n "$KT" ] && [ $RC = 0 ]' "RT2-05 a role's own platform toolset is available to that role in check-card"
+  # V1-07 / RT2-09: host_allows gives decide the caller's own capability, role and run, whatever the request file holds
+  cat >"$R/bin/host_access.py" <<'PY'
+import json, os
+def decide(q):
+    json.dump(q, open(os.environ["QA_HOST_SEEN"], "w"))
+    return {"allowed": True}
+PY
+  export QA_HOST_SEEN=$T/seen.json
+  ed .stella/capabilities.json --arg a "$RA" --arg g "$(uuid)" --arg i "$IID" \
+    '.entries += [{id: "qa-host_session", kind: "tool", summary: "qahost fake host capability", keywords: ["qahost"], inputs: "none", outputs: "text",
+      allowed_roles: [$a], risk_class: "host_session", hosts: [], secrets: [], status: "approved", source: "qa", triage: {result: "shipped"},
+      definition: {text: "QA-HOST-DEF"}, global_id: $g, install_id: $i}]'
+  printf '{"capability": "other-cap", "role": "other-role", "run": "other-run", "target": {"app": "qa-app", "domain": null}, "action": {"type": "qa-open"}, "confirmation": null}\n' >"$T/hreq.json"
+  run h1 C describe qa-host_session --role "$RA" --run qa-own-run --host-request "$T/hreq.json" --json
+  ok 'jq -e --arg r "$RA" ".capability == \"qa-host_session\" and .role == \$r and .run == \"qa-own-run\"" "$QA_HOST_SEEN"' "V1-07 decide is asked about the caller's own capability, role and run, not the request file's"
   ;;
 esac
 finish

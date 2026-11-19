@@ -394,6 +394,8 @@ ok '[ "$(kc ".skills = [\"qa-k-skill-ok\", \"qa-k-no-such-capability\"]")" = 2 ]
 cp "$KCAP" "$KCAP.keep"; echo '{"schema_version": 1, "entries": [' >"$KCAP"
 ok '[ "$(kc ".skills = [\"qa-k-skill-ok\"]")" = 2 ]' "AC7-card-refused the registry cannot be read: a card naming a skill is refused (fail closed)"
 mv "$KCAP.keep" "$KCAP"
+KTS=$(jq -r --arg r "$KAR" '[(.roles[$r].platform_toolsets // {})[]?[]] | map(select(type == "string"))[0] // empty' "$RF")
+ok '[ -n "$KTS" ] && [ "$(kc ".tools = [\"$KTS\"]")" = 0 ]' "RT2-05 a role's own platform toolset in a card's tools is available to that role: allowed (one rule with check-card)"
 
 # T1 (r5): the two routes agree on every 10th run row (the judge and a real guard process, the same row), and a planted difference (the judge
 # given a copy of the guard whose refusal reads otherwise) is caught

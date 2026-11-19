@@ -4,7 +4,12 @@
     ".claude/skills"
   ],
   "mcp_manifests": [
-    ".mcp.json"
+    ".mcp.json",
+    "opencode.json"
+  ],
+  "mcp_keys": [
+    "mcpServers",
+    "mcp"
   ],
   "extension_folders": [
     ".stella/extensions"
