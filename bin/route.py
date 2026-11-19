@@ -515,7 +515,7 @@ def send(prov, proto, link, prompt, key, timeout, local, edit=None, who=None):
         edit(b)
     req = urllib.request.Request(url_of(prov, link, local, render(rq["path"], dict(vals, model=urllib.parse.quote(link["model"], safe="")))),
                                  data=json.dumps(b).encode(), headers=headers_of(rq, key), method=rq.get("method", "POST"))
-    t0, zero, hs = time.monotonic(), dict.fromkeys(cost.TYPES, 0), {}
+    t0, zero, hs = time.monotonic(), dict.fromkeys(cost.types(), 0), {}
     try:
         status, raw = fetch(req, timeout, hs)   # one deadline for the whole call: a server that drips bytes, in the head or the body, holds no task
     except (OSError, http.client.HTTPException, ValueError) as e:
