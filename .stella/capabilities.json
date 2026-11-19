@@ -1053,7 +1053,7 @@
         "api link",
         "per-run"
       ],
-      "inputs": "mint --run R --role ROLE --card C --link <connection>/<model> [--ttl S] | revoke --run R",
+      "inputs": "mint --run R --role ROLE --card C --link <connection>/<model> [--project P] [--ttl S] | revoke --run R",
       "outputs": "mint: the token alone on stdout; revoke: JSON {run, revoked}; exit 1 with a catalog code (STL-MDL-797 token state or gateway data, 799 link or ttl refused, STL-CFG-312 worker environment)",
       "allowed_roles": [],
       "risk_class": "write",
@@ -1307,6 +1307,60 @@
         "result": "shipped"
       },
       "global_id": "daa915f1-f9ad-42b7-89c5-5d7a0cdb0a65",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "adapter",
+      "kind": "command",
+      "summary": "Worker adapters (engine side): list the coding CLIs, report a CLI's version against its tested versions, start a run of a role in a worktree (conformance gate, link check, run token, generated policy and MCP config, rendered prompt, ledger slots, OS box for boxed profiles), stop it, show its log and its completion evidence",
+      "keywords": [
+        "adapter",
+        "worker",
+        "coding cli",
+        "run",
+        "start",
+        "stop",
+        "evidence",
+        "conformance",
+        "events.jsonl"
+      ],
+      "inputs": "list --json | version --adapter A --json | start --adapter A --role R --worktree W --brief-file F [--card C] [--card-file J] [--link CONN/MODEL] [--project P] [--run-id R] [--wait] --json | stop --run R [--reason T] | logs --run R [--follow] | evidence --run R --json",
+      "outputs": "JSON (list, version, the started run, evidence); the run record and events.jsonl under the index key adapter_runs; exit 1 with a catalog code (STL-GRD-640..654, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/adapter.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "18765b15-57f0-4e1e-9df6-6bed2eb5ee22",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "mock-agent",
+      "kind": "tool",
+      "summary": "Test rig: a fake coding CLI driven by an action list in its prompt (write, read, edit, shell, MCP call, model call, env, usage); obeys its generated policy config and hook the way its adapter entry says and prints jsonl",
+      "keywords": [
+        "mock",
+        "agent",
+        "fake cli",
+        "adapter",
+        "test rig"
+      ],
+      "inputs": "--prompt-file F --config C [--model M] [--mcp-config J] [--cwd W] | --version",
+      "outputs": "jsonl tool_use, tool_result, usage and result lines on stdout; exit 0, 1 when an action crashes",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/mock_agent.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "cb8536f6-36a3-4a15-b41a-9b726de3a48b",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

@@ -4,9 +4,10 @@ key: it holds a short-lived token minted for its run, and bin/model_proxy.py swa
 EVERY run (api and cli-login); its record holds the link's connection type, and the proxy refuses a token whose link is no api link.
 Token: the data prefix (.stella/run-gateway.json token.prefix, so a leak scanner can find one) + token.random_bytes random bytes,
 urlsafe. Only sha256(token) is stored (index key run_tokens, a state path under the protected repo paths), with
-{run, role, card, connection, model, type, minted, expires, revoked}; the value is printed once, by mint, and nowhere else.
+{run, role, card, project, connection, model, type, minted, expires, revoked}; the value is printed once, by mint, and nowhere else.
 CLI (host only: refuses in a worker environment, STL-CFG-312, before reading anything):
-  run_token.py mint --run R --role ROLE --card C --link CONN/MODEL [--ttl S]   the token alone on stdout (ttl default token.ttl_s, at most token.max_ttl_s)
+  run_token.py mint --run R --role ROLE --card C --link CONN/MODEL [--project P] [--ttl S]   the token alone on stdout (ttl default token.ttl_s,
+        at most token.max_ttl_s); project (null when not given) is recorded so the proxy can count the run's calls toward its budget
   run_token.py revoke --run R                                                 every token of the run is revoked; {run, revoked} on stdout
 Importers: lookup(token) -> (record, None) or (None or record, code); verify(token) -> the record or None; tid(token) the id
 events carry (a prefix of the hash, never the value).
@@ -118,7 +119,7 @@ def cmd_mint(a):
         raise Stop(BADLINK, x.problem) from None
     token = g["prefix"] + secrets.token_urlsafe(g["random_bytes"])
     t = now()
-    rec = {"run": a.run, "role": a.role, "card": a.card, "connection": prov["id"], "model": model, "type": prov.get("type"),
+    rec = {"run": a.run, "role": a.role, "card": a.card, "project": a.project, "connection": prov["id"], "model": model, "type": prov.get("type"),
            "minted": t.strftime(TIME), "expires": (t + datetime.timedelta(seconds=ttl)).strftime(TIME), "revoked": None}
     with store(write=True) as st:
         for k in [k for k, v in st["tokens"].items() if (sd.when(v, "expires") or t) <= t]:   # expired records go: the file stays bounded
@@ -148,6 +149,7 @@ def main(argv):
     p = sub.add_parser("mint")
     for k in ("run", "role", "card", "link"):
         p.add_argument("--" + k, required=True)
+    p.add_argument("--project")
     p.add_argument("--ttl", type=int)
     sub.add_parser("revoke").add_argument("--run", required=True)
     a = ap.parse_args(argv)
