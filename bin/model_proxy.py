@@ -205,7 +205,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             for p in model_pointers(rq["body"]):
                 route.put(doc, p, rec["model"])   # the run's model, whatever the client asked
             body = json.dumps(doc).encode()
-            who = argparse.Namespace(role=rec["role"], card=rec["card"], project=None, task=rec["run"])
+            who = argparse.Namespace(role=rec["role"], card=rec["card"], project=rec.get("project"), task=rec["run"])
             try:
                 defer = route.budget_gate(who)
             except route.Stop as x:
@@ -278,7 +278,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     @staticmethod
     def who(rec):
-        return {"role": rec["role"], "project": None, "card": rec["card"], "session": rec["run"]}
+        return {"role": rec["role"], "project": rec.get("project"), "card": rec["card"], "session": rec["run"]}
 
 
 class Server(http.server.ThreadingHTTPServer):

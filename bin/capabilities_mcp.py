@@ -243,10 +243,16 @@ def call(tool, arguments):
     try:
         pre, mc = run_token.gateway()["token"]["prefix"], conf()
         tok = next((v for v in (os.environ.get(n) for n in worker_env.signals()["token_env"]) if v and v.startswith(pre)), None)
-        st = sd.load(sd.load(sd.INDEX)[STATE_KEY])
-        host, port, path = st["bind"], st["port"], st["path"]
+        import roles   # the run env names are adapter data (adapters.json run_env)
+        url = os.environ.get(roles._stella_json(".stella/adapters.json")["run_env"]["capabilities_url"] or "") or ""
+        if url:   # a run passes its server URL: a boxed worker may not read the state folder
+            u = urllib.parse.urlsplit(url)
+            host, port, path = u.hostname, u.port, u.path
+        else:
+            st = sd.load(sd.load(sd.INDEX)[STATE_KEY])
+            host, port, path = st["bind"], st["port"], st["path"]
         assert ipaddress.ip_address(host).is_loopback and type(port) is int and isinstance(path, str)
-    except (run_token.Stop, sd.DataError, OSError, KeyError, TypeError, ValueError, AssertionError) as e:
+    except (run_token.Stop, sd.DataError, OSError, KeyError, TypeError, ValueError, AssertionError, ImportError) as e:
         raise ClientError(UNREACHABLE, f"the capability server address cannot be read ({type(e).__name__})") from None
     if tok is None:
         raise ClientError(UNREACHABLE, "this environment holds no run token")
