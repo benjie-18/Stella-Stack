@@ -16,10 +16,10 @@ worker environment, STL-CFG-312; JSON out, --json accepted everywhere):
         output) on stdin; prints the observed limit, or null when the answer is no limit.
   ledger.py report --by card|project|role|model|connection     calls, tokens and cost per key.
   ledger.py check                              the usage file and the state file against their schemas.
-Slots are flock files under <ledger_state path>.slots/. A daily cap counts the records of the day of the signals data's day_reset clock (an outcome whose outcome_classes say it is no call is left out).
+Slots are open-file-description locks (fcntl F_OFD_SETLK; status asks with F_OFD_GETLK, which takes none) on files under <ledger_state path>.slots/. A daily cap counts the records of the day of the signals data's day_reset clock (an outcome whose outcome_classes say it is no call is left out).
 Every state change that is no plain call record (a limit observed, a hold refused) is one trusted event line (bin/event_log.py).
 Exit: 0 ok; 1 refused or failed (catalog code and plain message on stderr, {code, problem} on stdout); 2 usage; 75, 76, 77 of hold.
-shortcut: the usage file is read whole on every status, hold and report; upgrade (an index or a daily counter file) when it grows past
+shortcut: struct flock is the 64-bit Linux layout (FLOCK). shortcut: the usage file is read whole on every status, hold and report; upgrade (an index or a daily counter file) when it grows past
 a few hundred thousand lines. shortcut: a daily cap is checked, not reserved: callers that run in parallel past a cap with no slot limit
 can overshoot it by the calls in flight; give the model a max_concurrent to close that."""
 import os, sys
