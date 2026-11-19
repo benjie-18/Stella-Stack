@@ -459,6 +459,19 @@ chain st-q/st-q-m1; fresh; call lg5
 ok '[ $RC = 0 ] && [ "$(cnt st-q/st-q-m1)" = 1 ] && [ "$(LG status --connection st-q --model st-q-m1 --json | jq .concurrency.in_use)" = 0 ]' "a call holds its slot while it runs and gives it back after"
 kill $S429 2>/dev/null
 
+# ---- the budget gate (F2c C, C-RT-08): route.py call asks bin/budget.py before any request is sent ----
+BUD=$R/.stella/budgets.json; BAK=$T/budgets.bak; cp "$BUD" "$BAK"; BST=$R/$(ix .budget_state); AL=$T/sup/logs/alerts.log
+ed budgets.json '.budgets = [{id: "fo-p", scope: "project", key: "st-project", window_days: 1, soft_percent: [], hard: {amount: 1, currency: "USD"}, plan_share_cap: null, on_approve: {option: "raise", raise_percent: 50, connection: null, model: null}}]'
+jq -nc --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{v: 1, id: "00000000-0000-4000-8000-000000000001", install_id: "i", ts: $t, connection: "x", model: "x", role: "r", project: "st-project", card: "c", session: "s", kind: "call", outcome: "ok", status: null,
+  tokens: {input: 1, output: 1, cache_write: 0, cache_read: 0, reasoning: 0}, latency_ms: 1, batch: false, cost: {amount: 5, currency: "USD", entry: "x", priced: true}, plan_share: null}' >>"$UL"
+N0=$(grep -c . "$UL"); chain st-a/st-a-m1; fresh; rm -f "$BST"; call bh1
+ok '[ $RC = 1 ] && J bh1 ".code == \"STL-LIM-432\"" && [ "$(cnt st-a/st-a-m1)" = 0 ] && [ "$(grep -c . "$UL")" = "$N0" ]' "a project at its hard cap: the call is refused with the hold's code, no request is sent, no usage record is written"
+ed budgets.json '.budgets[0].hard.amount = 1000'; rm -f "$BST"; fresh; call bh2
+ok '[ $RC = 0 ] && [ "$(cnt st-a/st-a-m1)" = 1 ] && J bh2 ".link.connection == \"st-a\""' "the same project under its cap: the call goes out"
+echo '{' >"$BUD"; A0=$(grep -c STL-LIM-434 "$AL" 2>/dev/null || true); fresh; call bh3
+ok '[ $RC = 1 ] && J bh3 ".code == \"STL-LIM-434\"" && [ "$(cnt st-a/st-a-m1)" = 0 ] && [ "$(grep -c STL-LIM-434 "$AL")" = "$((A0 + 1))" ]' "a budgets file that cannot be read: the call is refused with STL-LIM-434, one alert, no request sent"
+cp "$BAK" "$BUD"; rm -f "$BST"
+
 rm -f "$R/bin/resolve.py"; call nores
 ok '[ $RC = 1 ] && J nores ".code == \"STL-MDL-710\"" && [ "$(cnt st-a/st-a-m1)" = 0 ]' "with no resolver nothing is routed (STL-MDL-710)"
 rt usage call --role "$ROLE"

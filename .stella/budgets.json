@@ -108,5 +108,8 @@
       "min_cards": 4,
       "lookback_minutes": 10080
     }
+  },
+  "unnamed_keys": {
+    "project": "unnamed"
   }
 }
