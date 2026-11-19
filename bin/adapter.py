@@ -337,8 +337,9 @@ class Stream:
     def diff(self):
         wt, h = self.rec["worktree"], hashlib.sha256()
         try:
-            h.update(git(wt, "diff", "--binary", self.rec["base"], binary=True))
-            for f in sorted(x for x in git(wt, "ls-files", "-z", "--others", "--exclude-standard", binary=True).split(b"\0") if x):
+            notes = self.rec.get("notes")   # the working-notes file changes every turn and says nothing about progress
+            h.update(git(wt, "diff", "--binary", self.rec["base"], "--", ".", *([f":(exclude,literal){notes}"] if notes else []), binary=True))
+            for f in sorted(x for x in git(wt, "ls-files", "-z", "--others", "--exclude-standard", binary=True).split(b"\0") if x and x.decode("utf-8", "surrogateescape") != notes):
                 h.update(f + b"\0")
                 with contextlib.suppress(OSError), open(os.path.join(wt, f.decode("utf-8", "surrogateescape")), "rb") as fh:
                     h.update(hashlib.sha256(fh.read()).digest())
@@ -577,7 +578,7 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
     rec = {"schema_version": 1, "run": run, "role": a.role, "card": a.card, "conformance": not a.card, "project": a.project, "adapter": e["id"],
            "version": ver, "tested": tested, "link": link, "conn_type": ctype, "unattended": True, "background": not a.wait,
            "boxed": pre is not None, "worktree": wt, "base": base, "run_dir": rdir, "pid": None, "pgid": None, "started": now(),
-           "ended": None, "exit": None, "stopped": None,
+           "ended": None, "exit": None, "stopped": None, "notes": tr["notes"]["path"].replace("{card}", a.card or run),   # the notes file stays out of the progress digest (stuck.py)
            "run_policy": {"applied": tr["applied"], "unsupported": tr["unsupported"], "hook": bool(tr["hook"] and e["policy"].get("hook"))}, "global_id": str(uuid.uuid4()), "install_id": sd.install_id()}
     out = {"run": run, "adapter": e["id"], "version": ver, "tested": tested, "link": link, "conn_type": ctype, "background": not a.wait}
     import ledger   # the run's lease: the link's slots, taken here and held by the CLI's process (as ledger.py hold does: it cannot run with a worker's env)
