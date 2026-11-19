@@ -10,7 +10,7 @@
     "default",
     "family_map",
     "role_overrides",
-    "entries"
+    "profiles"
   ],
   "properties": {
     "schema_version": {
@@ -37,7 +37,7 @@
         "minLength": 1
       }
     },
-    "entries": {
+    "profiles": {
       "type": "array",
       "minItems": 1,
       "items": {

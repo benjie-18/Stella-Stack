@@ -373,7 +373,7 @@
       "format": "json",
       "owner_only": true,
       "redact_keys": [],
-      "list_key": "entries",
+      "list_key": "profiles",
       "id_field": "id",
       "record_kind": "setting",
       "global_id": "b6c58f82-4f56-4053-b01b-8ba1f4a60b77",

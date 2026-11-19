@@ -8,7 +8,7 @@
     "nemotron": "markdown"
   },
   "role_overrides": {},
-  "entries": [
+  "profiles": [
     {
       "id": "tags",
       "section_template": "<{name}>\n{body}\n</{name}>",
