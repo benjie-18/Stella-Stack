@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Worker adapters",
-  "description": "One entry per coding CLI (F3): every CLI-specific name lives here. Item P: id, binary, token_env, model_flags, tools, policy. Item A adds the run part.",
+  "description": "One entry per coding CLI (F3): every CLI-specific name lives here. Item P: id, binary, token_env, model_flags, tools, policy. Item A: label, status, version_cmd, tested_versions, conn_types, protocols, start, cli_login, stream, supports, mcp, unverified and the top-level run_env, env_keep, output_cap, stop_grace_s. Item X2: run_policy templates.",
   "x-one-document": true,
   "type": "object",
   "properties": {
@@ -10,6 +10,37 @@
     },
     "about": {
       "type": "string"
+    },
+    "run_env": {
+      "type": "object",
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "capabilities_url": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "env_keep": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "uniqueItems": true
+    },
+    "output_cap": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "stop_grace_s": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 600
     },
     "entries": {
       "type": "array",
@@ -24,6 +55,18 @@
           "binary": {
             "type": "string",
             "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "stub"
+            ],
+            "description": "stub: a CLI that is not installed (binary and version_cmd only); start fails closed with STL-GRD-641."
           },
           "token_env": {
             "type": "string",
@@ -302,6 +345,240 @@
             ],
             "additionalProperties": false
           },
+          "version_cmd": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "tested_versions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "conn_types": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "api",
+                "cli-login"
+              ]
+            },
+            "uniqueItems": true
+          },
+          "protocols": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "start": {
+            "type": "object",
+            "properties": {
+              "argv": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "env": {
+                "type": "object",
+                "properties": {
+                  "base_url_env": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                  },
+                  "token_env": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                  },
+                  "set": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                    },
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "settings": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "argv"
+            ],
+            "additionalProperties": false
+          },
+          "cli_login": {
+            "type": "object",
+            "properties": {
+              "credential_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "home_env": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+              }
+            },
+            "additionalProperties": false,
+            "description": "credential_paths are hidden by the sandbox policy and never read by the adapter."
+          },
+          "stream": {
+            "type": "object",
+            "properties": {
+              "format": {
+                "type": "string",
+                "enum": [
+                  "jsonl"
+                ]
+              },
+              "items": {
+                "$ref": "#/$defs/pointer"
+              },
+              "type": {
+                "$ref": "#/$defs/pointer"
+              },
+              "types": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "tool_use",
+                      "tool_result",
+                      "usage",
+                      "result",
+                      "error"
+                    ]
+                  }
+                }
+              },
+              "tool_name": {
+                "$ref": "#/$defs/pointer"
+              },
+              "tool_input": {
+                "$ref": "#/$defs/pointer"
+              },
+              "tool_result": {
+                "$ref": "#/$defs/pointer"
+              },
+              "ok": {
+                "$ref": "#/$defs/pointer"
+              },
+              "error": {
+                "$ref": "#/$defs/pointer"
+              },
+              "usage": {
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "$ref": "#/$defs/pointer"
+                  },
+                  "output": {
+                    "$ref": "#/$defs/pointer"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "final_text": {
+                "$ref": "#/$defs/pointer"
+              }
+            },
+            "required": [
+              "format",
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          "supports": {
+            "type": "object",
+            "properties": {
+              "hook": {
+                "$ref": "#/$defs/flag"
+              },
+              "deferred_tools": {
+                "$ref": "#/$defs/flag"
+              },
+              "compaction": {
+                "$ref": "#/$defs/flag"
+              },
+              "clear_tool_results": {
+                "$ref": "#/$defs/flag"
+              },
+              "subagent": {
+                "$ref": "#/$defs/flag"
+              },
+              "script_tools": {
+                "$ref": "#/$defs/flag"
+              },
+              "working_notes": {
+                "$ref": "#/$defs/flag"
+              },
+              "skill_use_observable": {
+                "$ref": "#/$defs/flag"
+              },
+              "tool_use_observable": {
+                "$ref": "#/$defs/flag"
+              }
+            },
+            "additionalProperties": false
+          },
+          "run_policy": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object"
+            },
+            "description": "Item X2: per supported feature, the settings template bin/run_policy.py translate merges ({value} and the policy's own keys)."
+          },
+          "mcp": {
+            "type": "object",
+            "properties": {
+              "into": {
+                "type": "string",
+                "enum": [
+                  "settings",
+                  "file"
+                ]
+              },
+              "template": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "into",
+              "template"
+            ],
+            "additionalProperties": false,
+            "description": "The capability server in the CLI's config form: {url}, {auth_header}, {auth_value}; into settings merges it into the settings file."
+          },
+          "unverified": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
           "global_id": {
             "type": "string",
             "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
@@ -325,5 +602,22 @@
     "schema_version",
     "entries"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "pointer": {
+      "type": "string",
+      "pattern": "^(/[^/]*)*$"
+    },
+    "flag": {
+      "type": [
+        "boolean",
+        "string"
+      ],
+      "enum": [
+        true,
+        false,
+        "unverified"
+      ]
+    }
+  }
 }

@@ -1,9 +1,36 @@
 {
   "schema_version": 1,
-  "about": "Worker adapters (F3): one entry per coding CLI, every CLI-specific name in data. Item P owns id, binary, token_env, model_flags, tools (DC-12: tool name -> read|write|shell|other and the input pointers of its path or command) and policy (target file and owned pointers, one config shape list per policy rule kind, a hook where the CLI runs one, fixed entries, what could not be verified). In a template {name}, {home}, {path}, {word}, {sub}, {command}, {binary}, {pattern} are the rule's items, {stack} the stack folder.",
+  "about": "Worker adapters (F3): one entry per coding CLI, every CLI-specific name in data. Item P owns id, binary, token_env, model_flags, tools (DC-12: tool name -> read|write|shell|other and the input pointers of its path or command) and policy (target file and owned pointers, one config shape list per policy rule kind, a hook where the CLI runs one, fixed entries, what could not be verified). In a template {name}, {home}, {path}, {word}, {sub}, {command}, {binary}, {pattern} are the rule's items, {stack} the stack folder. Item A owns the run part (label, status, version_cmd, tested_versions, conn_types, protocols, start, cli_login, stream, supports, mcp, unverified) and the top-level run_env, env_keep, output_cap, stop_grace_s; the schema describes each.",
+  "run_env": {
+    "adapter": "STELLA_ADAPTER",
+    "capabilities_url": "STELLA_CAPABILITIES_URL"
+  },
+  "env_keep": [
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "TZ",
+    "TMPDIR",
+    "NO_PROXY",
+    "no_proxy",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy"
+  ],
+  "output_cap": 4000,
+  "stop_grace_s": 10,
   "entries": [
     {
       "id": "opencode",
+      "label": "OpenCode",
+      "status": "active",
       "binary": "opencode",
       "token_env": "STELLA_RUN_TOKEN",
       "tools": {
@@ -238,11 +265,121 @@
           "whether a ~/ pattern is expanded to the home folder (the protected home folders are written ~/<folder>/* so a project's own .claude or .hermes folder is not hit)"
         ]
       },
+      "version_cmd": [
+        "opencode",
+        "--version"
+      ],
+      "tested_versions": [
+        "2.0.26"
+      ],
+      "conn_types": [
+        "api",
+        "cli-login"
+      ],
+      "protocols": [
+        "chat-completions"
+      ],
+      "start": {
+        "argv": [
+          "opencode",
+          "run",
+          "--standalone",
+          "--auto",
+          "--format",
+          "json",
+          "--model",
+          "stella/{model}",
+          "{prompt}"
+        ],
+        "env": {
+          "token_env": "STELLA_RUN_TOKEN",
+          "set": {
+            "OPENCODE_CONFIG": "{settings_file}"
+          }
+        },
+        "settings": {
+          "provider": {
+            "stella": {
+              "npm": "@ai-sdk/openai-compatible",
+              "name": "Stella model proxy",
+              "options": {
+                "baseURL": "{base_url}/v1",
+                "apiKey": "{env:STELLA_RUN_TOKEN}"
+              },
+              "models": {
+                "{model}": {}
+              }
+            }
+          }
+        }
+      },
+      "cli_login": {
+        "credential_paths": [
+          "{home}/.local/share/opencode/auth.json"
+        ],
+        "home_env": "HOME"
+      },
+      "stream": {
+        "format": "jsonl",
+        "type": "/type",
+        "types": {
+          "tool_use": [
+            "tool_use",
+            "tool_result"
+          ],
+          "text": "result",
+          "step_finish": "usage",
+          "error": "error"
+        },
+        "tool_name": "/part/tool",
+        "tool_input": "/part/state/input",
+        "tool_result": "/part/state/output",
+        "error": "/error",
+        "usage": {
+          "input": "/part/tokens/input",
+          "output": "/part/tokens/output"
+        },
+        "final_text": "/part/text"
+      },
+      "supports": {
+        "hook": false,
+        "deferred_tools": "unverified",
+        "compaction": "unverified",
+        "clear_tool_results": "unverified",
+        "subagent": "unverified",
+        "script_tools": "unverified",
+        "working_notes": "unverified",
+        "skill_use_observable": "unverified",
+        "tool_use_observable": "unverified"
+      },
+      "mcp": {
+        "into": "settings",
+        "template": {
+          "mcp": {
+            "stella-capabilities": {
+              "type": "remote",
+              "url": "{url}",
+              "headers": {
+                "{auth_header}": "{auth_value}"
+              },
+              "enabled": true
+            }
+          }
+        }
+      },
+      "unverified": [
+        "run flags (run, --standalone, --auto, --format json, --model provider/model) are from `opencode run --help` (v2.0.26); a real run was not made here",
+        "OPENCODE_CONFIG as the config file variable is from the binary's strings; the provider block (openai-compatible, baseURL, {env:VAR} apiKey) and the mcp remote form follow the OpenCode docs, not run here",
+        "the --format json event names and pointers (type, part.tool, part.state.input/output, part.tokens, part.text) are not verified against a real run",
+        "a cli-login run (OpenCode's own provider login) is not tried"
+      ],
       "global_id": "b750e496-eb61-407e-91df-ee05aa734c4d",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
       "id": "claude-code",
+      "label": "Claude Code",
+      "status": "active",
       "binary": "claude",
       "token_env": "STELLA_RUN_TOKEN",
       "model_flags": {
@@ -462,7 +599,126 @@
           "a Read deny on ~/.claude or ~/.hermes leaves the CLI's own reads of its config alone (the permissions guide says deny rules apply to Claude's tools)"
         ]
       },
+      "version_cmd": [
+        "claude",
+        "--version"
+      ],
+      "tested_versions": [
+        "2.1.328"
+      ],
+      "conn_types": [
+        "api",
+        "cli-login"
+      ],
+      "protocols": [
+        "messages"
+      ],
+      "start": {
+        "argv": [
+          "claude",
+          "-p",
+          "--output-format",
+          "stream-json",
+          "--verbose",
+          "--model",
+          "{model}",
+          "--settings",
+          "{settings_file}",
+          "--mcp-config",
+          "{mcp_config}",
+          "--strict-mcp-config",
+          "--permission-mode",
+          "acceptEdits",
+          "--permission-prompts",
+          "none",
+          "{prompt}"
+        ],
+        "env": {
+          "base_url_env": "ANTHROPIC_BASE_URL",
+          "token_env": "ANTHROPIC_AUTH_TOKEN"
+        }
+      },
+      "cli_login": {
+        "credential_paths": [
+          "{home}/.claude/.credentials.json"
+        ],
+        "home_env": "CLAUDE_CONFIG_DIR"
+      },
+      "stream": {
+        "format": "jsonl",
+        "items": "/message/content",
+        "type": "/type",
+        "types": {
+          "tool_use": "tool_use",
+          "tool_result": "tool_result",
+          "result": "result"
+        },
+        "tool_name": "/name",
+        "tool_input": "/input",
+        "tool_result": "/content",
+        "error": "/is_error",
+        "usage": {
+          "input": "/usage/input_tokens",
+          "output": "/usage/output_tokens"
+        },
+        "final_text": "/result"
+      },
+      "supports": {
+        "hook": true,
+        "deferred_tools": "unverified",
+        "compaction": true,
+        "clear_tool_results": "unverified",
+        "subagent": true,
+        "script_tools": "unverified",
+        "working_notes": "unverified",
+        "skill_use_observable": "unverified",
+        "tool_use_observable": "unverified"
+      },
+      "mcp": {
+        "into": "file",
+        "template": {
+          "mcpServers": {
+            "stella-capabilities": {
+              "type": "http",
+              "url": "{url}",
+              "headers": {
+                "{auth_header}": "{auth_value}"
+              }
+            }
+          }
+        }
+      },
+      "unverified": [
+        "the flags (-p, --output-format stream-json, --verbose, --model, --settings, --mcp-config, --strict-mcp-config, --permission-mode, --permission-prompts) are from `claude --help` (2.1.328); a real run was not made here",
+        "the proxy address and the token variable of start.env follow the Claude Code docs, not run here",
+        "the stream-json pointers (message.content items of type tool_use / tool_result, the result line's result and usage) are not verified against a real run",
+        "compaction (--autocompact) and subagents (--agents) are from --help; the other supports flags are not checked"
+      ],
       "global_id": "5444b0a4-6d63-40d6-8631-e27d626a4abd",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "codex",
+      "label": "Codex CLI",
+      "status": "stub",
+      "binary": "codex",
+      "version_cmd": [
+        "codex",
+        "--version"
+      ],
+      "global_id": "d0882b6d-fda4-4eb3-a378-38a228ff1db0",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "gemini",
+      "label": "Gemini CLI",
+      "status": "stub",
+      "binary": "gemini",
+      "version_cmd": [
+        "gemini",
+        "--version"
+      ],
+      "global_id": "a0bdece4-74a6-4fab-91c2-85aa1b00e44a",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
