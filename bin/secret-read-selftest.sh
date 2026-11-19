@@ -16,7 +16,7 @@ run() { jq -nc --arg t "$2" --argjson i "$3" '{tool_name: $t, tool_input: $i, cw
 term() { run "$1" terminal "$(jq -nc --arg c "$2" '{command: $c}')"; }
 block() { sed -n '/^# --- secret paths/,/^# --- end secret paths/p' "$1"; }
 
-ok '[ -n "$(block $R)" ] && [ "$(block $R)" = "$(block $S)" ]' "the secret-path block (list and matcher) is identical in both hooks"
+ok '[ -n "$(block $R)" ] && [ "$(block $R)" = "$(block $S)" ] && ! block $S | grep -qE "^[[:space:]]*SECRETS(_OK)?[[:space:]]*=[[:space:]]*[([]" && block $S | grep -qF "policy_rule(\"secret_read\")"' "the secret-path block (matcher) is identical in both hooks, and its secret classes come from the policy rule through the one loader, no literal list (F3 DC-11)"
 # K6: the hooks import roles from /workspace/bin; run copies whose import points at $STACK/bin (a no-op for the installed tree)
 cp_hook() { sed "s#/workspace/bin#$STACK/bin#g" "$1" >"$T/$(basename "$1")"; chmod +x "$T/$(basename "$1")"; }
 cp_hook "$R"; cp_hook "$S"; R=$T/$(basename "$R"); S=$T/$(basename "$S")

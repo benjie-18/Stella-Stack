@@ -845,6 +845,62 @@ def protected(d):
             [f"{h}/{c}" for h in homes() for c in d["protected"]["home"]])
 
 
+STELLA = os.path.realpath(os.environ.get("STELLA_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # F3: the tree of the policy data: this file's own, or a scratch root (as the data tool reads it)
+POLICY_KINDS = ("write_boundary", "protected_read", "secret_read", "commit_rule", "dispatcher_only", "model_limits")
+GIT_FORMS = ("global", "sub", "option", "sub_args")   # commit_rule deny_git: where git reads the word (before the subcommand, the subcommand, any option, a subcommand's arguments)
+
+
+def _stella_json(rel):
+    with open(os.path.join(STELLA, rel), encoding="utf-8") as f:
+        return json.load(f, object_pairs_hook=_pairs, parse_constant=_const)
+
+
+def _strs(v, empty=False):
+    return isinstance(v, list) and (empty or v) and all(isinstance(x, str) and x for x in v)
+
+
+def policy():
+    """F3 (DC-11, DC-13): the stack policy (.stella/policy.json), shape-checked: one rule of each kind, the secret and commit rules whole.
+    The one loader: the read guards, the OS box, the git guard and the policy tool all read it here. Raises RolesError: every caller fails closed."""
+    try:
+        p = _stella_json(".stella/policy.json")
+        kinds = [r["kind"] for r in p["rules"]]
+        if p["schema_version"] != 1 or sorted(kinds) != sorted(POLICY_KINDS):
+            raise ValueError("the rules are not exactly one of each kind " + ", ".join(POLICY_KINDS))
+        s = policy_rule("secret_read", p)
+        if not (_strs(s["deny"]) and _strs(s["allow"], True) and _strs(s["dirs"]) and _strs(s["text"]) and _strs(s["glob_probes"], True)
+                and all(d.startswith(("~/", "/")) for d in s["dirs"])):
+            raise ValueError("secret_read needs deny, dirs (~/ or absolute) and text lists, and allow and glob_probes lists")
+        re.compile("|".join(s["text"]))
+        g = policy_rule("commit_rule", p)["deny_git"]
+        if not (isinstance(g, list) and g and all(isinstance(x, dict) and set(x) - {"why"} and len(set(x) - {"why"}) == 1 and (set(x) - {"why"}) <= set(GIT_FORMS)
+                                                 and isinstance(x.get("why"), str) and x["why"] for x in g)):
+            raise ValueError("commit_rule deny_git needs entries of one form each (" + ", ".join(GIT_FORMS) + ") and a why")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, re.error) as e:
+        raise RolesError(f".stella/policy.json: cannot be read ({type(e).__name__}: {e})")
+    return p
+
+
+def policy_rule(kind, p=None):
+    """The rule of one kind of the policy (p, or the one policy() reads). Raises RolesError (or StopIteration on a p not checked by policy())."""
+    return next(r for r in (p or policy())["rules"] if r["kind"] == kind)
+
+
+def adapters():
+    """F3: the worker adapter entries of .stella/adapters.json by id (the CLI-specific names: binary, flags, tool map, config shapes).
+    Raises RolesError: callers fail closed."""
+    try:
+        a = _stella_json(".stella/adapters.json")
+        if a["schema_version"] != 1 or not isinstance(a["entries"], list):
+            raise ValueError("shape")
+        out = {e["id"]: e for e in a["entries"]}
+        if len(out) != len(a["entries"]):
+            raise ValueError("an adapter id is repeated")
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise RolesError(f".stella/adapters.json: cannot be read ({type(e).__name__}: {e})")
+    return out
+
+
 def discovered(H):
     """{profile: dir} of the profiles that exist in a Hermes root (a config.yaml in their folder)."""
     out = {ROOT_PROFILE: H} if os.path.isfile(f"{H}/config.yaml") else {}

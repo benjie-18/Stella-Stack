@@ -426,6 +426,30 @@
       "id_field": "schema_version",
       "global_id": "5e9af096-2b81-4bc4-9c0d-0034ef868e0c",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "policy",
+      "path": ".stella/policy.json",
+      "schema": "policy",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "6b208604-79f1-40d7-8f49-8afb949e82f8",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "adapters",
+      "path": ".stella/adapters.json",
+      "schema": "adapters",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "08487483-445d-418d-9cf0-bc2126d20c58",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ],
   "spans": ".supervisor/logs/spans.jsonl",

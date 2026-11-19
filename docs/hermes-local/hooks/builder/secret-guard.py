@@ -2,7 +2,7 @@
 """Secret-read guard (F12): pre_tool_call on terminal, process_manage, read_file, search_files, vision_analyze
 and skill_view for the builder role, and on read_file and search_files only for the dispatcher and reviewer roles
 (D42, D46: the matchers are in docs/hermes-local/roles.json; those roles' terminals have their own guards). Refuses reading
-the secret paths below (the same list as the dispatcher's read-only terminal, F11). A mistake guard, not a boundary: the builder's own shell can still build a path at run time.
+the secret paths of the policy's secret_read rule (.stella/policy.json, F3 DC-11; the dispatcher's read-only terminal reads the same rule, F11). A mistake guard, not a boundary: the builder's own shell can still build a path at run time.
 Exit 2 = block; any error blocks."""
 import json, sys
 
@@ -13,9 +13,6 @@ import json, sys
 # quotes. Recursing into a folder that holds secrets counts too. Not caught: a path the shell builds at run time (an
 # unknown variable, $(…), an encoder).
 import codecs, fnmatch, glob, os, pwd, re, shlex, time
-SECRETS = (".env*", "*.pem", "*.key", "~/.hermes/.env", "~/.hermes/auth.json", "~/.claude/.credentials*",
-           "~/.local/share/opencode/auth.json", "~/.hermes/broker", "~/.ssh", "~/.aws", "~/.config/gh")
-SECRET_OK = (".env.example", ".env.sample", ".env.template")
 HOMES = sorted({pwd.getpwuid(os.getuid()).pw_dir, os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir})
 UNREADABLE = ""   # set when the role table or the data index cannot be read: every read is refused, with this message
 try:   # K6: the owner settings files (roles.json owner_settings) are read by no agent role; an unreadable table refuses all
@@ -29,13 +26,28 @@ try:   # K6: the owner settings files (roles.json owner_settings) are read by no
     FILE_CH = _roles.chains(_roles.owner_settings(_t), _LM)   # K1b: a path is one of these by what it IS (identity: a short name, a case variant, a link), never by its spelling
     TREE_CH = _roles.chains(_roles.state_trees(_t), _LM)
     DIR_CH = _roles.chains({os.path.dirname(f) for f in _roles.owner_settings(_t)} | set(_roles.state_trees(_t)), _LM)
+    _S = _roles.policy_rule("secret_read")   # F3 DC-11: the secret classes are policy data (.stella/policy.json), read by the one loader; unreadable refuses all
+    SECRETS, SECRET_OK, PROBES = tuple(_S["deny"]), tuple(_S["allow"]), tuple(_S["glob_probes"])
+    SECRET_DIRS = [d if d.startswith("/") else f"{h}/{d[2:]}" for d in _S["dirs"] for h in HOMES]   # /proc among them: a recursive search there reads every process's environment
+    SECRET_TEXT = re.compile("|".join(_S["text"]))   # a match whose word is an allowed name (SECRET_OK) is let through: _secret_text
 except Exception as _e:
     OWNER_FILES, OWNER_TREES, OWNER_TEXT, FILE_CH, TREE_CH, DIR_CH = None, [], [], [], [], []
-    UNREADABLE = f"the role table or the data index cannot be read ({type(_e).__name__}), so every read is refused until it is fixed [STL-CFG-303]"
-SECRET_DIRS = [f"{h}/{d}" for h in HOMES for d in (".hermes", ".claude", ".local/share/opencode", ".ssh", ".aws", ".config/gh")]
-SECRET_DIRS.append("/proc")   # a recursive search of /proc reads every process's environment
-SECRET_TEXT = re.compile(r"(?<![\w.-])\.env(?!\.(?:example|sample|template)\b)|\.claude/\.credentials|\.hermes/auth\.json|"
-                         r"opencode/auth\.json|\.hermes/broker\b|(?:(?<![\w.~-])|(?<=-[A-Za-z]))/proc/(?:self|thread-self|\d|[*?\[$])|(?<![\w.-])\.(?:ssh|aws)\b|\.config/gh\b")
+    SECRETS, SECRET_OK, PROBES, SECRET_DIRS, SECRET_TEXT = (), (), (), [], None
+    UNREADABLE = f"the role table or the data index cannot be read, or the policy data (.stella/policy.json) ({type(_e).__name__}), so every read is refused until it is fixed [STL-CFG-303]"
+WORD_END = set(" \t\n'\"`;|&<>(){}=,")
+
+
+def _secret_text(cmd):
+    """True when the command text names a secret path (the rule's text patterns), unless each word that does is an allowed name."""
+    for m in SECRET_TEXT.finditer(cmd):
+        a, b = m.start(), m.end()
+        while a and cmd[a - 1] not in WORD_END:
+            a -= 1
+        while b < len(cmd) and cmd[b] not in WORD_END:
+            b += 1
+        if not any(fnmatch.fnmatch(cmd[a:b].rsplit("/", 1)[-1].casefold(), o) for o in SECRET_OK):
+            return True
+    return False
 RECURSIVE = {"rg", "ag", "ack", "rgrep", "find", "tar", "zip", "cp", "rsync", "scp", "diff"}   # diff: two folders compare every file (B2V-14)
 GIT_READERS = {"diff", "grep", "difftool"}   # B2V-14: a path outside the repo turns them into plain file readers
 FOLDER_OPTS = {"jq": ("-L", "--library-path")}   # B.2 point 9 (W4-CV3-03): a reader that builds a file name from a NAMED folder and a word (jq -L <dir> with
@@ -65,7 +77,7 @@ def secret_path(p):
     if OWNER_FILES is None or _hit(p, FILE_CH, ("equal",)) or _hit(p, TREE_CH, ("equal", "inside")):
         return True
     b = os.path.basename(p).casefold()   # B2V-01: .ENV is .env on a case-insensitive mount
-    if b not in SECRET_OK and any(fnmatch.fnmatch(b, s) for s in SECRETS if "/" not in s):
+    if not any(fnmatch.fnmatch(b, o) for o in SECRET_OK) and any(fnmatch.fnmatch(b, s) for s in SECRETS if "/" not in s):
         return True
     return any(fnmatch.fnmatch(p, h + s[1:]) or fnmatch.fnmatch(p, h + s[1:] + "/*")
                for h in HOMES for s in SECRETS if s.startswith("~/"))
@@ -129,7 +141,7 @@ def _path_why(word, cwd, names, recursive):
                 if recursive and (_hit(q, FILE_CH, ("contains",)) or _hit(q, TREE_CH, ("contains",))):   # also a folder that does not exist (yet)
                     return f"recursing into {q} reads an owner settings file or an owner state path [STL-CFG-312]"   # K6: the folder that holds one
         b = os.path.basename(w)
-        if b.startswith(".") and glob.has_magic(b) and any(fnmatch.fnmatch(n, b) for n in (".env", ".env.local", ".credentials.json")):
+        if b.startswith(".") and glob.has_magic(b) and any(fnmatch.fnmatch(n, b) for n in PROBES):
             return f"the glob {word} matches secret files"
     return None
 
@@ -194,7 +206,7 @@ def secret_why(cmd, cwd):
         return "the command names an owner settings file"   # B2V-16: the owner-settings tail, not "block for a secret"
     if any(t in cmd.casefold() for t in OWNER_TEXT):
         return "the command names an owner state path of the apply tool (its backups, applied state or event log) [STL-CFG-312]"
-    if SECRET_TEXT.search(cmd):
+    if _secret_text(cmd):
         return "the command names a secret path"
     if _owner_dir(cwd):
         return f"{cwd} is the folder that holds an owner settings file"
