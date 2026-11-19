@@ -134,7 +134,7 @@ key)   # T-PROXY-KEY: the key never in a response, log or error; client auth str
   c0=$(calls); call k1 "$TOK" qa-m1 '{"x-api-key": "QAJUNK-client", "api-key": "QAJUNK-client2"}'
   ok '[ "$(st k1)" = 200 ] && [ "$(calls)" = $((c0 + 1)) ]' "T-PROXY-KEY a call with a valid token is forwarded once and answered 200"
   UP=$(last_up)
-  ok 'jq -e --arg h "$HDR" --arg v "${HTPL/\{key\}/$KEY}" "[.headers | to_entries[] | select((.key | ascii_downcase) == (\$h | ascii_downcase)) | .value] == [\$v]" <<<"$UP"' \
+  ok '[ -n "$UP" ] && jq -e --arg h "$HDR" --arg v "${HTPL/\{key\}/$KEY}" "[.headers | to_entries[] | select((.key | ascii_downcase) == (\$h | ascii_downcase)) | .value] == [\$v]" <<<"$UP"' \
     "T-PROXY-KEY upstream got the real key in the protocol's own header template, once"
   ok '! grep -qF -- "$TOK" <<<"$UP" && ! grep -qF QAJUNK <<<"$UP"' "T-PROXY-KEY every client auth header is stripped (the run token and other key headers never reach upstream)"
   ok '[ -n "$(st k1)" ] && ! grep -qF -- "$KEY" "$T/o/k1.json"' "T-PROXY-KEY the key is in no response body or header"
@@ -178,7 +178,7 @@ ledger)   # T-PROXY-LEDGER: each call writes a ledger record and respects the bu
   UL=$R/$(ix .usage_ledger); u0=$(nl "$UL"); e0=$(nl "$EV")
   call l1 "$TOK" qa-m2
   ok '[ "$(st l1)" = 200 ] && [ "$(nl "$UL")" = $((u0 + 1)) ]' "T-PROXY-LEDGER one call: one usage ledger record"
-  ok 'tail -n1 "$UL" | jq -e ".connection == \"qa-api\" and .model == \"qa-m1\" and .role == \"builder\" and .card == \"qa-card-1\" and (.tokens.input > 0)"' "T-PROXY-LEDGER the record names the connection, the pinned model, role and card, with the upstream's token counts"
+  ok '[ -n "$(tail -n1 "$UL")" ] && tail -n1 "$UL" | jq -e ".connection == \"qa-api\" and .model == \"qa-m1\" and .role == \"builder\" and .card == \"qa-card-1\" and (.tokens.input > 0)"' "T-PROXY-LEDGER the record names the connection, the pinned model, role and card, with the upstream's token counts"
   ok '[ "$(nl "$EV")" -gt "$e0" ] && tail -n +$((e0 + 1)) "$EV" | grep >/dev/null qa-run-1 && ! grep -qF -- "$TOK" "$EV" && ! grep -qF -- "$KEY" "$EV"' "T-PROXY-LEDGER the call wrote an event line naming the run (no token, no key)"
   u1=$(nl "$UL"); call l2 "${TOK%????????}QAQAQAQA"
   ok 'refused l2 "STL-MDL-79[0-9]" && [ "$(nl "$UL")" = "$u1" ]' "T-PROXY-LEDGER a refused token writes no usage record"

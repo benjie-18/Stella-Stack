@@ -71,7 +71,7 @@ ROLE=$(jq -r '.roles | keys[0]' "$RJ")
 # rend <tag> <role> <link> [more args]: render; the prompt text (longest string of the JSON) in $T/o/<tag>.txt
 rend() { local t=$1; run "$t" PR render --role "$2" --link "$3" --brief "$T/brief.md" "${@:4}" --json
   jq -r '[.. | strings] | max_by(length) // ""' "$T/o/$t.out" >"$T/o/$t.txt" 2>/dev/null; }
-prof() { jq -e --arg p "$2" '[.. | strings] | index($p) != null' "$T/o/$1.out" >/dev/null 2>&1; }
+prof() { [ -s "$T/o/$1.out" ] && jq -e --arg p "$2" '[.. | strings] | index($p) != null' "$T/o/$1.out" >/dev/null 2>&1; }
 
 case $S in
 switch)   # AC9-profile-switch: a data change only
@@ -92,7 +92,7 @@ switch)   # AC9-profile-switch: a data change only
   ok '[ "$(cd "$R/bin" && find . -type f ! -name "*.pyc" -exec sha256sum {} + | sort | sha256sum)" = "$BIN0" ]' "AC9-profile-switch no code changed: bin/ is byte-identical"
   ;;
 order)   # T-PROMPT-ORDER: evidence first, question last, the family's parallel-tools line
-  ok 'jq -e "[.profiles[] | (.order[0] | test(\"evidence|context\")) and (.order[-1] | test(\"question\"))] | all and length > 0" "$PF"' "T-PROMPT-ORDER every profile's order starts with evidence/context and ends with the question"
+  ok '[ -s "$PF" ] && jq -e "[.profiles[] | (.order[0] | test(\"evidence|context\")) and (.order[-1] | test(\"question\"))] | all and length > 0" "$PF"' "T-PROMPT-ORDER every profile's order starts with evidence/context and ends with the question"
   rend o1 "$ROLE" qa-pp/qa-pm1
   grep -oE '^@@[^/@][^@]*@@$' "$T/o/o1.txt" | sed 's/@@//g' >"$T/o/o1.seq"
   jq -r '.profiles[] | select(.id == "qa-tags") | .order[]' "$PF" >"$T/o/order" 2>/dev/null

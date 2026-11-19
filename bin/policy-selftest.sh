@@ -70,10 +70,10 @@ regen)   # AC3-regen: one rule change regenerates every CLI's config
   CS=$(sha256sum <"$R/.claude/settings.json")
   run g0 P generate --all --write; ok '[ $RC = 0 ]' "AC3-regen generate --all --write renders the shipped policy (exit 0)"
   ok 'ls "$GEN"/*.json >/dev/null' "AC3-regen the committed generated configs exist under docs/hermes-local/generated"
-  run d0 P drift --json; ok '[ $RC = 0 ] && jq -e . "$T/o/d0.out"' "AC3-regen drift is clean (exit 0, JSON) right after a regeneration"
+  run d0 P drift --json; ok '[ $RC = 0 ] && [ -s "$T/o/d0.out" ] && jq -e . "$T/o/d0.out"' "AC3-regen drift is clean (exit 0, JSON) right after a regeneration"
   ADS=$(adapters); ok '[ -n "$ADS" ]' "AC3-regen adapters.json has at least one adapter with a policy part"
   ed .stella/policy.json '(.rules[] | select(.kind == "secret_read") | .deny) += ["*.qa-regen-canary"]'
-  ok 'jq -e "[.rules[] | select(.kind == \"secret_read\") | .deny[] | select(. == \"*.qa-regen-canary\")] | length == 1" "$PJ"' "AC3-regen precondition: one secret rule glob added in the data"
+  ok '[ -s "$PJ" ] && jq -e "[.rules[] | select(.kind == \"secret_read\") | .deny[] | select(. == \"*.qa-regen-canary\")] | length == 1" "$PJ"' "AC3-regen precondition: one secret rule glob added in the data"
   run d1 P drift --json; ok '[ $RC = 1 ] && code d1' "AC3-regen the changed rule makes the committed configs stale: drift exit 1 with STL-GRD-61x"
   run g1 P generate --all --write; ok '[ $RC = 0 ]' "AC3-regen regenerate after the rule change (exit 0)"
   run d2 P drift --json; ok '[ $RC = 0 ]' "AC3-regen drift clean again after the regeneration"
@@ -114,7 +114,7 @@ render)   # AC2-policy-render: every active adapter's generated config holds the
   ok '[ -n "$SEC" ]' "AC2-policy-render precondition: the secret rule has deny globs"
   for a in $ADS; do
     G=$T/o/gen-$a; run "g-$a" P generate --adapter "$a" --worktree "$T/wt" --out "$G" --json
-    ok '[ $RC = 0 ] && [ -s "$G" ] && jq -e . "$T/o/g-$a.out"' "AC2-policy-render adapter $a: generate --adapter --worktree --out --json renders (exit 0, JSON)"
+    ok '[ $RC = 0 ] && [ -s "$G" ] && [ -s "$T/o/g-$a.out" ] && jq -e . "$T/o/g-$a.out"' "AC2-policy-render adapter $a: generate --adapter --worktree --out --json renders (exit 0, JSON)"
     hook() { grep -qF policy.py "$G"; }
     ok '{ grep -qF "$T/wt" "$G" || hook; } && ! grep -qF "{worktree}" "$G"' "AC2-policy-render adapter $a: the write boundary is the given worktree (no template left)"
     miss=; for p in $PROT; do grep -qF -- "$p" "$G" 2>/dev/null || miss="$miss $p"; done
@@ -129,7 +129,7 @@ secret)   # T-SECRET-DATA: the secret list lives only in policy data; secret-gua
     sed "s#/workspace/bin#$R/bin#g" "${h%%:*}" >"${h##*:}"; chmod +x "${h##*:}"; done
   term() { jq -nc --arg c "$2" --arg d "$R" '{tool_name: "terminal", tool_input: {command: $c}, cwd: $d}' | python3 -I "$1" >"$T/o/h.out" 2>&1; echo $?; }
   box_classes() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import box; print(box.secret_classes())' "$R/bin"; }
-  ok 'jq -e "[.rules[] | select(.kind == \"secret_read\")] | length == 1 and (.[0].deny | length > 0) and (.[0].allow | type == \"array\")" "$PJ"' \
+  ok '[ -s "$PJ" ] && jq -e "[.rules[] | select(.kind == \"secret_read\")] | length == 1 and (.[0].deny | length > 0) and (.[0].allow | type == \"array\")" "$PJ"' \
     "T-SECRET-DATA policy.json holds exactly one secret_read rule with deny and allow globs"
   ok '! grep -qE "^[[:space:]]*SECRETS(_OK)?[[:space:]]*=[[:space:]]*[\(\[]" "$HK/builder/secret-guard.py" "$HK/default/read-only-terminal.py" "$R/bin/box.py"' \
     "T-SECRET-DATA no hook and not box.py keeps its own literal SECRETS / SECRET_OK list"
@@ -152,11 +152,11 @@ secret)   # T-SECRET-DATA: the secret list lives only in policy data; secret-gua
   ok '[ "$(term "$SG" "cat qa-notes.txt")" = 0 ]' "T-SECRET-DATA control: the restored rule lets an ordinary read through"
   ;;
 sandbox)   # T-SANDBOX-STUB: the sandbox policy is data and a features stub due at E1
-  ok 'jq -e ".sandbox.writable == [\"{worktree}\"] and (.sandbox.network | type == \"string\" and length > 0) and (.sandbox | has(\"credential_dirs_hidden\"))" "$PJ"' \
+  ok '[ -s "$PJ" ] && jq -e ".sandbox.writable == [\"{worktree}\"] and (.sandbox.network | type == \"string\" and length > 0) and (.sandbox | has(\"credential_dirs_hidden\"))" "$PJ"' \
     "T-SANDBOX-STUB policy.json sandbox: writable is the worktree only, a network rule, credential_dirs_hidden"
-  ok 'jq -e "[.entries[] | select(.id == \"adapter-sandbox\")] | length == 1 and .[0].due_phase == \"E1\" and (.[0].replaced_by | type == \"string\" and length > 0) and .[0].status != \"on\"" "$R/.stella/features.json"' \
+  ok '[ -s "$R/.stella/features.json" ] && jq -e "[.entries[] | select(.id == \"adapter-sandbox\")] | length == 1 and .[0].due_phase == \"E1\" and (.[0].replaced_by | type == \"string\" and length > 0) and .[0].status != \"on\"" "$R/.stella/features.json"' \
     "T-SANDBOX-STUB features.json stub adapter-sandbox: due_phase E1, replaced_by set, not on"
-  ok 'jq -e "[.files[] | select(.path == \".stella/policy.json\")] | length == 1" "$IX" && [ -f "$R/.stella/schemas/policy.schema.json" ]' "T-SANDBOX-STUB policy.json has an index row and a schema"
+  ok '[ -s "$IX" ] && jq -e "[.files[] | select(.path == \".stella/policy.json\")] | length == 1" "$IX" && [ -f "$R/.stella/schemas/policy.schema.json" ]' "T-SANDBOX-STUB policy.json has an index row and a schema"
   run c0 python3 -I "$R/bin/stella_data.py" check; ok '[ $RC = 0 ]' "T-SANDBOX-STUB stella_data.py check passes with the policy data"
   run c1 P check --json; ok '[ $RC = 0 ]' "T-SANDBOX-STUB policy.py check passes"
   ed .stella/policy.json '.sandbox.writable = ["{worktree}", "/"]'
