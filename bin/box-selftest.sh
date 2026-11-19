@@ -284,7 +284,7 @@ rm "$PH/home/.claude-link"
 cat >"$T/sc.py" <<'PY'
 import ast, json, os, sys
 sys.path.insert(0, sys.argv[1]); import roles, box
-rules = [r for r in json.load(open(os.path.join(roles.STELLA, ".stella/policy.json"), encoding="utf-8"))["rules"] if r["kind"] == "secret_read"]
+rules = [r for r in json.load(open(os.path.join(roles.DATA_ROOT, ".stella/policy.json"), encoding="utf-8"))["rules"] if r["kind"] == "secret_read"]
 assert len(rules) == 1 and rules[0]["deny"], "exactly one secret_read rule, with deny globs"
 assert roles.policy_rule("secret_read") == rules[0], "the one loader reads that rule"
 assert box.secret_classes() == (list(rules[0]["deny"]), list(rules[0]["allow"])), "box.secret_classes() is the rule's deny and allow"
