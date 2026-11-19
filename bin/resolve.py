@@ -22,17 +22,19 @@ Probe data (F2b item C, owner ruling 2026-11-18): what a link can do is read fro
 bin/probe.py's records, the newest not dated in the future; the catalog's advertised capabilities are not read). A link with no
 record may serve (a CLI-login link cannot be probed at all): rule 4 refuses only a link whose record fails a requirement; the CLI
 writes one STL-MDL-738 warning alert line when the link its answer serves (the served rung, else the first usable link) has no
-record and the role has requirements or --tokens gives a size (route.py does the same for each pick; resolve(ctx) writes none). Rule 4 reads it, and through rule 4 the needs-class trigger, --tokens and cross_family. The records file is
+record and the role has requirements or --tokens gives a size (route.py does the same for each pick; resolve(ctx) writes none); a
+line that cannot be written withdraws the answer (STL-CFG-318). A records file present but unusable fails closed: every link with
+no usable record counts as failing every requirement (stella_data.probe_records, STL-MDL-739 in check). Rule 4 reads it, and through rule 4 the needs-class trigger, --tokens and cross_family. The records file is
 protected state (index key probe_records: no role may write it, records of another install are ignored); a forged record can make a
 link look able (it then fails at run time and fails over) or unable (no link: fail closed), never widen reach: rules 1 to 3 and 5 to
 7 do not read it. --tokens N: after the class order is fixed, a link whose probed effective context is below N is excluded
-(STL-MDL-715); a link with no record is not (it may serve, unproven). Cross-family review (a role of cross_family.reviewer_roles, with a card, not on a rung walk): see
+(STL-MDL-715); a link with no record is not (it may serve, unproven). Cross-family review (a role of cross_family.reviewer_roles, with a card; on a rung walk the served rung is judged, never moved): see
 crossed(); a waived answer is written by the CLI alone as one trusted routing.cross-family-waiver line (STL-MDL-737; logged true), none
 in a worker environment (logged false: information only); a line that cannot be written withdraws the answer (chain [], the log's
 code, exit 1).
 Rung walk (F2b item D; --rung N >= 1, ctx["rung"]; 0 is the answer without it): rungs N.. of the role's escalation_chain in the
 active preset are judged alone in order by the rules below (rule 5's class order widened to the preset's needs class and last
-resort; the last resort outside the order still needs a crossing grant; an exempt role keeps its own order); an excluded or
+resort; the last resort outside the order still needs a crossing grant, the order read before any class is put first (DC-05); an exempt role keeps its own order); an excluded or
 waiting (needs_grant) rung is skipped, the first other one served (a rung in cooldown is answered as itself, STL-MDL-724). The
 answer adds rung {requested, served, last, link, skipped[] {rung, connection, model, link_class, status, code, reason}} and its
 chain is [link] or []; none served: STL-MDL-731 (escalate to the owner), exit 1. The CLI alone writes the walk to the event log:
@@ -336,13 +338,15 @@ def resolve(ctx, d=None):
             return X(POLICY, "the connection does not allow every data class the role handles")
         if models.get((prov["id"], model)) is None:
             return X(UNMET, "its model is not listed for its connection")
-        miss = sd.unmet(req, rec(prov, model))
-        return X(UNMET, f"its probe record does not meet the role's requirements ({', '.join(miss)})") if miss else None
+        r = rec(prov, model)
+        miss = sd.unmet(req, r)
+        return X(UNMET, f"its probe record does not meet the role's requirements ({', '.join(miss)})" + (f": {r[sd.BROKEN]}" if r.get(sd.BROKEN) else "")) if miss else None
 
     # the preset's needs class goes first for a listed task tier, or when no link of the order can serve the role (rules 1 to 4)
     notes = [f"class order {json.dumps(order)} of " + ("the exempt role" if exempt else "the Local only policy, which overrides the preset" if local_only
                                                        else f"preset {sd.idn(preset, True)}")]
-    if needs is not None and needs not in flat(order):
+    effective = flat(order)   # DC-05: the crossing test reads the order before any class is put first
+    if needs is not None and needs not in effective:
         listed = tier in mode.get("frontier_when", {}).get("tiers", [])
         if listed or not any(early(p, m) is None for p, m in catalog(flat(order))):
             order = [needs] + order
@@ -369,7 +373,7 @@ def resolve(ctx, d=None):
         probs = {m["kind"]: m for m in reversed(sd.route_problems(pols, need, prov, now, pid))}   # the first problem of each kind
         if "never" in probs:   # a class that never reaches a hosted link refuses before any grant is offered, a crossing grant too (DC-08)
             return X(POLICY, f"the connection {probs['never']['text']}")
-        if cls == last and cls not in inorder and not any(g["preset"] == preset and g["to_class"] == cls and sd.grant_in_force(g, pid, now) for g in crossing):
+        if cls == last and cls not in effective and not any(g["preset"] == preset and g["to_class"] == cls and sd.grant_in_force(g, pid, now) for g in crossing):
             return ("needs_grant", CROSSING, f"link class {sd.idn(cls, True)} is the last resort of preset {sd.idn(preset, True)}, and no crossing grant is in force here",
                     {"kind": "crossing", "to_class": cls}, None)
         if "grant" in probs:
@@ -450,6 +454,8 @@ def resolve(ctx, d=None):
         elif bad:
             out["code"], out["reason"] = bad["code"], f"card app {sd.idn(bad['app'], True)}: {bad['reason']}"
         out["decision"] = {"rule": "rung", "reason": head + (f"rung {link[0]} of {len(rungs)} served" if link else "no rung served") + f", {len(skipped)} skipped"}
+        if cf and role in cf["reviewer_roles"]:   # CRT-05: the served rung is judged too (one link: nothing to reorder)
+            out["cross_family"] = crossed(ctx, d, out, mode, cf, [], {})
         return out
     if not any(e["status"] == "usable" for e in chain):
         count = {s: sum(e["status"] == s for e in chain) for s in ("excluded", "needs_grant", "cooldown")}
@@ -500,6 +506,12 @@ def crossed(ctx, d, out, mode, cf, items, ranks):
     return {**r, "status": "waived", "reason": "a usable link of another family is reachable only across a pin, a class-order item, a source or the privacy order"
             if any(map(other, chain)) else "no usable link of the review role has a known family other than the builder's"}
 
+def withdraw(out, code, why):
+    """A served answer whose log or alert line could not be written: no link (a rung's too), the code and why."""
+    if out.get("rung"):
+        out["rung"]["served"] = out["rung"]["link"] = None
+    out["chain"], out["code"], out["reason"] = [], code, why
+
 def waived_line(out):
     """The CLI's one trusted routing.cross-family-waiver line (STL-MDL-737) for a waived answer; in a worker environment none can
     be written, and the answer stays information (logged false). A line that cannot be written withdraws the answer (chain [],
@@ -515,7 +527,7 @@ def waived_line(out):
         cf["logged"] = True
     except Exception as e:   # fail closed
         code, why = (e.code, e.problem) if isinstance(e, el.EventError) else (LOG_FAILED, f"{type(e).__name__} while writing the waiver's event line")
-        out["chain"], out["code"], out["reason"] = [], code, f"the cross-family waiver's event line could not be written ({why}), so no link is served"
+        withdraw(out, code, f"the cross-family waiver's event line could not be written ({why}), so no link is served")
 
 def main(argv):
     p = argparse.ArgumentParser(prog="resolve.py", allow_abbrev=False, description="The ordered chain of model links a role may use right now, and why (JSON).")
@@ -535,7 +547,8 @@ def main(argv):
     log = out.get("rung") and walked(out)
     lk = (out["rung"].get("link") if out.get("rung") else None) or next((e for e in out["chain"] if e["status"] == "usable"), None)   # the link this answer serves
     if lk and out["chain"] and lk.get("probed") is False and sd.needs_probe(sd.load(sd.load(sd.INDEX)["role_table"])["roles"][out["role"]].get("requirements", {}), None, a["tokens"]):
-        sd.alert_line(sd.UNPROBED, f"role {out['role']}: the answer serves link {link_key(lk)}, which has no probe record (run bin/probe.py due)")
+        if sd.alert_line(sd.UNPROBED, f"role {out['role']}: the answer serves link {link_key(lk)}, which has no probe record (run bin/probe.py due)") is False:
+            withdraw(out, LOG_FAILED, f"the {sd.UNPROBED} alert line for unprobed link {link_key(lk)} could not be written, so no link is served")   # CRT-04: never served unflagged
     if (out.get("cross_family") or {}).get("status") == "waived" and any(e["status"] == "usable" for e in out["chain"]):   # no link served: no review to waive
         waived_line(out)
     print(json.dumps(out, indent=2, ensure_ascii=False))
@@ -568,8 +581,7 @@ def walked(out):
     except Exception as e:   # fail closed: an unlogged skip is never silent
         code, why = (e.code, e.problem) if isinstance(e, el.EventError) else (LOG_FAILED, f"{type(e).__name__} while writing the walk's event line")
         if r["served"] is not None:
-            r["served"] = r["link"] = None
-            out["chain"], out["code"], out["reason"] = [], code, f"the walk's event line could not be written ({why}), so no rung is served"
+            withdraw(out, code, f"the walk's event line could not be written ({why}), so no rung is served")
             return None
         r["log_code"] = code
         return code, why

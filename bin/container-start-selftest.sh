@@ -81,6 +81,9 @@ ok 'STELLA_ROOT=$FX python3 -I /workspace/bin/stella_data.py check >/dev/null 2>
 probes "$FX" "| if .model == \"$WANT\" then .vision = true | .context.effective = 999999 else . end"; run STELLA_ROOT=$FX
 ok '[ "$(jq -c ".providers[].models[\"$WANT\"] | [.capabilities.tools, .capabilities.input, .limit.context]" "$CFG")" = "[true,[\"text\",\"image\"],999999]" ] && [ "$(jq -c ".entries[] | $LQ | .models[] | select(.id == \"$WANT\") | [.capabilities.vision, .capabilities.context_tokens]" "$FX/.stella/connections.json")" != "[true,999999]" ]' \
   "F2b C: the config's tool calling, vision and context are the link's probe record's (vision true, effective 999999), not the catalog's"
+rm -f "$FX/$(jq -r .probe_records "$FX/.stella/data-files.json")"; run STELLA_ROOT=$FX
+ok '[ "$rc" = 0 ] && [ "$(jq -c ".providers[].models[\"$WANT\"] | [.capabilities.tools, .limit.context]" "$CFG")" = "$(jq -c ".entries[] | $LQ | .models[] | select(.id == \"$WANT\") | [.capabilities.tool_calling == true, .capabilities.context_tokens]" "$FX/.stella/connections.json")" ]' \
+  "C-CVER-03 a link with no probe record (it may serve unproven) keeps the catalog's tool calling and context in the config"
 probes "$FX"
 nomodel() { jq -e '(has("model") | not) and ([.providers[].models] == [{}]) and (.permission.skill | length > 0)' "$CFG" >/dev/null && [ ! -e "$CFG.tmp" ] && [ ! -e "$CFG.err" ] && [ -f "$T/apply.ran" ]; }
 RS=$FX/$(jq -r .routing_state "$FX/.stella/data-files.json"); mkdir -p "$(dirname "$RS")"   # every local link cools down

@@ -8,19 +8,19 @@ CLI (host only: every command refuses in a worker environment, STL-CFG-312; the 
         (STL-MDL-735) unless --again, which replaces that record.
   probe.py due [--json]    {due: [{connection, model, version[, probeable: false]}], unreachable: [{connection, problem}]}: the links of the catalog whose
         current model-list version has no record (the batch lane's input; scheduling it is later work), and with version null and
-        probeable false the links with no record whose connection has no wire shape (a CLI login): they serve unproven, flagged
-        (STL-MDL-738), and no probe run can record them.
+        probeable false the links with no record of a CLI-login connection: they serve unproven, flagged (STL-MDL-738), and no probe
+        run can record them. An api connection whose protocol is missing or unknown is unreachable, the field named.
   probe.py show [--connection C] [--model M] [--json]    the records.
   probe.py check [--json]  the records file against its schema and the routing data (the file is protected state, not a data row).
 Records: the file the index key probe_records names (a protected state path: no role writes it, git never holds it), schema
 .stella/schemas/probes.schema.json. A reader (records()) takes nothing from a file that is unreadable or invalid, and ignores a record of
-another install. A capability the probe could not test is null (null meets no requirement). A link that never answers: STL-MDL-736,
+another install; routing then fails closed (stella_data.probe_records: no link counts as unprobed), and a run drops the bad records. A capability the probe could not test is null (null meets no requirement). A link that never answers: STL-MDL-736,
 nothing recorded. An unknown connection or model: STL-MDL-734. Tests (each a smoke test judged here, never by the model's word):
   json: an object came back. tool_calling / parallel_tool_calls: the wire shape's own request carries a tool; one / two calls in one
   answer. vision: false (shortcut: no wire shape has an image form, upgrade when protocols define one). output_shape: for each id of
   routing probe.output_shapes, strongest first, that the wire shape names a pointer for, the test schema is sent there shape_trials
   times; the first id with no invalid answer is recorded, else none. context: `needles` chains of `hops` hops planted in a filler
-  prompt at each length (about four bytes a token); the score of a length is the share of chains answered; effective = the longest
+  prompt at each length (about four bytes a token); the score of a length is the share of chains answered (the last code, and no other planted code); effective = the longest
   length whose score >= the shortest's * (1 - tolerance); when the shortest scores 0, the shortest length (never 0).
 Exit: 0 ok; 1 refused or failed (catalog code and plain message on stderr, {code, problem} on stdout); 2 usage."""
 import os, sys
@@ -75,24 +75,37 @@ def problems(doc, rt=None):
     return errs
 
 
+def raw():
+    """The records file as parsed (not judged); a missing file is an empty one. Raises when it cannot be read."""
+    try:
+        with open(path(), "rb") as f:
+            return json.loads(f.read(el.MAX_FILE + 1))
+    except FileNotFoundError:
+        return {"schema_version": 1, "records": []}
+
+
 def load(rt=None):
     """(the whole document, None) or (None, the problem): a missing file is an empty one."""
     try:
-        with open(path(), "rb") as f:
-            doc = json.loads(f.read(el.MAX_FILE + 1))
-    except FileNotFoundError:
-        return {"schema_version": 1, "records": []}, None
+        doc = raw()
     except (OSError, ValueError, RecursionError, sd.DataError, el.EventError) as e:
         return None, f"the records file cannot be read ({type(e).__name__})"
     errs = problems(doc, rt)
     return (None, errs[0]) if errs else (doc, None)
 
 
+def read(rt=None):
+    """(the valid records of this install, None), or ([], the problem) for a file that is present but cannot be used whole. Routing
+    reads it through stella_data.probe_records(), which fails closed on the problem (CRT-01): a missing file is no record, a broken
+    one never makes a link look unprobed."""
+    doc, why = load(rt)
+    iid = sd.install_id() if doc else None
+    return ([r for r in doc["records"] if r["install_id"] == iid] if doc else []), why
+
+
 def records(rt=None):
     """The valid records of this install; none when the file is unreadable or invalid (fail closed)."""
-    doc, _ = load(rt)
-    iid = sd.install_id() if doc else None
-    return [r for r in doc["records"] if r["install_id"] == iid] if doc else []
+    return read(rt)[0]
 
 
 def shape_of(connection, model):
@@ -105,14 +118,22 @@ def shape_of(connection, model):
 
 
 def save(rec):
-    """Add the record (replacing the one of its key) under the file's lock, written whole after it passes its own check."""
+    """Add the record (replacing the one of its key) under the file's lock, written whole after it passes its own check. A record
+    that breaks the file (one that fails alone, or the earlier of a key twice) is dropped, so one bad record never blocks the
+    probe that repairs it (CRT-01); a file that cannot be read at all is refused (the owner fixes it: probe.py check names it)."""
     import route
     p = path()
     with el.locked(p + ".lock"):
-        doc, why = load()
-        if doc is None:
-            raise Stop(FAILED, why)
-        doc["records"] = [r for r in doc["records"] if (r["connection"], r["model"], r["version"]) != (rec["connection"], rec["model"], rec["version"])] + [rec]
+        try:
+            got, rt = raw(), sd.routing()
+        except (OSError, ValueError, RecursionError, sd.DataError, el.EventError) as e:
+            raise Stop(FAILED, f"the records file cannot be read ({type(e).__name__})")
+        keep = {}
+        for r in got.get("records") if isinstance(got, dict) and isinstance(got.get("records"), list) else []:
+            if not problems({"schema_version": 1, "records": [r]}, rt):
+                keep.pop(k := (r["install_id"], r["connection"], r["model"], r["version"]), None)
+                keep[k] = r
+        doc = {"schema_version": 1, "records": [r for r in keep.values() if (r["connection"], r["model"], r["version"]) != (rec["connection"], rec["model"], rec["version"])] + [rec]}
         errs = problems(doc)
         if errs:
             raise Stop(FAILED, f"the record would break the records file ({errs[0]})")
@@ -166,7 +187,7 @@ def link_of(route, a):
 
 # ---- the tests ----
 def chain_prompt(tokens, needles, hops, rnd):
-    """(prompt, last codes): filler of about `tokens` tokens with chains of codes planted at even gaps, and one question per chain asked after it."""
+    """[(prompt, its chain's last code, every planted code)]: filler of about `tokens` tokens with chains of codes planted at even gaps, and one question per chain asked after it."""
     codes, chains = set(), []
     for _ in range(needles):
         c = []
@@ -181,13 +202,18 @@ def chain_prompt(tokens, needles, hops, rnd):
     gap = max((tokens * 4 - sum(map(len, facts))) // (len(facts) + 1), 0)
     body = "".join((FILLER * (gap // len(FILLER) + 1))[:gap] + f for f in facts)
     asks = [f"Start from code {c[0]} and follow the keys, each code to the code it is the key to, until a code has no key. Answer with the last code only." for c in chains]
-    return [(f"{body}\n\n{q}", c[-1]) for q, c in zip(asks, chains)]
+    return [(f"{body}\n\n{q}", c[-1], codes) for q, c in zip(asks, chains)]
+
+
+def answered(text, last, codes):
+    """The answer holds the chain's last code and no other planted code (CRT-03: an echo of every code is no answer)."""
+    return last in text and not any(c in text for c in codes - {last})
 
 
 def context(route, ask, p, rnd):
     pts = []
     for n in sorted(p["lengths"]):
-        got = sum(1 for prompt, last in chain_prompt(n, p["needles"], p["hops"], rnd) if last in str((ask(prompt)[0] or {}).get("text") or ""))
+        got = sum(1 for prompt, last, codes in chain_prompt(n, p["needles"], p["hops"], rnd) if answered(str((ask(prompt)[0] or {}).get("text") or ""), last, codes))
         pts.append({"tokens": n, "score": round(got / p["needles"], 4)})
     short = pts[0]["score"]
     # W23P-02: a link that fails the multi-hop test even at the shortest length answered prompts of that length, so that length is
@@ -271,10 +297,15 @@ def cmd_due(a):
     seen = {(r["connection"], r["model"]) for r in recs}
     timeout = route.timeout_of()
     for prov in cat.values():
-        proto = protos.get(prov.get("protocol")) if prov["kind"] == "provider" and prov.get("enabled") is not False else None
-        if proto is None:   # no wire shape (a CLI login): it cannot be probed; its links with no record serve unproven (owner ruling 2026-11-18)
-            if prov["kind"] == "provider" and prov.get("enabled") is not False:
-                due += [{"connection": prov["id"], "model": m["id"], "version": None, "probeable": False} for m in prov["models"] if (prov["id"], m["id"]) not in seen]
+        if prov["kind"] != "provider" or prov.get("enabled") is False:
+            continue
+        if prov["type"] == "cli-login":   # no wire shape: it cannot be probed; its links with no record serve unproven (owner ruling 2026-11-18)
+            due += [{"connection": prov["id"], "model": m["id"], "version": None, "probeable": False} for m in prov["models"] if (prov["id"], m["id"]) not in seen]
+            continue
+        proto = protos.get(prov.get("protocol"))
+        if proto is None:   # an api connection a probe could reach once its catalog entry names its wire shape (B-VER-02)
+            bad.append({"connection": prov["id"], "problem": f"connection {sd.idn(prov['id'])}: its protocol (wire shape) is " +
+                        ("not set in the catalog" if not prov.get("protocol") else f"{sd.idn(prov['protocol'])}, not an entry of the wire shapes")})
             continue
         try:
             items = listing(route, prov, proto, local, key_of(route, prov), timeout)

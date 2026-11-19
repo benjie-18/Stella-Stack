@@ -541,4 +541,22 @@ ok '[ "$(rc x3)" = 1 ] && J x3 ".chain == [] and (.code | test(\"^STL-[A-Z]+-[0-
 ok '! J p0 ".stubs | index(\"routing-advertised-capabilities\") or index(\"routing-advertised-context\")" && ! grep -q "advertised-capabilities\|advertised-context" "$RS"' \
   "15g C-DC-06 no answer and no resolver code rests on the advertised-capability or advertised-context stubs"
 
+# ---- 16: F2b fix round (CRT-01, CRT-02, CRT-04, CRT-05) ----
+mk pb pr; own pb '[["qa-local", "qa-local-m1", {"tool_calling": false}], ["qa-local", "qa-local-m2", {"tool_calling": false}]]'
+jq '.records += [.records[0] | .global_id = "11111111-1111-4111-8111-111111111111"]' "$T/pb/$PF" >"$T/pb/$PF.n" && mv "$T/pb/$PF.n" "$T/pb/$PF"
+rs pb b1 --role "$NR" --project qa-proj; STELLA_ROOT=$T/pb python3 -I -B "$SD" check >"$T/o/pbcheck" 2>&1; kb=$?
+ok '[ "$(rc b1)" = 1 ] && J b1 "([.chain[] | select(.status == \"usable\")] | length) == 0 and ([.chain[] | select(.connection == \"qa-front\")][0] | .code == \"$C_UNMET\" and (.reason | test(\"probe records\")))" &&
+  [ "$kb" != 0 ] && grep -q "^STL-MDL-739 " "$T/o/pbcheck"' \
+  "16a CRT-01 a probe records file that is present but unusable (a duplicate record) lifts no refusal: every link with no usable record is unmet ($C_UNMET, the file named), check fails with STL-MDL-739"
+mk cr base; preset cr qa-x "{class_order: [\$l], needs_class: \$x, last_resort: \$x, frontier_when: {tiers: [\$t]}, roles: {(\$r): {active: true, escalation_chain: [$(L qa-front m1)]}}}"
+rs cr x1 --role "$NR" --project qa-proj --rung 1 --tier "$TIER"
+ok 'passes cr && J x1 ".rung.served == null and [.rung.skipped[] | [.rung, .status, .code]] == [[1, \"needs_grant\", \"$C_CROSS\"]]"' \
+  "16b CRT-02 DC-05 a needs class that is also the last resort, put first by a listed tier, still needs a crossing grant on its rung ($C_CROSS)"
+rm -f "$AL"; mkdir "$AL"; rs pr f1 --role "$NR" --project qa-proj; rmdir "$AL"; : >"$AL"
+ok '[ "$(rc f1)" = 1 ] && J f1 ".chain == [] and .code == \"STL-CFG-318\""' "16c CRT-04 an unprobed pick whose STL-MDL-738 alert line cannot be written is withdrawn (chain [], STL-CFG-318)"
+mk cr5 cf; ed cr5 role-assignments --arg v "$VR" --argjson ch "[$(L qa-front m1)]" '.effort_modes["qa-all"] |= (.cross_family_review = true | .roles[$v] = ((.roles[$v] // {active: true}) + {escalation_chain: $ch}))'
+n0=$(evn cr5 '.type == "routing.cross-family-waiver"'); rs cr5 v1 --role "$VR" --project qa-proj --card qa-card --rung 1; n1=$(evn cr5 '.type == "routing.cross-family-waiver"')
+ok 'passes cr5 && [ "$(rc v1)" = 0 ] && J v1 ".rung.served == 1 and .cross_family.status == \"waived\" and .cross_family.builder_family == \"qa-fa\" and .cross_family.logged == true" && [ $((n1 - n0)) = 1 ]' \
+  "16d CRT-05 a review role served on a rung of the builder's family is judged too: waived, one routing.cross-family-waiver line"
+
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
