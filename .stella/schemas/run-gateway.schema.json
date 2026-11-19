@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Run gateway",
+  "description": "Per-run tokens and the loopback model proxy (F3 item T; body B1 api; design section 2, DC-04). bin/run_token.py mints a token for every run and stores only its sha256 (index key run_tokens); bin/model_proxy.py swaps a token of an api link for the real key (bin/credentials.py) and forwards to the connection's catalog host only. Owner-only: only the owner path writes it.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "token": {
+      "type": "object",
+      "properties": {
+        "prefix": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]{2,15}_$",
+          "description": "The fixed start of every token, so a leak scanner can find one in a log or a file."
+        },
+        "random_bytes": {
+          "type": "integer",
+          "minimum": 32,
+          "maximum": 128,
+          "description": "Random bytes after the prefix (urlsafe base64)."
+        },
+        "ttl_s": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "A token's life when mint names no --ttl; it must exceed the longest run (a token that expires mid-run stops the run's model calls)."
+        },
+        "max_ttl_s": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The longest life mint accepts."
+        }
+      },
+      "required": [
+        "prefix",
+        "random_bytes",
+        "ttl_s",
+        "max_ttl_s"
+      ],
+      "additionalProperties": false
+    },
+    "proxy": {
+      "type": "object",
+      "properties": {
+        "bind": {
+          "enum": [
+            "127.0.0.1",
+            "::1"
+          ],
+          "description": "The address the proxy listens on: loopback only (model_proxy.py refuses any other, STL-MDL-799)."
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "The port when serve names no --port; 0 = ephemeral (the bound port goes to the index key model_proxy_state)."
+        },
+        "max_body_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The largest request body forwarded (STL-MDL-795 above it)."
+        },
+        "forward_headers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "description": "Client headers passed upstream (lower case). Every other client header is dropped, and an auth header of any protocol never passes, whatever this list says."
+        },
+        "forward_query": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          },
+          "description": "Query parameters passed upstream; every other one is dropped (a query could carry a key)."
+        }
+      },
+      "required": [
+        "bind",
+        "port",
+        "max_body_bytes",
+        "forward_headers",
+        "forward_query"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "token",
+    "proxy"
+  ],
+  "additionalProperties": false
+}

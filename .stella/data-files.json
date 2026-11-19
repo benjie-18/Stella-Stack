@@ -365,9 +365,23 @@
       "record_kind": "setting",
       "global_id": "442de288-ebe4-4a3b-9093-894e2a7a93ea",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "run-gateway",
+      "path": ".stella/run-gateway.json",
+      "schema": "run-gateway",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "b28b3dbf-00a8-485f-afba-4280cb6ba3e7",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ],
   "spans": ".supervisor/logs/spans.jsonl",
   "budget_state": ".supervisor/state/budget-state.json",
-  "model_check_state": ".supervisor/state/model-check-state.json"
+  "model_check_state": ".supervisor/state/model-check-state.json",
+  "run_tokens": ".supervisor/state/run-tokens.json",
+  "model_proxy_state": ".supervisor/state/model-proxy.json"
 }

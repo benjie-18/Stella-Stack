@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "token": {
+    "prefix": "stlrt_",
+    "random_bytes": 32,
+    "ttl_s": 43200,
+    "max_ttl_s": 172800
+  },
+  "proxy": {
+    "bind": "127.0.0.1",
+    "port": 0,
+    "max_body_bytes": 8388608,
+    "forward_headers": [
+      "accept",
+      "anthropic-version",
+      "anthropic-beta"
+    ],
+    "forward_query": [
+      "alt"
+    ]
+  }
+}
