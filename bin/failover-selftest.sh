@@ -432,7 +432,7 @@ s = http.server.ThreadingHTTPServer((sys.argv[1], 0), H)
 print(s.server_address[1], flush=True)
 s.serve_forever()
 P
-python3 -I "$T/srv429.py" "$LO" 777 >"$T/srv429.port" 2>/dev/null &
+python3 -I "$T/srv429.py" "$LO" 777 >"$T/srv429.port" 2>/dev/null & S429=$!; disown   # not a job of this shell: its stop is not a line after the verdict
 for i in $(seq 100); do [ -s "$T/srv429.port" ] && break; sleep 0.1; done
 prov st-h "$SHAPE0" 100000; ed connections.json --argjson p "$(head -n1 "$T/srv429.port")" '(.entries[] | select(.id == "st-h") | .hosts[0].port) = $p'; recs
 chain st-h/st-h-m1 st-b/st-b-m1; fresh; rm -f "$LS"; call lg3
@@ -446,6 +446,7 @@ ok '[ $RC = 0 ] && [ "$(cnt st-q/st-q-m1)" = 0 ] && [ "$(cnt st-b/st-b-m1)" = 1 
   "T-LIM-CONC: a link whose slots another process holds is not called; the next link answers (one limit.hit line)"
 chain st-q/st-q-m1; fresh; call lg5
 ok '[ $RC = 0 ] && [ "$(cnt st-q/st-q-m1)" = 1 ] && [ "$(LG status --connection st-q --model st-q-m1 --json | jq .concurrency.in_use)" = 0 ]' "a call holds its slot while it runs and gives it back after"
+kill $S429 2>/dev/null
 
 rm -f "$R/bin/resolve.py"; call nores
 ok '[ $RC = 1 ] && J nores ".code == \"STL-MDL-710\"" && [ "$(cnt st-a/st-a-m1)" = 0 ]' "with no resolver nothing is routed (STL-MDL-710)"
