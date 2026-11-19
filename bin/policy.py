@@ -15,13 +15,13 @@ CLI: policy.py check [--json]          validate the policy and every adapter's p
                                        outside the write boundary, 616 a read of a secret or protected path, 617 an unreadable
                                        payload or policy)
 Exit: 0 ok; 1 a problem (a catalog code and its plain message); 2 usage."""
-import argparse, copy, fnmatch, json, os, re, shlex, sys
+import argparse, copy, fnmatch, json, os, re, shlex, sys, tempfile
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)
 import roles, stella_data as sd, worker_env
 
-ROOT = roles.STELLA   # the tree whose data is read and whose generated files are written
+ROOT = roles.DATA_ROOT   # the tree whose data is read and whose generated files are written
 STACK = roles.ROOT    # the stack folder every rendered path names (as the role table's paths do), whichever tree renders
 
 
@@ -33,14 +33,19 @@ def items(kind, p, table, ad, all_ads, worktree):
     """{set name: [vars]} of one rule kind: what an adapter's templates render."""
     r = roles.policy_rule(kind, p)
     if kind == "write_boundary":
-        return {"outside": [{}], "writable": [{"path": w.replace("{worktree}", worktree)} for w in r["writable"] if worktree or "{worktree}" not in w]}
+        return {"outside": [{}], "writable": [{"path": p} for p in writable(r, worktree)]}
     if kind == "protected_read":
         return {"repo": [{"path": x} for x in roles.protected(table)[0]],
                 "home": [{"home": x} for x in table["protected"]["home"]],
                 "owner": [{"name": os.path.basename(x)} for x in table["owner_settings"]]}
     if kind == "secret_read":
-        return {"name": [{"name": g} for g in r["deny"] if "/" not in g], "home": [{"home": g[2:]} for g in r["deny"] if g.startswith("~/")],
-                "allow": [{"name": g} for g in r["allow"]]}
+        names, homes = [g for g in r["deny"] if "/" not in g], [g[2:] for g in r["deny"] if g.startswith("~/")]
+        return {"name": [{"name": g} for g in names], "home": [{"home": g} for g in homes], "allow": [{"name": g} for g in r["allow"]],
+                # for a command line: a name glob that starts a word (prefix), one whose literal end ends a word (suffix: *.key, not .keys()),
+                # and the last two parts of a home glob, as the rule's text patterns name them (tail: opencode/auth.json from any folder)
+                "prefix": [{"name": g} for g in names if not g.startswith("*")],
+                "suffix": [{"name": g} for g in names if g.startswith("*") and "*" not in g[1:] and "?" not in g and "[" not in g],
+                "tail": [{"tail": "/".join(g.split("/")[-2:])} for g in homes if "/" in g]}
     if kind == "commit_rule":
         out = {f: [] for f in roles.GIT_FORMS}
         for e in r["deny_git"]:
@@ -52,9 +57,19 @@ def items(kind, p, table, ad, all_ads, worktree):
         held = {f for pr in table["profiles"].values() if pr.get("worker") == ad["id"] for f in roles.PERMS if table["roles"].get(pr["role"], {}).get(f)}
         return {"command": [{"command": c} for f, c in r["commands"].items() if f not in held]} if ad["id"] in kinds else {"command": [{"command": c} for c in r["commands"].values()]}
     if kind == "model_limits":
-        return {"forbidden": [{"binary": n, "pattern": x} for a in all_ads.values() for n in (a.get(r["forbidden_flags_key"]) or {}).get("names", [])[:1]
+        return {"forbidden": [{"binary": n, "pattern": x} for a in all_ads.values() for n in (a.get(r["forbidden_flags_key"]) or {}).get("names", [])
                               for x in (a.get(r["forbidden_flags_key"]) or {}).get("deny_patterns", [])]}
     raise roles.RolesError(f"no items for rule kind {kind}")
+
+
+def run_tmp():
+    """The run's temporary folder: the TMPDIR the CLI (and so its hook, and the engine that renders its config) runs with."""
+    return os.path.realpath(tempfile.gettempdir())
+
+
+def writable(rule, worktree):
+    """The write_boundary rule's writable paths for a run in worktree (none when no worktree is known)."""
+    return [fill(w, {"worktree": worktree, "run_tmp": run_tmp()}) for w in rule["writable"]] if worktree else []
 
 
 def fill(t, v):
@@ -144,8 +159,8 @@ def problems():
         except Exception as e:
             out.append(("STL-GRD-610", f"{rel} fails its schema: {e}"))
     for where, ws in (("sandbox.writable", p.get("sandbox", {}).get("writable", [])), ("the write_boundary rule", roles.policy_rule("write_boundary", p)["writable"])):
-        if not ws or any(not w.startswith("{worktree}") for w in ws):
-            out.append(("STL-GRD-614", f"{where} names a writable path beyond the worktree: only {{worktree}} (and paths under it) may be writable"))
+        if not ws or any(not w.startswith(("{worktree}", "{run_tmp}")) for w in ws):
+            out.append(("STL-GRD-614", f"{where} names a writable path beyond the worktree and the run tmp: only {{worktree}} and {{run_tmp}} (and paths under them) may be writable"))
     unknown = sorted(set(roles.policy_rule("dispatcher_only", p)["commands"]) - set(roles.PERMS))
     if unknown:
         out.append(("STL-GRD-610", f"the dispatcher_only rule names flags the role table does not have: {', '.join(unknown)}"))
@@ -161,7 +176,17 @@ def problems():
         if tokens is not None and ad.get("token_env") not in tokens:
             out.append(("STL-GRD-612", f"adapter {aid}: its token_env {ad.get('token_env')!r} is not an owner-auth worker_signals.token_env name, so a CLI run would not count as a worker"))
         hook = pol.get("hook") or {}
-        covered = set(pol.get("shapes", {})) | set(hook.get("kinds", []))
+        covered = set(hook.get("kinds", []))
+        for kind, shapes in pol.get("shapes", {}).items():   # a shape covers its kind only when it renders something for this adapter (V1-11)
+            try:
+                sets = items(kind, p, table, ad, ads, "/dev/null/wt")
+            except Exception:
+                continue   # the render check below names it
+            own = kind != "model_limits" or (ad.get(roles.policy_rule(kind, p)["forbidden_flags_key"]) or {}).get("deny_patterns")
+            if own and any(sets.get(name) and temps for s in shapes for name, temps in s["templates"].items()):
+                covered.add(kind)
+            else:
+                out.append(("STL-GRD-611", f"adapter {aid}: its {kind} shapes render nothing" + (" (it has no model flags of its own)" if not own else "")))
         for kind in roles.POLICY_KINDS:
             if kind not in covered:
                 out.append(("STL-GRD-611", f"adapter {aid}: rule kind {kind} has neither a config shape nor the adapter's hook"))
@@ -226,6 +251,111 @@ def _within(p, d):
     return p == d or p.startswith(d.rstrip("/") + "/")
 
 
+# Shell grammar the hook reads a command line with (bash words, not stack data): what a command writes.
+SEP = {"&&", "||", ";", "|", "&", "|&", ";;", "(", ")"}
+REDIRECT = {">", ">>", ">|", "&>", "&>>", "<>", ">&"}
+WRAPPERS = {"sudo", "doas", "env", "nohup", "time", "command", "exec", "builtin", "nice", "ionice", "stdbuf", "setsid", "timeout", "xargs", "chroot",
+            "export", "declare", "local", "readonly", "typeset", "if", "elif", "then", "else", "while", "until", "do", "!", "{", "}"}
+WRITE_ALL = {"tee", "touch", "mkdir", "rm", "rmdir", "unlink", "truncate", "shred", "chmod", "chown", "chgrp", "mkfifo", "mknod"}   # every operand is written
+WRITE_LAST = {"cp", "mv", "install", "ln", "rsync", "scp"}   # the last operand is written
+TARGET_OPTS = {"-t", "--target-directory", "-C", "--directory", "--git-dir", "--work-tree"}   # an option whose value is a folder written in (cp -t, git -C, tar -C, make -C)
+IN_PLACE = {"sed", "perl"}   # with -i every operand is written
+ASSIGN = re.compile(r"([A-Za-z_]\w*)=(.*)", re.S)
+
+
+def _views(cmd, depth=0):
+    """The token lists of a command line and of every quoted command line in it (bash -c '...'), an unquoted newline read as ';'.
+    Raises ValueError when the top line cannot be read (the caller refuses); a nested string that cannot be read is no command."""
+    lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+    lex.commenters = ""   # a # inside a word is text; a real comment only adds words, so a write it hides is still judged (fail closed)
+    lex.whitespace_split = True
+    toks, line = [], lex.lineno
+    while (t := lex.get_token()) is not None:
+        if lex.lineno - line > t.count("\n") and toks:
+            toks.append(";")
+        line = lex.lineno
+        toks.append(t)
+    yield toks
+    for t in toks:
+        if depth < 3 and re.search(r"\s", t):
+            try:
+                yield from _views(t, depth + 1)
+            except ValueError:
+                pass
+
+
+def _resolve(w, here, names, text):
+    """(real paths, unresolved) of a shell word in folder here: unresolved when it uses a variable the command may set other than by
+    NAME=value (read, for, ...), a relative path in an unknown folder, or anything only the shell can compute."""
+    bare = re.sub(r"\$\{?[A-Za-z_]\w*\}?", "", text)
+    for v in re.findall(r"\$\{?([A-Za-z_]\w*)", w) + (["HOME"] if w.startswith("~") else []):
+        if v not in names and re.search(rf"\b{v}\b", bare):
+            return [], True
+    if here is None and not w.startswith(("/", "~", "$")):
+        return [], True
+    return roles.expand_word(w, here or "/", names)
+
+
+def _shell(cmd, cwd):
+    """(writes, reads) of a command line: the words it writes to and every word it names, each (word, folder, names)."""
+    writes, reads = [], []
+    for toks in _views(cmd):
+        here, names = cwd, {}
+        segs, seg = [], []
+        for t in toks + [";"]:
+            if t in SEP:
+                segs.append(seg)
+                seg = []
+            else:
+                seg.append(t)
+        for seg in segs:
+            words, skip = [], False
+            for i, t in enumerate(seg):   # redirections: the word after > is written, after >& unless it is a file descriptor
+                if skip:
+                    skip = False
+                    continue
+                if t in REDIRECT or t in ("<", "<<", "<<<"):
+                    skip = True
+                    if i + 1 < len(seg):
+                        reads.append((seg[i + 1], here, dict(names)))
+                        if t in REDIRECT and not (t == ">&" and re.fullmatch(r"\d+|-", seg[i + 1])):
+                            writes.append((seg[i + 1], here, dict(names)))
+                    continue
+                words.append(t)
+            wrapped = False
+            while words:   # NAME=value words, then wrappers (sudo, env, timeout 5, ...) before the command
+                m = ASSIGN.fullmatch(words[0])
+                if m:
+                    names[m[1]] = m[2]
+                elif words[0] in WRAPPERS:
+                    wrapped = True
+                elif not (wrapped and re.fullmatch(r"-.*|[0-9.]+[smhd]?", words[0])):
+                    break
+                words.pop(0)
+            for w in words:
+                reads += [(x, here, dict(names)) for x in [w] + w.split("=", 1)[1:]]
+            if not words:
+                continue
+            name, args = words[0].rsplit("/", 1)[-1], words[1:]
+            ops = [w for w in args if not w.startswith("-")]
+            out = [args[i + 1] for i, w in enumerate(args[:-1]) if w in TARGET_OPTS]
+            out += [w.split("=", 1)[1] for w in args if "=" in w and w.split("=", 1)[0] in TARGET_OPTS]
+            if name == "dd":
+                out += [w[3:] for w in args if w.startswith("of=")]
+            if name in WRITE_ALL or (name in IN_PLACE and any(re.fullmatch(r"-[A-Za-z]*i\S*|--in-place\S*", w) for w in args)):
+                out += ops
+            if name in WRITE_LAST and ops and not any(w in TARGET_OPTS or w.split("=", 1)[0] in TARGET_OPTS for w in args):
+                out.append(ops[-1])
+            if name == "git" and ops and ops[0] in ("clone", "init"):
+                out.append(ops[-1])
+            writes += [(w, here, dict(names)) for w in out]
+            if name in ("cd", "pushd", "popd"):
+                to = ops[0] if ops else "~"
+                ps, unres = _resolve(to, here, names, cmd) if name != "popd" and to != "-" else ([], True)
+                here = None if unres or not ps else ps[0]
+    return writes, reads
+
+
 def judge(ad, payload, worktree):
     """(code, why) when the call breaks a rule the adapter's hook enforces, else None."""
     p, table = roles.policy(), roles.load()
@@ -237,35 +367,66 @@ def judge(ad, payload, worktree):
     cwd = payload.get("cwd") or os.getcwd()
     homes = roles.homes()
     s = roles.policy_rule("secret_read", p)
-    def secret(x):
+    wb = roles.policy_rule("write_boundary", p)
+    roots = [os.path.realpath(w) for w in writable(wb, worktree)]
+    sdirs = [os.path.realpath(d if d.startswith("/") else f"{h}/{d[2:]}") for d in s["dirs"] for h in homes]
+    def secret(x, word=False):   # word: a shell word only counts by its file name when that file exists (process.env.HOME is no file)
         b = os.path.basename(x).casefold()
         if any(fnmatch.fnmatch(b, g) for g in s["allow"]):
             return False
-        return (any(fnmatch.fnmatch(b, g) for g in s["deny"] if "/" not in g)
+        return ((any(fnmatch.fnmatch(b, g) for g in s["deny"] if "/" not in g) and (not word or os.path.lexists(x)))
                 or any(fnmatch.fnmatch(x, f"{h}/{g[2:]}") or _within(x, f"{h}/{g[2:]}") for h in homes for g in s["deny"] if g.startswith("~/")))
     def protected(x):
         repo, home = roles.protected(table)
-        return any(_within(x, os.path.realpath(d)) for d in repo + home) or any(os.path.realpath(o) == x for o in roles.owner_settings(table))
+        owners = [os.path.realpath(o) for o in roles.owner_settings(table)]
+        return (any(_within(x, os.path.realpath(d)) for d in repo + home + [os.path.dirname(o) for o in owners]) or x in owners) \
+            and not (worktree and _within(x, os.path.realpath(worktree)))
+    def outside(x, raw, here):
+        if any(fnmatch.fnmatch(os.path.normpath(os.path.join(here or "/", raw)), d) for d in wb.get("devices", [])):
+            return False
+        return not any(_within(x, r) for r in roots)
     if spec["class"] == "shell":
         cmd = str(get(a, spec["command"]) or "")
         text = re.compile("|".join(s["text"]))
         for w in re.findall(r"[^\s'\"\x60;|&<>(){}=,]+", cmd):   # a word that names a secret, unless its file name is an allowed one
             if "secret_read" in kinds and text.search(w) and not any(fnmatch.fnmatch(w.rsplit("/", 1)[-1].casefold(), g) for g in s["allow"]):
                 return "STL-GRD-616", f"the command names a secret path ({w})"
+        try:
+            writes, reads = _shell(roles.ansi(cmd), cwd)
+        except ValueError:
+            return "STL-GRD-617", "the command line cannot be parsed, so its paths cannot be judged"
+        if "write_boundary" in kinds:
+            for w, here, names in writes:
+                if not worktree:
+                    return "STL-GRD-615", "no worktree is known for this run, so no write is inside it"
+                ps, unres = _resolve(w, here, names, cmd)
+                if unres or not ps:
+                    return "STL-GRD-615", f"the command writes to {w}, which cannot be resolved before it runs"
+                bad = next((x for x in ps if outside(x, w, here)), None)
+                if bad:
+                    return "STL-GRD-615", f"the command writes to {w} ({bad}), outside the worktree and the run tmp"
+        for w, here, names in reads:
+            for x in _resolve(w, here, names, cmd)[0]:
+                if "secret_read" in kinds and secret(x, True):
+                    return "STL-GRD-616", f"the command names a secret path ({w})"
+                if "protected_read" in kinds and protected(x):
+                    return "STL-GRD-616", f"the command names a protected path ({w})"
         return None
-    raw = get(a, spec["path"])
+    raw = get(a, spec["path"]) or ("." if spec["class"] == "read" else None)   # a search with no path searches the current folder
     if not raw:
         return None
     x = os.path.realpath(os.path.join(cwd, os.path.expanduser(str(raw))))
     if "secret_read" in kinds and secret(x):
         return "STL-GRD-616", f"{raw} is a secret path"
-    if "protected_read" in kinds and protected(x) and not (worktree and _within(x, os.path.realpath(worktree))):
+    if "secret_read" in kinds and spec["class"] == "read" and os.path.isdir(x) and any(_within(x, d) or _within(d, x) for d in sdirs):
+        return "STL-GRD-616", f"a search over {raw} enters a secret folder"
+    if "protected_read" in kinds and protected(x):
         return "STL-GRD-616", f"{raw} is a protected path"
     if spec["class"] == "write" and "write_boundary" in kinds:
         if not worktree:
             return "STL-GRD-615", "no worktree is known for this run, so no write is inside it"
-        if not _within(x, os.path.realpath(worktree)):
-            return "STL-GRD-615", f"{raw} is outside the worktree {worktree}"
+        if outside(x, str(raw), cwd):
+            return "STL-GRD-615", f"{raw} is outside the worktree {worktree} and the run tmp"
     return None
 
 
@@ -279,7 +440,7 @@ def hook(aid, worktree):
         got = judge(ad, payload, worktree)
     except Exception as e:   # fail closed: an unreadable payload, policy or adapter refuses the call
         ad = ad if "ad" in locals() else None
-        got = ("STL-GRD-617", f"the policy hook cannot judge this call ({type(e).__name__})")
+        got = ("STL-GRD-617", f"the policy check cannot judge this call ({type(e).__name__})")
     if not got:
         return 0
     code, why = got

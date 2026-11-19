@@ -41,7 +41,15 @@
               "minLength": 1
             },
             "minItems": 1,
-            "description": "write_boundary: the writable paths; each starts with {worktree} (policy.py check)"
+            "description": "write_boundary: the writable paths; each starts with {worktree} or {run_tmp} (the run's temporary folder, the TMPDIR the CLI runs with) (policy.py check)"
+          },
+          "devices": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^/"
+            },
+            "description": "write_boundary: device paths a shell write may always name (globs: the null device, the standard streams)"
           },
           "paths_from": {
             "type": "string"
