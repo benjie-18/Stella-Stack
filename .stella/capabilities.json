@@ -886,6 +886,33 @@
       "triage": {"result": "shipped"},
       "global_id": "8af2c40b-6c3a-4df3-ae1e-a1342a996db5",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "prompt",
+      "kind": "command",
+      "summary": "Prompt profiles: renders a role prompt in the form the model's family follows best (tag or heading sections, evidence first, capability line, working notes, question last, the family's parallel-tool-call line). Profile chosen by --profile, the role override, the catalog model's family, else the default; every form is in .stella/prompt-profiles.json.",
+      "keywords": [
+        "prompt",
+        "profile",
+        "family",
+        "render",
+        "evidence",
+        "parallel tools",
+        "capability line"
+      ],
+      "inputs": "render --role R --link CONN/MODEL --brief FILE [--profile P] [--evidence FILE] [--attached FILE] [--notes FILE] [--instructions FILE] [--question FILE|TEXT] --json | check --json",
+      "outputs": "JSON (render: {profile, family, role, link, sections, reasoning, example_placement, parallel_tools, text}; check: {ok, entries}); exit 1 with a catalog code (STL-CFG-330 data unusable, 331 profile or link not found, 332 input unusable, 333 capability line missing)",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/prompt.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "d964b2fd-e04b-4b7a-95ca-f7f34005d836",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

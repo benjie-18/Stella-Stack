@@ -2092,6 +2092,54 @@
       "check": "`python3 bin/model_check.py status --json`; `python3 bin/event_log.py verify`.",
       "related": "F2c item F; bin/model_check.py, .stella/model-check.json (weekly)",
       "resolvable": false
+    },
+    {
+      "code": "STL-CFG-330",
+      "area": "CFG",
+      "severity": "warning",
+      "title": "the prompt profiles file cannot be used",
+      "message": "The prompt profiles file is not valid: {problem}. Prompts cannot be rendered until it is fixed.",
+      "action": "fix what the message names in .stella/prompt-profiles.json, then run `python3 bin/prompt.py check`. See STL-CFG-330 in docs/alert-codes.md.",
+      "cause": "The file breaks its schema, or a map names a profile it does not define.",
+      "check": "`python3 bin/prompt.py check --json`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item PP; bin/prompt.py, .stella/prompt-profiles.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-CFG-331",
+      "area": "CFG",
+      "severity": "info",
+      "title": "no prompt profile for this link",
+      "message": "A prompt could not be rendered: {problem}. Nothing was changed.",
+      "action": "name a link that is a model of the catalog and a profile the file defines. See STL-CFG-331 in docs/alert-codes.md.",
+      "cause": "The link is not a model of .stella/connections.json, or --profile names no profile.",
+      "check": "`python3 bin/prompt.py check --json`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item PP; bin/prompt.py, .stella/prompt-profiles.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-CFG-332",
+      "area": "CFG",
+      "severity": "info",
+      "title": "prompt.py was given input it cannot use",
+      "message": "A prompt could not be rendered: {problem}. Nothing was changed.",
+      "action": "fix the input the message names (a readable file for each of --brief, --evidence, --attached, --notes, --instructions). See STL-CFG-332 in docs/alert-codes.md.",
+      "cause": "An input file is missing or unreadable, or the command failed in an unexpected way.",
+      "check": "`python3 bin/prompt.py check --json`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item PP; bin/prompt.py, .stella/prompt-profiles.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-CFG-333",
+      "area": "CFG",
+      "severity": "warning",
+      "title": "the capability prompt line is missing",
+      "message": "A prompt could not be rendered: {problem}. No prompt was made without it.",
+      "action": "add capability_prompt_line to .stella/capability-sources.json. See STL-CFG-333 in docs/alert-codes.md.",
+      "cause": "The capability sources file has no capability_prompt_line text.",
+      "check": "`python3 bin/prompt.py check --json`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item PP; bin/prompt.py, .stella/prompt-profiles.json",
+      "resolvable": false
     }
   ]
 }

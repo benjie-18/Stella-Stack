@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Prompt profiles",
+  "description": "The prompt profiles bin/prompt.py renders with (F3 PP): section template, section order, example placement, reasoning settings and the parallel-tool-call line per profile; which profile a model family and a role get.",
+  "x-one-document": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "default",
+    "family_map",
+    "role_overrides",
+    "entries"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "about": {
+      "type": "string"
+    },
+    "default": {
+      "type": "string",
+      "minLength": 1
+    },
+    "family_map": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "role_overrides": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "section_template",
+          "titles",
+          "order",
+          "example_placement",
+          "reasoning",
+          "parallel_tools_line",
+          "global_id",
+          "install_id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "section_template": {
+            "type": "string",
+            "minLength": 1
+          },
+          "titles": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "order": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "evidence",
+                "brief",
+                "capabilities",
+                "notes",
+                "capability_line",
+                "instructions",
+                "question"
+              ]
+            }
+          },
+          "example_placement": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reasoning": {
+            "type": "object"
+          },
+          "parallel_tools_line": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "global_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "install_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}
