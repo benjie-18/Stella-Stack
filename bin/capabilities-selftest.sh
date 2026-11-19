@@ -60,7 +60,7 @@ WORKER() { env STUB_WORKER_MARK=1 "$@"; }   # a worker environment (a roles.json
 C() { python3 -I "$R/bin/capabilities.py" "$@"; }
 range='STL-GRD-6(6[0-9]|7[0-4])'
 mapfile -t RL < <(jq -r '.roles | keys[]' "$RJ"); RA=${RL[0]}; RQ=${RL[1]}; RH=${RL[2]}   # allowed, requestable, hidden
-ACLASS=$(jq -r '.actions | keys[0]' "$POL")   # an approval class the approval service knows (owner-auth action classes)
+ACLASS=$(jq -r '[.. | objects | select(has("approval_class")) | .approval_class.enum[]?] | map(select(. != "read"))[0] // empty' "$R/.stella/schemas/approval-request.schema.json")   # an approval class (the approval-request schema's enum), not the skill's own risk class
 SRC=$(ix '[.capability_sources // empty | .. | strings]')
 SK=$(jq -r '[.[] | select((endswith(".json") or startswith(".stella/extensions")) | not)][0] // ".claude/skills"' <<<"${SRC:-[]}")
 MCPF=$(jq -r '[.[] | select(endswith(".mcp.json"))][0] // ".mcp.json"' <<<"${SRC:-[]}")
@@ -84,7 +84,7 @@ found)   # AC4-found
   run d1 C describe qa-fake-skill --role "$RA" --json
   ok '[ $RC = 0 ] && grep -q qazebra "$T/o/d1.out"' "AC4-found describe returns the entry to the allowed role"
   run w1 WORKER python3 -I "$R/bin/capabilities.py" search qazebra --role "$RA" --json
-  ok '[ $RC != 0 ] && ! grep -q qa-fake-skill "$T/o/w1.out" && out w1 | grep -qE "STL-(CFG-312|GRD-6(6[0-9]|7[0-4]))"' "AC4-found DC-05: in a worker environment --role is refused (no local answer)"
+  ok '[ $RC != 0 ] && ! grep -q qa-fake-skill "$T/o/w1.out" && out w1 | grep >/dev/null -E "STL-(CFG-312|GRD-6(6[0-9]|7[0-4]))"' "AC4-found DC-05: in a worker environment --role is refused (no local answer)"
   ;;
 requestable)   # AC4-requestable
   run s1 C search qazebra --role "$RQ" --json
@@ -101,28 +101,28 @@ invisible)   # AC4-invisible
   run d2 C describe qa-no-such-capability --role "$RH" --json; r2=$RC
   ok '[ $r1 = 1 ] && [ $r2 = 1 ] && [ "$(out d1 | sed s/qa-fake-skill/ID/g)" = "$(out d2 | sed s/qa-no-such-capability/ID/g)" ]' "AC4-invisible describe of the hidden id answers exactly like an unknown id (exit 1, same output)"
   run q1 C request qa-fake-skill --reason "qa wants it" --role "$RH" --card qa-card-h --json
-  ok '[ $RC = 1 ] && out q1 | grep -qE "$range"' "AC4-invisible request of the hidden id fails closed like an unknown id"
+  ok '[ $RC = 1 ] && out q1 | grep >/dev/null -E "$range"' "AC4-invisible request of the hidden id fails closed like an unknown id"
   ;;
 request)   # AC4-request-approval
   e0=$(nl "$EV")
   run q1 C request qa-fake-skill --reason "qa needs the zebra" --role "$RQ" --card qa-card-7 --json
   ok '[ $RC = 0 ]' "AC4-request-approval role $RQ requests the fake skill (exit 0)"
-  ok 'tail -n +$((e0 + 1)) "$EV" | jq -c "select(.type == \"approval-request\")" | grep -q qa-card-7' "AC4-request-approval a trusted approval-request line naming the card is in the event log"
+  ok 'tail -n +$((e0 + 1)) "$EV" | jq -c "select(.type == \"approval-request\")" | grep >/dev/null qa-card-7' "AC4-request-approval a trusted approval-request line naming the card is in the event log"
   e1=$(nl "$EV")
   run q2 C request qa-fake-skill --reason "already mine" --role "$RA" --card qa-card-8 --json
   run q3 C request qa-fake-skill --reason "never mine" --role "$RH" --card qa-card-9 --json
-  ok '[ $RC = 1 ] && ! tail -n +$((e1 + 1)) "$EV" | grep -q qa-card-9' "AC4-request-approval a role that may never use it opens no approval"
+  ok '[ $RC = 1 ] && ! tail -n +$((e1 + 1)) "$EV" | grep >/dev/null qa-card-9' "AC4-request-approval a role that may never use it opens no approval"
   ;;
 unknown)   # AC4-unknown
   for v in describe load request; do
     case $v in describe) a=();; load) a=(--run qa-run-1);; request) a=(--reason x --card qa-card-u);; esac
     run "u-$v" C "$v" qa-no-such-capability --role "$RA" "${a[@]}" --json
-    ok '[ $RC = 1 ] && out "u-$v" | grep -qE "$range"' "AC4-unknown $v of an unknown id: exit 1 with STL-GRD-66x"
+    ok '[ $RC = 1 ] && out "u-$v" | grep >/dev/null -E "$range"' "AC4-unknown $v of an unknown id: exit 1 with STL-GRD-66x"
   done
   run u-s C search qa-no-such-capability-words --role "$RA" --json
   ok '[ $RC = 0 ] && ! grep -q qa-no-such "$T/o/u-s.out"' "AC4-unknown a search with no match is an empty answer, not an error"
   run u-r C search qazebra --role qa-no-such-role --json
-  ok '[ $RC != 0 ] && ! grep -q qa-fake-skill "$T/o/u-r.out" && out u-r | grep -qE "STL-[A-Z]+-[0-9]{3}"' "AC4-unknown an unknown role sees nothing (fails closed with a code)"
+  ok '[ $RC != 0 ] && ! grep -q qa-fake-skill "$T/o/u-r.out" && out u-r | grep >/dev/null -E "STL-[A-Z]+-[0-9]{3}"' "AC4-unknown an unknown role sees nothing (fails closed with a code)"
   ;;
 sources)   # T-SOURCES-UNKNOWN
   mkdir -p "$R/$SK/qa-unreg-skill"
@@ -132,9 +132,9 @@ sources)   # T-SOURCES-UNKNOWN
   bad=; for r in "${RL[@]}"; do run "s-$r" C search qazebra --role "$r" --json; { [ $RC = 0 ] && ! grep -q qa-unreg-skill "$T/o/s-$r.out"; } || bad="$bad $r"; done
   ok '[ -z "$bad" ]' "T-SOURCES-UNKNOWN ... from every role (search answers, never shows it; failed:$bad)"
   run d1 C describe qa-unreg-skill --role "$RA" --json
-  ok '[ $RC = 1 ] && out d1 | grep -qE "$range"' "T-SOURCES-UNKNOWN describe of it fails closed like an unknown id"
+  ok '[ $RC = 1 ] && out d1 | grep >/dev/null -E "$range"' "T-SOURCES-UNKNOWN describe of it fails closed like an unknown id"
   : >"$AL"; run s2 C search qazebra --role "$RA" --json
-  ok '[ "$(grep -c qa-unreg-skill "$AL")" = 1 ] && grep qa-unreg-skill "$AL" | grep -qE "$range"' "T-SOURCES-UNKNOWN one search raises exactly one alert naming it, with STL-GRD-66x"
+  ok '[ "$(grep -c qa-unreg-skill "$AL")" = 1 ] && grep qa-unreg-skill "$AL" | grep >/dev/null -E "$range"' "T-SOURCES-UNKNOWN one search raises exactly one alert naming it, with STL-GRD-66x"
   [ -f "$R/$MCPF" ] || echo '{"mcpServers": {}}' >"$R/$MCPF"
   ed "$MCPF" '.mcpServers["qa-unreg-server"] = {command: "true", args: []}'
   run s3 C search qa-unreg-server --role "$RA" --json

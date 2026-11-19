@@ -88,7 +88,7 @@ switch)   # AC9-profile-switch: a data change only
   ok '[ $RC = 0 ] && prof s4 qa-tags' "AC9-profile-switch --profile names a profile explicitly"
   ed .stella/prompt-profiles.json --arg r "$ROLE" '.role_overrides[$r] = "qa-no-such-profile"'
   rend s5 "$ROLE" qa-pp/qa-pm1
-  ok '[ $RC = 1 ] && out s5 | grep -qE "STL-CFG-33[0-9]"' "AC9-profile-switch a role override naming no profile fails closed with STL-CFG-33x"
+  ok '[ $RC = 1 ] && out s5 | grep >/dev/null -E "STL-CFG-33[0-9]"' "AC9-profile-switch a role override naming no profile fails closed with STL-CFG-33x"
   ok '[ "$(cd "$R/bin" && find . -type f ! -name "*.pyc" -exec sha256sum {} + | sort | sha256sum)" = "$BIN0" ]' "AC9-profile-switch no code changed: bin/ is byte-identical"
   ;;
 order)   # T-PROMPT-ORDER: evidence first, question last, the family's parallel-tools line
