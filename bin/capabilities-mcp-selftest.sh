@@ -141,7 +141,7 @@ newev() { tail -n +$(($1 + 1)) "$EV" 2>/dev/null | jq -c "select(.type == \"$2\"
 TA=$(mint --run qa-run-ma --role "$RA" --card qa-card-ma --link "$LINK")
 TQ=$(mint --run qa-run-mq --role "$RQ" --card qa-card-mq --link "$LINK")
 TH=$(mint --run qa-run-mh --role "$RH" --card qa-card-mh --link "$LINK")
-ok '[ -n "$TA" ] && [ -n "$TQ" ] && [ -n "$TH" ] && [ -s "$T/mcp.err" -o -n "$MP" ] && python3 -I -c "import socket, sys; socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), 1)" "$MP"' \
+ok '[ -n "$TA" ] && [ -n "$TQ" ] && [ -n "$TH" ] && python3 -I -c "import socket, sys; socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), 1)" "$MP"' \
   "precondition: three run tokens minted (roles $RA, $RQ, $RH) and the MCP server listens on its free port"
 
 case $S in

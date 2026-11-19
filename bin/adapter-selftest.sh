@@ -20,8 +20,8 @@
 #     adapter.py evidence --run R --json answers exit_code as a number once the CLI has exited.
 #  A4 the conformance scratch root is the index key whose name holds "conformance" and not "record" (a path, relative to the root
 #     unless absolute); a card-less run's worktree lies under it (DC-06).
-#  A5 the run record (index key adapter_runs: a folder of JSON files, a .jsonl or a .json) is the JSON object holding the run id as
-#     run, run_id or id; it holds booleans unattended and background (DC-10, as bin/host-access-selftest.sh plants them).
+#  A5 the run record is <adapter_runs>/<run>.json (index key adapter_runs, layout settled by the orchestrator 19:1x); it holds booleans
+#     unattended and background (DC-10, as bin/host-access-selftest.sh plants them).
 #  A6 the per-run events.jsonl is a file named events.jsonl under a path that holds the run id, somewhere in the scratch root.
 #  A7 the fake CLI's op "shell" runs its command through a shell in the worktree with the CLI's own environment.
 #  A8 bin/false-close-guard.py takes today's payload (tool_name kanban_complete, tool_input.task_id = the card) and finds the
@@ -130,41 +130,8 @@ FAKE=$(jq -c --arg v "${VER:-none}" --arg s "$SHAPE" --arg te "$TE" --arg g "$(u
 [ -f "$AF" ] && ed .stella/adapters.json --argjson f "$FAKE" '.entries += [$f]'
 # addent <id> <jq patch of the fake entry>: one more adapter entry, data only
 addent() { ed .stella/adapters.json --argjson f "$FAKE" --arg id "$1" --arg g "$(uuid)" ".entries += [\$f + {id: \$id, global_id: \$g} | $2]"; }
-cat >"$T/rec.py" <<'PYR'
-import json, os, sys
-# rec.py <path> <run> [card]: print the run record (the object holding the run id as run, run_id or id); with a card, set its card
-p, run, card = sys.argv[1], sys.argv[2], (sys.argv[3] if len(sys.argv) > 3 else None)
-files = [os.path.join(d, f) for d, _, fs in os.walk(p) for f in fs] if os.path.isdir(p) else [p]
-def walk(x, hit):
-    if isinstance(x, dict):
-        if any(x.get(k) == run for k in ("run", "run_id", "id")):
-            hit.append(x)
-            if card is not None:
-                x["card"] = card
-        for v in x.values(): walk(v, hit)
-    elif isinstance(x, list):
-        for v in x: walk(v, hit)
-for f in files:
-    try:
-        txt = open(f).read()
-    except OSError:
-        continue
-    try:
-        docs, lines = [json.loads(txt)], False
-    except ValueError:
-        try:
-            docs, lines = [json.loads(l) for l in txt.splitlines() if l.strip()], True
-        except ValueError:
-            continue
-    hit = []
-    for d in docs: walk(d, hit)
-    if hit:
-        if card is not None:
-            open(f, "w").write("".join(json.dumps(d) + "\n" for d in docs) if lines else json.dumps(docs[0]))
-        print(json.dumps(hit[0])); sys.exit(0)
-sys.exit(1)
-PYR
-rec() { [ -n "$AR" ] && python3 -I "$T/rec.py" "$R/$AR" "$@"; }
+# rec <run> [card]: the run record <adapter_runs>/<run>.json (settled layout); with a card, its card field is set to it first
+rec() { local f=$R/$AR/$1.json; [ -n "$AR" ] && [ -s "$f" ] || return 1; [ -z "${2:-}" ] || ed "$AR/$1.json" --arg c "$2" '.card = $c'; cat "$f"; }
 # ---- the proxy on an ephemeral port (it writes its own state; the adapter finds it there) ----
 python3 -I "$R/bin/model_proxy.py" serve --port 0 >"$T/proxy.out" 2>"$T/proxy.err" &
 for i in $(seq 50); do [ -s "$T/proxy.out" ] && break; sleep 0.1; done; PPORT=$(jq -r '.port // empty' "$T/proxy.out" 2>/dev/null)
@@ -175,7 +142,8 @@ brief() { local a; a=$(jq -c --arg m "qamark-$1.txt" '[{op: "write", path: $m, t
 # go <tag> <run> <worktree> <link> <json actions> [more start args]: start one run of the fake adapter, card-less unless the args say
 go() { brief "$2" "$5"; run "$1" A start --adapter qa-fake --role "$ROLE" --worktree "$3" --brief-file "$T/brief-$2.md" --link "$4" --run-id "$2" "${@:6}" --json; }
 # done_ <run>: wait (at most 40 s) until evidence answers a numeric exit_code
-done_() { local i; for i in $(seq 80); do A evidence --run "$1" --json 2>/dev/null | jq -e '.exit_code | type == "number"' >/dev/null 2>&1 && return 0; sleep 0.5; done; return 1; }
+# (jq 1.6 -e passes on empty input: every jq -e here reads an answer that is known to be non-empty)
+done_() { local i o; [ -f "$R/bin/adapter.py" ] || return 1; for i in $(seq 80); do o=$(A evidence --run "$1" --json 2>/dev/null) && [ -n "$o" ] && jq -e '.exit_code | type == "number"' <<<"$o" >/dev/null 2>&1 && return 0; sleep 0.5; done; return 1; }
 # spawned <worktree> <run>: the run's marker file appears within 15 s; none_ <worktree> <run>: after 2 s it is still absent
 spawned() { local i; for i in $(seq 30); do [ -f "$1/qamark-$2.txt" ] && return 0; sleep 0.5; done; return 1; }
 none_() { sleep 2; [ ! -f "$1/qamark-$2.txt" ]; }
@@ -187,7 +155,7 @@ ok '[ -n "$PORT" ] && [ -n "$PPORT" ] && [ -n "$VER" ] && [ -n "$TE" ] && [ -n "
 case $S in
 callers)   # AC1-callers: a new data entry starts a run with no code change; run record, events.jsonl, logs, stop
   run l1 A list --json
-  ok '[ $RC = 0 ] && jq -e "[.. | objects | select(.id == \"qa-fake\")] | length > 0" "$T/o/l1.out"' "AC1-callers list --json shows the new data entry qa-fake"
+  ok '[ $RC = 0 ] && [ -s "$T/o/l1.out" ] && jq -e "[.. | objects | select(.id == \"qa-fake\")] | length > 0" "$T/o/l1.out"' "AC1-callers list --json shows the new data entry qa-fake"
   go s1 qa-run-a1 "$WT" qa-api/qa-m1 '[{"op":"say","text":"QA-SAY-A1"},{"op":"write","path":"qaout.txt","text":"QA-OUT"},{"op":"usage","input":7,"output":3}]'
   ok '[ $RC = 0 ] && grep -q qa-run-a1 "$T/o/s1.out"' "AC1-callers start (card-less, worktree under the conformance root): exit 0, JSON naming the run"
   done_ qa-run-a1; d=$?
@@ -264,7 +232,7 @@ stubs)   # T-STUBS-CLI: a stub entry and an active entry with a missing binary f
   ok '[ ${#ST[@]} -ge 1 ] && [ -z "$bad" ]' "T-STUBS-CLI start of every shipped stub fails closed with STL-GRD-64x/65x (failed:$bad)"
   addent qa-stub '{id: .id, label: .label, binary: "qa-stub-cli", version_cmd: ["qa-stub-cli", "--version"], status: "stub", global_id: .global_id, install_id: .install_id}'
   run l1 A list --json
-  ok '[ $RC = 0 ] && jq -e "[.. | objects | select(.id == \"qa-stub\")][0] | [.. | strings] | index(\"stub\") != null" "$T/o/l1.out"' "T-STUBS-CLI a stub added as data is listed as a stub"
+  ok '[ $RC = 0 ] && [ -s "$T/o/l1.out" ] && jq -e "[.. | objects | select(.id == \"qa-stub\")][0] | [.. | strings] | index(\"stub\") != null" "$T/o/l1.out"' "T-STUBS-CLI a stub added as data is listed as a stub"
   brief qa-run-st1 '[]'
   run t1 A start --adapter qa-stub --role "$ROLE" --worktree "$WT" --brief-file "$T/brief-qa-run-st1.md" --link qa-api/qa-m1 --run-id qa-run-st1 --json
   ok '[ $RC != 0 ] && out t1 | grep >/dev/null -E "$range"' "T-STUBS-CLI start of the data-added stub fails closed with STL-GRD-64x/65x"
