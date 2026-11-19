@@ -19,8 +19,18 @@
       "additionalProperties": false
     },
     "cli_patterns": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 200}}},
-    "cli_usage": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 200}}}
+    "cli_usage": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 200}}},
+    "min_wait_seconds": {"type": "integer", "minimum": 0, "description": "The shortest wait a limit is observed for, whatever a header says."},
+    "limit_error_plan_share": {"type": "number", "minimum": 0, "description": "The plan share a CLI's limit error stands for (1 = the whole plan)."},
+    "day_reset": {"type": "object", "description": "The clock a daily cap resets on: exactly one of utc_offset_minutes (a fixed offset from UTC) or zone (a zone name the standard library knows); the day runs from midnight to midnight there.", "properties": {"utc_offset_minutes": {"type": "integer", "minimum": -1439, "maximum": 1439}, "zone": {"type": "string", "minLength": 1, "maxLength": 100}}, "additionalProperties": false},
+    "limit_triggers": {"type": "object", "description": "Which answer classes (the wire shape's errors) are a limit, and how the wait is found: the sources in order, the first that gives a time wins (retry_after, reset_header, day_reset: the next reset of the daily clock, default: default_wait_seconds). A class not listed is no limit.", "additionalProperties": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["retry_after", "reset_header", "day_reset", "default"]}}},
+    "outcome_classes": {"type": "object", "description": "What each outcome word of a usage record means: counts_as_call (it counts against a daily cap) and is_error (an error in reports and an error span). A word not listed counts as a call and as an error.", "additionalProperties": {"type": "object", "properties": {"counts_as_call": {"type": "boolean"}, "is_error": {"type": "boolean"}}, "required": ["counts_as_call", "is_error"], "additionalProperties": false}},
+    "billing": {"type": "object", "description": "How a connection type is billed: plan (no cost, a plan share) or metered (priced). A type not listed is metered.", "additionalProperties": {"enum": ["plan", "metered"]}},
+    "cache_hit_rate": {"type": "object", "description": "The cache hit rate is the sum of the numerator token types over the sum of the denominator token types (names of the usage schema's tokens).", "properties": {"numerator": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}, "denominator": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}}, "required": ["numerator", "denominator"], "additionalProperties": false},
+    "duration_units": {"type": "object", "description": "The duration units of a reset header (1m30s) and their length in seconds.", "additionalProperties": {"type": "number", "minimum": 0}},
+    "epoch_min_seconds": {"type": "integer", "minimum": 1, "description": "A plain number of seconds above this in a reset header is an epoch time, not a wait."},
+    "field_limits": {"type": "object", "description": "The most characters kept of the holder name of a refused hold and of the reason of an observed limit.", "properties": {"holder": {"type": "integer", "minimum": 1}, "reason": {"type": "integer", "minimum": 1}}, "required": ["holder", "reason"], "additionalProperties": false}
   },
-  "required": ["schema_version", "default_wait_seconds", "max_wait_seconds", "plan_share_max_age_seconds", "headers", "cli_patterns", "cli_usage"],
+  "required": ["schema_version", "default_wait_seconds", "max_wait_seconds", "plan_share_max_age_seconds", "headers", "cli_patterns", "cli_usage", "min_wait_seconds", "limit_error_plan_share", "day_reset", "limit_triggers", "outcome_classes", "billing", "cache_hit_rate", "duration_units", "epoch_min_seconds", "field_limits"],
   "additionalProperties": false
 }

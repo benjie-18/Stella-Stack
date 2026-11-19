@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Sound comparison of two arms (a model, a profile, a harness) on the same tasks (F2c item E), stdlib only, no model call. Every number
 that acts (confidence level, trials, pass^k's k, the non-inferiority margin, the minimum sample, the regression rule, the stale-catalog
-days) is data: .stella/model-check.json (schema model-check). Nothing here names a model, a provider, a connection or a role.
+days, the digests per event line, the input read cap) is data: .stella/model-check.json (schema model-check). Nothing here names a model, a provider, a connection or a role.
 Method. An arm is a list of trial records {task, trial, passed, score?} (the value of a trial is its score, else 1 or 0 for passed).
 Only tasks both arms ran are paired. Per task the mean over its trials, per arm; the paired difference a - b per task; the mean
 difference with a t-interval over tasks (n-1 degrees of freedom; the interval's unit is the task, never the trial, because trials of
@@ -41,7 +41,7 @@ BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
 
 BAD_INPUT, REGRESSION, BAD_PARAMS, BAD_BENCH, UNEXPECTED = "STL-MDL-750", "STL-MDL-751", "STL-MDL-752", "STL-MDL-753", "STL-CFG-310"
-KEY, SCHEMA_ID, LINE, CHUNK = "benchmark_results", "model-check", "benchmark.recorded", 100   # CHUNK: record digests in one event line   # the index key of the results file; the schema id of the parameters
+KEY, SCHEMA_ID, LINE = "benchmark_results", "model-check", "benchmark.recorded"   # the index key of the results file; the schema id of the parameters
 
 class Stop(Exception):
     def __init__(self, code, problem, alert=True, out=None):
@@ -202,10 +202,11 @@ def read_benchmarks():
         return [], f"the benchmark results cannot be read ({type(e).__name__})"
 
 def record_results(rows):
-    """Append benchmark records (dicts without install_id) to the results file and one trusted line per CHUNK of them; returns the count.
+    """Append benchmark records (dicts without install_id) to the results file and one trusted line per event_chunk (model-check.json) of them; returns the count.
     A Stop (STL-MDL-753) when a row is invalid, the file cannot be read or no line can be written (nothing is written then)."""
     import event_log as el, stella_data as sd
     try:
+        chunk = model_params()["event_chunk"]   # read before anything is written
         el.preflight()   # no record without its trusted line
         item, iid, p = sd.schema_of("benchmarks")["properties"]["records"]["items"], sd.install_id(), el.path(sd.load(sd.INDEX)[KEY])
         new = [{"install_id": iid, **r} for r in rows]
@@ -220,17 +221,18 @@ def record_results(rows):
             except FileNotFoundError:
                 old = []
             route.write_whole(p, {"schema_version": 1, "records": old + new})
-        for i in range(0, len(new), CHUNK):
-            el.append(el.build(LINE, f"{len(new[i:i + CHUNK])} benchmark records", new={"digests": [digest(r) for r in new[i:i + CHUNK]]}))
+        for i in range(0, len(new), chunk):
+            el.append(el.build(LINE, f"{len(new[i:i + chunk])} benchmark records", new={"digests": [digest(r) for r in new[i:i + chunk]]}))
     except (OSError, ValueError, RecursionError, KeyError, TypeError, sd.DataError, el.EventError) as e:
         raise Stop(BAD_BENCH, f"the benchmark results cannot be written ({type(e).__name__})")
     return len(new)
 
 # ---- the CLI ----
 def _load(path):
+    cap = model_params()["read_cap_bytes"]
     try:
         with open(path, "rb") as f:
-            got = json.loads(f.read(8 << 20))
+            got = json.loads(f.read(cap))
     except (OSError, ValueError, RecursionError) as e:
         raise Stop(BAD_INPUT, f"{os.path.basename(path)}: cannot be read ({type(e).__name__})", alert=False)
     if not isinstance(got, list):

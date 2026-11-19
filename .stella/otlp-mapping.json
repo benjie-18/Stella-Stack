@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "namespace": "stella",
+  "service_name": "stella",
+  "scope_name": "stella-cost",
+  "operation": "chat",
+  "span_name": "{operation} {model}",
+  "kind": 3,
+  "status_codes": {
+    "ok": 1,
+    "error": 2
+  },
+  "path": "/v1/traces",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "auth": {
+    "header": "Authorization",
+    "scheme": "Bearer"
+  },
+  "schemes": {
+    "plain": "http",
+    "tls": "https"
+  },
+  "plain_when": [
+    "local_endpoint",
+    "loopback_host"
+  ],
+  "attributes": [
+    {"name": "gen_ai.operation.name", "value": "{operation}"},
+    {"name": "gen_ai.request.model", "from": "model"},
+    {"name": "gen_ai.provider.name", "from": "connection"},
+    {"name": "gen_ai.usage.input_tokens", "from": "tokens.input", "default": 0},
+    {"name": "gen_ai.usage.output_tokens", "from": "tokens.output", "default": 0},
+    {"name": "gen_ai.usage.cache_creation.input_tokens", "from": "tokens.cache_write", "default": 0},
+    {"name": "gen_ai.usage.cache_read.input_tokens", "from": "tokens.cache_read", "default": 0},
+    {"name": "gen_ai.usage.reasoning.output_tokens", "from": "tokens.reasoning", "default": 0},
+    {"name": "{namespace}.role", "from": "role"},
+    {"name": "{namespace}.project", "from": "project"},
+    {"name": "{namespace}.card", "from": "card"},
+    {"name": "{namespace}.cost", "from": "cost.amount"},
+    {"name": "{namespace}.batch", "from": "batch", "default": false}
+  ]
+}

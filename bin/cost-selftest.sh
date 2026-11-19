@@ -48,7 +48,7 @@ class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
-        with open(sys.argv[1], "a") as f: f.write(json.dumps({"path": self.path, "auth": self.headers.get("Authorization"), "body": raw}) + "\n")
+        with open(sys.argv[1], "a") as f: f.write(json.dumps({"path": self.path, "auth": self.headers.get("Authorization"), "hdr": dict(self.headers), "body": raw}) + "\n")
         self.send_response(200); self.send_header("Content-Length", "2"); self.end_headers(); self.wfile.write(b"{}")
 s = http.server.ThreadingHTTPServer((host, 0), H)
 print(s.server_address[1], flush=True); s.serve_forever()
@@ -195,5 +195,56 @@ assert cost.usage_of(chat, {}) == {"input": 0, "output": 0, "cache_write": 0, "c
 E' "C2 a shape with no extra keys, or an answer with no usage block, gives zeros for what it cannot show (never an error)"
 ok 'jq -e "[.entries[].response | has(\"usage_extra\")] | any" "$R/.stella/protocols.json" && python3 -I -B "$R/bin/stella_data.py" check >/dev/null' "C3 the protocols schema takes the optional usage_extra and the shipped file with it passes check"
 ok 'jq -e ".entries[] | select(.id == \"otlp-export\") | .status == \"off\"" "$ROOT/.stella/features.json"' "C4 the shipped otlp-export feature is off"
+
+# ---- HC1: every policy value is data; editing it in the scratch root changes behavior, no code change ----
+OM=$R/.stella/otlp-mapping.json; SG=$R/.stella/limit-signals.json; cp "$OM" "$T/om.keep"; cp "$SG" "$T/sg.keep"; cp "$R/.stella/schemas/usage.schema.json" "$T/us.keep"
+cp "$R/.stella/schemas/pricing.schema.json" "$T/ps.keep"
+ok 'jq -e ".schema_version == 1" "$OM" && python3 -I -B "$R/bin/stella_data.py" check >/dev/null' "HC1 the OTLP mapping is a data file that passes check"
+# 1 the span and the export are built from otlp-mapping.json
+ed otlp-mapping.json '.operation = "embed" | .span_name = "{operation}/{model}" | (.attributes[] | select(.name == "gen_ai.request.model") | .name) = "x.model"'
+CO span --json --record "$RJSON" >"$T/o/span2"
+ok 'jq -e ".name == \"embed/qa-m\" and .attributes[\"x.model\"] == \"qa-m\" and .attributes[\"gen_ai.operation.name\"] == \"embed\" and (.attributes | has(\"gen_ai.request.model\") | not)" "$T/o/span2"' "HC1 operation, span name template and attribute names are data"
+cp "$T/om.keep" "$OM"
+ed otlp-mapping.json '.namespace = "zz"'
+ok 'CO span --json --record "$RJSON" | jq -e ".attributes | has(\"zz.role\") and has(\"zz.cost\") and (has(\"stella.role\") | not)"' "HC1 the attribute namespace is data"
+cp "$T/om.keep" "$OM"
+ed otlp-mapping.json '.status_codes = {"ok": 0, "error": 1}'
+ok 'CO span --json --record "$RJSON" | jq -e ".status == 0"' "HC1 the span status codes are data"
+cp "$T/om.keep" "$OM"
+ed otlp-mapping.json '.kind = 2 | .path = "/zz/t" | .service_name = "svc-zz" | .scope_name = "scope-zz" | .auth.header = "X-Key" | .auth.scheme = "Token"'
+: >"$T/got.jsonl"; ed connections.json '(.entries[] | select(.id == "qa-otlp") | .hosts[0].port) = '"$LP"
+CO export --json --record "$RJSON" >"$T/o/ex5"
+ok 'jq -e ".path == \"/zz/t\" and .hdr[\"X-Key\"] == \"Token $KEY\" and (.hdr | has(\"Authorization\") | not) and (.body | fromjson | .resourceSpans[0].scopeSpans[0].spans[0].kind == 2 and .resourceSpans[0].scopeSpans[0].scope.name == \"scope-zz\" and .resourceSpans[0].resource.attributes[0].value.stringValue == \"svc-zz\")" "$T/got.jsonl"' "HC1 OTLP path, span kind, service and scope names, auth header name and scheme are data"
+cp "$T/om.keep" "$OM"
+ed otlp-mapping.json '.plain_when = []'
+CO export --json --record "$RJSON" >"$T/o/ex6" 2>/dev/null; rc6=$?
+ok '[ "$rc6" = 1 ] && jq -e ".code == \"STL-LIM-422\"" "$T/o/ex6"' "HC1 the scheme choice rule is data: with no plain rule a loopback endpoint is reached over TLS (and fails here)"
+cp "$T/om.keep" "$OM"
+# 3 span status follows outcome_classes: a refused record is no error span unless the data says so
+rec qa-p qa-m 2026-03-01T00:00:00Z '{"outcome":"refused"}' >"$T/rf.json"
+ok 'CO span --json --record "$T/rf.json" | jq -e ".status == 1"' "HC3 a refused record is not an error span (the ledger and cost agree)"
+ed limit-signals.json '.outcome_classes.refused.is_error = true'
+ok 'CO span --json --record "$T/rf.json" | jq -e ".status == 2"' "HC3 outcome_classes.is_error is data: the span status follows it"
+cp "$T/sg.keep" "$SG"
+# 7 cache hit rate lists
+ed limit-signals.json '.cache_hit_rate.denominator = ["input","cache_read"]'
+ok 'CO rollup --by role --records "$LED" --json | jq -e ".groups[\"r-a\"].cache_hit_rate == 0.6"' "HC7 the cache hit rate formula is data (denominator without cache_write: 300/500)"
+cp "$T/sg.keep" "$SG"
+# 6 billing: a type that is metered is priced, one billed by plan is not
+ed limit-signals.json '.billing["cli-login"] = "metered"'
+ok '[ "$(price qa-cli qa-m 2026-03-01T00:00:00Z | jq -r ".cost.priced")" = false ]' "HC6 billing is data: a cli-login connection set to metered is priced (here: unpriced, no row)"
+ed limit-signals.json '.billing.api = "plan"'
+ok '[ "$(price qa-p qa-m 2026-03-01T00:00:00Z | jq -r ".cost")" = null ]' "HC6 an api connection billed by plan has cost null"
+cp "$T/sg.keep" "$SG"
+# 2 a sixth token type is priced with no code change
+ed schemas/usage.schema.json '.properties.tokens.properties.audio = {"type":"integer","minimum":0} | .properties.tokens.required += ["audio"]'
+ed schemas/pricing.schema.json '.properties.entries.items.properties.per_million.properties.audio = {"type":"number","minimum":0}'
+ed pricing.json '.entries[0].per_million.audio = 10 | .entries[1].per_million.audio = 10'
+ok 'CO check --json | jq -e ".ok == true"' "HC2 a table with the sixth type's price passes check"
+ok '[ "$(rec qa-p qa-m 2026-03-01T00:00:00Z "{\"tokens\":{\"input\":0,\"output\":0,\"cache_write\":0,\"cache_read\":0,\"reasoning\":0,\"audio\":1000000}}" | CO price --json | jq -r .cost.amount)" = 10 ]' "HC2 a sixth token type is priced with no code change"
+ed pricing.json 'del(.entries[0].per_million.audio)'
+ok '! CO check --json >/dev/null' "HC2 a row that lacks the price of a token type fails check"
+cp "$T/prc.keep" "$PRC"; cp "$T/us.keep" "$R/.stella/schemas/usage.schema.json"; cp "$T/ps.keep" "$R/.stella/schemas/pricing.schema.json"
+ok 'CO check --json | jq -e ".ok == true" && python3 -I -B "$R/bin/stella_data.py" check >/dev/null' "HC the shipped data passes check after the edits are undone"
 
 echo "# cost-selftest: $fails failed"; [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

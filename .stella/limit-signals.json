@@ -12,5 +12,15 @@
   },
   "cli_usage": {
     "claude-code": []
-  }
+  },
+  "min_wait_seconds": 1,
+  "limit_error_plan_share": 1,
+  "day_reset": {"utc_offset_minutes": 0},
+  "limit_triggers": {"rate_limit": ["retry_after", "reset_header", "default"], "daily_cap": ["retry_after", "reset_header", "day_reset", "default"]},
+  "outcome_classes": {"ok": {"counts_as_call": true, "is_error": false}, "error": {"counts_as_call": true, "is_error": true}, "limit": {"counts_as_call": true, "is_error": true}, "timeout": {"counts_as_call": true, "is_error": true}, "refused": {"counts_as_call": false, "is_error": false}},
+  "billing": {"api": "metered", "cli-login": "plan"},
+  "cache_hit_rate": {"numerator": ["cache_read"], "denominator": ["input", "cache_read", "cache_write"]},
+  "duration_units": {"ms": 0.001, "s": 1, "m": 60, "h": 3600, "d": 86400},
+  "epoch_min_seconds": 1000000000,
+  "field_limits": {"holder": 100, "reason": 300}
 }

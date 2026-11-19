@@ -198,6 +198,89 @@ printf '{"v":1,"id":"torn' >>"$UL"
 rec qa-new qa-m5 ok builder after-kill >/dev/null
 ok "grep -c 'after-kill' '$UL' | grep -qx 1 && L check --json | jq -e '.ok == true and .torn == 1' && L report --by card --json | jq -e '.groups[\"kw\"].calls == $NK'" "a torn last line is skipped and counted; the next record starts on a new line"
 
+# ---- HC1: every policy value is data; editing it in the scratch root changes behavior, no code change ----
+SIG=$R/.stella/limit-signals.json; cp "$SIG" "$T/sig.keep"; cp "$R/.stella/schemas/usage.schema.json" "$T/usage.keep"
+PYL() { python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); sys.argv = sys.argv[1:]; exec(sys.stdin.read())' "$R/bin" "$@"; }
+# 2 token types: one list (the usage schema's tokens properties); a sixth type is counted with no code change
+ed schemas/usage.schema.json '.properties.tokens.properties.audio = {"type":"integer","minimum":0} | .properties.tokens.required += ["audio"]'
+python3 -I -c 'import json,sys; t={"input":1,"output":1,"cache_write":0,"cache_read":0,"reasoning":0,"audio":7}; print(json.dumps({"connection":"qa-new","model":"qa-m5","outcome":"ok","card":"hc2","tokens":t}))' | L record --json >/dev/null
+rec qa-new qa-m5 ok builder hc2 >/dev/null
+ok "jq -e '.tokens.audio == 7' <(grep '\"card\":\"hc2\"' '$UL' | head -1) && jq -e '.tokens.audio == 0' <(grep '\"card\":\"hc2\"' '$UL' | tail -1)" "HC2 a sixth token type added to the usage schema is stored (and zeroed when absent)"
+ok "L report --by card --json | jq -e '.groups.hc2.tokens.audio == 7'" "HC2 report sums the sixth token type"
+cp "$T/usage.keep" "$R/.stella/schemas/usage.schema.json"
+# 3 outcome words
+rec qa-new qa-m3 refused >/dev/null
+ok "L status --connection qa-new --model qa-m3 --json | jq -e '.daily.used == 1'" "HC3 (baseline) a refused record is not a call"
+ed limit-signals.json '.outcome_classes.refused.counts_as_call = true'
+ok "L status --connection qa-new --model qa-m3 --json | jq -e '.daily.used == 3'" "HC3 outcome_classes.counts_as_call is data: refused counts when the data says so"
+rec qa-new qa-m5 timeout builder hc3 >/dev/null
+ok "L report --by card --json | jq -e '.groups.hc3.errors == 1'" "HC3 a timeout is an error by data"
+ed limit-signals.json '.outcome_classes.timeout.is_error = false'
+ok "L report --by card --json | jq -e '.groups.hc3.errors == 0'" "HC3 outcome_classes.is_error is data: the same record is no error once the data says so"
+cp "$T/sig.keep" "$SIG"
+# 4 the daily reset clock
+ok "PYL <<'E'
+import ledger, datetime
+now = datetime.datetime(2026, 3, 1, 20, 30, tzinfo=datetime.timezone.utc)
+assert ledger.iso(ledger.midnight(now)) == '2026-03-02T00:00:00Z', ledger.iso(ledger.midnight(now))
+E" "HC4 the shipped reset clock is the UTC midnight"
+ed limit-signals.json '.day_reset = {"utc_offset_minutes": 600}'
+ok "PYL <<'E'
+import ledger, datetime
+now = datetime.datetime(2026, 3, 1, 20, 30, tzinfo=datetime.timezone.utc)   # 06:30 on the 2nd at +10:00
+assert ledger.iso(ledger.midnight(now)) == '2026-03-02T14:00:00Z', ledger.iso(ledger.midnight(now))
+E" "HC4 day_reset utc_offset_minutes moves the reset (+10:00: 14:00Z)"
+ed limit-signals.json '.day_reset = {"zone": "Asia/Kolkata"}'
+ok "PYL <<'E'
+import ledger, datetime
+now = datetime.datetime(2026, 3, 1, 20, 30, tzinfo=datetime.timezone.utc)   # 02:00 on the 2nd at +05:30
+assert ledger.iso(ledger.midnight(now)) == '2026-03-02T18:30:00Z', ledger.iso(ledger.midnight(now))
+E" "HC4 day_reset zone (a name the stdlib knows) moves the reset"
+ok "PYL <<'E'
+import ledger, datetime
+now = datetime.datetime(2026, 3, 1, 20, 30, tzinfo=datetime.timezone.utc)
+recs = [{'kind':'call','outcome':'ok','connection':'c','model':'m','ts':t} for t in ('2026-03-01T18:29:59Z','2026-03-01T18:30:00Z','2026-03-02T18:29:59Z','2026-03-02T18:30:00Z')]
+assert ledger.day_used(recs, 'c', 'm', now) == 2
+E" "HC4 the daily window is the data's day: records from the day's start to its end"
+ed limit-signals.json '.day_reset = {"zone": "Nowhere/None"}'
+ok "(L status --connection qa-new --model qa-m1 --json 2>&1 || true) | grep -q STL-LIM-414" "HC4 an unknown zone fails closed (STL-LIM-414)"
+cp "$T/sig.keep" "$SIG"
+# 5 limit triggers, the wait order, the floor and the plan share of a limit error
+ed limit-signals.json '.default_wait_seconds = 40 | .limit_triggers = {"rate_limit": ["default"], "daily_cap": ["default"]}'
+printf '{"error": {"message": "too many requests"}}' | L observe --connection qa-new --model qa-m1 --status 429 --header 'Retry-After: 3' --json >"$T/obs"
+ok "jq -e '.source == \"rate_limit\" and .until > \"$(date -u -d +30sec +%FT%TZ)\"' $T/obs" "HC5 limit_triggers lists the wait sources per trigger: with only default the Retry-After header is ignored"
+ed limit-signals.json '.limit_triggers = {"daily_cap": ["default"]}'
+printf '{"error": {"message": "too many requests"}}' | L observe --connection qa-new --model qa-m2 --status 429 --json >"$T/obs"
+ok "jq -e '. == null' $T/obs" "HC5 a trigger the data does not list is no limit"
+cp "$T/sig.keep" "$SIG"
+ed limit-signals.json '.min_wait_seconds = 30'
+printf '{"error": {"message": "too many requests"}}' | L observe --connection qa-new --model qa-m4 --status 429 --header 'Retry-After: 1' --json >"$T/obs"
+ok "jq -e '.until > \"$(date -u -d +20sec +%FT%TZ)\"' $T/obs" "HC5 min_wait_seconds is data: a 1 s wait is raised to the floor"
+cp "$T/sig.keep" "$SIG"
+ed limit-signals.json '.limit_error_plan_share = 0.7 | .default_wait_seconds = 30'
+printf 'usage limit reached for this plan; try again later' | L observe --connection "$CLI" --json >/dev/null
+ok "L status --connection '$CLI' --model '$CM' --json | jq -e '.plan_share == 0.7'" "HC5 limit_error_plan_share is data"
+# 6 billing: the plan or metered way of a connection type is data
+ed limit-signals.json '.billing["cli-login"] = "metered"'
+ok "L status --connection '$CLI' --model '$CM' --json | jq -e '.plan_share == null'" "HC6 billing per connection type is data: a cli-login type that is metered has no plan share"
+ed limit-signals.json '.billing["cli-login"] = "plan" | .billing.api = "plan"'
+rec qa-new qa-m5 ok builder hc6 0.3 >/dev/null
+ok "L status --connection qa-new --model qa-m5 --json | jq -e '.plan_share == 0.3'" "HC6 an api type billed by plan shows the plan share of its records"
+cp "$T/sig.keep" "$SIG"
+# 8 the header parser: duration units, the epoch floor, the stored text lengths
+ed limit-signals.json '.duration_units.s = 20'
+printf '{"error": {"message": "too many requests"}}' | L observe --connection qa-two --model qa-x --status 429 --header 'Retry-After: 2s' --json >"$T/obs"
+ok "jq -e '.until > \"$(date -u -d +30sec +%FT%TZ)\"' $T/obs" "HC8 duration_units is data: a unit that is 20 s long makes 2s a 40 s wait"
+cp "$T/sig.keep" "$SIG"
+ed limit-signals.json '.field_limits.reason = 7'
+ok "PYL <<'E'
+import ledger, datetime
+o = ledger.observe_limit('qa-new', 'qa-m6', 'retry_after', ledger.utcnow() + datetime.timedelta(seconds=5), 'x' * 50)
+assert len(o['reason']) == 7, o
+E" "HC8 field_limits.reason is data: the stored reason is cut where the data says"
+cp "$T/sig.keep" "$SIG"
+ok "python3 -I -B $R/bin/stella_data.py check >/dev/null 2>&1" "HC the shipped data passes check after the edits are undone"
+
 # ---- core contract ----
 ok "(STUB_WORKER_MARK=1 L status --connection qa-new --json 2>&1 || true) | grep -q STL-CFG-312" "T-CORE-LEDGER a worker environment is refused (STL-CFG-312)"
 L bogus 2>/dev/null; RC=$?
