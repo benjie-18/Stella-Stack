@@ -1,0 +1,469 @@
+{
+  "schema_version": 1,
+  "about": "Worker adapters (F3): one entry per coding CLI, every CLI-specific name in data. Item P owns id, binary, token_env, model_flags, tools (DC-12: tool name -> read|write|shell|other and the input pointers of its path or command) and policy (target file and owned pointers, one config shape list per policy rule kind, a hook where the CLI runs one, fixed entries, what could not be verified). In a template {name}, {home}, {path}, {word}, {sub}, {command}, {binary}, {pattern} are the rule's items, {stack} the stack folder.",
+  "entries": [
+    {
+      "id": "opencode",
+      "binary": "opencode",
+      "token_env": "STELLA_RUN_TOKEN",
+      "tools": {
+        "read": {
+          "class": "read",
+          "path": "/filePath"
+        },
+        "edit": {
+          "class": "write",
+          "path": "/filePath"
+        },
+        "write": {
+          "class": "write",
+          "path": "/filePath"
+        },
+        "grep": {
+          "class": "read",
+          "path": "/path"
+        },
+        "glob": {
+          "class": "read",
+          "path": "/path"
+        },
+        "list": {
+          "class": "read",
+          "path": "/path"
+        },
+        "bash": {
+          "class": "shell",
+          "command": "/command"
+        },
+        "webfetch": {
+          "class": "other"
+        },
+        "task": {
+          "class": "other"
+        }
+      },
+      "policy": {
+        "target": {
+          "file": "opencode.json",
+          "owned_pointers": [
+            "/permission/bash",
+            "/permission/edit",
+            "/permission/read",
+            "/permission/external_directory"
+          ]
+        },
+        "worktree_ref": null,
+        "fixed": [
+          {
+            "pointer": "/permission/bash",
+            "key": "bin/escalate.sh *",
+            "value": "allow"
+          },
+          {
+            "pointer": "/permission/bash",
+            "key": "{stack}/bin/escalate.sh *",
+            "value": "allow"
+          }
+        ],
+        "shapes": {
+          "model_limits": [
+            {
+              "pointer": "/permission/bash",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "forbidden": [
+                  "{binary} {pattern}"
+                ]
+              }
+            }
+          ],
+          "protected_read": [
+            {
+              "pointer": "/permission/bash",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "owner": [
+                  "*{name}*"
+                ]
+              }
+            },
+            {
+              "pointer": "/permission/edit",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "owner": [
+                  "*{name}*"
+                ],
+                "repo": [
+                  "{path}",
+                  "{path}/*"
+                ],
+                "home": [
+                  "~/{home}/*"
+                ]
+              }
+            },
+            {
+              "pointer": "/permission/read",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "owner": [
+                  "*{name}*"
+                ],
+                "repo": [
+                  "{path}",
+                  "{path}/*"
+                ],
+                "home": [
+                  "~/{home}/*"
+                ]
+              }
+            }
+          ],
+          "secret_read": [
+            {
+              "pointer": "/permission/bash",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "name": [
+                  "*/{name}*",
+                  "* {name}*"
+                ],
+                "home": [
+                  "*/{home}*",
+                  "*~/{home}*"
+                ]
+              }
+            },
+            {
+              "pointer": "/permission/read",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "name": [
+                  "{name}",
+                  "*/{name}"
+                ],
+                "home": [
+                  "*/{home}",
+                  "*/{home}/*"
+                ]
+              }
+            },
+            {
+              "pointer": "/permission/read",
+              "form": "map",
+              "value": "allow",
+              "templates": {
+                "allow": [
+                  "{name}",
+                  "*/{name}"
+                ]
+              }
+            }
+          ],
+          "commit_rule": [
+            {
+              "pointer": "/permission/bash",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "global": [
+                  "git {word} *",
+                  "git {word}=*"
+                ],
+                "sub": [
+                  "git {word}",
+                  "git {word} *",
+                  "git * {word} *"
+                ],
+                "option": [
+                  "git *{word}*"
+                ],
+                "sub_args": [
+                  "git {sub} {word}",
+                  "git {sub} {word} *",
+                  "git {sub} * {word}",
+                  "git {sub} * {word} *"
+                ]
+              }
+            }
+          ],
+          "dispatcher_only": [
+            {
+              "pointer": "/permission/bash",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "command": [
+                  "{command}",
+                  "{command} *"
+                ]
+              }
+            }
+          ],
+          "write_boundary": [
+            {
+              "pointer": "/permission/external_directory",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "outside": [
+                  "*"
+                ]
+              }
+            },
+            {
+              "pointer": "/permission/external_directory",
+              "form": "map",
+              "value": "allow",
+              "templates": {
+                "writable": [
+                  "{path}",
+                  "{path}/*"
+                ]
+              }
+            }
+          ]
+        },
+        "unverified": [
+          "pattern semantics (absolute or project-relative paths, * across /, which of two matching patterns wins) are taken from the patterns the repo config already used and the CLI binary's strings; opencode.ai is not on the firewall allowlist",
+          "external_directory also gates reads and shell paths outside the project folder, so the write boundary is stricter here than on the other CLI",
+          "the tool input names (filePath, path, command) come from the CLI binary's strings",
+          "whether a ~/ pattern is expanded to the home folder (the protected home folders are written ~/<folder>/* so a project's own .claude or .hermes folder is not hit)"
+        ]
+      },
+      "global_id": "b750e496-eb61-407e-91df-ee05aa734c4d",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "claude-code",
+      "binary": "claude",
+      "token_env": "STELLA_RUN_TOKEN",
+      "model_flags": {
+        "names": [
+          "claude",
+          "claude-code"
+        ],
+        "model": "--model",
+        "fallback": "--fallback-model",
+        "mode": "--permission-mode",
+        "mode_forbidden": [
+          "bypassPermissions"
+        ],
+        "skip": [
+          "--dangerously-skip-permissions",
+          "--allow-dangerously-skip-permissions",
+          "--yolo"
+        ],
+        "run": [
+          "-p",
+          "--print"
+        ],
+        "no_model": [
+          "--version",
+          "-v",
+          "-V",
+          "--help",
+          "-h",
+          "mcp",
+          "doctor",
+          "update",
+          "config",
+          "plugin"
+        ],
+        "model_prefix": "claude-",
+        "deny_patterns": [
+          "*--model *",
+          "*--model=*",
+          "*opusplan*",
+          "*--dangerously-skip-permissions*",
+          "*--allow-dangerously-skip-permissions*",
+          "setup-token*",
+          "-p*",
+          "*-p *",
+          "*--print*"
+        ]
+      },
+      "tools": {
+        "Read": {
+          "class": "read",
+          "path": "/file_path"
+        },
+        "Edit": {
+          "class": "write",
+          "path": "/file_path"
+        },
+        "Write": {
+          "class": "write",
+          "path": "/file_path"
+        },
+        "MultiEdit": {
+          "class": "write",
+          "path": "/file_path"
+        },
+        "NotebookEdit": {
+          "class": "write",
+          "path": "/notebook_path"
+        },
+        "Grep": {
+          "class": "read",
+          "path": "/path"
+        },
+        "Glob": {
+          "class": "read",
+          "path": "/path"
+        },
+        "Bash": {
+          "class": "shell",
+          "command": "/command"
+        },
+        "WebFetch": {
+          "class": "other"
+        },
+        "WebSearch": {
+          "class": "other"
+        },
+        "Task": {
+          "class": "other"
+        }
+      },
+      "policy": {
+        "target": {
+          "file": "docs/hermes-local/generated/claude-code.settings.json",
+          "owned_pointers": [
+            "/permissions/deny",
+            "/hooks/PreToolUse"
+          ]
+        },
+        "worktree_ref": "${CLAUDE_PROJECT_DIR}",
+        "shapes": {
+          "secret_read": [
+            {
+              "pointer": "/permissions/deny",
+              "form": "list",
+              "templates": {
+                "name": [
+                  "Read({name})",
+                  "Read(//**/{name})"
+                ],
+                "home": [
+                  "Read(~/{home})",
+                  "Read(~/{home}/**)"
+                ]
+              }
+            }
+          ],
+          "protected_read": [
+            {
+              "pointer": "/permissions/deny",
+              "form": "list",
+              "templates": {
+                "repo": [
+                  "Read(/{path})",
+                  "Read(/{path}/**)",
+                  "Edit(/{path})",
+                  "Edit(/{path}/**)"
+                ],
+                "home": [
+                  "Read(~/{home}/**)",
+                  "Edit(~/{home}/**)"
+                ],
+                "owner": [
+                  "Read(//**/{name})",
+                  "Edit(//**/{name})"
+                ]
+              }
+            }
+          ],
+          "commit_rule": [
+            {
+              "pointer": "/permissions/deny",
+              "form": "list",
+              "templates": {
+                "global": [
+                  "Bash(git {word} *)",
+                  "Bash(git {word}=*)"
+                ],
+                "sub": [
+                  "Bash(git {word})",
+                  "Bash(git {word} *)",
+                  "Bash(git * {word} *)"
+                ],
+                "option": [
+                  "Bash(git *{word}*)"
+                ],
+                "sub_args": [
+                  "Bash(git {sub} {word})",
+                  "Bash(git {sub} {word} *)",
+                  "Bash(git {sub} * {word})",
+                  "Bash(git {sub} * {word} *)"
+                ]
+              }
+            }
+          ],
+          "dispatcher_only": [
+            {
+              "pointer": "/permissions/deny",
+              "form": "list",
+              "templates": {
+                "command": [
+                  "Bash({command})",
+                  "Bash({command} *)"
+                ]
+              }
+            }
+          ],
+          "model_limits": [
+            {
+              "pointer": "/permissions/deny",
+              "form": "list",
+              "templates": {
+                "forbidden": [
+                  "Bash({binary} {pattern})"
+                ]
+              }
+            }
+          ]
+        },
+        "hook": {
+          "pointer": "/hooks/PreToolUse",
+          "form": "list",
+          "kinds": [
+            "write_boundary",
+            "secret_read",
+            "protected_read"
+          ],
+          "template": {
+            "matcher": "{matcher}",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "{command}"
+              }
+            ]
+          },
+          "deny": {
+            "hookSpecificOutput": {
+              "hookEventName": "PreToolUse",
+              "permissionDecision": "deny",
+              "permissionDecisionReason": "{reason}"
+            }
+          },
+          "deny_exit": 0
+        },
+        "unverified": [
+          "the hook command is run through a shell that expands ${CLAUDE_PROJECT_DIR} (the hooks guide shows it in a command; not run here)",
+          "a Read deny on ~/.claude or ~/.hermes leaves the CLI's own reads of its config alone (the permissions guide says deny rules apply to Claude's tools)"
+        ]
+      },
+      "global_id": "5444b0a4-6d63-40d6-8631-e27d626a4abd",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    }
+  ]
+}

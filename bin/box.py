@@ -8,12 +8,11 @@ The card's branch ref is not bound from the shared refs/heads/<project> folder (
 over one spelling of a sibling's ref hides only that spelling): the box sees a private copy of its own ref, and run() applies
 it to the real repo after the call, for this ref only, as a compare-and-swap.
 """
-import ast, contextlib, fnmatch, json, os, pwd, re, shutil, signal, stat, subprocess, sys, tarfile, time, uuid
+import contextlib, fnmatch, json, os, pwd, re, shutil, signal, stat, subprocess, sys, tarfile, time, uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import roles
 
-HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs/hermes-local/hooks/builder/secret-guard.py")
 NO_NEST = "--disable-userns"   # no namespace inside a box; only the merge test of a stack card runs without it (merge_exec nest)
 BASE = ["bwrap", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup-try",
         NO_NEST, "--die-with-parent", "--new-session", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"]
@@ -24,17 +23,13 @@ class BoxError(Exception):
 
 
 def secret_classes():
-    """(SECRETS, SECRET_OK) read, not run, from secret-guard.py: the one list (no copy to drift)."""
-    got = {}
+    """(SECRETS, SECRET_OK): the deny and allow globs of the policy's secret_read rule (.stella/policy.json, F3 DC-11), read through the
+    one loader in roles.py (the read guards read the same rule). Unreadable: BoxError, so the terminal is refused (fail closed)."""
     try:
-        for n in ast.parse(open(HOOK, encoding="utf-8").read()).body:
-            if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name) and n.targets[0].id in ("SECRETS", "SECRET_OK"):
-                got[n.targets[0].id] = [str(x) for x in ast.literal_eval(n.value)]
-    except (OSError, SyntaxError, ValueError) as e:
-        raise BoxError(f"secret classes cannot be read from secret-guard.py: {e}")
-    if set(got) != {"SECRETS", "SECRET_OK"}:
-        raise BoxError("secret-guard.py has no SECRETS / SECRET_OK constants")
-    return got["SECRETS"], got["SECRET_OK"]
+        s = roles.policy_rule("secret_read")
+    except roles.RolesError as e:
+        raise BoxError(f"secret classes cannot be read from the policy: {e}")
+    return list(s["deny"]), list(s["allow"])
 
 
 def _worktree(ws):

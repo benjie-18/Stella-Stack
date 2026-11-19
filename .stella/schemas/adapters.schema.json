@@ -1,0 +1,329 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Worker adapters",
+  "description": "One entry per coding CLI (F3): every CLI-specific name lives here. Item P: id, binary, token_env, model_flags, tools, policy. Item A adds the run part.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "about": {
+      "type": "string"
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+          },
+          "binary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "token_env": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$",
+            "description": "The per-run token variable; policy.py check requires it among owner-auth worker_signals.token_env (DC-03)."
+          },
+          "model_flags": {
+            "type": "object",
+            "properties": {
+              "names": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "model": {
+                "type": "string"
+              },
+              "fallback": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string"
+              },
+              "mode_forbidden": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "skip": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "run": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "no_model": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "model_prefix": {
+                "type": "string"
+              },
+              "deny_patterns": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "names",
+              "model",
+              "fallback",
+              "mode",
+              "mode_forbidden",
+              "skip",
+              "run",
+              "no_model",
+              "model_prefix",
+              "deny_patterns"
+            ],
+            "additionalProperties": false,
+            "description": "What bin/policy.py renders as forbidden in every CLI's shell and docs/hermes-local/hooks/builder/model-guard.py judges: the CLI's command names, its model, fallback and permission-mode flags, the modes and flags that skip permissions, the flags only a model run takes, the words that run no model, the prefix a model name may carry."
+          },
+          "tools": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "class": {
+                  "enum": [
+                    "read",
+                    "write",
+                    "shell",
+                    "other"
+                  ]
+                },
+                "path": {
+                  "type": "string",
+                  "pattern": "^/"
+                },
+                "command": {
+                  "type": "string",
+                  "pattern": "^/"
+                }
+              },
+              "required": [
+                "class"
+              ],
+              "additionalProperties": false
+            },
+            "description": "DC-12: tool name -> class and the JSON pointers of its path or command in the tool input."
+          },
+          "policy": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"
+                  },
+                  "owned_pointers": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^/"
+                    }
+                  }
+                },
+                "required": [
+                  "file",
+                  "owned_pointers"
+                ],
+                "additionalProperties": false
+              },
+              "worktree_ref": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "fixed": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "pointer": {
+                      "type": "string",
+                      "pattern": "^/"
+                    },
+                    "key": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pointer",
+                    "key",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "shapes": {
+                "type": "object",
+                "propertyNames": {
+                  "enum": [
+                    "write_boundary",
+                    "protected_read",
+                    "secret_read",
+                    "commit_rule",
+                    "dispatcher_only",
+                    "model_limits"
+                  ]
+                },
+                "additionalProperties": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "pointer": {
+                        "type": "string",
+                        "pattern": "^/"
+                      },
+                      "form": {
+                        "enum": [
+                          "list",
+                          "map"
+                        ]
+                      },
+                      "value": {
+                        "type": "string"
+                      },
+                      "templates": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "minItems": 1
+                        }
+                      }
+                    },
+                    "required": [
+                      "pointer",
+                      "form",
+                      "templates"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "hook": {
+                "type": "object",
+                "properties": {
+                  "pointer": {
+                    "type": "string",
+                    "pattern": "^/"
+                  },
+                  "form": {
+                    "enum": [
+                      "list"
+                    ]
+                  },
+                  "kinds": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "enum": [
+                        "write_boundary",
+                        "protected_read",
+                        "secret_read",
+                        "commit_rule",
+                        "dispatcher_only",
+                        "model_limits"
+                      ]
+                    }
+                  },
+                  "template": {
+                    "type": "object"
+                  },
+                  "deny": {
+                    "type": "object"
+                  },
+                  "deny_exit": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2
+                  }
+                },
+                "required": [
+                  "pointer",
+                  "form",
+                  "kinds",
+                  "template",
+                  "deny"
+                ],
+                "additionalProperties": false
+              },
+              "unverified": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "target",
+              "shapes"
+            ],
+            "additionalProperties": false
+          },
+          "global_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "install_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "id",
+          "binary",
+          "global_id",
+          "install_id"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "entries"
+  ],
+  "additionalProperties": false
+}

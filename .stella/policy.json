@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "about": "The stack policy (F3 item P; body B3, E2 policy layer): each rule written once as data. bin/policy.py renders it into each worker CLI's own permission config (the shapes in .stella/adapters.json), checks it, and catches a hand edit of a generated file (drift). The read guards (secret-guard.py, read-only-terminal.py), bin/box.py and git-guard.py read their rule through the one loader in bin/roles.py and fail closed when it cannot be read. A value that names another file (role_table#/...) is read there, never copied. {worktree} is the run's worktree.",
+  "rules": [
+    {
+      "id": "write-boundary",
+      "kind": "write_boundary",
+      "writable": [
+        "{worktree}"
+      ],
+      "about": "a worker writes only inside its worktree"
+    },
+    {
+      "id": "protected-paths",
+      "kind": "protected_read",
+      "paths_from": "role_table#/protected",
+      "owner_from": "role_table#/owner_settings",
+      "about": "the stack's protected paths (repo list anchored at the stack root, home list under each home) and the owner settings files are neither read nor written by a worker CLI"
+    },
+    {
+      "id": "secret-reads",
+      "kind": "secret_read",
+      "deny": [
+        ".env*",
+        "*.pem",
+        "*.key",
+        "~/.hermes/.env",
+        "~/.hermes/auth.json",
+        "~/.claude/.credentials*",
+        "~/.local/share/opencode/auth.json",
+        "~/.hermes/broker",
+        "~/.ssh",
+        "~/.aws",
+        "~/.config/gh"
+      ],
+      "allow": [
+        ".env.example",
+        ".env.sample",
+        ".env.template"
+      ],
+      "dirs": [
+        "~/.hermes",
+        "~/.claude",
+        "~/.local/share/opencode",
+        "~/.ssh",
+        "~/.aws",
+        "~/.config/gh",
+        "/proc"
+      ],
+      "text": [
+        "(?<![\\w.-])\\.env",
+        "\\.claude/\\.credentials",
+        "\\.hermes/auth\\.json",
+        "opencode/auth\\.json",
+        "\\.hermes/broker\\b",
+        "(?:(?<![\\w.~-])|(?<=-[A-Za-z]))/proc/(?:self|thread-self|\\d|[*?\\[$])",
+        "(?<![\\w.-])\\.(?:ssh|aws)\\b",
+        "\\.config/gh\\b"
+      ],
+      "glob_probes": [
+        ".env",
+        ".env.local",
+        ".credentials.json"
+      ],
+      "about": "deny: file name globs (no slash) and home globs (~/); allow: names that are never secret; dirs: folders a recursive search must not enter (a ~/ folder under each home); text: regular expressions a command line must not name (a match whose word is an allowed name is let through); glob_probes: names a dotted glob is tried against"
+    },
+    {
+      "id": "commit-own-worktree",
+      "kind": "commit_rule",
+      "own_worktree_only": true,
+      "deny_git": [
+        {
+          "global": "-c",
+          "why": "git -c sets config"
+        },
+        {
+          "global": "--config-env",
+          "why": "git --config-env sets config"
+        },
+        {
+          "sub": "config",
+          "why": "git config"
+        },
+        {
+          "option": "--no-verify",
+          "why": "--no-verify skips the commit guard"
+        },
+        {
+          "sub_args": {
+            "sub": "commit",
+            "args": [
+              "-n"
+            ]
+          },
+          "why": "--no-verify skips the commit guard"
+        },
+        {
+          "sub_args": {
+            "sub": "add",
+            "args": [
+              "-A",
+              "--all",
+              ".",
+              "./",
+              ":/"
+            ]
+          },
+          "why": "git add -A/--all/. sweeps unrelated files; add files by name"
+        }
+      ],
+      "about": "git words a worker never runs, each with why (the refusal's text): global (an option before the subcommand), sub (a subcommand), option (an option anywhere), sub_args (a subcommand's argument; a one-letter option also inside a group such as -an). Commits go only to the worker's own card worktree (git-guard.py, bin/commit-guard.sh)"
+    },
+    {
+      "id": "dispatcher-only",
+      "kind": "dispatcher_only",
+      "actions_from": "role_table#/roles/*/may_*",
+      "commands": {
+        "may_create_cards": "hermes kanban create",
+        "may_complete": "hermes kanban complete",
+        "may_unblock": "hermes kanban unblock",
+        "may_claim": "hermes kanban claim"
+      },
+      "about": "a board action whose flag no role of an adapter's worker profiles holds is denied to that CLI's shell"
+    },
+    {
+      "id": "model-limits",
+      "kind": "model_limits",
+      "worker_model_from": "resolver",
+      "forbidden_flags_key": "model_flags",
+      "about": "a worker CLI runs only the model the resolver assigns; each adapter's model_flags (adapters.json) name the flags that pick another model or skip permissions, denied in every CLI's shell"
+    }
+  ],
+  "sandbox": {
+    "credential_dirs_hidden": [
+      "adapters#/entries/*/credential_paths",
+      "role_table#/sandbox/hide"
+    ],
+    "writable": [
+      "{worktree}"
+    ],
+    "network": "egress_proxy_only",
+    "enforced_from": "E1",
+    "feature": "adapter-sandbox",
+    "about": "The worker CLI's tool subprocesses: credential folders hidden, the worktree the only writable path, network only through the egress proxy. Data only until E1 enforces it (features.json stub adapter-sandbox)."
+  }
+}

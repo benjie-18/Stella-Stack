@@ -396,6 +396,17 @@
       "flag": "otlp-export",
       "global_id": "34f8d89b-3b66-4b0e-8680-63ffccfe7fd7",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "adapter-sandbox",
+      "owner_phase": "F3",
+      "status": "planned",
+      "depends_on": [],
+      "flag": null,
+      "due_phase": "E1",
+      "replaced_by": "E1 enforces the sandbox policy of .stella/policy.json (sandbox): a worker CLI's tool subprocesses run with the credential folders hidden, the worktree the only writable path and network only through the egress proxy",
+      "global_id": "730cfb35-a5cd-43c7-9530-53b731de4c36",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }
