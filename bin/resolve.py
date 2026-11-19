@@ -385,6 +385,8 @@ def resolve(ctx, d=None):
             st, lim = ledger.status(connection, model), ledger.signals()["plan_share_limit"]
         except ledger.Stop as x:   # fail closed for this link only: a lock or usage file that cannot be used leaves the link, not every answer
             return f"the usage ledger cannot be used for the link ({x.code} {x.problem})", None
+        except Exception as x:   # any other error of the ledger read (its data, a file) is the same: this link only, never an exception
+            return f"the usage ledger cannot be used for the link ({type(x).__name__})", None
         if st["daily"]["cap"] is not None and st["daily"]["used"] >= st["daily"]["cap"]:
             return f"the link's daily limit is used ({st['daily']['used']} of {st['daily']['cap']} calls); it resets at {st['daily']['resets_at']}", st["daily"]["resets_at"]
         if st["observed"]:

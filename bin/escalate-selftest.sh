@@ -491,4 +491,12 @@ n=$(grep -c . "$T/cli-calls"); echo hi | cc MOCK_CLI_MODE=ok $E t_dddd0007 judge
 ok '[ "$rc" = 75 ] || [ "$rc" = 3 ]' "T-LIM-CLI: the CLI's limit message ends the call as a pool limit (queued)"
 ok '[ "$(LG status --connection "$CLIC" --json | jq -r "[.observed.source, .plan_share] | @tsv")" = "$(printf "cli_limit_error\t1")" ] && [ "$rc2" = 3 ] && [ "$(grep -c . "$T/cli-calls")" = "$n" ] && grep -q "STL-MDL-724" "$T/err"' "T-LIM-CLI: the limit text is an observed limit (plan share 1): the next call is refused as a cooldown (exit 3) and the CLI is not run again"
 
+# A-RT-01: a model's answer text never sets a limit; the patterns are the data's (limit-signals cli_patterns), not the script's own copy
+wroot lim2 3; SCL=$T/sup-lim2; : >"$T/cli-calls"
+echo hi | cc MOCK_CLI_MODE=ok_limit_text $E t_dddd0005 judge quote >/dev/null 2>"$T/err"; rc=$?
+ok '[ "$rc" = 0 ] && [ "$(LG status --connection "$CLIC" --json | jq .observed)" = null ] && [ "$(LG status --connection "$CLIC" --json | jq .plan_share)" = null ] && jq -s -e "length == 1 and .[0].outcome != \"limit\"" "$WR/.supervisor/state/usage.jsonl" && ! grep -q POOL_EXHAUSTED "$SCL/escalations.log"' "A-RT-01 a successful answer whose text quotes a limit message is no limit: exit 0, no observed limit, no plan share, no walk"
+wroot lim3 3; SCL=$T/sup-lim3
+fxs '.cli_patterns["claude-code"] = ["a phrase the mock never prints"]'
+echo hi | cc MOCK_CLI_MODE=usage_limit $E t_dddd0005 judge data >/dev/null 2>"$T/err"; rc=$?
+ok '[ "$rc" != 3 ] && [ "$rc" != 75 ] && [ "$(LG status --connection "$CLIC" --json | jq .observed)" = null ] && ! grep -q POOL_EXHAUSTED "$SCL/escalations.log"' "A-RT-01 the limit patterns are the data's: with the data's list changed the CLI's old limit text is no limit to escalate.sh either"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

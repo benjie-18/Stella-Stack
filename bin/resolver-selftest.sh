@@ -582,6 +582,10 @@ ok '[ -n "$OU" ] && [ "$OU" != null ] && J q3 --arg c "$C_COOL" --arg u "$OU" "$
 mk lg2 base; mkdir -p "$T/lg2/.supervisor/logs" "$T/lg2/.supervisor/state"; LGROOT=lg2; lgrec qa-cli qa-cli-m1 1
 rs lg2 q4 --role "$NR" --project qa-proj
 ok 'J q4 --arg c "$C_COOL" "$(ent qa-cli) | length > 0 and all(.[]; .status == \"cooldown\" and .code == \$c and (.reason | test(\"plan\")))"' "17e a cli-login link whose plan share is at the limit of the data (limit-signals plan_share_limit) is cooldown"
+mk lg3 base; mkdir -p "$T/lg3/.supervisor/logs" "$T/lg3/.supervisor/state"; LGROOT=lg3
+printf '{not json' >"$T/lg3/$(p limit-signals)"   # the ledger's signals data cannot be read: any error of the ledger read, not only its Stop
+rs lg3 q5 --role "$NR" --project qa-proj
+ok 'J q5 --arg c "$C_COOL" "$(ent qa-cli) | length > 0 and all(.[]; .status == \"cooldown\" and .code == \$c and (.reason | test(\"usage ledger cannot be used\")) and .cooldown_until == null)"' "17g A-RT-07 an error of the ledger read that is no Stop (its data unreadable) answers that link as cooldown ($C_COOL), reason \"the usage ledger cannot be used\", never an exception"
 ok '! jq -e ".entries[] | select(.id == \"routing-observed-quota\")" "$ROOT/$(p features)" >/dev/null && ! grep -q routing-observed-quota "$RS" && J b ".stubs == []"' "17f the routing-observed-quota stub is gone from features.json and from the resolver's answers (T-STUB-QUOTA)"
 
 # ---- 18: the ranking reads benchmark results (F2c item G), the advertised score is only the prior ----
