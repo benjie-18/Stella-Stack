@@ -530,7 +530,8 @@ def owner_settings(d):
 
 
 STATE_KEYS = ("backup_dir", "applied_state", "event_log", "owner_key", "approval_store", "event_writer_state",
-              "routing_state", "card_facts", "probe_records", "triage_calibration")   # the index keys that name state paths (B1, F1c D0; F2 DC-06: failover state and card facts)
+              "routing_state", "card_facts", "probe_records", "triage_calibration",
+              "benchmark_results", "usage_ledger", "ledger_state", "spans")   # the index keys that name state paths (B1, F1c D0; F2 DC-06: failover state and card facts)
 
 
 def index(d, root=None):
