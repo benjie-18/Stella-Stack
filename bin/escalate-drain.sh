@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Manual drain of the bin/escalate.sh queue (F15, F28, F29); never run by cron. Entries: .supervisor/state/queue.jsonl.
-# usage: escalate-drain.sh --list               every entry: id, state, reason, card, model (purpose), created
+# usage: escalate-drain.sh --list               every entry: id, state, reason, card, role rung (purpose), or model (purpose) for a legacy one, created
 #        escalate-drain.sh --replay <id>|--all  run queued entries again through bin/escalate.sh, which asks the resolver and checks
 #                                               the model's limits and the pool again. An entry is claimed under the queue lock before the run,
 #                                               so a second replay of the same id does nothing. Still blocked, refused or
-#                                               not started (exit 2, 3, 75, 126, 127): left queued, no alert. Older than QUEUE_MAX_AGE_HOURS, or its card
-#                                               done or archived: marked stale and skipped.
-#        escalate-drain.sh --drop <id>          mark it dropped
+#                                               not started (exit 2, 3, 75, 126, 127): left queued, no alert. No rung left (exit 4, STL-MDL-731):
+#                                               state owner, prompt kept. Older than QUEUE_MAX_AGE_HOURS, or its card done or
+#                                               archived: marked stale and skipped. An entry in state owner (no rung left) is never
+#                                               replayed or staled. A legacy entry (written before F2b item E: a model and no role) is
+#                                               never replayed with that model: it gets state legacy, keeps its prompt and is listed,
+#                                               so the owner can issue it again (escalate.sh <card> <purpose> <reason>).
+#        escalate-drain.sh --drop <id>          mark a queued, owner or legacy entry dropped (the only way out of owner and legacy)
 # A prompt file is removed when its entry leaves the queued state; a prompt_file that is not the queue's own (pfile) is never read or removed. Exit 0, or 2 on a usage error, an unknown id or a link in the state folder (nothing written).
 # A line of the queue file that is not JSON (a cut write) is skipped by every read and kept as it is by every rewrite; --list warns about it.
 set -uo pipefail
@@ -42,6 +46,10 @@ replay() {
   e=$(entry "$id")
   [ -n "$e" ] || { flock -u 6; echo "$id: no such entry" >&2; return 2; }
   [ "$(jq -r .state <<<"$e")" = queued ] || { flock -u 6; echo "$id: $(jq -r .state <<<"$e"), nothing to do"; return 0; }
+  if jq -e 'has("model") and (has("role") | not)' <<<"$e" >/dev/null; then   # E-DC-08: never replayed with the model it names
+    setstate "$id" legacy; flock -u 6
+    echo "$id: legacy (it names model $(jq -r '.model | tostring' <<<"$e"), not the purpose's role and rung): not replayed, prompt kept; issue it again with escalate.sh <card> <purpose> <reason>, then --drop $id"; return 0
+  fi
   card=$(jq -r .card <<<"$e"); pf=$(pfile "$e")
   age=$(( ($(date +%s) - $(date -d "$(jq -r .created <<<"$e")" +%s)) / 3600 ))
   cs=$(kanban show "$card" --json 2>/dev/null | jq -r '.task.status // empty')
@@ -51,12 +59,13 @@ replay() {
   fi
   setstate "$id" replayed; flock -u 6   # claimed: a second replay of this id finds it replayed and does nothing
   mapfile -t args < <(jq -r '.claude_args[]?' <<<"$e")
-  ESCALATE_REPLAY="$id" /workspace/bin/escalate.sh "$card" "$(jq -r .model <<<"$e")" "$(jq -r .purpose <<<"$e")" \
-    "$(jq -r .call_reason <<<"$e")" -- "${args[@]}" <"$pf"
+  ESCALATE_REPLAY="$id" /workspace/bin/escalate.sh "$card" "$(jq -r .purpose <<<"$e")" \
+    "$(jq -r .call_reason <<<"$e")" -- "${args[@]}" <"$pf"   # the rung is the card's current one (state/rungs.json), as on a first call
   rc=$?
   flock 6
   case "$rc" in
     0)    setstate "$id" replayed; rm -f "$pf"; echo "$id: replayed" ;;
+    4)    setstate "$id" owner; echo "$id: no rung left (STL-MDL-731): kept for the owner (state owner), prompt kept" ;;
     2|3|75|126|127) setstate "$id" queued; echo "$id: still blocked or not runnable now (exit $rc), left in the queue" ;;   # 2: kanban show failed (review M2), or escalate.sh refused because a setting's registry default is unreadable (STL-CFG-310); 126: escalate.sh could not be started (a field over the argument limit); 126, 127 from escalate.sh: its model command did not start, and its note and log line say "left in the queue" too (W5-VER7-01). The prompt is kept, the entry goes stale by age (W5-RT6-03)
     *)    setstate "$id" failed; rm -f "$pf"; echo "$id: failed (exit $rc)" ;;
   esac
@@ -66,7 +75,7 @@ replay() {
 case "${1:-}" in
   --list)
     [ -s "$Q" ] || { echo "queue empty"; exit 0; }
-    rows | jq -r '[.id, .state, .reason, .card, (.model + " (" + .purpose + ")"), .created] | @tsv'
+    rows | jq -r '[.id, .state, .reason, .card, ((if has("role") then "\(.role) rung \(.rung)" else .model end | tostring) + " (" + (.purpose | tostring) + ")"), .created] | @tsv'
     bad=$(jq -cR 'select(try (fromjson | type == "object") catch false | not)' "$Q" 2>/dev/null | wc -l)   # the lines no read can use
     [ "$bad" = 0 ] || echo "warning: $bad line(s) of $Q are not queue entries and are skipped (the entries after them are listed); fix or remove them" >&2 ;;
   --replay) [ -n "${2:-}" ] || usage; replay "$2" ;;
@@ -78,7 +87,7 @@ case "${1:-}" in
     [ -n "${2:-}" ] || usage
     flock 6; e=$(entry "$2")
     [ -n "$e" ] || { echo "$2: no such entry" >&2; exit 2; }
-    if [ "$(jq -r .state <<<"$e")" = queued ]; then setstate "$2" dropped; rm -f "$(pfile "$e")"; echo "$2: dropped"
+    if [[ "$(jq -r .state <<<"$e")" =~ ^(queued|owner|legacy)$ ]]; then setstate "$2" dropped; rm -f "$(pfile "$e")"; echo "$2: dropped"
     else echo "$2: $(jq -r .state <<<"$e"), nothing to do"; fi ;;
   *) usage ;;
 esac

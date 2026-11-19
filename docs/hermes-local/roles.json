@@ -101,6 +101,7 @@
     "bin/route.py",
     "bin/credentials.py",
     "bin/resolve.py",
+    "bin/probe.py",
     "bin/consent.py"
   ],
   "write_tools": [

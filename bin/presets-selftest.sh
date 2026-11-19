@@ -19,7 +19,16 @@ mk() {  # <name> [<from name>]: a scratch root with a copy of the data and the r
   cp -r "$ROOT/docs/hermes-local/hooks" "$T/$1/docs/hermes-local/hooks"
 }
 ed() { local f="$T/$1/.stella/$2"; jq "${@:3}" "$f" >"$f.n" && mv "$f.n" "$f"; }   # <root> <file> <jq args and filter>
-sd() { STELLA_ROOT=$T/$1 python3 -I "$SD" "${@:2}"; }
+probes() {  # <root>: one probe record per model of the root's own fake connections (ids the shipped catalog lacks), mirroring the capabilities the
+  # fixture gives the model (null stays null): what a link can do is read from its record, never from the catalog (F2b item C). NOPROBES=<root>: none.
+  local f="$T/$1/$PF"; [ "${NOPROBES:-}" = "$1" ] && { rm -f "$f"; return; }; mkdir -p "$(dirname "$f")"
+  jq --arg i "$IID" --arg o "$OSN" --argjson s "$SHIPPED" '{schema_version: 1, records: [.entries[] | select(.kind == "provider") | .id as $c | select($s | index($c) | not)
+    | .models[] | (.capabilities // {}) as $k | {global_id: "00000000-0000-4000-8000-000000000000", install_id: $i, connection: $c, model: .id, version: "qa",
+      probed_at: "2026-01-01T00:00:00Z", family: null, tool_calling: $k.tool_calling, parallel_tool_calls: null, json: $k.json_mode, vision: $k.vision,
+      output_shape: $o, context: {advertised: $k.context_tokens, effective: ($k.context_tokens // 0), short_score: 1, points: []}, code: null}]}' \
+    "$T/$1/.stella/connections.json" >"$f.n" 2>/dev/null && mv "$f.n" "$f" || rm -f "$f.n"
+}
+sd() { probes "$1"; STELLA_ROOT=$T/$1 python3 -I "$SD" "${@:2}"; }
 passes() { sd "$1" check >"$T/o" 2>&1; }      # <root>: check exits 0; the output is kept in $T/o
 refuses() { ! sd "$1" check >"$T/o" 2>&1; }   # <root>: check exits non-zero
 coded() { grep -q "^$1 " "$T/o"; }            # <code>: a line of the kept output starts with it
@@ -43,7 +52,8 @@ INS=$(j '.files[] | select(.schema == "install") | .path' "$ROOT/.stella/data-fi
 GCLASS=$(j '[.class_rules | to_entries[] | select(.value.hosted == "grant") | .key][0]' "$ROOT/.stella/data-policy.json")
 NCLASS=$(j '[.class_rules | to_entries[] | select(.value.hosted != "grant") | .key][0]' "$ROOT/.stella/data-policy.json")
 CLOUD=$(j '[.entries[] | select(.kind == "provider" and .locality == "cloud")][0].id' "$ROOT/.stella/connections.json")
-STATEDIR=$(j .card_facts "$ROOT/.stella/data-files.json")
+STATEDIR=$(j .card_facts "$ROOT/.stella/data-files.json"); PF=$(j .probe_records "$ROOT/.stella/data-files.json")
+SHIPPED=$(jq -c '[.entries[].id]' "$ROOT/.stella/connections.json"); OSN=$(j '.probe.output_shapes[-1]' "$RT")
 read -r C_OFF C_CHAIN C_BUILTIN < <(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; print(s.OFF_REQUIRED, s.CHAIN_FAILS, s.BUILTIN_EDIT)' "$BIN")
 uuid() { cat /proc/sys/kernel/random/uuid; }
 link() { echo "{\"connection\":\"qa-pin\",\"model\":\"$1\",\"parameters\":{}}"; }
@@ -84,6 +94,11 @@ for m in notools smallctx null missing; do
 done
 mk fb-bad five; ed fb-bad role-assignments.json --arg p "$PINROLE" --argjson l "$(link qa-notools)" "$F.roles[\$p].fallbacks = [\$l]"
 ok 'refuses fb-bad && coded "$C_CHAIN"' "4a a fallback that fails the role's requirements is refused with $C_CHAIN"
+NOPROBES=pin-notools passes pin-notools; k=$?; n0=$(grep -c . "$T/sup/logs/alerts.log" 2>/dev/null)
+ok '[ "$k" = 0 ] && grep -q "^warning: STL-MDL-738 .*qa-pin/qa-notools" "$T/o"' "4-norec the same pin with no probe record passes (it may serve), with a STL-MDL-738 warning line naming the link: the catalog's advertised capabilities are not read"
+refuses pin-notools; n1=$(grep -c . "$T/sup/logs/alerts.log"); cp "$T/o" "$T/o-pn"; sd pin-notools get --json role-assignments >"$T/o-get" 2>&1; kg=$?
+ok 'grep -q "^$C_CHAIN .*pins\[0\].*tool_calling" "$T/o-pn" && [ $((n1 - ${n0:-0})) = "$(grep -c "^STL-" "$T/o-pn")" ] && [ "$kg" = 0 ] && jq -e .effort_modes "$T/o-get" >/dev/null' \
+  "4-probed a pin whose probe record fails the role is refused with $C_CHAIN and one alert line per such line, and never stops a read (get serves the data)"
 mk off-pin five; ed off-pin role-assignments.json --arg o "$OPT" --argjson l "$(link qa-notools)" "$F.roles[\$o] = {active: false, pins: [\$l]}"
 ok 'passes off-pin' "4b control: the links of an inactive role are not judged"
 
@@ -205,6 +220,28 @@ mk dup five; ed dup routing.json '.link_classes += [.link_classes[0]]'
 ok 'refuses dup && grep -q "link_classes: an id is listed twice" "$T/o"' "5v a link class listed twice is refused"
 mk cool five; ed cool routing.json '.failover.triggers |= with_entries(.value.cooldown_s = .value.max_cooldown_s + 1)'
 ok 'refuses cool && grep -q "cooldown_s is above max_cooldown_s" "$T/o"' "5w a cooldown above its cap is refused"
+u u21 routing.json '.effort.by_role[$p] = $x' "5x an unknown effort id in the routing data's effort table is refused (a role's id alone)"
+u u21b routing.json '.effort.by_role[$p] = {default: $x}' "5x2 and as a role's default"
+u u22 routing.json '.effort.by_role[$x] = {default: .effort.levels[0]}' "5y an unknown role in the effort table is refused"
+u u23 routing.json '.effort.by_role[$p] = {tiers: {($x): .effort.levels[0]}}' "5z an unknown task tier in the effort table is refused"
+u u24 role-assignments.json "$F.roles[\$p].escalation_chain[0].parameters.effort = \$x" "5za an unknown effort id in a rung's parameters is refused"
+u u25 role-assignments.json "$F.roles[\$p].pins[0].parameters.effort = \$x" "5zb an unknown effort id in a pin's parameters is refused"
+u u26 role-assignments.json '.assignments[0].chain[0].parameters.effort = $x' "5zc an unknown effort id in an assignment's chain is refused"
+u u27 routing.json '.builder_roles += [$x]' "5ze a building role that is not an assignable role is refused"
+mk bnc five; ed bnc routing.json '.card_roles -= [.builder_roles[0]]'
+ok 'passes bnc' "5zf control: a building role need not be a card role (a role asked with no card)"
+mk edup five; ed edup routing.json '.effort.levels += [.effort.levels[0]]'
+ok 'refuses edup' "5zd an effort level listed twice is refused"
+
+# ---- the escalation chain (F2b item D): judged like a pin; built-ins ship a chain for each building role; effort levels are data ----
+mk ec five; ed ec role-assignments.json --arg p "$PINROLE" --argjson l "$(link qa-notools)" "$F.roles[\$p].escalation_chain = [\$l]"
+ok 'refuses ec && grep -q "^$C_CHAIN .*escalation_chain\[0\]" "$T/o"' "6x a rung that fails the role's requirements is refused with $C_CHAIN, naming escalation_chain[0]"
+BUILDERS=$(jq -c '.builder_roles // []' "$RT")   # the building roles: routing data, not named
+ok '[ "$(jq length <<<"$BUILDERS")" -gt 0 ] && jq -e --argjson b "$BUILDERS" --slurpfile rt "$RT" "[.effort_modes[] | select(.builtin)] as \$m | (\$m | length) > 0 and all(\$m[]; . as \$p | all(\$b[];
+  (\$p.roles[.].escalation_chain | length) > 0 and all(\$p.roles[.].escalation_chain[]; (.parameters.effort // null) as \$e | \$e == null or (\$rt[0].effort.levels | index(\$e)) != null)))" "$RA" >/dev/null' \
+  "6y every built-in preset ships an escalation chain for each building role, with known effort ids (and check accepts it: case 1)"
+mk enew five; ed enew routing.json '.effort.levels += ["qa-new-level"]'; ed enew role-assignments.json --arg p "$PINROLE" "$F.roles[\$p].escalation_chain[0].parameters.effort = \"qa-new-level\""
+ok 'passes enew' "6z a new effort level added as data only is valid in a rung's parameters"
 
 # ---- a fake link class and a fake tier, as data only ----
 mk cls five
@@ -231,9 +268,22 @@ cloud = {"id": "c", "type": "api", "locality": "cloud", "data_policy": {}, "mode
 eq(s.link_class(cloud, "m"), None, "link_class: a cloud link that names no class has none (not routable)")
 eq(s.link_class(dict(cloud, aggregator=True), "m"), s.routing()["class_defaults"]["aggregator"], "link_class: an aggregator that names none gets the default aggregator class")
 req = {"tool_calling": True, "vision": False, "min_context_tokens": 100}
-eq(s.unmet(req, {"tool_calling": True, "vision": None, "context_tokens": 100}), [], "unmet: capabilities that meet every requirement")
-eq(s.unmet(req, {"tool_calling": None, "vision": None, "context_tokens": None}), ["tool_calling", "min_context_tokens"], "unmet: a null capability meets no requirement")
-eq(s.unmet(dict(req, vision=True), {"tool_calling": True, "vision": False, "context_tokens": 99}), ["vision", "min_context_tokens"], "unmet: vision false and a window one token short")
+eq(s.unmet(req, {"tool_calling": True, "vision": None, "context": {"effective": 100}}), [], "unmet: a probe record that meets every requirement")
+eq(s.unmet(req, {"tool_calling": None, "vision": None, "context": {"effective": None}}), ["tool_calling", "min_context_tokens"], "unmet: a null capability meets no requirement")
+eq(s.unmet(dict(req, vision=True), {"tool_calling": True, "vision": False, "context": {"effective": 99}}), ["vision", "min_context_tokens"], "unmet: vision false and an effective context one token short")
+eq(s.unmet(req, None), [], "unmet: no record is no unmet requirement (owner ruling 2026-11-18: an unprobed link may serve, flagged)")
+eq(s.needs_probe(req, None), True, "needs_probe: no record for a role with requirements is flagged")
+eq(s.needs_probe({"tool_calling": False, "vision": False, "min_context_tokens": 0}, None) or s.needs_probe(req, {"tool_calling": True}), False, "needs_probe: not for a role with no requirements, nor for a link with a record")
+eq(s.unmet({"tool_calling": False, "vision": False, "min_context_tokens": 0}, None), [], "unmet: a role with no requirements needs no record")
+eq(s.unmet(req, {"tool_calling": True, "context_tokens": 1048576, "context": {"effective": 99, "advertised": 1048576}}), ["min_context_tokens"], "unmet: the context is the effective one, never the advertised window")
+rec = lambda c, m, at, **k: {"connection": c, "model": m, "probed_at": at, **k}
+recs = [rec("c", "m", "2026-01-01T00:00:00Z", v=1), rec("c", "m", "2026-02-01T00:00:00Z", v=2), rec("c", "m", "2999-01-01T00:00:00Z", v=3), rec("c", "x", "2026-03-01T00:00:00Z", v=4)]
+eq((s.probed(recs, "c", "m") or {}).get("v"), 2, "probed: the newest record of the link, never one dated in the future")
+eq(s.probed(recs, "c", "y"), None, "probed: a link with no record is not probed (None)")
+role = next(r for r, x in s.load(s.load(s.INDEX)["role_table"])["roles"].items() if x.get("requirements", {}).get("tool_calling"))
+table = s.load(s.load(s.INDEX)["role_table"])
+eq(s.probe_problems(table, role, pin, pin["models"][0]["id"], []), [], "probe_problems: a link with no record has none (it may serve; rule 4 judges it at run time)")
+eq(len(s.probe_problems(table, role, pin, pin["models"][0]["id"], [rec(pin["id"], pin["models"][0]["id"], "2026-01-01T00:00:00Z", tool_calling=False)])), 1, "probe_problems: a record that fails the role is one problem")
 now = datetime.datetime(2026, 11, 14, 12, 0, 0)
 g = {"data_class": gclass, "connection": "c", "granted_at": "2026-11-01T00:00:00Z", "scope": {"level": "project", "project": "p1"}}
 pol = lambda *grants, rule="grant": [("x", {"class_rules": {gclass: {"hosted": rule}}, "privacy_grants": list(grants)})]
@@ -250,7 +300,7 @@ sys.exit(1 if bad else 0)
 PY
 STELLA_ROOT=$T/cls python3 -I "$T/unit.py" "$BIN" "$LOCAL" "$GCLASS" >"$T/unit.out" 2>&1; urc=$?
 cat "$T/unit.out"; fails=$((fails + $(grep -c '^FAIL' "$T/unit.out")))
-ok '[ $urc = 0 ] && [ "$(grep -c "^ok" "$T/unit.out")" = 15 ]' "7 the link class, requirement and grant functions answer as the data says (15 cases ran, exit $urc)"
+ok '[ $urc = 0 ] && [ "$(grep -c "^ok" "$T/unit.out")" = 24 ]' "7 the link class, requirement, probe and grant functions answer as the data says (24 cases ran, exit $urc)"
 
 # ---- DC-03: a class that is not hosted never labels a link that leaves the machine ----
 mk reach cls; ed reach connections.json --arg c "$CLOUD" '(.entries[] | select(.id == $c)).link_class = "qa-class"'

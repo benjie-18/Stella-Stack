@@ -3,18 +3,44 @@
 role may use right now, and why. Read-only: no network, no write to any data file; it reads the failover state file (index key
 routing_state; absent = no cooldown, no history) and the card facts store (index key card_facts) and creates neither. No role,
 preset, link class, tier, driver, provider or model is named in this file: every id comes from the data, and every rule is the
-one function of bin/stella_data.py (reach, policy_allows, route_problems, grant_in_force, link_class, unmet).
-CLI: resolve.py resolve --role R --project P [--card C] [--tier T] [--driver D] [--task ID] [--json]   (JSON is the only output)
-Import: resolve(ctx) -> the same dict (ctx: {role, project, card, tier, driver, task}); link_key(link) -> "<connection>/<model>",
+one function of bin/stella_data.py (reach, policy_allows, route_problems, grant_in_force, link_class, probed, unmet).
+CLI: resolve.py resolve --role R --project P [--card C] [--tier T] [--driver D] [--task ID] [--rung N] [--tokens N] [--json]   (JSON only)
+Import: resolve(ctx) -> the same dict (ctx: {role, project, card, tier, driver, task, rung, tokens}); link_key(link) -> "<connection>/<model>",
 the state file's key; role_view(role, project, card=None) -> what routing gives the role before any link is judged (its
 docstring has the keys), the one copy of that rule: resolve() reads it there. Both write nothing and alert nothing: a
 fail-closed answer is a stella_data.DataError (Refusal carries its code; any other one is data that `check` refuses, STL-CFG-310).
 Output: {role, project, card, preset {id, source: card|project|global}, policy: project|default (a project the data policy
 does not list follows the default), local_only, tier, driver, chain[], decision {rule, reason}, failure_history[] (the task's,
 from the state file), stubs[] (features ids the answer rests on), apps[] {app, status, code, reason} (the card's apps),
-code, reason (null when a link is usable and no app is refused)}. A chain entry: {connection, model, parameters, link_class,
+cross_family (only for a role of routing cross_family.reviewer_roles, not on a rung walk: {builder_family, served_family, status:
+met|waived, reason, logged}), code, reason (null when a link is usable and no app is refused)}. A chain entry: {connection, model, parameters, link_class,
 source: pin:card|pin:project|pin:global|preset|fallback|last_resort, status: usable|needs_grant|cooldown|excluded, code,
-reason, grant: null or {kind: privacy, data_class} or {kind: crossing, to_class}, mid_task, cooldown_until}.
+reason, grant: null or {kind: privacy, data_class} or {kind: crossing, to_class}, mid_task, cooldown_until, effort: its
+parameters.effort, else routing effort.by_role[role].tiers[tier], else .default, else null, family: its probe record's, else null,
+probed: whether it has a probe record}.
+Probe data (F2b item C, owner ruling 2026-11-18): what a link can do is read from its probe record only (stella_data.probed():
+bin/probe.py's records, the newest not dated in the future; the catalog's advertised capabilities are not read). A link with no
+record may serve (a CLI-login link cannot be probed at all): rule 4 refuses only a link whose record fails a requirement; the CLI
+writes one STL-MDL-738 warning alert line when the link its answer serves (the served rung, else the first usable link) has no
+record and the role has requirements or --tokens gives a size (route.py does the same for each pick; resolve(ctx) writes none); a
+line that cannot be written withdraws the answer (STL-CFG-318). A records file present but unusable fails closed: every link with
+no usable record counts as failing every requirement (stella_data.probe_records, STL-MDL-739 in check). Rule 4 reads it, and through rule 4 the needs-class trigger, --tokens and cross_family. The records file is
+protected state (index key probe_records: no role may write it, records of another install are ignored); a forged record can make a
+link look able (it then fails at run time and fails over) or unable (no link: fail closed), never widen reach: rules 1 to 3 and 5 to
+7 do not read it. --tokens N: after the class order is fixed, a link whose probed effective context is below N is excluded
+(STL-MDL-715); a link with no record is not (it may serve, unproven). Cross-family review (a role of cross_family.reviewer_roles, with a card; on a rung walk the served rung is judged, never moved): see
+crossed(); a waived answer is written by the CLI alone as one trusted routing.cross-family-waiver line (STL-MDL-737; logged true), none
+in a worker environment (logged false: information only); a line that cannot be written withdraws the answer (chain [], the log's
+code, exit 1).
+Rung walk (F2b item D; --rung N >= 1, ctx["rung"]; 0 is the answer without it): rungs N.. of the role's escalation_chain in the
+active preset are judged alone in order by the rules below (rule 5's class order widened to the preset's needs class and last
+resort; the last resort outside the order still needs a crossing grant, the order read before any class is put first (DC-05); an exempt role keeps its own order); an excluded or
+waiting (needs_grant) rung is skipped, the first other one served (a rung in cooldown is answered as itself, STL-MDL-724). The
+answer adds rung {requested, served, last, link, skipped[] {rung, connection, model, link_class, status, code, reason}} and its
+chain is [link] or []; none served: STL-MDL-731 (escalate to the owner), exit 1. The CLI alone writes the walk to the event log:
+one routing.rung-skipped line (STL-MDL-732) per skip, one routing.rung-exhausted line (731) when none is served; a line that cannot
+be written withdraws a served rung (the log's code) or, exhausted, names it in rung.log_code. --rung in a worker environment
+fails closed (STL-CFG-312) before anything is judged. A role the preset turns off answers as without --rung (NO_LINK, no rung key).
 Exit: 0 one usable link or more and no app refused; 1 no usable link (NO_LINK, the same JSON) or a refused card app (its
 code, the same JSON), or fail closed with one catalog line, one alert line and no JSON: an unknown role, tier, driver, card
 id, preset or link class, a role that works a card called with no card, a project id that is a listed one but for case or
@@ -28,7 +54,7 @@ Every link is judged by all the rules, in this order; the first that fails names
    preset: the class order is the classes that are not hosted, with no last resort and no crossing (an exempt role keeps its own);
  3 the connection: switched off, a CLI login without terms_ok, an aggregator whose broker entries do not resolve
    (credentials.check, when that module exists), allowed_roles, data_classes_allowed;
- 4 the role's requirements against the advertised capabilities (unmet; a stub);
+ 4 the role's requirements against the link's probe record (probed, unmet): no record meets none; then --tokens;
  5 the preset: its allowed localities (the last-resort class is the one exception) and the role's class order; the
    last-resort class needs a crossing grant; any other class is excluded. An exempt role (routing data exempt_roles) follows
    its own class order instead, and is never a crossing;
@@ -38,7 +64,7 @@ Every link is judged by all the rules, in this order; the first that fails names
 Chain order: the owner's pins (card, project, global assignment rows), the preset's pins for the role, the catalog's links
 of each class of the order (a list item of the order is a group: best(), the one ranking), the preset's fallbacks, the
 last-resort class. A link listed twice keeps its first place."""
-import argparse, datetime, json, os, sys, types
+import argparse, datetime, json, os, re, sys, types
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -47,8 +73,10 @@ import stella_data as sd
 # spelled out: the alert selftest counts a code as used only when a script holds it as a literal
 NO_LINK, UNKNOWN, TERMS, AGGREGATOR, HARD = "STL-MDL-710", "STL-MDL-711", "STL-MDL-712", "STL-MDL-713", "STL-MDL-714"
 UNMET, POLICY, PRIVACY, CROSSING, COOLDOWN = "STL-MDL-715", "STL-MDL-716", "STL-MDL-717", "STL-MDL-718", "STL-MDL-724"
+EXHAUSTED, RUNG_SKIPPED, WORKER, LOG_FAILED = "STL-MDL-731", "STL-MDL-732", "STL-CFG-312", "STL-CFG-318"   # the rung walk (F2b item D)
+WAIVER = "STL-MDL-737"   # a review role answered with no link of another family than the builder (F2b item C)
 READS = ("role-assignments", "routing", "connections", "data-policy", "grants", "features")   # the schemas a resolve reads
-STUBS = ("routing-advertised-capabilities", "routing-advertised-context", "routing-observed-quota")   # features ids every answer rests on
+STUBS = ("routing-observed-quota",)   # features ids every answer rests on
 STUB_SCORES = "routing-advertised-scores"   # and this one when a group was ranked
 
 
@@ -145,7 +173,7 @@ def _data(project):
     policies = [dict(p, allowed_providers=[(sd.entry(conn, x) or {}).get("id", x) for x in p["allowed_providers"]])
                 for p in ([projects[pid]] if pid in projects else defaults) + [d for d in defaults if d["mode"] == "local_only"]]
     return types.SimpleNamespace(idx=idx, by=by, docs=docs, ra=ra, rt=rt, table=table, conn=conn, pols=pols, alias=alias, pid=pid, listed=pid in projects,
-                                 policies=policies, local_only=any(p["mode"] == "local_only" for p in policies))
+                                 policies=policies, local_only=any(p["mode"] == "local_only" for p in policies), recs=sd.probe_records(rt))
 
 
 def role_view(role, project, card=None, d=None):
@@ -158,7 +186,8 @@ def role_view(role, project, card=None, d=None):
      needs_class: the class resolve() puts first for a listed task tier or when no link of the order meets the role's
        requirements (null: none, always so for an exempt role and under Local only),
      last_resort (null for an exempt role and under Local only),
-     pins[] {scope: card|project|global, chain[]}: the owner's, in chain order, preset_pins[], fallbacks[]: the preset's for the role}"""
+     pins[] {scope: card|project|global, chain[]}: the owner's, in chain order, preset_pins[], fallbacks[]: the preset's for the role,
+     escalation_chain[]: the preset's rungs for the role (rung N is entry N-1)}"""
     d = d or _data(project)
     ra, rt = d.ra, d.rt
     known("role", role, set(d.table["roles"]) - {d.table["fallback_role"]})
@@ -186,13 +215,20 @@ def role_view(role, project, card=None, d=None):
     return {"role": role, "project": project, "card": card, "preset": {"id": preset, "source": source}, "local_only": d.local_only, "exempt": bool(exempt),
             "active": rp["active"], "class_order": order, "order_source": src, "needs_class": needs, "last_resort": last,
             "pins": [{"scope": lvl, "chain": a["chain"]} for lvl, a in scoped], "preset_pins": rp.get("pins", []),
-            "fallbacks": rp.get("fallbacks", []) if not exempt or exempt["in_fallback_chain"] else []}
+            "fallbacks": rp.get("fallbacks", []) if not exempt or exempt["in_fallback_chain"] else [], "escalation_chain": rp.get("escalation_chain", [])}
 
 
-def resolve(ctx):
-    role, project, card, tier, driver, task = (ctx.get(k) for k in ("role", "project", "card", "tier", "driver", "task"))
+def resolve(ctx, d=None):
+    """The answer (module docstring). ctx["rung"] N >= 1 walks the role's escalation chain instead (0 or None: the chain); ctx["tokens"]
+    N excludes a link whose probed effective context is below N. Pure: no event line is written for a skipped or exhausted walk or a
+    cross-family waiver on this path (cross_family.logged is false); only the CLI (main) logs them. d: the data _data() loaded (the
+    builder's resolve of a review role's answer reads the same data)."""
+    role, project, card, tier, driver, task, rung, tokens = (ctx.get(k) for k in ("role", "project", "card", "tier", "driver", "task", "rung", "tokens"))
+    for k, v in (("rung", rung), ("tokens", tokens)):
+        if v is not None and (type(v) is not int or v < 0):
+            raise Refusal(UNKNOWN, f"the {k} is not a non-negative integer")
     now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-    d = _data(project)
+    d = d or _data(project)
     idx, by, docs, ra, rt, table, conn, pols, alias, pid, policies, local_only = (
         d.idx, d.by, d.docs, d.ra, d.rt, d.table, d.conn, d.pols, d.alias, d.pid, d.policies, d.local_only)
     known("role", role, set(table["roles"]) - {table["fallback_role"]})
@@ -267,6 +303,9 @@ def resolve(ctx):
         known("link class", k, classes)
 
     req = table["roles"][role].get("requirements", {})
+    eff = rt.get("effort", {}).get("by_role", {}).get(role, {})
+    eff = {"default": eff} if isinstance(eff, str) else eff   # an id alone is the role's default
+    effort = lambda params: params["effort"] if params.get("effort") is not None else eff.get("tiers", {}).get(tier, eff.get("default"))
     need = req.get("allowed_data_classes", [])
     providers = [p for p in conn.values() if p["kind"] == "provider"]
     models = {(p["id"], m["id"]): m for p in providers for m in p["models"]}
@@ -275,8 +314,10 @@ def resolve(ctx):
     broker = {}
     X = lambda code, why: ("excluded", code, why, None, None)
 
+    rec = lambda prov, model: sd.probed(d.recs, prov["id"], model, now)
+
     def early(prov, model):
-        """Rules 1 to 4: None, or why this link cannot serve the role at all."""
+        """Rules 1 to 4: None, or why this link cannot serve the role at all (a link with no probe record may: owner ruling 2026-11-18)."""
         if sd.reach(prov) != "local" and hard:
             return X(HARD, f"the link leaves the machine, and {hard[0]}")
         if not all(sd.policy_allows(p, prov) for p in policies):
@@ -295,14 +336,17 @@ def resolve(ctx):
             return X(POLICY, "the connection does not list this role in its allowed_roles")
         if any(k not in prov["data_policy"]["data_classes_allowed"] for k in need):
             return X(POLICY, "the connection does not allow every data class the role handles")
-        mod = models.get((prov["id"], model))
-        miss = ["its model is not listed for its connection"] if mod is None else sd.unmet(req, mod["capabilities"])
-        return X(UNMET, f"the advertised capabilities do not meet the role's requirements ({', '.join(miss)})") if miss else None
+        if models.get((prov["id"], model)) is None:
+            return X(UNMET, "its model is not listed for its connection")
+        r = rec(prov, model)
+        miss = sd.unmet(req, r)
+        return X(UNMET, f"its probe record does not meet the role's requirements ({', '.join(miss)})" + (f": {r[sd.BROKEN]}" if r.get(sd.BROKEN) else "")) if miss else None
 
     # the preset's needs class goes first for a listed task tier, or when no link of the order can serve the role (rules 1 to 4)
     notes = [f"class order {json.dumps(order)} of " + ("the exempt role" if exempt else "the Local only policy, which overrides the preset" if local_only
                                                        else f"preset {sd.idn(preset, True)}")]
-    if needs is not None and needs not in flat(order):
+    effective = flat(order)   # DC-05: the crossing test reads the order before any class is put first
+    if needs is not None and needs not in effective:
         listed = tier in mode.get("frontier_when", {}).get("tiers", [])
         if listed or not any(early(p, m) is None for p, m in catalog(flat(order))):
             order = [needs] + order
@@ -310,22 +354,26 @@ def resolve(ctx):
                                                                          else "no link of the class order meets the role's requirements"))
     inorder = flat(order)
 
-    def judge(prov, model):
-        """(status, code, reason, grant, cooldown_until) of one link: the first rule that fails names it."""
+    def judge(prov, model, rung=False):
+        """(status, code, reason, grant, cooldown_until) of one link: the first rule that fails names it. A rung's class may also
+        be the preset's needs class or its last resort (rule 5 only); the last resort outside the order still needs a crossing grant."""
         cls, reach, no = sd.link_class(prov, model, rt), sd.reach(prov), early(prov, model)
         if no:
             return no
+        r = rec(prov, model)
+        if tokens and r is not None and r["context"]["effective"] < tokens:   # A4a: a task longer than the probed effective context (no record: may serve)
+            return X(UNMET, f"its probed effective context ({r['context']['effective']} tokens) is below the task's {tokens} tokens")
         if cls is None:
             return X(POLICY, "the link has no link class (its connection names none), so it is not routable")
         if not (exempt or local_only) and reach not in mode["allowed_localities"] and cls != last:   # Local only overrides the preset's localities
             return X(POLICY, f"preset {sd.idn(preset, True)} allows no link that is {reach} for routing")
-        if cls not in inorder and (exempt or cls != last):
+        if cls not in inorder and (exempt or cls not in ({last, needs} if rung else {last})):
             return X(POLICY, f"link class {sd.idn(cls, True)} is not in the class order of " + (
                 "this exempt role" if exempt else "the Local only policy" if local_only else f"preset {sd.idn(preset, True)} for this role"))
         probs = {m["kind"]: m for m in reversed(sd.route_problems(pols, need, prov, now, pid))}   # the first problem of each kind
         if "never" in probs:   # a class that never reaches a hosted link refuses before any grant is offered, a crossing grant too (DC-08)
             return X(POLICY, f"the connection {probs['never']['text']}")
-        if cls not in inorder and not any(g["preset"] == preset and g["to_class"] == cls and sd.grant_in_force(g, pid, now) for g in crossing):
+        if cls == last and cls not in effective and not any(g["preset"] == preset and g["to_class"] == cls and sd.grant_in_force(g, pid, now) for g in crossing):
             return ("needs_grant", CROSSING, f"link class {sd.idn(cls, True)} is the last resort of preset {sd.idn(preset, True)}, and no crossing grant is in force here",
                     {"kind": "crossing", "to_class": cls}, None)
         if "grant" in probs:
@@ -338,38 +386,77 @@ def resolve(ctx):
     # ---- the chain
     seen = set()
 
+    def judged(prov, model, params, source, rung=False):
+        status, code, why, grant, until = judge(prov, model, rung)
+        return {"connection": prov["id"], "model": model, "parameters": params, "effort": effort(params), "link_class": sd.link_class(prov, model, rt), "source": source,
+                "status": status, "code": code, "reason": why, "grant": grant, "mid_task": False, "cooldown_until": until,
+                "family": (rec(prov, model) or {}).get("family"), "probed": rec(prov, model) is not None}
+
     def links(pairs, source):
         got = []
         for prov, model, params in pairs:
             if prov is None or prov["kind"] != "provider" or (prov["id"], model) in seen:
                 continue   # a pin that names no provider is refused by `check`; a link keeps its first place
             seen.add((prov["id"], model))
-            status, code, why, grant, until = judge(prov, model)
-            got.append({"connection": prov["id"], "model": model, "parameters": params, "link_class": sd.link_class(prov, model, rt), "source": source,
-                        "status": status, "code": code, "reason": why, "grant": grant, "mid_task": False, "cooldown_until": until})
+            got.append(judged(prov, model, params, source))
         return got
     pinned = lambda ls: [(sd.entry(conn, l["connection"]), l["model"], l["parameters"]) for l in ls]
     pins = [(pinned(p["chain"]), f"pin:{p['scope']}") for p in view["pins"]] + [(pinned(view["preset_pins"]), "preset")]
     chain = [e for ls, src in pins for e in links(ls, src)]
-    ranked = False
+    ranked, items = False, []   # items: the chain's slices that are one class-order item (one class or one best-of group), for cross_family
     for it in order:
         got = links([(p, m, {}) for p, m in catalog(it if isinstance(it, list) else [it])], "preset")
         if isinstance(it, list):
             got, why = best(got, {link_key({"connection": c, "model": m}): x.get("score") for (c, m), x in models.items()}, {k: x["privacy_rank"] for k, x in classes.items()})
             notes.append(f"best suited of {json.dumps(it)}: {why}")
             ranked = True
+        items.append((len(chain), len(chain) + len(got)))
         chain += got
     chain += links(pinned(view["fallbacks"]), "fallback")
     if last is not None and last not in inorder:
-        chain += links([(p, m, {}) for p, m in catalog([last])], "last_resort")
+        got = links([(p, m, {}) for p, m in catalog([last])], "last_resort")
+        items.append((len(chain), len(chain) + len(got)))
+        chain += got
     drv, named = drivers.get(driver), {(p["id"], m) for ls, _ in pins for p, m, _ in ls if p}
-    for e in chain:   # mid-task only under a driver that allows it, never on a CLI login, on an aggregator only for the role pinned to that link
+
+    def mid(e):   # mid-task only under a driver that allows it, never on a CLI login, on an aggregator only for the role pinned to that link
         p = conn[e["connection"]]
         e["mid_task"] = bool(drv and drv["mid_task"]) and p["type"] != "cli-login" and (not p.get("aggregator") or (p["id"], e["model"]) in named)
+    for e in chain:
+        mid(e)
     out["chain"], out["decision"] = chain, {"rule": "best_suited" if ranked else "class_order", "reason": "; ".join(notes)}
     if ranked and sd.phases(feats.get(STUB_SCORES, {})):
         out["stubs"].append(STUB_SCORES)
+    cf = rt.get("cross_family")
+    if cf and role in cf["reviewer_roles"] and not rung:
+        out["cross_family"] = crossed(ctx, d, out, mode, cf, items, {k: x["privacy_rank"] for k, x in classes.items()})
     bad = next((a for a in apps if a["code"]), None)
+    if rung:   # the escalation chain: rungs N.. judged alone, in order; an excluded or waiting rung is skipped, the first other one served
+        rungs, skipped, link = view["escalation_chain"], [], None
+        for n in range(rung, len(rungs) + 1):
+            l, prov = rungs[n - 1], sd.entry(conn, rungs[n - 1]["connection"])
+            e = judged(prov, l["model"], l["parameters"], "rung", True) if prov and prov["kind"] == "provider" else {
+                "connection": l["connection"], "model": l["model"], "link_class": None, "status": "excluded", "code": UNKNOWN,
+                "reason": "the rung's connection is not a provider of the connections catalog"}   # skipped, never dropped: rung numbers stay
+            if e["status"] in ("usable", "cooldown"):   # a rung in cooldown is answered as itself: failover, not the walk, waits it out
+                mid(e)
+                link = (n, e)
+                break
+            skipped.append({"rung": n, **{k: e[k] for k in ("connection", "model", "link_class", "status", "code", "reason")}})
+        out["rung"] = {"requested": rung, "served": link and link[0], "last": len(rungs), "link": link and link[1], "skipped": skipped}
+        out["chain"] = [link[1]] if link else []
+        head = f"role {sd.idn(role, True)} under preset {sd.idn(preset, True)}: "
+        if link is None:
+            out["code"], out["reason"] = EXHAUSTED, head + (f"no rung from {rung} on is usable ({len(skipped)} skipped)" if skipped else
+                                                            f"its escalation chain has {len(rungs)} rung(s), none from {rung} on")
+        elif link[1]["status"] == "cooldown":
+            out["code"], out["reason"] = COOLDOWN, head + f"rung {link[0]}: {link[1]['reason']}"
+        elif bad:
+            out["code"], out["reason"] = bad["code"], f"card app {sd.idn(bad['app'], True)}: {bad['reason']}"
+        out["decision"] = {"rule": "rung", "reason": head + (f"rung {link[0]} of {len(rungs)} served" if link else "no rung served") + f", {len(skipped)} skipped"}
+        if cf and role in cf["reviewer_roles"]:   # CRT-05: the served rung is judged too (one link: nothing to reorder)
+            out["cross_family"] = crossed(ctx, d, out, mode, cf, [], {})
+        return out
     if not any(e["status"] == "usable" for e in chain):
         count = {s: sum(e["status"] == s for e in chain) for s in ("excluded", "needs_grant", "cooldown")}
         out["code"], out["reason"] = NO_LINK, (f"role {sd.idn(role, True)} under preset {sd.idn(preset, True)}: none of the {len(chain)} links of its chain is usable "
@@ -379,17 +466,126 @@ def resolve(ctx):
     return out
 
 
+def lift(seg, want, rank):
+    """seg with the links `want` holds moved ahead, stably, past links it does not hold, never past one of a lower privacy rank."""
+    got = []
+    for e in seg:
+        i = len(got)
+        while want(e) and i and not want(got[i - 1]) and rank(got[i - 1]) >= rank(e):
+            i -= 1
+        got.insert(i, e)
+    return got
+
+def crossed(ctx, d, out, mode, cf, items, ranks):
+    """Cross-family review (body B2, ruling (2) of design C): the review role's chain reordered so that its usable links of another
+    family than the builder's come first, inside each class-order item only (owner pins, preset pins and fallbacks keep place and
+    order; no link moves ahead of a link of a lower privacy rank; nothing is added or unexcluded). The builder's family is that of
+    the first usable link of builder_role resolved for the same card and project from the same data. Returns {builder_family,
+    served_family, status: met|waived, reason, logged: false} (the CLI logs a waiver)."""
+    chain, preset = out["chain"], out["preset"]["id"]
+    res = lambda st, why, bf=None: {"builder_family": bf, "served_family": next((e["family"] for e in chain if e["status"] == "usable"), None),
+                                    "status": st, "reason": why, "logged": False}
+    if ctx.get("card") is None:
+        return res("waived", "the review role is asked with no card, so there is no builder to differ from")
+    if mode.get("cross_family_review") is not True:
+        return res("waived", f"preset {sd.idn(preset, True)} does not ask for cross-family review (cross_family_review is not true)")
+    try:
+        b = resolve({**ctx, "role": cf["builder_role"], "rung": None, "tokens": None}, d)
+    except sd.DataError as e:
+        return res("waived", f"the builder's resolve refuses ({getattr(e, 'code', 'STL-CFG-310')}), so its family is not known")
+    bf = next((e["family"] for e in b["chain"] if e["status"] == "usable"), None)
+    if bf is None:
+        return res("waived", "the builder's family is not known (its first usable link has no probe record or a null family, or it has no usable link)")
+    other = lambda e: e["status"] == "usable" and e["family"] not in (None, bf)
+    for a, z in items:
+        chain[a:z] = lift(chain[a:z], other, lambda e: ranks.get(e["link_class"], float("inf")))
+    r = res("met", None, bf)
+    if r["served_family"] not in (None, bf):
+        out["decision"]["reason"] += f"; cross-family review: links of a family other than the builder's ({bf}) go first inside each class-order item"
+        return r
+    return {**r, "status": "waived", "reason": "a usable link of another family is reachable only across a pin, a class-order item, a source or the privacy order"
+            if any(map(other, chain)) else "no usable link of the review role has a known family other than the builder's"}
+
+def withdraw(out, code, why):
+    """A served answer whose log or alert line could not be written: no link (a rung's too), the code and why."""
+    if out.get("rung"):
+        out["rung"]["served"] = out["rung"]["link"] = None
+    out["chain"], out["code"], out["reason"] = [], code, why
+
+def waived_line(out):
+    """The CLI's one trusted routing.cross-family-waiver line (STL-MDL-737) for a waived answer; in a worker environment none can
+    be written, and the answer stays information (logged false). A line that cannot be written withdraws the answer (chain [],
+    the log's code): an unlogged waiver is never silent."""
+    import event_log as el, worker_env
+    cf, nn = out["cross_family"], lambda v, none: none if v is None else v   # a missing card or family reads as missing, never as None
+    if worker_env.reason():
+        return
+    try:
+        el.append(el.build("routing.cross-family-waiver", f"role {out['role']} on " + nn(out["card"] and f"card {out['card']}", "no card"), code=WAIVER,
+                           who={"role": out["role"]}, detail=f"card {nn(out['card'], 'none')}, role {out['role']}, preset {out['preset']['id']}, builder family "
+                                  f"{nn(cf['builder_family'], 'not known')}, served family {nn(cf['served_family'], 'not known')}: {cf['reason']}"))
+        cf["logged"] = True
+    except Exception as e:   # fail closed
+        code, why = (e.code, e.problem) if isinstance(e, el.EventError) else (LOG_FAILED, f"{type(e).__name__} while writing the waiver's event line")
+        withdraw(out, code, f"the cross-family waiver's event line could not be written ({why}), so no link is served")
+
 def main(argv):
     p = argparse.ArgumentParser(prog="resolve.py", allow_abbrev=False, description="The ordered chain of model links a role may use right now, and why (JSON).")
     p.add_argument("command", choices=["resolve"])
     for flag, required in (("role", True), ("project", True), ("card", False), ("tier", False), ("driver", False), ("task", False)):
         p.add_argument(f"--{flag}", required=required)
+    p.add_argument("--rung", type=rung_arg, help="walk the role's escalation chain from rung N (0: the chain itself)")
+    p.add_argument("--tokens", type=rung_arg, help="the task's size: a link whose probed effective context is below it is excluded")
     p.add_argument("--json", action="store_true", help="accepted: JSON is the only output")
-    out = resolve(vars(p.parse_args(argv)))   # a usage error exits 2 with a usage line (argparse)
+    a = vars(p.parse_args(argv))   # a usage error exits 2 with a usage line (argparse)
+    if a["rung"]:   # DC-01: the rung number comes from a host-side caller; a worker never asks, before anything is judged
+        import worker_env
+        w = worker_env.reason()
+        if w:
+            raise Refusal(WORKER, f"resolve --rung is asked from a worker environment ({w}); only a host-side caller walks the escalation chain")
+    out = resolve(a)
+    log = out.get("rung") and walked(out)
+    lk = (out["rung"].get("link") if out.get("rung") else None) or next((e for e in out["chain"] if e["status"] == "usable"), None)   # the link this answer serves
+    if lk and out["chain"] and lk.get("probed") is False and sd.needs_probe(sd.load(sd.load(sd.INDEX)["role_table"])["roles"][out["role"]].get("requirements", {}), None, a["tokens"]):
+        if sd.alert_line(sd.UNPROBED, f"role {out['role']}: the answer serves link {link_key(lk)}, which has no probe record (run bin/probe.py due)") is False:
+            withdraw(out, LOG_FAILED, f"the {sd.UNPROBED} alert line for unprobed link {link_key(lk)} could not be written, so no link is served")   # CRT-04: never served unflagged
+    if (out.get("cross_family") or {}).get("status") == "waived" and any(e["status"] == "usable" for e in out["chain"]):   # no link served: no review to waive
+        waived_line(out)
     print(json.dumps(out, indent=2, ensure_ascii=False))
     if out["code"]:
         sd.say(out["code"], out["reason"])
+    if log:
+        sd.say(log[0], log[1])
     return 1 if out["code"] else 0
+
+
+def rung_arg(v):
+    if not re.fullmatch(r"[0-9]+", v):
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return int(v)
+
+
+def walked(out):
+    """One trusted event line per skipped rung and one when no rung is served (the CLI's only writes). A line that cannot be
+    written: a served rung is withdrawn (the log's code); an exhausted walk keeps its code and names the log's in rung.log_code.
+    Returns None, or (the log's code, its problem)."""
+    import event_log as el
+    r, role, preset = out["rung"], out["role"], out["preset"]["id"]
+    try:
+        for x in r["skipped"]:
+            el.append(el.build("routing.rung-skipped", f"rung {x['rung']} of role {role}", code=RUNG_SKIPPED, who={"role": role},
+                               detail=f"role {role}, preset {preset}, rung {x['rung']}, link {link_key(x)}, status {x['status']}, code {x['code']}"))
+        if r["served"] is None:
+            el.append(el.build("routing.rung-exhausted", f"rung {r['requested']} of role {role}", code=EXHAUSTED, who={"role": role},
+                               detail=f"role {role}, preset {preset}, rung {r['requested']}, last {r['last']}, skipped {len(r['skipped'])}"))
+    except Exception as e:   # fail closed: an unlogged skip is never silent
+        code, why = (e.code, e.problem) if isinstance(e, el.EventError) else (LOG_FAILED, f"{type(e).__name__} while writing the walk's event line")
+        if r["served"] is not None:
+            withdraw(out, code, f"the walk's event line could not be written ({why}), so no rung is served")
+            return None
+        r["log_code"] = code
+        return code, why
+    return None
 
 
 if __name__ == "__main__":

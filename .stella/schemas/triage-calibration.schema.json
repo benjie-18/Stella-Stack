@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Triage calibration",
+  "description": "The confidence threshold bin/triage.py fit chose from the logged verdicts the owner labelled (overrides and reroutes). Written on the host only; when it exists its threshold wins over routing triage.threshold.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "threshold": {"type": "number", "minimum": 0, "maximum": 1},
+    "labels": {"type": "integer", "minimum": 0},
+    "fitted_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"}
+  },
+  "required": ["schema_version", "threshold", "labels", "fitted_at"],
+  "additionalProperties": false
+}

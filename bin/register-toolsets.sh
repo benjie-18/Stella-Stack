@@ -5,6 +5,7 @@
 #   skills_disabled    -> `hermes config set skills.disabled`
 #   config             -> `hermes config set <key> <value>` (the role's config keys, and auxiliary.background_review.enabled
 #                         from its background_review field)
+#   model.default      -> the first usable link bin/resolve.py lists for the profile's role (none usable: unchanged, its code reported, exit 1)
 #   hook_files         -> byte copies of the repo hook scripts into <profile dir>/hooks/ (registered by
 #                         bin/register-escalation-hook.sh)
 # Profiles: every row of the table plus every profile found in ~/.hermes (no row = the fallback role). The volume is
@@ -20,6 +21,7 @@ H="$HOME/.hermes"   # HOME-relative (production HOME is /home/node), so the self
 BK="$H/backups/toolsets-$(date -u +%Y%m%dT%H%M%SZ)"
 T=$(mktemp); trap 'rm -f "$T"' EXIT
 python3 /workspace/bin/roles.py spec "$H" >"$T" || { echo "toolsets: role table invalid, nothing changed ($(head -1 "$T"))"; exit 1; }
+CARD_ROLES=$(python3 -I /workspace/bin/stella_data.py get --json routing 2>/dev/null | jq -ec '.card_roles | select(type == "array")') || CARD_ROLES=   # only the model step needs it, and fails alone
 rc=0
 pdir() { jq -r --arg p "$prof" '.[$p].dir' "$T"; }
 h() { if [ "$(pdir)" = "$H" ]; then hermes "$@"; else hermes -p "$prof" "$@"; fi 2>&1 | { grep -v setlocale || true; }; }
@@ -75,6 +77,26 @@ for prof in $(jq -r 'keys[]' "$T"); do
     elif [ "$mode" = --check ]; then echo "$prof: plugin $pl DRIFT (not enabled)"; rc=1
     elif h plugins enable "$pl" >/dev/null; then echo "$prof: plugin $pl enabled"
     else echo "$prof: plugin $pl could not be enabled"; rc=1; fi
+  fi
+  # the engine model: the first link the resolver lists usable for the profile's role. A role of routing card_roles is asked about a
+  # random card with no facts record and no project (as the coding CLI's container start asks), any other role with no card: one
+  # call, so no role is refused first and no alert line is written for nothing (W1P-02).
+  # None usable: the model stays and the resolver's code is reported (never a model the resolver did not list).
+  if [ -z "$CARD_ROLES" ]; then echo "$prof: model.default left unchanged: routing data unreadable (card_roles)"; rc=1; continue; fi
+  role=$(jq -r --arg p "$prof" '.[$p].role' "$T")
+  card=(); jq -e --arg r "$role" 'index($r)' <<<"$CARD_ROLES" >/dev/null 2>&1 && card=(--card "$(cat /proc/sys/kernel/random/uuid)")
+  res=$(python3 -I /workspace/bin/resolve.py resolve --role "$role" --project "" "${card[@]}" --json 2>&1 || true)
+  want=$(jq -r '[.chain[] | select(.status == "usable")][0].model // empty' <<<"$res" 2>/dev/null || true)
+  if [ -z "$want" ]; then
+    why=$(jq -r '"\(.code // "STL-MDL-710") \(.reason // "the chain holds no usable link")"' <<<"$res" 2>/dev/null || true)
+    echo "$prof: model.default left unchanged: ${why:-$(grep -m1 'STL-[A-Z]*-[0-9]' <<<"$res" | head -c 300)}"; rc=1
+  else
+    if ! have=$(h config get model.default); then echo "$prof: could not read model.default (hermes config get failed), nothing changed"; rc=1   # S4: as skills.disabled
+    elif have=$(head -1 <<<"$have"); [ "$have" = "$want" ]; then echo "$prof: model.default $want (in sync)"
+    elif [ "$mode" = --check ]; then echo "$prof: model.default is ${have:-unset or unreadable}, expected $want"; rc=1
+    else backup
+      if h config set model.default "$want" >/dev/null; then echo "$prof: model.default set to $want"
+      else echo "$prof: model.default could not be set (hermes config set failed)"; rc=1; fi; fi
   fi
 done
 exit $rc

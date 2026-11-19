@@ -42,6 +42,22 @@
       "mid_task": false
     }
   ],
+  "effort": {
+    "levels": ["low", "medium", "high", "max"],
+    "by_role": {
+      "dispatcher": "low",
+      "router": "low",
+      "voice": "low",
+      "look": "low",
+      "builder": {"default": "medium", "tiers": {"light": "low"}},
+      "reviewer": "medium",
+      "tester": "medium",
+      "validator": "medium",
+      "proposer": "high",
+      "verifier": "high",
+      "red-team": "high"
+    }
+  },
   "exempt_roles": [
     {
       "role": "router",
@@ -55,6 +71,11 @@
     }
   ],
   "card_roles": ["builder", "reviewer", "tester", "validator", "verifier", "red-team"],
+  "builder_roles": ["builder"],
+  "cross_family": {"builder_role": "builder", "reviewer_roles": ["validator", "verifier"]},
+  "escalation": {
+    "purposes": {"judge": "validator", "review": "reviewer", "plan": "proposer", "rescue": "builder"}
+  },
   "workflow": {
     "required_roles": [
       {
@@ -133,5 +154,23 @@
         "kind": "none"
       }
     }
+  },
+  "probe": {
+    "lengths": [1000, 4000, 16000, 32000, 64000],
+    "needles": 3,
+    "hops": 2,
+    "tolerance": 0.2,
+    "output_shapes": ["strict_schema", "grammar", "json_mode", "none"],
+    "shape_trials": 3,
+    "repair_retries": 1
+  },
+  "triage": {
+    "role": "router",
+    "tiers": ["chat", "question", "work"],
+    "image_route": "image",
+    "project": {"default": "work", "keep": ["question"]},
+    "threshold": 0.7,
+    "samples": 3,
+    "min_labels": 50
   }
 }

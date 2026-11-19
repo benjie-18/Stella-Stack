@@ -76,7 +76,8 @@
       ],
       "risk_class": "read",
       "global_id": "d80849c2-33a3-4d6c-b2fb-3ec8a71bfe64",
-      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
+      "protocol": "chat-completions"
     },
     {
       "id": "claude-subscription",
@@ -246,7 +247,8 @@
       "risk_class": "send",
       "global_id": "794222aa-6875-4855-8f25-6d4f751ee4d4",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
-      "link_class": "free_cloud"
+      "link_class": "free_cloud",
+      "protocol": "chat-completions"
     },
     {
       "id": "discord",

@@ -380,72 +380,6 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
-      "id": "routing-advertised-capabilities",
-      "owner_phase": "F2",
-      "status": "on",
-      "depends_on": [],
-      "flag": null,
-      "due_phase": "F2b",
-      "replaced_by": "the capability probe (F2b): probed tool calling, vision and JSON mode per model; until then routing judges a role's requirements by the catalog's advertised capabilities (a null value meets no requirement)",
-      "global_id": "0cb60837-7e61-4e4b-af77-3ea73ed0878e",
-      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
-    },
-    {
-      "id": "preset-check-unserved-role",
-      "owner_phase": "F2",
-      "status": "on",
-      "depends_on": [],
-      "flag": null,
-      "due_phase": "F2b",
-      "replaced_by": "the check rule that refuses a preset leaving an active role with no link able to serve it (built on branch f2/W1-rt10-held, finding W1-RT-10); it waits for the capability probe (F2b) because no shipped model advertises vision yet; until then the check judges only an explicit chain and that the class order is not empty",
-      "global_id": "aae349f5-1604-4b83-81fd-41c0991aa651",
-      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
-    },
-    {
-      "id": "routing-advertised-context",
-      "owner_phase": "F2",
-      "status": "on",
-      "depends_on": [],
-      "flag": null,
-      "due_phase": "F2b",
-      "replaced_by": "the capability probe's effective context size (F2b); until then the context check of a role's requirements and of a mid-task switch reads the catalog's advertised context_tokens",
-      "global_id": "42057f9b-da35-4662-a792-f5e3d720dd3a",
-      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
-    },
-    {
-      "id": "routing-escalation-walk",
-      "owner_phase": "F2",
-      "status": "on",
-      "depends_on": [],
-      "flag": null,
-      "due_phase": "F2b",
-      "replaced_by": "the builder escalation walk (F2b: resolve --rung N); until then a preset's escalation_chain is stored and checked for shape only, and nothing climbs it",
-      "global_id": "a4518e0e-8d1f-4af8-8689-d95b5db754cf",
-      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
-    },
-    {
-      "id": "escalate-caller-names-model",
-      "owner_phase": "F2",
-      "status": "on",
-      "depends_on": [],
-      "flag": null,
-      "due_phase": "F2b",
-      "replaced_by": "the escalation-chain walk (F2b: bin/escalate.sh takes the next rung of the role's escalation chain from the resolver instead of a model named by its caller); until then the caller names the model, the name must be a model the catalog lists for the script's CLI, the resolver must list exactly that link usable, and no other link is tried",
-      "global_id": "9dae5c53-5ab1-4c9f-9983-13d25725ea8b",
-      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
-    },
-    {
-      "id": "profile-engine-model-host-step",
-      "owner_phase": "F2",
-      "status": "on",
-      "depends_on": [],
-      "flag": null,
-      "due_phase": "F2b",
-      "replaced_by": "the profile launch asks the resolver (F2b: the engine model of each Hermes profile is set from bin/resolve.py's answer for the profile's role when the profile is applied or launched); until then that model lives in the engine's own config outside the repo and the owner sets it by hand on the host, so a pin, a preset or a data policy does not change it",
-      "global_id": "c9944e0f-c4ce-471a-864c-94d8e2310038",
-      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
-    },
-    {
       "id": "routing-observed-quota",
       "owner_phase": "F2",
       "status": "on",
@@ -476,6 +410,15 @@
       "due_phase": "F2c",
       "replaced_by": "the weekly model check (F2c): the one engine path that updates a built-in preset, with a changelog line and rollback; until then no path changes a built-in preset (the apply tool refuses every candidate that does)",
       "global_id": "35e660aa-0e06-419d-96a4-02a119cf7514",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "triage-classifier",
+      "owner_phase": "F2b",
+      "status": "off",
+      "depends_on": [],
+      "flag": "triage-classifier",
+      "global_id": "0e9a6e70-f416-486b-b6be-3f0b90643750",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

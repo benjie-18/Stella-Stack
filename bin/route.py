@@ -3,11 +3,16 @@
 bin/resolve.py gives it (resolve(ctx) -> the chain document, link_key(link)): no routing rule lives here, and a provider's answer can
 only move a task along that chain. Nothing here names a model, a provider, a host, a role, a preset or a link class: all are data.
 CLI (host only: every command refuses in a worker environment, STL-CFG-312; the output is always JSON):
-  route.py call --role R --project P [--card C] [--tier T] [--driver D] [--pending-tool-call] --task ID [--json]   (prompt on stdin)
+  route.py call --role R --project P [--card C] [--tier T] [--driver D] [--pending-tool-call] [--rung N] --task ID [--schema FILE] [--json]   (prompt on stdin)
       the engine loop's driver: calls the first link the task may use through its connection's wire shape (.stella/protocols.json),
       and on a failure moves on until a link answers. Output: {task, link {connection, model}, link_class, text, tool_calls, usage,
-      model, switches, failure_history, refused, stubs}.
-  route.py attempt --role R --project P [--card C] [--tier T] [--driver D] --task ID [--json]
+      model, switches, failure_history, refused, stubs}, plus logprobs (the per-token {token, logprob} items) when the link's answer has them
+      at the wire shape's response.logprobs pointer (bin/triage.py reads the route label's probability from it).
+      --rung N (the escalation script): the chain is the resolver's rung walk from N (resolve(ctx) with ctx["rung"]): the served rung's link only.
+      --schema FILE (F2b B): the answer must be JSON that meets the object schema in FILE, which gets a short `reasoning` string as its first
+      property. The link's newest probe record (bin/probe.py) names the output shape: the schema goes at that wire-shape pointer; with none
+      (or no record) it goes in the prompt. A wrong answer gets routing probe.repair_retries repair retries, then STL-MDL-736: never a guessed value.
+  route.py attempt --role R --project P [--card C] [--tier T] [--driver D] --task ID [--tokens N] [--json]
       for a worker CLI's launcher: ONE link (the next the task may use) and the task's failure_history; it calls no model and
       never switches inside an attempt.
   route.py result --task ID --link <connection>/<model> --outcome ok|<trigger id>
@@ -22,10 +27,14 @@ A step (one pick of a link, the same for call and attempt), in this order:
      down (this task's failure, another task's, a launcher's report) and also back to an earlier link that is usable again. A
      switch past failover.max_switches_per_task stops the task (STL-MDL-723); a task with no switch left stays on its last link
      while that one can be used.
-  3. call only: a link with no wire shape cannot be called here; a switch is mid-task, so the link must allow it (`mid_task` of the
-     chain), its advertised context window must hold the conversation (stub routing-advertised-context, named in `stubs`) and a
-     pending tool call must stay on the same wire shape; else the switch is refused (STL-MDL-722, one event line) and the next
-     link is judged.
+  3. call only: a link with no wire shape cannot be called here, nor one whose probed effective context (its newest probe record,
+     stella_data.probed; a link with no record may serve, unproven) is below the conversation, on the first pick too; a switch is
+     mid-task, so the link must also allow it (`mid_task` of the chain) and a pending tool call must stay on the same wire shape;
+     else the link is refused (a switch: STL-MDL-722, one event line) and the next link is judged. The resolver is asked with the conversation's size (call: the prompt's estimate, on
+     every pick; attempt: --tokens when the launcher gives it), so a link whose effective context is below it is never in the chain.
+     A pick or switch of a link with no probe record for a role with requirements, or with a task size (call always has one),
+     writes one STL-MDL-738 warning alert line
+     (owner ruling 2026-11-18: it may serve, flagged).
   4. a link that needs a grant is never skipped: with a card and a module `consent`, consent.gate(ctx, link) -> {status: granted |
      waiting | queued, code?, request_id?} decides; with no card or no such module the task stops with STL-MDL-719 and one inbox
      alert, and no approval request is raised. A task that waits exits 3.
@@ -33,7 +42,10 @@ A step (one pick of a link, the same for call and attempt), in this order:
      pick, than the chain's first link that is not excluded (a head that cools down or needs a grant is that bar; only an
      excluded head is skipped): one inbox alert and one event line with the routing data's consent.alert_code_notice, whatever
      the grant.
-  6. one trusted event line: `routing.switch` (STL-MDL-721) from the link left, else `routing.pick` with the resolver's reason.
+  6. one trusted event line: `routing.switch` (STL-MDL-721) from the link left, else `routing.pick` with the resolver's reason; for
+     a review role (the answer's cross_family), one `routing.cross-family-waiver` line (STL-MDL-737) before it when the answer is
+     waived or the link is of the builder's family or of none known (a switch back to the builder's family too). A line that
+     cannot be written stops the task with the event log's code before any model is called.
 A failure becomes a trigger by the wire shape's `errors` rows (status, body pattern; first match wins); the transport says timeout
 (the whole call has one wall-clock deadline of CALL_TIMEOUT seconds: name lookup, connect, status line, headers and body, however
 the bytes arrive) and server_error (no answer, no connection, an
@@ -83,10 +95,12 @@ if os.path.isfile(os.path.join(BIN, "consent.py")):   # this tool's own folder o
 
 # the alert selftest counts a code as used only when a script holds it as a literal: the notice's code is data (consent.alert_code_notice), shipped as STL-MDL-729
 NO_LINK, UNKNOWN, WAITING, SWITCH, MID_REFUSED, STOPPED = "STL-MDL-710", "STL-MDL-711", "STL-MDL-719", "STL-MDL-721", "STL-MDL-722", "STL-MDL-723"
+PROBE_FAILED = "STL-MDL-736"   # a structured-output call that got no valid answer (bin/probe.py holds the same code for a probe)
 UNEXPECTED = "STL-CFG-310"   # an error this tool did not foresee: one coded line with the error's type, never its text
+LOG_FAILED = "STL-CFG-318"   # a flag line that could not be written: the pick is not used (CRT-04)
 TIMEOUT_KEY = "CALL_TIMEOUT"   # the settings registry key: the seconds one model call may take
 TIMED_OUT, DOWN, MALFORMED = "timeout", "server_error", "malformed_tool_call"   # triggers no errors row of a wire shape can say
-CONTEXT_STUB = "routing-advertised-context"   # the features entry the context check rests on until F2b's probe
+WAIVER = "STL-MDL-737"   # a review role on a link of no other family than the builder's (the resolver's cross_family)
 USABLE, NEEDS_GRANT, EXCLUDED, GRANTED = "usable", "needs_grant", "excluded", "granted"   # the resolver's and the consent gate's words
 KEYS = set()   # the keys read in this run and their JSON-escaped forms: masked in the output wherever they stand, glued to other characters too
 TIME = "%Y-%m-%dT%H:%M:%SZ"
@@ -236,7 +250,7 @@ def cleared_event(a, keys, detail):
 
 def ctx_of(a):
     """What the resolver and the consent gate are asked with."""
-    return {k: getattr(a, k) for k in ("role", "project", "card", "tier", "driver", "task")}
+    return {k: getattr(a, k, None) for k in ("role", "project", "card", "tier", "driver", "task", "rung", "tokens")}
 
 
 # ---- one step: the next link the task uses ----
@@ -252,18 +266,19 @@ def next_link(chain, st, ts, rt, t, skip):
     return c[0] if c else None
 
 
-def unfit(a, link, left, cat, tokens):
+def unfit(a, link, left, cat, tokens, recs):
     """Why the engine loop cannot use this link now (None: it can). Without `left` (the link the task leaves) this is no switch:
-    the task's first link, or the link it last used."""
-    prov, mod = model_of(cat, link)
+    the task's first link, or the link it last used. recs: the probe records (stella_data.probe_records)."""
+    prov, _ = model_of(cat, link)
     if not prov.get("protocol"):
         return "its connection has no wire shape (a worker CLI drives it, between attempts)"
+    r = sd.probed(recs, prov["id"], link["model"])
+    if r is not None and r["context"]["effective"] < tokens:   # the first pick too; a link with no record may serve (owner ruling 2026-11-18)
+        return f"its probed effective context ({r['context']['effective']} tokens) does not hold the conversation (about {tokens} tokens)"
     if not left:
         return None
     if link.get("mid_task") is not True:
         return "the link may not be switched to in the middle of a task (between attempts only)"
-    if (mod["capabilities"].get("context_tokens") or 0) < tokens:
-        return f"its advertised context window does not hold the conversation (about {tokens} tokens)"
     if a.pending_tool_call and prov["protocol"] != (sd.entry(cat, left.split("/", 1)[0]) or {}).get("protocol"):
         return "a tool call is pending and the link speaks another wire shape, so the call's state does not carry over"
     return None
@@ -272,7 +287,8 @@ def unfit(a, link, left, cat, tokens):
 def advance(a, doc, rt, cat, refused, tokens=None):
     """The next link of the task after every gate of a step (module text), or Stop. tokens: the conversation's size for the engine
     loop's mid-task checks; None for an attempt (a worker CLI switches between attempts only)."""
-    chain, rank = doc["chain"], {c["id"]: c["privacy_rank"] for c in rt["link_classes"]}
+    chain, rank, recs = doc["chain"], {c["id"]: c["privacy_rank"] for c in rt["link_classes"]}, sd.probe_records(rt)
+    req = sd.load(sd.load(sd.INDEX)["role_table"])["roles"].get(a.role, {}).get("requirements", {})
     while True:
         with state() as st:
             ts = task_of(st, a.task)
@@ -284,7 +300,7 @@ def advance(a, doc, rt, cat, refused, tokens=None):
         if link is None:
             why = "; ".join(dict.fromkeys(str(e.get("reason")) for e in chain if e.get("reason"))) or "the chain is empty"
             raise Stop(*((STOPPED, f"task {a.task} has no link left after {len(hist)} failed") if hist else (NO_LINK, f"role {a.role}: {why}")))
-        why = unfit(a, link, left, cat, tokens) if tokens is not None else None
+        why = unfit(a, link, left, cat, tokens, recs) if tokens is not None else None
         if why:
             refused.append({"link": key, "code": MID_REFUSED if left else NO_LINK, "reason": why})
             if left:
@@ -309,6 +325,16 @@ def advance(a, doc, rt, cat, refused, tokens=None):
             code, problem = rt["consent"]["alert_code_notice"], f"task {a.task} uses link {key} (class {link.get('link_class')}), less private than {was}"
             alert(code, problem)
             event("routing.notice", a, code, new={"link": key, "link_class": link.get("link_class")}, detail=problem)
+        cf = doc.get("cross_family") if isinstance(doc.get("cross_family"), dict) else None   # a review role: the waiver goes next to its pick or switch
+        lrec = sd.probed(recs, link["connection"], link["model"])
+        fam = (lrec or {}).get("family")   # the probe record's, as the resolver judged it
+        if sd.needs_probe(req, lrec, getattr(a, "tokens", None)):   # it may serve unproven, flagged once per pick or switch (a task size counts as a requirement)
+            if sd.alert_line(sd.UNPROBED, f"task {a.task}, role {a.role}: link {key} has no probe record (run bin/probe.py due)") is False:   # CRT-04: never served unflagged
+                raise Stop(LOG_FAILED, f"task {a.task}: link {key} has no probe record and its {sd.UNPROBED} alert line could not be written, so it is not used")
+        if cf and (cf.get("status") != "met" or fam in (None, cf.get("builder_family"))):
+            event("routing.cross-family-waiver", a, WAIVER, new={"link": key, "family": fam},
+                  detail=f"card {a.card or 'none'}, role {a.role}, preset {(doc.get('preset') or {}).get('id')}, builder family {cf.get('builder_family') or 'not known'}, served family "
+                         f"{fam or 'not known'}: " + str(cf.get("reason") if cf.get("status") != "met" else "the task moved to a link of no other known family than the builder's")[:300])
         if left:
             h = hist[-1] if hist and isinstance(hist[-1], dict) else {}   # a history entry is read as data: any shape
             own = h.get("link") == left and isinstance(h.get("trigger"), str)
@@ -420,22 +446,42 @@ def fetch(req, timeout):
     return got[0]
 
 
-def send(prov, proto, link, prompt, key, timeout, local):
-    """One request to the link: (answer, None, status) or (None, trigger, status); trigger None with no answer: no row maps the error.
-    No text of an exception or of an error answer leaves here (either could repeat the key)."""
-    h, rq, rs = next(iter(prov["hosts"]), None), proto["request"], proto["response"]   # shortcut: the entry's first host is its API endpoint, upgrade when hosts carry a purpose id
-    vals = {"model": link["model"], "prompt": prompt}
-    path = render(rq["path"], dict(vals, model=urllib.parse.quote(link["model"], safe="")))
+def url_of(prov, link, local, path):
+    """The URL of a path on the connection's endpoint (also the probe's model list); Stop when the connection has no plain host."""
+    h = next(iter(prov["hosts"]), None)   # shortcut: the entry's first host is its API endpoint, upgrade when hosts carry a purpose id
     if h is None or not HOST.fullmatch(h["host"]) or not path.startswith("/"):
         raise Stop(NO_LINK, f"link {resolve.link_key(link)}: its connection has no host that is a plain host name, or its request path does not start with /")
     try:
         plain = h["host"] in local or ipaddress.ip_address(h["host"]).is_loopback
     except ValueError:
         plain = False   # TLS to every host but a model server on this machine (a local host of the data policy, a loopback address)
+    return f"{'http' if plain else 'https'}://{h['host']}:{h['port']}{path}"
+
+
+def headers_of(rq, key):
+    return {"Content-Type": "application/json", **{k: render(v, {"key": key or ""}) for k, v in rq["headers"].items() if key or "{key}" not in v}}
+
+
+def put(doc, p, v):
+    """Set the value at an RFC 6901 pointer, making objects on the way."""
+    *path, last = [x.replace("~1", "/").replace("~0", "~") for x in p.split("/")[1:]]
+    for x in path:
+        doc = doc[int(x)] if isinstance(doc, list) else doc.setdefault(x, {})
+    doc[int(last) if isinstance(doc, list) else last] = v
+
+
+def send(prov, proto, link, prompt, key, timeout, local, edit=None):
+    """One request to the link: (answer, None, status) or (None, trigger, status); trigger None with no answer: no row maps the error.
+    edit: a function that changes the rendered body (the structured-output schema, the probe's tests) before it is sent.
+    No text of an exception or of an error answer leaves here (either could repeat the key)."""
+    rq, rs = proto["request"], proto["response"]
+    vals = {"model": link["model"], "prompt": prompt}
     mt = (link.get("parameters") or {}).get("max_tokens")
-    body = json.dumps(render(rq["body"], vals, mt if type(mt) is int else None)).encode()
-    headers = {"Content-Type": "application/json", **{k: render(v, dict(vals, key=key or "")) for k, v in rq["headers"].items() if key or "{key}" not in v}}
-    req = urllib.request.Request(f"{'http' if plain else 'https'}://{h['host']}:{h['port']}{path}", data=body, headers=headers, method=rq.get("method", "POST"))
+    b = render(rq["body"], vals, mt if type(mt) is int else None)
+    if edit:
+        edit(b)
+    req = urllib.request.Request(url_of(prov, link, local, render(rq["path"], dict(vals, model=urllib.parse.quote(link["model"], safe="")))),
+                                 data=json.dumps(b).encode(), headers=headers_of(rq, key), method=rq.get("method", "POST"))
     try:
         status, raw = fetch(req, timeout)   # one deadline for the whole call: a server that drips bytes, in the head or the body, holds no task
     except (OSError, http.client.HTTPException, ValueError) as e:
@@ -453,7 +499,8 @@ def send(prov, proto, link, prompt, key, timeout, local):
         return None, MALFORMED, status
     if not text and not calls:   # nothing for the task: no success, so it clears no cooldown
         return None, DOWN, status
-    return {"text": text, "tool_calls": calls, "usage": ptr(doc, rs["usage"]), "model": ptr(doc, rs["model"])}, None, status
+    lp = ptr(doc, rs["logprobs"]) if rs.get("logprobs") else None   # the per-token items, when the wire shape names a pointer and the answer has them
+    return {"text": text, "tool_calls": calls, "usage": ptr(doc, rs["usage"]), "model": ptr(doc, rs["model"]), **({"logprobs": lp} if lp else {})}, None, status
 
 
 # ---- the commands ----
@@ -479,17 +526,44 @@ def out(a, link, hist, refused, stubs, **more):
     print(el.scrub(line))
 
 
-def cmd_call(a):
-    prompt = sys.stdin.buffer.read().decode("utf-8", "replace")   # bytes that are not UTF-8 (a tool's binary output) are replaced, whatever the locale
-    rt, cat, protos, local = data()
-    doc = resolved(a, rt, True)
+def timeout_of():
+    """The seconds one model call may take (the settings registry's CALL_TIMEOUT); Stop when the stored value is rejected."""
     e = settings.entry(TIMEOUT_KEY)
     timeout = settings.current(e)[0]
     if type(timeout) is not int or settings.problems(e, timeout):
         raise Stop(e["code"], f"{TIMEOUT_KEY}: the stored value is rejected by the setting's own rules")
-    tokens = len(prompt.encode()) // 4 + 1   # shortcut: about four bytes a token, upgrade with F2b's probe (CONTEXT_STUB)
+    return timeout
+
+
+def with_reasoning(s):
+    """The caller's object schema with a short `reasoning` string as its first property, before the verdict (one already there is kept as given)."""
+    if not (isinstance(s, dict) and s.get("type") == "object" and not sd.lint_schema(s)):
+        raise Stop(UNKNOWN, "the --schema file is not an object schema in the subset stella_data.py validates")
+    props = dict(s.get("properties") or {})
+    why = props.pop("reasoning", {"type": "string", "description": "a short reasoning, written before the other fields"})
+    return {**{k: v for k, v in s.items() if k not in ("properties", "required")}, "properties": {"reasoning": why, **props},
+            "required": ["reasoning", *[x for x in s.get("required", []) if x != "reasoning"]]}
+
+
+def invalid(text, schema):
+    """Why the answer is no JSON that meets the schema; None when it is."""
+    try:
+        doc = json.loads(text)
+    except (TypeError, ValueError, RecursionError):
+        return "it is not JSON"
+    errs = sd.validate_doc(doc, schema)
+    return errs[0][:200] if errs else None
+
+
+def cmd_call(a):
+    prompt = sys.stdin.buffer.read().decode("utf-8", "replace")   # bytes that are not UTF-8 (a tool's binary output) are replaced, whatever the locale
+    rt, cat, protos, local = data()
+    a.tokens = tokens = len(prompt.encode()) // 4 + 1   # shortcut: about four bytes a token (the probe's own estimate), upgrade when a wire shape counts tokens
+    doc = resolved(a, rt, True)
+    timeout = timeout_of()
+    schema = with_reasoning(json.load(open(a.schema))) if a.schema else None   # an unreadable file ends in main()'s coded line
     a.refused = refused = []
-    stubs = list(dict.fromkeys([*(doc.get("stubs") or []), CONTEXT_STUB]))
+    stubs = list(doc.get("stubs") or [])
     while True:
         link = advance(a, doc, rt, cat, refused, tokens)
         prov, _ = model_of(cat, link)
@@ -502,9 +576,26 @@ def cmd_call(a):
             forms = (key, json.dumps(key)[1:-1])   # the output is JSON: the key's escaped form too
             KEYS.update(forms)
             el.SECRETS.update(forms)   # scrubbed from every event detail, alert text and output of this run
+        proto, text, edit = protos[prov["protocol"]], prompt, None
+        if schema:   # the strongest shape the probe proved for this link puts the schema at its pointer; else (or no record) it goes in the prompt
+            import probe
+            where = proto["request"].get("output_shape", {}).get(probe.shape_of(prov["id"], link["model"]))
+            if where:
+                edit = lambda b, w=where: put(b, w, schema)
+            else:
+                text = f"{prompt}\n\nAnswer with one JSON object and nothing else. It must follow this JSON Schema:\n{json.dumps(schema)}"
         for _ in range(rt["failover"]["retry_count"] + 1):
-            ans, trigger, status = send(prov, protos[prov["protocol"]], link, prompt, key, timeout, local)
+            ans, trigger, status = send(prov, proto, link, text, key, timeout, local, edit)
             if ans is not None:
+                break
+        for n in range(rt["probe"]["repair_retries"] + 1 if ans is not None and schema else 0):   # a wrong answer gets the repair retries, then a code: never a guessed value
+            err = invalid(ans["text"], schema)
+            if err is None:
+                break
+            if n == rt["probe"]["repair_retries"]:
+                raise Stop(PROBE_FAILED, f"link {resolve.link_key(link)}: the answer is not JSON that meets the schema ({err}), also after {n} repair retries")
+            ans, trigger, status = send(prov, proto, link, f"{text}\n\nYour answer was:\n{ans['text']}\n\nIt was refused: {err}. Answer again with one JSON object that follows the schema.", key, timeout, local, edit)
+            if ans is None:
                 break
         with state() as st:
             if ans is not None:
@@ -562,6 +653,9 @@ def main(argv):
             p.add_argument("--" + k, required=req)
         p.add_argument("--json", action="store_true")
     sub.choices["call"].add_argument("--pending-tool-call", action="store_true")
+    sub.choices["call"].add_argument("--rung", type=int, help="the chain is that rung of the role's escalation chain (resolve --rung): the escalation script's call")
+    sub.choices["attempt"].add_argument("--tokens", type=int, help="the task's size in tokens: a link whose probed effective context is below it is not in the chain")
+    sub.choices["call"].add_argument("--schema", help="a JSON Schema file: the answer must be JSON that meets it (one short `reasoning` property is added first)")
     p = sub.add_parser("result")
     for k in ("task", "link", "outcome"):
         p.add_argument("--" + k, required=True)

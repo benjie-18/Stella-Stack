@@ -104,6 +104,10 @@ ed "$(rel connections)" --arg g "$(uuid)" --argjson ar "$AR" --argjson dc "$(jq 
          models: [("st-far-m1", "st-far-m2") | {id: ., capabilities: {tool_calling: true, json_mode: true, context_tokens: 1048576, vision: true, streaming: true},
                   probed_at: null, probe_source: "advertised", cost: null, limits: null}]}
       | .data_policy.data_classes_allowed = $dc]'
+PR=$R/$(ix .probe_records); mkdir -p "$(dirname "$PR")"   # F2b item C: routing reads what a link can do from its probe record only
+jq --arg i "$IID" --arg o "$(jq -r '.probe.output_shapes[-1]' "$RT")" '{schema_version: 1, records: [.entries[] | select(.id == "st-far") | .models[] | {global_id: "00000000-0000-4000-8000-000000000000",
+  install_id: $i, connection: "st-far", model: .id, version: "st", probed_at: "2026-01-01T00:00:00Z", family: null, tool_calling: true, parallel_tool_calls: null, json: true,
+  vision: true, output_shape: $o, context: {advertised: null, effective: 1048576, short_score: 1, points: []}, code: null}]}' "$R/$(rel connections)" >"$PR"
 ed "$DREL" '.local_hosts += ["127.0.0.1"]'
 # st-cross: the fake connection's class is the last resort (a crossing grant); st-all: it is in the order (only a privacy grant can be asked)
 ed "$AREL" --arg n "$NEAR" --arg f "$FAR" '.assignments = [] | .selection.global = "st-cross"

@@ -62,6 +62,15 @@ prov() {  # <id> <wire shape id or empty> <context tokens>: a fake connection (t
        | if \$s == \"\" then del(.protocol) else .protocol = \$s end]"
 }
 prov st-a "$SHAPE0" 100000; prov st-b "$SHAPE0" 100000; prov st-t "$SHAPE0" 16; prov st-o "$SHAPE1" 100000; prov st-n "" 100000
+# the probe records (F2b item C): route.py's context check reads a link's effective context there, never the catalog; each fake model is
+# recorded at the context the fixture gives it, family st-fam
+PF=$R/$(ix .probe_records); mkdir -p "$(dirname "$PF")"
+recs() { jq --arg i "$(jq -r .install_id "$R/$(ix '.files[] | select(.schema == "install") | .path')")" --arg o "$(jq -r '.probe.output_shapes[-1]' "$R/.stella/routing.json")" \
+  '{schema_version: 1, records: [.entries[] | select(.id | startswith("st-")) | .id as $c | .models[] | {global_id: "00000000-0000-4000-8000-000000000000", install_id: $i,
+    connection: $c, model: .id, version: "st", probed_at: "2026-01-01T00:00:00Z", family: "st-fam", tool_calling: true, parallel_tool_calls: null, json: true, vision: true,
+    output_shape: $o, context: {advertised: .capabilities.context_tokens, effective: .capabilities.context_tokens, short_score: 1, points: []}, code: null}]}' \
+  "$R/.stella/connections.json" >"$PF"; }
+recs
 ed protocols.json '.entries |= map(.request.path = "/" + .id + .request.path)'   # the mock serves each shape under its id
 cp "$R/.stella/protocols.json" "$T/protocols.keep"
 CD=$(ix .backup_dir)/st-keys; mkdir -p "$R/$CD"; chmod 700 "$R/$CD"; (umask 077; printf '%s' "$KEY" >"$R/$CD/$KN")
@@ -166,8 +175,22 @@ ok '[ $RC = 0 ] && J mid ".link.model == \"st-b-m2\" and ([.refused[] | select(.
   "a mid-task switch is refused to: a too-small context window, a link not allowed mid-task, a link with no wire shape, another wire shape under a pending tool call"
 ok '[ "$(cnt st-t/st-t-m1)" = 0 ] && [ "$(cnt st-b/st-b-m1)" = 0 ] && [ "$(cnt st-o/st-o-m1)" = 0 ] && [ "$(ev mid ".type == \"routing.switch-refused\" and .code == \"STL-MDL-722\"")" = 4 ] && [ "$(ev mid "$SW")" = 1 ]' \
   "no refused link is called; one event line per refused switch, one for the switch made"
-ok 'J mid --slurpfile f "$R/.stella/features.json" "(.stubs - [\"st-resolver-stub\"]) as \$own | (.stubs | length == 2) and (\$own | length == 1) and ([\$f[0].entries[] | select(.id == \$own[0] and .due_phase != null)] | length == 1)"' \
-  "the output names the stubs it rests on: the resolver's, and a features entry with a due phase for the advertised context window"
+ok 'J mid ".stubs == [\"st-resolver-stub\"]"' "the output names the stubs the resolver's answer rests on, and no context stub of its own (C-DC-06: the context check reads probe data)"
+cp "$PF" "$T/pf.keep"; jq '.records |= map(select(.model != "st-a-m1"))' "$T/pf.keep" >"$PF"
+AL=$T/sup/logs/alerts.log; a0=$(grep -c "^STL-MDL-738 " "$AL" 2>/dev/null)
+chain st-a/st-a-m1 st-b/st-b-m1; fresh; call norec; a1=$(grep -c "^STL-MDL-738 " "$AL" 2>/dev/null)
+ok '[ $RC = 0 ] && J norec ".link.model == \"st-a-m1\" and .refused == []" && [ "$(cnt st-a/st-a-m1)" = 1 ] && jq -e ".tokens > 0" "$R/ctx.json" && [ $((a1 - ${a0:-0})) = 1 ] && grep "^STL-MDL-738 " "$AL" | tail -1 | grep -qF "st-a/st-a-m1"' \
+  "owner ruling 2026-11-18: a link with no probe record may serve (picked and called), flagged by one STL-MDL-738 warning alert naming it; the resolver was asked with the prompt's size (ctx tokens)"
+mv "$AL" "$AL.keep"; mkdir "$AL"; chain st-a/st-a-m1; fresh; call noflag; rmdir "$AL"; mv "$AL.keep" "$AL"
+ok '[ $RC = 1 ] && [ "$(cnt st-a/st-a-m1)" = 0 ] && grep -q "STL-CFG-318" "$T/o/noflag.err"' "CRT-04 an unprobed pick whose STL-MDL-738 alert line cannot be written is not called (STL-CFG-318)"
+chain st-t/st-t-m1 st-b/st-b-m1; fresh; PROMPT=$(head -c 400 /dev/zero | tr '\0' 'w') call small
+ok '[ $RC = 0 ] && J small ".link.model == \"st-b-m1\" and ([.refused[] | .code + \" \" + .link] == [\"STL-MDL-710 st-t/st-t-m1\"])" && [ "$(cnt st-t/st-t-m1)" = 0 ]' \
+  "C-DC-04 a link whose probed effective context (16) does not hold the conversation is refused on the first pick too, never called"
+cp "$T/pf.keep" "$PF"
+chain st-a/st-a-m1; jq '. + {cross_family: {builder_family: "st-fam", served_family: "st-fam", status: "waived", reason: "st: no other family", logged: false}}' "$R/chain.json" >"$R/chain.n" && mv "$R/chain.n" "$R/chain.json"
+fresh; call wv; rt wva attempt --role "$ROLE" --project st-project --task wva --tokens 7 --json
+ok '[ $RC = 0 ] && [ "$(ev wv ".type == \"routing.cross-family-waiver\" and .code == \"STL-MDL-737\"")" = 1 ] && [ "$(ev wva ".type == \"routing.cross-family-waiver\"")" = 1 ] && jq -e ".tokens == 7" "$R/ctx.json"' \
+  "C-DC-05 a waived reviewer answer: call and attempt each write one routing.cross-family-waiver line (STL-MDL-737) beside the pick; attempt passes --tokens to the resolver"
 chain st-a/st-a-m1 st-o/st-o-m1; fresh "[$(fault st-a/st-a-m1 "$LT")]"; call shape
 ok '[ $RC = 0 ] && [ "$(cnt st-o/st-o-m1)" = 1 ] && J shape ".refused == []"' "with no tool call pending a switch to another wire shape is made"
 chain st-n/st-n-m1 "st-b/st-b-m1,usable,$P1,nomid"; fresh; call first
@@ -293,7 +316,7 @@ P
 python3 -I "$T/srv.py" "$LO" "$T/body" "$T/srv.log" >"$T/srv.port" 2>"$T/srv.err" &
 for i in $(seq 100); do [ -s "$T/srv.port" ] && break; sleep 0.1; done
 XP=$(head -n1 "$T/srv.port")
-prov st-x "$SHAPE0" 100000; ed connections.json --argjson p "${XP:-9}" '(.entries[] | select(.id == "st-x") | .hosts[0].port) = $p'   # a fake connection on that server
+prov st-x "$SHAPE0" 100000; ed connections.json --argjson p "${XP:-9}" '(.entries[] | select(.id == "st-x") | .hosts[0].port) = $p'; recs   # a fake connection on that server
 RSP=$(jq -c --arg s "$SHAPE0" '.entries[] | select(.id == $s) | .response' "$R/.stella/protocols.json")
 PA='split("/")[1:] | map(tonumber? // .)'   # a pointer of the wire shape as a jq path
 answer() { jq -cn --argjson r "$RSP" --arg t "$1" "setpath(\$r.text | $PA; \$t)" >"$T/body"; }   # <text>: the server's next answer

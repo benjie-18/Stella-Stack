@@ -23,7 +23,19 @@ chmod +x "$T/bin/"*
 fails=0
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 CFG="$T/home/.config/opencode/opencode.json"
-run() { rm -f "$T/apply.ran"; env HOME="$T/home" PATH="$T/bin:$PATH" ESCALATE_SUP_DIR="$T/sup" ALERT_TARGET="stub:#alerts" "$@" \
+# F2b item C: the resolver and the OpenCode config read what a link can do from its probe record only. A fixture root (FX0: the shipped
+# data) whose local models are recorded as the catalog advertises them; every run uses it unless a case names another root.
+LQ='select(.kind == "provider" and .locality == "local")'
+probes() {  # <root> [<jq overrides of each record>]: a probe record per local model of the root's catalog, mirroring its advertised capabilities
+  local f; f="$1/$(jq -r .probe_records "$1/.stella/data-files.json")"; mkdir -p "$(dirname "$f")"
+  jq --arg i "$(jq -r .install_id "$1/$(jq -r '.files[] | select(.schema == "install") | .path' "$1/.stella/data-files.json")")" --arg o "$(jq -r '.probe.output_shapes[-1]' "$1/.stella/routing.json")" \
+    "{schema_version: 1, records: [.entries[] | $LQ | .id as \$c | .models[] | {global_id: \"00000000-0000-4000-8000-000000000000\", install_id: \$i, connection: \$c, model: .id,
+      version: \"qa\", probed_at: \"2026-01-01T00:00:00Z\", family: null, tool_calling: .capabilities.tool_calling, parallel_tool_calls: null, json: .capabilities.json_mode,
+      vision: .capabilities.vision, output_shape: \$o, context: {advertised: .capabilities.context_tokens, effective: (.capabilities.context_tokens // 0), short_score: 1, points: []}, code: null} ${2:-}]}" \
+    "$1/.stella/connections.json" >"$f"
+}
+FX0=$T/fx0; mkdir -p "$FX0/docs"; cp -r /workspace/.stella "$FX0/"; cp -r /workspace/docs/hermes-local "$FX0/docs/"; probes "$FX0"
+run() { rm -f "$T/apply.ran"; env HOME="$T/home" PATH="$T/bin:$PATH" ESCALATE_SUP_DIR="$T/sup" ALERT_TARGET="stub:#alerts" STELLA_ROOT="$FX0" "$@" \
   bash "$T/ws/bin/cs.sh" > "$T/out" 2> "$T/err"; rc=$?; }
 
 run
@@ -60,12 +72,19 @@ run FAKE_JQ_FAIL=1; ok '[ "$rc" != 0 ] && [ -f "$T/apply.ran" ]' "D93: with jq f
 # worker kind), not the catalog's first local model; no usable local link = a config that names no model and a coded failed step.
 # Fixture root: the shipped data with one more model put first on the local provider (the shipped pin still names the other).
 FX=$T/fx; mkdir -p "$FX/docs"; cp -r /workspace/.stella "$FX/"; cp -r /workspace/docs/hermes-local "$FX/docs/"
-LQ='select(.kind == "provider" and .locality == "local")'; eval "$(grep -m1 '^WORKER=[a-z-]* ' "$T/ws/bin/cs.sh")"
+eval "$(grep -m1 '^WORKER=[a-z-]* ' "$T/ws/bin/cs.sh")"
 ROLE=$(jq -r --arg w "${WORKER:-}" '[.profiles[] | select(.worker == $w) | .role][0]' /workspace/docs/hermes-local/roles.json)
-jq "(.entries[] | $LQ | .models) |= [(.[0] | .id = \"qa-first\")] + ." /workspace/.stella/connections.json >"$FX/.stella/connections.json"
+jq "(.entries[] | $LQ | .models) |= [(.[0] | .id = \"qa-first\")] + ." /workspace/.stella/connections.json >"$FX/.stella/connections.json"; probes "$FX"
 WANT=$(STELLA_ROOT=$FX python3 -I /workspace/bin/resolve.py resolve --role "$ROLE" --project "" --card "$(cat /proc/sys/kernel/random/uuid)" --json 2>/dev/null | jq -r '[.chain[] | select(.status == "usable") | .model][0]')
 run STELLA_ROOT=$FX
 ok 'STELLA_ROOT=$FX python3 -I /workspace/bin/stella_data.py check >/dev/null 2>&1 && [ "$rc" = 0 ] && [ -n "$WANT" ] && [ "$WANT" != qa-first ] && [ "$(jq -r ".model | sub(\"^[^/]*/\"; \"\")" "$CFG")" = "$WANT" ] && [ "$(jq -r ".providers[].models | keys[]" "$CFG")" = "$WANT" ]' "W7b-VAL-02: the config names the model the resolver answers for role $ROLE ($WANT), not the catalog's first local model (the fixture passes the data check)"
+probes "$FX" "| if .model == \"$WANT\" then .vision = true | .context.effective = 999999 else . end"; run STELLA_ROOT=$FX
+ok '[ "$(jq -c ".providers[].models[\"$WANT\"] | [.capabilities.tools, .capabilities.input, .limit.context]" "$CFG")" = "[true,[\"text\",\"image\"],999999]" ] && [ "$(jq -c ".entries[] | $LQ | .models[] | select(.id == \"$WANT\") | [.capabilities.vision, .capabilities.context_tokens]" "$FX/.stella/connections.json")" != "[true,999999]" ]' \
+  "F2b C: the config's tool calling, vision and context are the link's probe record's (vision true, effective 999999), not the catalog's"
+rm -f "$FX/$(jq -r .probe_records "$FX/.stella/data-files.json")"; run STELLA_ROOT=$FX
+ok '[ "$rc" = 0 ] && [ "$(jq -c ".providers[].models[\"$WANT\"] | [.capabilities.tools, .limit.context]" "$CFG")" = "$(jq -c ".entries[] | $LQ | .models[] | select(.id == \"$WANT\") | [.capabilities.tool_calling == true, .capabilities.context_tokens]" "$FX/.stella/connections.json")" ]' \
+  "C-CVER-03 a link with no probe record (it may serve unproven) keeps the catalog's tool calling and context in the config"
+probes "$FX"
 nomodel() { jq -e '(has("model") | not) and ([.providers[].models] == [{}]) and (.permission.skill | length > 0)' "$CFG" >/dev/null && [ ! -e "$CFG.tmp" ] && [ ! -e "$CFG.err" ] && [ -f "$T/apply.ran" ]; }
 RS=$FX/$(jq -r .routing_state "$FX/.stella/data-files.json"); mkdir -p "$(dirname "$RS")"   # every local link cools down
 jq --arg s "$(date -u +%FT%TZ)" --arg u "$(date -u -d '+30 days' +%FT%TZ)" "{links: ([.entries[] | $LQ | .id as \$c | .models[] | {key: (\$c + \"/\" + .id), value: {trigger: \"rate_limit\", since: \$s, until: \$u, failures: 1, observed_limit: null}}] | from_entries), tasks: {}}" "$FX/.stella/connections.json" >"$RS"

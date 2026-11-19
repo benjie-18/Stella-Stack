@@ -280,8 +280,16 @@ Routing fields (F2, all optional): `link_class` on a provider and `models[].link
 a link's class: the model's, else the connection's, else the class `routing.json` `class_defaults` gives a link whose
 `reach()` is local, or an aggregator; any other link has no class and is not routable. `protocol` (an api provider's wire
 shape) is an x-ref to an entry of `.stella/protocols.json`; `models[].score` (advertised suitability, a stub until the F2c
-benchmark) is shape-checked only. Capabilities are advertised values until the F2b probe (`probe_source: "advertised"`); a null capability
-meets no requirement of a role (`stella_data.unmet(requirements, capabilities)`).
+benchmark) is shape-checked only. `capabilities` are the owner's notes of what a model advertises (and the probe's
+`context.advertised`): no routing rule reads them (F2b item C). What a link can do is its capability probe record
+(`stella_data.probed(records, connection, model)`: the newest of `bin/probe.py`'s records of this install, never one dated in
+the future), judged by `stella_data.unmet(requirements, record)`: a null capability meets no requirement, and `min_context_tokens` is
+judged against `context.effective`. A link with no record (never probed, or a CLI login, which has no wire shape and cannot be
+probed) may serve a role with requirements, flagged (owner ruling 2026-11-18, `stella_data.needs_probe`): one STL-MDL-738
+warning alert line per pick (route.py) or resolver CLI answer that serves it (a task size, `--tokens` or route.py's estimate,
+counts as a requirement), a `warning:` line of `check` for a listed link
+(never a problem: the exit code stays 0), and `probe.py due` lists it (a link with no wire shape with `version` null and `probeable` false). The probe
+records a link that fails the multi-hop test even at its shortest length at that length, never at effective context 0.
 A model's `limits` object (F2 W7b; free-form, null = none) holds what the callers read: `bin/escalate.sh` reads `purposes` (a
 list: the only purposes the model runs for), `max_concurrent` (slots) and `per_day` (calls per UTC day), each a value or a
 string naming the key of the limits store (`.supervisor/limits.env`) that holds it (a key that store does not define refuses
@@ -289,13 +297,25 @@ the call), and `purpose_models` {purpose: the model name the CLI gets for that p
 `bin/container-start.sh` reads `output_tokens` for the coding tool's user config, whose model is the first link the resolver
 lists `usable` on a local connection for the role that runs that tool (the role table's first profile of its worker kind),
 asked at container start about a card with no facts record and no project; no such link, or no answer, leaves a config that
-names no model, and the step fails with the resolver's code. The engine model of each Hermes profile is set outside the repo,
-by hand (stub `profile-engine-model-host-step`, due F2b). No script names a model, a model's limit or a per-model settings key.
-The callers of a coding CLI (`bin/escalate.sh`, the builder model guard) take the model from the resolver: the escalation
-script runs the model its caller names only when the resolver lists that link `usable` (stub `escalate-caller-names-model`,
-due F2b), and the guard allows the model of the first usable link on a connection whose `cli` is its CLI; the F1b mark
-`worker_run` is gone. A call of `bin/escalate.sh` from a worker run (a card proven for the call by `roles.py prove`, or a
-worker marker of the role table set) names that run's own proven card or is refused (`STL-GRD-604`, exit 3, not queued).
+names no model, and the step fails with the resolver's code. The engine model of each Hermes profile (`model.default`) is set by
+`bin/register-toolsets.sh` (run by `bin/apply-hermes-local.sh`) from the first link the resolver lists usable for the profile's role
+(F2b item H); no usable link leaves that profile's model as it was and the run fails with the resolver's code. No script names a model, a model's limit or a per-model settings key.
+The callers of a coding CLI (`bin/escalate.sh`, the builder model guard) take the model from the resolver; the F1b mark
+`worker_run` is gone. The guard allows the model of the first usable link on a connection whose `cli` is its CLI. The
+escalation script (F2b item E) is called `escalate.sh <card-id> <purpose> <reason...>`: the caller names neither a model nor
+a rung. The purpose picks the role (routing `escalation.purposes`; no row: STL-MDL-747, exit 2), the card's current rung of
+that role is host-side state (`state/rungs.json` {card: {role: rung}}, 1 when absent; nothing in the script raises it), and
+`resolve.py resolve --role <role> --project <the card's project> --card <card> --rung <rung>` serves the link. It runs only on
+exit 0 with a usable served rung whose model's `limits.purposes` holds the purpose (else exit 3, not queued): on the script's CLI
+when the connection has a `cli` (another CLI: STL-MDL-746, not queued), else through `route.py call --rung <served>` (owner
+decision 2026-11-18). A rung whose limit, cooldown (724) or pool (route.py: 723) is exhausted is left for the next rung the
+resolver judges (D83 via the resolver); with none that runs, the call queues for the first rung's reason;
+no rung left (731) is exit 4, one owner line, an entry in state `owner` that the drain never replays or stales; every other
+refusal is not queued. One trusted `escalate.rung-served` event line per served rung (card, purpose, role, rung asked and
+served, from the role's rung-0 head, to the served link), written after its limits passed; if it cannot be written nothing
+runs. The old fallback runner is never called: the free-cloud gateway is a catalog connection, reached as a rung. A queue entry of the old form (a `model`, no `role`) gets state `legacy`: never replayed,
+listed, removed only by `--drop`. Only the supervisor runs the script: a call from a worker run (a card proven for the call by
+`roles.py prove`, or a worker marker of the role table set) is refused, its own card too (`STL-GRD-604`, exit 3, not queued).
 
 ### `.stella/data-policy.json`
 `data_classes[]`, `local_hosts[]` (the host names that count as local; a provider declared local may list only these), a `default` and `projects{}`; each has `mode` (`open`, `local_only`, `allowed_providers`) and
@@ -359,10 +379,11 @@ The resolver that applies the precedence is `bin/resolve.py` (F2; see "Model cal
 class id, or a list of ids: the best suited of these), `frontier_when` {`tiers`} with `needs_class` (that class goes first for
 a listed task tier, or when no link of `class_order` meets the role's requirements), `last_resort` (a class used only under a
 crossing grant), `verification_depth`, `changelog[]` {`at`, `by`, `what`} and `roles{}`: per role `active` and optional
-`class_order`, `last_resort`, `pins[]`, `fallbacks[]`, `escalation_chain[]` (links; the chain is stored only, the walk is
-F2b). A role not listed follows the preset's own values and is active. Shipped, all `builtin: true`: standard (one best-of
+`class_order`, `last_resort`, `pins[]`, `fallbacks[]`, `escalation_chain[]` (links: the rungs `resolve --rung N` walks, rung N
+= entry N-1; a link's `parameters.effort` may raise the effort of a model the chain already has). A role not listed follows the preset's own values and is active. Shipped, all `builtin: true`: standard (one best-of
 group of free cloud and local; frontier is its `needs_class` for the medium and complex tiers), eco (local, free cloud; last
-resort frontier), max (frontier, free cloud; last resort local), local_only (local). `selection` {`global`, `projects{}`,
+resort frontier), max (frontier, free cloud; last resort local), local_only (local); each gives every building role
+(routing `builder_roles`) an `escalation_chain` (shipped: the local model at effort high, then max). `selection` {`global`, `projects{}`,
 `cards{}`} names the active preset (card beats project beats global; ships standard). An assignment may add `class_order`
 (the owner's per-role override). Every key is optional, but a preset must leave each active role something to resolve from
 (see "What `check` refuses"); a class order, where given, holds at least one class. The ids that cannot be null
@@ -382,7 +403,12 @@ one present: the schema pins the set), `same_connection_first`, `max_switches_pe
 `retry_count`}; `consent` {`approval_class`, `ttl_s`, `alert_code_queue`, `alert_code_notice`}; `card_facts` {`when_missing`:
 the card facts the resolver judges, each `true`: a fact that is not recorded counts as holding, so hosted links are excluded;
 `carries_secrets` and `vault_content` are required, `false` is refused, a new fact is added as a key}; `credentials` {`backend`,
-`backends{}` by id {`kind` none or dir, `path`}} (ships kind none: every read is refused until the secrets broker).
+`backends{}` by id {`kind` none or dir, `path`}} (ships kind none: every read is refused until the secrets broker);
+`builder_roles[]` (the roles that build: the builder escalation applies to them); `escalation` {`purposes{}`: per
+escalation purpose the role whose chain `bin/escalate.sh` walks (owner decision 2026-11-18; `check` refuses a role that is
+not assignable)} (optional: absent, every escalation call is refused); `effort` {`levels[]` (the effort ids,
+lowest first), `by_role{}`: per role an effort id (its default) or {`default`, `tiers{}` by task tier}} (optional: a resolved link's `effort` is its
+`parameters.effort`, else the role's tier value, else its default, else null; absent, no effort id exists).
 *To add a link class, tier or driver:* add the entry; no code names one. A hosted class takes a `privacy_rank` above every
 class that is not hosted. *A failover trigger* is added to the protocols schema and to this file's schema together.
 **What `check` refuses** (rules `presets`, `routing`, `link classes`, `grant scopes` of `bin/stella_data.py`; an unknown id
@@ -391,13 +417,18 @@ define; a `based_on` that is no preset; a role in a preset or in this file that 
 `when` that is neither `always` nor a trigger; a preset that sets `active: false` for a role `workflow.required_roles` lists as
 `always` or under a trigger that can fire (STL-MDL-725), or for an exempt role; an active role's pin or fallback that the one
 link judge refuses (`stella_data.link_problems()`, which also judges every assignment chain: the connection switched off, not
-listing the role or not allowing every data class it handles, a CLI login without `terms_ok`, the model not listed or not
-meeting the role's requirements by the catalog's advertised capabilities, a null one meeting none, the link outside the
-preset's `allowed_localities` unless its class is the role's last resort) (STL-MDL-726; an inactive role's links are not
-judged; a preset has no project, so the project's policy and grants are judged for an assignment and by the resolver); a
+listing the role or not allowing every data class it handles, a CLI login without `terms_ok`, the model not listed, the link
+outside the preset's `allowed_localities` unless its class is the role's last resort) (STL-MDL-726; an inactive role's links are not
+judged; an `escalation_chain` rung is judged the same way, but in a built-in preset only for its model being listed, so a catalog switch never makes a preset the owner cannot edit invalid, and the resolver skips that rung at
+run time; a `parameters.effort`, a `by_role` role or tier, or an effort id that the routing data does not define; a
+`builder_roles` entry that is not an assignable role; a preset has no project, so the project's policy and grants are judged for an assignment and by the resolver); a
 preset that leaves an active role no link that can serve it: of its pins, its fallbacks and the catalog's links of its class
 order, needs class and last resort, none passes the link judge (the owner's global assignment for the role counts as one)
-(STL-MDL-725 for a role the workflow requires, else STL-MDL-726; a role whose row in the role table has `optional: true`, such as `look`, is never judged here: it fails with NO_LINK, naming the role, when it is asked for); an empty class order; a link class with
+(STL-MDL-725 for a role the workflow requires, else STL-MDL-726; a role whose row in the role table has `optional: true`, such as `look`, is never judged here: it fails with NO_LINK, naming the role, when it is asked for).
+Probe data (F2b item C, ruling 1): a pin, fallback, rung (not of a built-in preset) or assignment link whose probe record fails
+the role's requirements is STL-MDL-726, and a role every allowed link of which has such a record is STL-MDL-725 or 726, as above;
+a link with no record may serve and is not refused (a STL-MDL-738 warning line). These lines rest on engine data: `check` lists them with one alert line each,
+and they never make a read refuse (the role fails NO_LINK at run time). Also refused: an empty class order; a link class with
 `hosted: false` on a link that leaves the machine
 (by `reach()`; the locality rules themselves read `reach()` only, never the label); a hosted class whose `privacy_rank` is
 not above that of every class that is not hosted; an id listed twice, an exempt role too; an exempt role's class order
@@ -415,8 +446,8 @@ baseline whatever was applied before, so the owner's next apply goes through and
 back is refused. A file edited by hand, damaged or missing is compared instead with the
 document last applied, or, that not known, the committed one: a hand edit of a built-in preset is never recorded by an apply
 of the edited file, and putting the baseline's presets back is allowed. A candidate that drops a built-in preset something still names is refused by the validity check
-first (STL-CFG-313). `routing_state` and `card_facts` are protected state paths (`bin/roles.py` STATE_KEYS): no role reads or
-writes them.
+first (STL-CFG-313). `routing_state`, `card_facts`, `probe_records` and `triage_calibration` are protected state paths (`bin/roles.py` STATE_KEYS): no role reads or
+writes them. `probe_records` is the capability probe's file (`bin/probe.py`; schema `.stella/schemas/probes.schema.json`, no data row, never in git): one record per connection, model and model version of what the probe found by trying the link; a reader takes nothing from an invalid file or from a record of another install; `probe.py check` judges it. The probe's settings are `probe` in routing.json. `triage_calibration` is the triage router's fitted threshold (`bin/triage.py fit`; schema `.stella/schemas/triage-calibration.schema.json`, no data row, never in git; when it exists its threshold wins over `triage.threshold`). The router's settings are `triage` in routing.json (role, tiers lowest first, image route, project rule, threshold, samples, min_labels); its optional classifier is the features entry `triage-classifier`, off by default.
 
 ### `.stella/grants.json`
 `grants[]` (capability grants, F1c) and (F2, optional) `crossing_grants[]`: `id`, `global_id`, `install_id`, `preset` and
@@ -776,10 +807,16 @@ the read-only resolver at most. `route.py` holds no routing rule: it walks the c
 - **The next link** is the first of the chain that is `usable` or `needs_grant`, not in cooldown, and has not failed in this
   task (the loop guard); with `failover.same_connection_first` a link of the connection just left goes first. A task that has
   no link left, or would pass `failover.max_switches_per_task`, stops with STL-MDL-723.
+- **Context** (`call`): the resolver is asked with the conversation's size (`tokens`, about four bytes a token), and a link
+  whose probed effective context does not hold it (a link with no record may serve, with a STL-MDL-738 warning alert line per
+  pick or switch) is refused on every pick, the first
+  one too. `attempt --tokens N` passes N to the resolver.
 - **Mid-task switch** (`call` only): refused (STL-MDL-722, one event line; the link after it is judged) when the chain says the
-  link is not `mid_task`, when its advertised `context_tokens` do not hold the conversation (about four bytes a token; stub
-  `routing-advertised-context`) or when `--pending-tool-call` is given and the link speaks another wire shape. A link with no
-  wire shape (a `cli-login` connection) is never called here.
+  link is not `mid_task`, when its probed effective context does not hold the conversation, or when `--pending-tool-call` is
+  given and the link speaks another wire shape. A link with no wire shape (a `cli-login` connection) is never called here.
+- **Cross-family waiver** (`call` and `attempt`): for an answer with `cross_family`, one trusted `routing.cross-family-waiver`
+  line (STL-MDL-737) beside the pick or switch when the answer is waived or the link's family (its probe record's) is the
+  builder's or unknown; a line that cannot be written stops the task with the log's code before any model is called.
 - **A link that needs a grant is never skipped.** With a card and an importable module `consent`,
   `consent.gate(ctx, link)` -> {`status`: `granted`, `waiting` or `queued`, `code`, `request_id`} decides; with no card, or no
   such module, the task stops with STL-MDL-719 and one inbox alert and raises no approval request. Exit 3: the task waits.
@@ -826,7 +863,34 @@ the read-only resolver at most. `route.py` holds no routing rule: it walks the c
   no tool call, is `server_error`; no proxy variable of the environment is followed; a task id longer than the limit in
   `route.py` is refused (STL-MDL-711) and the state keeps the task entries used last.
 - **The resolver's per-role view** is `resolve.role_view(role, project, card=None)` (the preset, class order and its
-  source, last resort, pins and fallbacks `resolve()` itself uses); `settings.py explain` prints it.
+  source, last resort, pins and fallbacks `resolve()` itself uses, and the role's `escalation_chain`); `settings.py explain` prints it.
+- **The escalation walk (F2b).** `resolve.py resolve ... --rung N` (a non-negative integer, else usage, exit 2; 0 or no flag:
+  the chain, byte for byte) answers rung N of the role's `escalation_chain` in the active preset: rungs N.. are judged alone,
+  in order, by the chain's rules (rule 5's class order also admits the preset's needs class and its last resort; the last
+  resort outside the order needs a crossing grant; an exempt role keeps its own order); an excluded or waiting rung is skipped,
+  the first other one served (`rung` {`requested`, `served`, `last`, `link`, `skipped[]`}, `chain` = [link]); a rung in
+  cooldown is answered as itself (STL-MDL-724); none served, past the last rung or no chain: STL-MDL-731 (escalate to the
+  owner, not "no link"), exit 1. The CLI writes one trusted `routing.rung-skipped` line (STL-MDL-732) per skip and one
+  `routing.rung-exhausted` line (731); an unwritable log withdraws a served rung (the log's code) or names its code in
+  `rung.log_code`. `--rung` in a worker environment is refused (STL-CFG-312): the rung comes from a host-side caller, and the
+  answer is information, never permission. `resolve(ctx)` with `ctx["rung"]` gives the same answer and writes nothing.
+- **Probe data and --tokens (F2b item C, owner ruling 2026-11-18).** Rule 4 judges a role's requirements against the link's probe
+  record only: a record that fails one excludes the link (STL-MDL-715); a link with no record may serve (the CLI writes one
+  STL-MDL-738 warning alert line when the link its answer serves has no record and the role has requirements; `resolve(ctx)` writes
+  none). `--tokens N` (a non-negative integer; ctx `tokens`) excludes, after the class order is fixed, a link whose probed
+  effective context is below N (STL-MDL-715), never a link with no record, and never moves the needs class. Each chain entry
+  carries `family` (its record's, else null) and `probed` (whether it has a record). A forged record (the file is protected state) can make
+  a link look able (it fails at run time and fails over) or unable (fail closed), never widen reach: the other rules do not read it.
+- **Cross-family review (F2b item C).** For a role of `routing.json` `cross_family.reviewer_roles` (not on a rung walk) the answer
+  has `cross_family` {`builder_family`, `served_family`, `status`: `met`|`waived`, `reason`, `logged`}. Under a preset whose
+  `cross_family_review` is true, with a card, `cross_family.builder_role` is resolved for the same card and project; its first
+  usable link's family is the builder's, and the chain is reordered stably so usable links of another family come first, only
+  inside one class-order item (one class or one best-of group, or the last-resort class), never past a link of a lower privacy
+  rank; pins and fallbacks keep place and order, nothing is added or unexcluded. Waived: no card, the flag not true, the builder's
+  family unknown, or no other family reachable inside those lines. The CLI writes a waived answer that serves a link as one
+  trusted `routing.cross-family-waiver` line (STL-MDL-737; `logged` true); in a worker environment none (`logged` false); a line
+  that cannot be written withdraws the answer (chain [], the log's code, exit 1). `check` refuses a role of `cross_family` that is
+  not assignable and a builder role that is also a review role; built-in presets ship `cross_family_review: true`.
 - **A project id given to the resolver** (the request's, a card facts record's, an assignment scope's) is a listed project
   only when it is that project's id or `global_id` exactly. It is refused (STL-MDL-711) when it is a listed one but for
   case or outer spaces, and when it does not match the pattern the data policy schema sets for a project key (an

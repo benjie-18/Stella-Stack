@@ -3,6 +3,8 @@
 .stella/schemas/, and the cross-file rules. No provider, app, channel, role or feature name is in this file.
 CLI: stella_data.py check [--json] [<id>]       validate every data file against its schema, then the cross-file rules.
                                                 With an id: that file's problems plus every cross-file problem.
+                                                Warnings (STL-MDL-738, a listed link with no probe record) follow as
+                                                "warning: " lines (--json: warnings[]) and never change the exit code.
      stella_data.py validate <schema> <file>    one JSON file against .stella/schemas/<schema>.schema.json
      stella_data.py list [--json] [<id>]        the data files, or the entries of one
      stella_data.py get [--json] <id> [<entry>] a whole data file, or one entry by its id (alias) or global_id (secrets masked)
@@ -77,6 +79,17 @@ class Coded(str):
 
 
 OFF_REQUIRED, CHAIN_FAILS, BUILTIN_EDIT = "STL-MDL-725", "STL-MDL-726", "STL-MDL-727"   # the preset rule's codes (F2 D1.9)
+PROBED = NOROW + "probe records"   # the member of a check line that rests on probe data: no read depends on it, so served() never refuses for it (C-DC-03)
+
+UNPROBED = "STL-MDL-738"   # a link with no probe record picked or listed for a role with requirements (owner ruling 2026-11-18)
+PROBES_BROKEN, BROKEN = "STL-MDL-739", "broken"   # a probe records file present but unusable (CRT-01); the key of its entry in probe_records()
+
+class Warned(Coded):
+    """A check line that is a warning (UNPROBED): `check` prints it, and neither its exit code nor served() counts it."""
+
+class Probed(Coded):
+    """A check line that rests on probe data (engine data that changes after the data was accepted): `check` lists it and writes
+    one alert line for it; its member is PROBED, so it never makes served() refuse a read (the role fails NO_LINK at run time)."""
 
 
 class Refused(DataError):
@@ -213,7 +226,7 @@ def jload(path, label=None):
 
 
 STATE = ("event_log", "backup_dir", "applied_state", "role_table", "owner_key", "approval_store", "event_writer_state", "routing_state",
-         "card_facts", "untrusted_events")   # the index keys that name a path; the last is the agents' stream (untrusted())
+         "card_facts", "probe_records", "triage_calibration", "untrusted_events")   # the index keys that name a path; the last is the agents' stream (untrusted())
 
 
 def untrusted(idx):
@@ -813,30 +826,90 @@ def link_class(prov, model, rt=None):
     return m.get("link_class") or prov.get("link_class") or d.get("local" if reach(prov) == "local" else "aggregator" if prov.get("aggregator") else None)
 
 
-def unmet(req, caps):
-    """The requirements of a role (roles.py requirements) that a model's advertised capabilities do not meet, by name; a null
-    capability meets no requirement. The resolver and the preset rule both ask here."""
-    import roles
-    return [k for k in roles.REQ_BOOLS if req.get(k) and caps.get(k) is not True] + \
-        (["min_context_tokens"] if req.get("min_context_tokens", 0) > (caps.get("context_tokens") or 0) else [])
+def probe_records(rt=None):
+    """The valid probe records of this install, read by bin/probe.py's reader only (read(): the file of index key
+    probe_records, protected state, records of another install ignored); [] when there are none (a missing file: a fresh install).
+    A file that is present but cannot be used whole fails closed (CRT-01): its records are not read, and one BROKEN entry makes
+    probed() answer every link with a record that proves nothing. rt: the routing document when the caller holds it (a rule of
+    `check` passes its own, never reads again)."""
+    try:
+        import probe
+        recs, why = probe.read(rt)
+    except Exception as e:
+        recs, why = [], f"the probe records cannot be read ({type(e).__name__})"
+    return recs + [{"connection": None, "model": None, "probed_at": "", BROKEN: why}] if why else recs
 
+
+def probed(recs, connection, model, now=None):
+    """The probe record that speaks for the link (connection id, model id): the newest of recs (probe_records()), never one dated
+    in the future; None: not probed. The only reader of a record's capabilities for routing (rule 4 of the resolver, the needs-class
+    trigger through it, the mid-task context check, check's link judges); the catalog's advertised capabilities are no longer read.
+    shortcut: the catalog does not hold the model-list version, so the newest record of any version counts; upgrade when it does."""
+    t = (now or datetime.datetime.now(datetime.timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    got = [r for r in recs if r["connection"] == connection and r["model"] == model and r["probed_at"] <= t]
+    if got:
+        return max(reversed(got), key=lambda r: r["probed_at"])   # a tie: the record written last (the file's later one)
+    bad = next((r[BROKEN] for r in recs if r.get(BROKEN)), None)   # a broken records file: a record that meets nothing, never "not probed"
+    return bad and {"connection": connection, "model": model, "family": None, "context": {"effective": 0}, BROKEN: f"the probe records file cannot be used ({bad}), so no link counts as probed (bin/probe.py check)"}
+
+
+def unmet(req, rec):
+    """The requirements of a role (roles.py requirements) that a link's probe record (probed()) does not meet, by name: a null
+    capability meets no requirement, min_context_tokens is judged against context.effective. No record: none (owner ruling
+    2026-11-18: an unprobed link may serve, flagged by its callers; see needs_probe()). The resolver, route.py and check ask here."""
+    import roles
+    if rec is None:
+        return []
+    return [k for k in roles.REQ_BOOLS if req.get(k) and rec.get(k) is not True] + \
+        (["min_context_tokens"] if req.get("min_context_tokens", 0) > ((rec.get("context") or {}).get("effective") or 0) else [])
+
+
+def model_problems(table, role, prov, model):
+    """The link itself, whatever the catalog's switches say: its model listed for its connection. Part of link_problems(); alone,
+    the judge of a built-in preset's rung. What the link can do is probe data: probe_problems()."""
+    if next((m for m in prov["models"] if m["id"] == model), None) is None:
+        return [f"its model ({desc(model)}) is not listed for {idn(prov['id'])}"]
+    return []
+
+
+def needs_probe(req, rec, tokens=None):
+    """Whether a link serves a role with requirements (req: roles.py requirements), or a task of a given size (tokens, read as a
+    requirement), with no probe record: it may (owner ruling 2026-11-18), flagged: one UNPROBED warning alert per pick (route.py,
+    the resolver CLI's answer), a warning of `check`, and `probe.py due` lists it."""
+    import roles
+    return rec is None and (any(req.get(k) for k in roles.REQ_BOOLS) or req.get("min_context_tokens", 0) > 0 or bool(tokens))
+
+
+def alert_line(code, problem):
+    """One alert log line for a code of the catalog (no send, nothing on stderr); False when it could not be written."""
+    _, tag, kv = alert_catalog.render(code, {"problem": problem})
+    return alert_catalog.log(tag, kv)
+
+
+def probe_problems(table, role, prov, model, recs):
+    """What the link's probe record says it cannot do for the role. A link with no record may serve (owner ruling 2026-11-18), so it
+    has no problem here (unprobed() warns); a problem here is a Probed check line (member PROBED) that never makes served() refuse a
+    read."""
+    rec = probed(recs, prov["id"], model)
+    miss = unmet(table["roles"].get(role, {}).get("requirements", {}), rec)
+    return [f"{idn(prov['id'])}: its probe record does not meet the role's requirements ({', '.join(miss)})"] if miss else []
+
+
+def unprobed(table, role, prov, model, recs):
+    """The warning for a listed link with no probe record for a role with requirements ([] or one text)."""
+    return [f"link {idn(prov['id'])}/{idn(model)} has no probe record, so it may serve the role unproven (run bin/probe.py due)"] \
+        if needs_probe(table["roles"].get(role, {}).get("requirements", {}), probed(recs, prov["id"], model)) else []
 
 def link_problems(table, role, prov, model, localities=None, mode=None, policies=(), where=None, pols=(), now=None, project=None):
     """Why the link (provider prov, model) may not be listed for `role`, as texts that follow the link's place: the one judge of
     an assignment's chain and of a preset's pins and fallbacks (W1-RT-01; the resolver excludes the same links at run time).
-    The link itself: its connection switched on, the model listed and its advertised capabilities meeting the role's
-    requirements (unmet), the connection allowing the role and every data class it handles, a cli-login's terms recorded.
+    The link itself: its connection switched on, the model listed, the connection allowing the role and every data class it handles, a cli-login's terms recorded.
     localities (those of effort mode `mode`; None: not judged): where the link may run, by reach(). The scope, for a caller
     that has one (an assignment; a preset has none, the resolver judges it per project): its policies (project_policies,
     named `where`) and, with the data policies `pols`, the hosted rule of each data class for its project (route_problems)."""
     req, pn = table["roles"].get(role, {}).get("requirements", {}), idn(prov["id"])
-    need, mod = req.get("allowed_data_classes", []), next((m for m in prov["models"] if m["id"] == model), None)
-    out = [] if prov["enabled"] else [f"{pn} is switched off"]
-    miss = unmet(req, mod["capabilities"]) if mod else []
-    if mod is None:
-        out.append(f"its model ({desc(model)}) is not listed for {pn}")
-    elif miss:
-        out.append(f"its model does not meet the role's requirements by its advertised capabilities ({', '.join(miss)})")
+    need = req.get("allowed_data_classes", [])
+    out = ([] if prov["enabled"] else [f"{pn} is switched off"]) + model_problems(table, role, prov, model)
     if localities is not None and reach(prov) not in localities:
         out.append(f"{pn} is {reach(prov)} for routing, which effort mode {idn(mode)} forbids")
     if not all(policy_allows(p, prov) for p in policies):
@@ -993,12 +1066,24 @@ def rule_role_classes(c):
         c["P"](TABLE, m)
 
 
+def probes_of(c):
+    """The probe records for a cross-file rule, read once per judge and judged by the routing data the rule was given (never read
+    again here: that read would judge the data once more); none when no routing document is open."""
+    if "probes" not in c:
+        rts = [d for _, d in c["whole"].get("routing", [])]
+        c["probes"] = probe_records(rts[0]) if len(rts) == 1 else []
+        for r in c["probes"]:
+            if r.get(BROKEN):
+                c["P"](c["whole"]["routing"][0][0], Probed(PROBES_BROKEN, f"{r[BROKEN]}; bin/probe.py run drops a bad record"), {PROBED})
+    return c["probes"]
+
 def rule_assignments(c):
     """Role assignments against the role table, the catalog, the effort modes and the data policy."""
     P, table, conn, pols = c["P"], c["table"], c["by"].get("connections", {}), c["whole"].get("data-policy", [])
     allroles = table["roles"]
     roles = set(allroles) - {table["fallback_role"]}   # the fail-closed row is no role to assign or allow
     seen, cards, now = {}, {}, datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    recs = probes_of(c)
     for rid, ra in c["whole"].get("role-assignments", []):
         for a in ra["assignments"]:
             sc, lvl, aid = a["scope"], a["scope"]["level"], idn(a["id"])
@@ -1026,9 +1111,14 @@ def rule_assignments(c):
                 prov = entry(conn, ch["connection"])
                 if prov is None or prov["kind"] != "provider":
                     continue   # its x-ref (connections, kind provider) refuses it, naming the field
-                for m in link_problems(table, a["role"], prov, ch["model"], mode and mode["allowed_localities"], a["effort_mode"], policies,
-                                       idn(pid) if listed else "the default", pols, now, pid):
+                bad = link_problems(table, a["role"], prov, ch["model"], mode and mode["allowed_localities"], a["effort_mode"], policies,
+                                    idn(pid) if listed else "the default", pols, now, pid)
+                for m in bad:
                     P(rid, f"{aid}: chain[{i}]: {m}")
+                for m in probe_problems(table, a["role"], prov, ch["model"], recs):
+                    P(rid, Probed(CHAIN_FAILS, f"{aid}: chain[{i}]: {m}"), {PROBED})
+                if not bad and unprobed(table, a["role"], prov, ch["model"], recs):   # a listed model only (never a value the data does not hold); warned by rule_presets, once per link
+                    c.setdefault("flag", {}).setdefault((rid, prov["id"], ch["model"]), set()).add(a["role"])
 
 
 def scope_problems(g):
@@ -1056,25 +1146,46 @@ def inside_state(rel, idx):
         return False
 
 
+def agent_links(x):
+    """[(field, link)] of a team agent entry: its link, then each fallback and rung, as written in the data."""
+    return [("link", x["link"])] + [(f"{f}[{i}]", l) for f in ("fallbacks", "escalation_chain") for i, l in enumerate(x.get(f, []))]
+
 def rule_presets(c):
     """The presets (effort modes) against the routing data, the catalog and the role table (F2 D1.9): every class, preset and
     role a preset names exists; no preset turns off a role the workflow requires (always, or under a trigger that can fire:
-    OFF_REQUIRED) or an exempt role (it stays on under every preset); no active role keeps a pin or a fallback that
-    link_problems() refuses (CHAIN_FAILS; an inactive role's links are not judged); no active role is left with no link that
+    OFF_REQUIRED) or an exempt role (it stays on under every preset); no active role keeps a pin, a fallback or a rung that
+    link_problems() refuses (CHAIN_FAILS; an inactive role's links are not judged; a built-in preset's rung only by
+    model_problems(), as the owner cannot edit it); every link's parameters.effort is an effort id of the routing data; no active role is left with no link that
     can serve it (W1-RT-02, W1-RT-10: off in effect; OFF_REQUIRED for a role the workflow requires, else CHAIN_FAILS): of its
     pins, its fallbacks and the catalog's links of its class order, needs class and last resort, one at least passes
     link_problems() (the owner's global assignment for the role counts: the assignment rule judges its chain). A role whose role-table row
-    has optional: true is not judged here (W1-RT-10): it fails with NO_LINK, naming the role, when it is asked for."""
-    P, table, conn = c["P"], c["table"], c["by"].get("connections", {})
+    has optional: true is not judged here (W1-RT-10): it fails with NO_LINK, naming the role, when it is asked for. Probe data (ruling
+    (1) of design C): what a link can do is never judged from the catalog; a link with no probe record may serve, one whose record
+    fails the role's requirements serves it not. Those lines rest on engine data that changes after the preset was accepted: they are
+    Probed (the same codes; member PROBED): `check` lists them with one alert line each, and served() never refuses a read for them
+    (the role fails NO_LINK at run time). A listed link (pin, fallback, rung of a custom preset) with no record for a role with
+    requirements is a Warned UNPROBED line: printed by `check`, never counted (owner ruling 2026-11-18)."""
+    P, table, conn, recs = c["P"], c["table"], c["by"].get("connections", {}), probes_of(c)
+    flag = c.setdefault("flag", {})   # (row, connection, model) -> the roles an unprobed link may serve (rule_assignments adds its chains')
     flat = lambda order: {k for it in order for k in (it if isinstance(it, list) else [it])}
     roles = set(table["roles"]) - {table["fallback_role"]}   # the fail-closed row is no role to route
     for _, rt in c["whole"].get("routing", []):
         classes, wf, exempt = {x["id"] for x in rt["link_classes"]}, rt["workflow"], {x["role"] for x in rt["exempt_roles"]}
         need = {x["role"] for x in wf["required_roles"] if x["when"] == "always" or wf["triggers"].get(x["when"], {}).get("can_fire")}
+        levels = set(rt.get("effort", {}).get("levels", []))
         for rid, ra in c["whole"].get("role-assignments", []):
             for a in ra["assignments"]:
                 for m in order_problems(a.get("class_order", []), classes, f"{idn(a['id'])}: class_order"):
                     P(rid, m)
+            # effort ids are data (routing effort.levels): every link of every assignment and preset names a known one or none
+            links = [(f"{idn(a['id'])}: chain[{i}]", l) for a in ra["assignments"] for i, l in enumerate(a["chain"])] + \
+                [(f"preset {kname(pid)}: role {nm(r, table['roles'], 'a key')}: {f}[{i}]", l) for pid, mode in ra["effort_modes"].items()
+                 for r, x in mode.get("roles", {}).items() for f in ("pins", "fallbacks", "escalation_chain") for i, l in enumerate(x.get(f, []))] + \
+                [(f"preset {kname(pid)}: agent {idn(an, True)}: {f}", l) for pid, mode in ra["effort_modes"].items()
+                 for an, x in mode.get("agents", {}).items() for f, l in agent_links(x)]
+            for at, l in links:
+                if "effort" in l["parameters"] and l["parameters"]["effort"] not in levels:
+                    P(rid, f"{at}: parameters.effort ({desc(l['parameters']['effort'])}) is not an effort id of the routing data (effort.levels)")
             owned = {(a["role"], a["effort_mode"]) for a in ra["assignments"] if a["scope"]["level"] == "global"}   # the owner's pins, in every project
             for pid, mode in ra["effort_modes"].items():
                 w = f"preset {kname(pid)}"
@@ -1083,14 +1194,18 @@ def rule_presets(c):
                     free = r in exempt or last is not None and link_class(prov, model, rt) == last
                     return link_problems(table, r, prov, model, None if free else mode["allowed_localities"], pid)
 
-                def linked(r):   # an active role has a link that can serve it; a role the preset does not list follows the preset and is active
-                    x = mode.get("roles", {}).get(r, {"active": True})
+                def cands(r):   # (row of the role, its last resort, the links it may resolve to: pins, fallbacks, custom rungs, the catalog's of its classes)
+                    x = mode.get("roles", {}).get(r, {"active": True})   # a role the preset does not list follows the preset and is active
                     last = x["last_resort"] if "last_resort" in x else mode.get("last_resort")
                     its = flat(x.get("class_order", mode.get("class_order", []))) | ({mode.get("needs_class"), last} - {None})
-                    named = [(entry(conn, l["connection"]), l["model"]) for f in ("pins", "fallbacks") for l in x.get(f, [])]
-                    return not x["active"] or (r, pid) in owned or any(not judged(r, last, p, m) for p, m in
-                        [(p, m) for p, m in named if p and p["kind"] == "provider"]
-                        + [(p, m["id"]) for p in conn.values() if p["kind"] == "provider" for m in p["models"] if link_class(p, m["id"], rt) in its])
+                    named = [(entry(conn, l["connection"]), l["model"]) for f in ("pins", "fallbacks") + (() if mode.get("builtin") else ("escalation_chain",))
+                             for l in x.get(f, [])]
+                    return x, last, [(p, m) for p, m in named if p and p["kind"] == "provider"] \
+                        + [(p, m["id"]) for p in conn.values() if p["kind"] == "provider" for m in p["models"] if link_class(p, m["id"], rt) in its]
+
+                def linked(r, probes=False):   # an active role has a link that can serve it; probes: a link whose probe record fails the role serves it not (no record: it may)
+                    x, last, ls = cands(r)
+                    return not x["active"] or (r, pid) in owned or any(not judged(r, last, p, m) and not (probes and probe_problems(table, r, p, m, recs)) for p, m in ls)
                 if mode.get("based_on") is not None and mode["based_on"] not in ra["effort_modes"]:
                     P(rid, f"{w}: based_on ({desc(mode['based_on'])}) is not a preset")
                 known = {r: x for r, x in mode.get("roles", {}).items() if r in roles}
@@ -1109,27 +1224,49 @@ def rule_presets(c):
                         elif r in exempt:
                             P(rid, f"{w} turns off role {idn(r, True)}, which is exempt from the presets and stays on under every one (routing data, exempt_roles)")
                         continue
+                units = [(f"role {idn(r, True)}", r, x, ("pins", "fallbacks", "escalation_chain")) for r, x in known.items() if x["active"]] + \
+                    [(f"agent {idn(an, True)}", None, {**x, "link": [x["link"]]}, ("link", "fallbacks", "escalation_chain")) for an, x in mode.get("agents", {}).items()]   # F2b G: a team agent has no role, so its links are judged for the model alone
+                for who, r, x, fields in units:
                     last = x["last_resort"] if "last_resort" in x else mode.get("last_resort")
-                    for f in ("pins", "fallbacks"):
+                    for f in fields:   # a rung is judged as a pin (DC-06)
                         for i, l in enumerate(x.get(f, [])):
                             prov = entry(conn, l["connection"])
                             if prov is None or prov["kind"] != "provider":
                                 continue   # its x-ref (connections, kind provider) refuses it, naming the field
-                            miss = judged(r, last, prov, l["model"])
+                            # a built-in rung: the owner cannot edit it, so a catalog switch never makes the data invalid; the resolver skips it at run time
+                            miss = model_problems(table, r, prov, l["model"]) if r is None or f == "escalation_chain" and mode.get("builtin") else judged(r, last, prov, l["model"])
                             if miss:
-                                P(rid, Coded(CHAIN_FAILS, f"{w}: role {idn(r, True)}: {f}[{i}] fails the role's requirements ({'; '.join(miss)})"))
-                bare = {r for r in roles - exempt if (r in need or not table["roles"][r].get("optional")) and not linked(r)}   # an optional role fails when asked for, not here; a required one is never optional
+                                P(rid, Coded(CHAIN_FAILS, f"{w}: {who}: {f}[{i}] fails the {'role' if r else 'link'}'s requirements ({'; '.join(miss)})"))
+                            if r is None or f == "escalation_chain" and mode.get("builtin"):
+                                continue   # a team agent has no role; a built-in rung is not judged on probe data either: the owner cannot edit it
+                            for m in probe_problems(table, r, prov, l["model"], recs):
+                                P(rid, Probed(CHAIN_FAILS, f"{w}: {who}: {f}[{i}] fails the role's requirements ({m})"), {PROBED})
+                judged_roles = {r for r in roles - exempt if r in need or not table["roles"][r].get("optional")}   # an optional role fails when asked for, not here; a required one is never optional
+                bare = {r for r in judged_roles if not linked(r)}
                 for code, rs, why in ((OFF_REQUIRED, bare & need, ", which the workflow requires (routing data, workflow.required_roles)"), (CHAIN_FAILS, bare - need, "")):
                     if rs:
                         P(rid, Coded(code, f"{w} gives no link to {', '.join(idn(r, True) for r in sorted(rs))}{why}: active, and no pin, fallback or "
                                            "link of its class order, needs class or last resort can serve it (connection, model and role rules)"))
+                for r in judged_roles:   # owner ruling 2026-11-18: each link with no record that may serve a role with requirements, one warning per link
+                    x, last, ls = cands(r)
+                    for p, m in ls if x["active"] else []:
+                        if not judged(r, last, p, m) and unprobed(table, r, p, m, recs):
+                            flag.setdefault((rid, p["id"], m), set()).add(r)
+                unserved = {r for r in judged_roles - bare if not linked(r, True)}   # ruling (1): resting on probe data, never blocking a read
+                for code, rs, why in ((OFF_REQUIRED, unserved & need, ", which the workflow requires (routing data, workflow.required_roles)"), (CHAIN_FAILS, unserved - need, "")):
+                    if rs:
+                        P(rid, Probed(code, f"{w} gives no link to {', '.join(idn(r, True) for r in sorted(rs))}{why}: active, and every link the "
+                                            "connection, model and role rules allow for it has a probe record that fails the role's requirements"), {PROBED})
+    for (rid, c, m), rs in flag.items():
+        P(rid, Warned(UNPROBED, f"link {idn(c)}/{idn(m)} has no probe record, so it may serve {', '.join(idn(r, True) for r in sorted(rs))} unproven "
+                                "(a role with requirements; run bin/probe.py due)"), {PROBED})
 
 
 def rule_routing(c):
     """The routing data against itself, the role table, the alert catalog and the index: ids listed once, an exempt role too; a
     hosted class less private than every class that is not hosted (W1-RT-06); every role it names is assignable; an exempt
     role's class order names known classes, none of them hosted (W1-RT-09); a required role's `when` is always or a trigger;
-    a cooldown is not above its cap; consent names an approval class and alert codes that exist; the credentials backend in
+    a cooldown is not above its cap; the effort table names known roles, tiers and effort ids; every escalation purpose names an assignable role; cross_family names assignable roles, its builder role none of its review roles; consent names an approval class and alert codes that exist; the credentials backend in
     use is defined, and a dir backend lies inside a protected state path (DC-05: no role may read the keys)."""
     P, table = c["P"], c["table"]
     roles = set(table["roles"]) - {table["fallback_role"]}
@@ -1145,6 +1282,7 @@ def rule_routing(c):
         wf, co, cr = rt["workflow"], rt["consent"], rt["credentials"]
         for at, r in [(f"exempt_roles[{i}].role", x["role"]) for i, x in enumerate(rt["exempt_roles"])] \
                 + [(f"card_roles[{i}]", x) for i, x in enumerate(rt["card_roles"])] \
+                + [(f"builder_roles[{i}]", x) for i, x in enumerate(rt.get("builder_roles", []))] \
                 + [(f"workflow.required_roles[{i}].role", x["role"]) for i, x in enumerate(wf["required_roles"])]:
             if r not in roles:
                 P(rid, f"{at}: {nm(r, table['roles'], 'it')} is not an assignable role in the role table")
@@ -1154,6 +1292,27 @@ def rule_routing(c):
                 P(rid, m)
             if hosted & {k for it in x["class_order"] for k in (it if isinstance(it, list) else [it])}:   # W1-RT-09: no preset's localities bind an exempt role
                 P(rid, f"exempt_roles[{i}].class_order names a hosted link class: an exempt role stays on links that do not leave the machine under every preset")
+        ef = rt.get("effort", {"levels": [], "by_role": {}})
+        tiers = {x["id"] for x in rt["task_tiers"]}
+        for r, x in ef["by_role"].items():
+            x = {"default": x} if isinstance(x, str) else x   # an id alone is the role's default
+            at = f"effort.by_role: {nm(r, table['roles'], 'a key')}"
+            if r not in roles:
+                P(rid, f"{at} is not an assignable role in the role table")
+            for t in x.get("tiers", {}).keys() - tiers:
+                P(rid, f"{at}: tiers: {nm(t, tiers, 'a key')} is not a task tier (task_tiers)")
+            for k, v in [("default", x.get("default"))] + [(f"tiers[{kname(t)}]", v) for t, v in x.get("tiers", {}).items() if t in tiers]:
+                if v is not None and v not in ef["levels"]:
+                    P(rid, f"{at}: {k} ({desc(v)}) is not an effort id of effort.levels")
+        for pu, r in rt.get("escalation", {}).get("purposes", {}).items():   # F2b item E: the purpose picks the role whose chain is walked
+            if r not in roles:
+                P(rid, f"escalation.purposes[{kname(pu)}]: {nm(r, table['roles'], 'it')} is not an assignable role in the role table")
+        cf = rt.get("cross_family")
+        for at, r in ([("cross_family.builder_role", cf["builder_role"])] + [(f"cross_family.reviewer_roles[{i}]", x) for i, x in enumerate(cf["reviewer_roles"])]) if cf else []:
+            if r not in roles:
+                P(rid, f"{at}: {nm(r, table['roles'], 'it')} is not an assignable role in the role table")
+        if cf and cf["builder_role"] in cf["reviewer_roles"]:   # a review role is judged against the builder role: one role cannot be both
+            P(rid, "cross_family.builder_role is also one of cross_family.reviewer_roles")
         for i, x in enumerate(wf["required_roles"]):
             if x["when"] != "always" and x["when"] not in wf["triggers"]:
                 P(rid, f"workflow.required_roles[{i}].when ({desc(x['when'])}) is neither always nor a trigger of workflow.triggers")
@@ -1599,12 +1758,14 @@ def judge(reads=None):
     return probs, by, {"head": head, "mid": mid, "own": [r["id"] for r in own], "members": members}
 
 
-def check(only=None):
+def check(only=None, warnings=False):
     """[(data id, problem)] over every data file in the index. With `only`: that file's problems, the index's own, and
-    every cross-file problem (a candidate file is judged against the rest of the data)."""
+    every cross-file problem (a candidate file is judged against the rest of the data). Warnings (Warned lines) only with
+    warnings=True: they are no problem of the data."""
     probs, _, cut = judge()
     head, mid, own = cut.get("head", 0), cut.get("mid", 0), cut.get("own", [])
-    return [(d, m) for i, (d, m, _) in enumerate(probs) if only is None or only in own or d == only or i < head or i >= mid]
+    return [(d, m) for i, (d, m, _) in enumerate(probs) if (only is None or only in own or d == only or i < head or i >= mid)
+            and (warnings or not isinstance(m, Warned))]
 
 
 def served(ids):
@@ -1775,20 +1936,26 @@ def main(argv):
                 row_of(args[0])
             except DataError:
                 pass   # an unreadable index is itself a problem that check prints
-        probs = check(args[0] if args else None)
+        every = check(args[0] if args else None, warnings=True)
+        probs, warns = [x for x in every if not isinstance(x[1], Warned)], [x for x in every if isinstance(x[1], Warned)]
+        wlines = [{"code": m.code, "data": d, "problem": m, "message": alert_catalog.render(m.code, {"problem": f"{d}: {m}"})[0].split("\n")[1]} for d, m in warns]
         lines = []
         for d, m in probs:
             code = getattr(m, "code", "STL-CFG-310")   # a rule's own code (Coded)
-            body = alert_catalog.render(code, {"problem": f"{d}: {m}"})[0]
+            body, tag, kv = alert_catalog.render(code, {"problem": f"{d}: {m}"})
+            if isinstance(m, Probed) and alert_catalog.log(tag, kv) is False:   # one alert line per line that rests on probe data
+                print("the alert line could not be written to the alert log", file=sys.stderr)
             lines.append({"code": code, "data": d, "problem": m, "message": body.split("\n")[1]})
         try:
             skipped = unopened()
         except DataError:
             skipped = []
         if as_json:
-            print(json.dumps({"ok": not probs, "problems": lines, "not_opened": skipped}, indent=2, ensure_ascii=False))
+            print(json.dumps({"ok": not probs, "problems": lines, "warnings": wlines, "not_opened": skipped}, indent=2, ensure_ascii=False))
         else:
             print("\n".join(f"{l['code']} {l['message']}" for l in lines) or "data OK")
+            for l in wlines:   # warnings never change the exit code
+                print(f"warning: {l['code']} {l['message']}")
             if skipped:
                 print(f"not opened (env format, read by the apply tool): {', '.join(skipped)}")
         return 1 if probs else 0

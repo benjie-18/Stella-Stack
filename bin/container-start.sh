@@ -15,8 +15,9 @@ git config --global --get-all safe.directory | grep -qxF "$ws" || git config --g
   || fail "git safe.directory not set for $ws"
 # OpenCode user config: local model only (never a cloud fallback) + the Claude-account skill denies.
 # The model is the resolver's (F2 W7b, W7b-VAL-02): the first link bin/resolve.py lists usable, on a local connection, for the role
-# that runs this CLI (the role table's first profile of its worker kind), with the catalog model's advertised capabilities and its
-# `limits.output_tokens`; the tracked opencode.json holds the provider frame and names no model. That role works a card and none
+# that runs this CLI (the role table's first profile of its worker kind), with what the link's probe record proves (tool calling,
+# vision, effective context: stella_data.probed, F2b item C; none without a record) and the catalog model's `limits.output_tokens`;
+# the tracked opencode.json holds the provider frame and names no model. That role works a card and none
 # exists here, so the resolver is asked about a card with no facts record (a random id) and no project: it then lists no link that
 # leaves the machine. No usable local link, or no answer: the config names no model (fail closed) and the step fails with the code.
 # shortcut: that file has one provider frame, taken as the local one; name the catalog entry in it when a second comes.
@@ -28,14 +29,18 @@ WORKER=opencode   # the role table's worker kind of the CLI this config is for
 role=$(python3 -I -c 'import sys; sys.path.insert(0, "/workspace/bin"); import roles; print(next(p["role"] for p in roles.load()["profiles"].values() if p.get("worker") == sys.argv[1]))' "$WORKER" 2>/dev/null)
 res=$(python3 -I /workspace/bin/resolve.py resolve --role "$role" --project "" --card "$(cat /proc/sys/kernel/random/uuid)" --json 2>"$cfg.err")
 lm=$(jq -c --slurpfile c <(python3 -I /workspace/bin/stella_data.py get --json connections 2>/dev/null) '[.chain[] | select(.status == "usable") | . as $l
-  | $c[0].entries[] | select(.id == $l.connection and .locality == "local") | .models[] | select(.id == $l.model)][0] // empty' <<<"$res" 2>/dev/null)
+  | $c[0].entries[] | select(.id == $l.connection and .locality == "local") | .models[] | select(.id == $l.model) | . + {connection: $l.connection}][0] // empty' <<<"$res" 2>/dev/null)
+rec=$([ -n "$lm" ] && python3 -I -c 'import sys, json; sys.path.insert(0, "/workspace/bin"); import stella_data as sd; print(json.dumps(sd.probed(sd.probe_records(), *sys.argv[1:3])))' \
+  "$(jq -r .connection <<<"$lm")" "$(jq -r .id <<<"$lm")" 2>/dev/null)
 why=$(jq -r '"\(.code // "STL-MDL-710") \(.reason // "the chain the resolver answers holds no usable local link")"' <<<"$res" 2>/dev/null)
 why=${why:-$(grep -m1 'STL-[A-Z]*-[0-9]' "$cfg.err" | head -c 300)}; why=${why:-STL-MDL-710 the resolver gave no answer}   # no JSON = it failed closed: its coded line
 rm -f "$cfg.err"
-if jq --argjson m "${lm:-null}" '(.providers | keys[0]) as $p | {"$schema"} + (if $m then {model: "\($p)/\($m.id)"} else {} end) + {
-    providers: (.providers | .[$p].models = (if $m then {($m.id): {name: $m.id, capabilities: {tools: ($m.capabilities.tool_calling == true),
-      input: (["text"] + (if $m.capabilities.vision == true then ["image"] else [] end)), output: ["text"]},
-      limit: ({context: $m.capabilities.context_tokens, output: $m.limits.output_tokens} | with_entries(select(.value != null)))}} else {} end)),
+# no probe record: the catalog's values (an unprobed link may serve, owner ruling 2026-11-18); a record, even a failing one: the probed values
+if jq --argjson m "${lm:-null}" --argjson r "${rec:-null}" '($r // {tool_calling: $m.capabilities.tool_calling, vision: $m.capabilities.vision, context: {effective: $m.capabilities.context_tokens}}) as $r
+  | (.providers | keys[0]) as $p | {"$schema"} + (if $m then {model: "\($p)/\($m.id)"} else {} end) + {
+    providers: (.providers | .[$p].models = (if $m then {($m.id): {name: $m.id, capabilities: {tools: ($r.tool_calling == true),
+      input: (["text"] + (if $r.vision == true then ["image"] else [] end)), output: ["text"]},
+      limit: ({context: $r.context.effective, output: $m.limits.output_tokens} | with_entries(select((.value // 0) > 0)))}} else {} end)),
     permission: {skill: (.permission.skill | del(.brainstorming))}}' \
   /workspace/opencode.json > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
 then [ -n "$lm" ] || [ "$(python3 -I /workspace/bin/stella_data.py get --json connections 2>/dev/null | jq '[.entries[] | select(.enabled == true and .locality == "local")] | length' 2>/dev/null)" = 0 ] || fail "opencode.json names no model: $why (role ${role:-unknown})"

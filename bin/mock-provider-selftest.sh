@@ -42,6 +42,11 @@ def call(s, m, p="hi", t=5):
     q = protos[s]["request"]
     return http(f"{BASE}/{s}{sub(q['path'], m)}", json.dumps(sub(q["body"], m, p)).encode(),
                 {**sub(q["headers"], m), "Content-Type": "application/json"}, t)
+def ptr_or_none(d, p):
+    try:
+        return ptr(d, p)
+    except (KeyError, IndexError, TypeError):
+        return None
 def ptr(d, p):
     for x in p.split("/")[1:]:
         d = d[int(x)] if isinstance(d, list) else d[x]
@@ -91,6 +96,41 @@ for s in protos:
 st, b = http(f"{BASE}/_calls"); d = json.loads(b)
 ok(all(d["counts"].get(k) == n for k, n in sent.items()) and sum(d["counts"].values()) == sum(sent.values()), "/_calls counts every call exactly")
 ok(len(d["requests"]) == sum(sent.values()) and all(r["headers"].get("x-api-key", r["headers"].get("Authorization", "k-" + r["model"])).endswith("k-" + r["model"]) or "k-" + r["model"] in json.dumps(r["headers"]) for r in d["requests"]), "/_calls records each request with its headers")
+# traits (F2b A): every shape, the extra one included; behavior comes from the control document and the shape's data
+def tctl(s, tr, faults=()):
+    return http(ctl, json.dumps({"models": {s: ["t1"]}, "faults": list(faults), "traits": [dict(tr, shape=s, model="t1")]}).encode())[0] == 200
+V = json.dumps({"route": "work", "confidence": 0.9})
+for s in protos:
+    q, r = protos[s]["request"], protos[s]["response"]
+    if r.get("logprobs"):
+        tctl(s, {"answers": [V], "logprob": -0.5}); items = ptr(json.loads(call(s, "t1")[1]), r["logprobs"])
+        ok("".join(i["token"] for i in items) == V and any(i["token"] == "work" and i["logprob"] == -0.5 for i in items), f"[{s}] logprob: tokens join to the answer, the label's token has the set value")
+    tctl(s, {"recall_tokens": 100}); a = json.loads(call(s, "t1", "code AB1234 here")[1]); b = json.loads(call(s, "t1", "code AB1234 " + "x " * 800)[1])
+    ok("AB1234" in ptr(a, r["text"]) and "AB1234" not in ptr(b, r["text"]), f"[{s}] recall_tokens: a needle is found in a short prompt and missed in a long one")
+    c = json.loads(call(s, "t1", "The key to AB1234 is CD5678. The key to CD5678 is EF9012. The key to GH3456 is JK7890.\nStart from AB1234.")[1])
+    ok(ptr(c, r["text"]) == "EF9012", f"[{s}] recall_tokens: a prompt that keys needles to needles is answered with the chain's end only (CRT-03)")
+    if r.get("tool_calls"):   # a list pointer holds N calls; a shape whose pointer holds one call (a dict sample) has one whatever N
+        for n in (1, 2):
+            tctl(s, {"tool_calls": n}); got = ptr(json.loads(call(s, "t1")[1]), r["tool_calls"]); lst = isinstance(r["tool_calls_sample"], list)
+            ok(len(got if isinstance(got, list) else [got]) == (n if lst else 1) and "{arguments}" not in json.dumps(got) and "not json" not in json.dumps(got), f"[{s}] tool_calls {n}: well-formed call(s) in one answer")
+        tctl(s, {}); ok(not ptr_or_none(json.loads(call(s, "t1")[1]), r["tool_calls"]), f"[{s}] tool_calls unset: no tool call")
+    tctl(s, {"answers": list("abcd"), "seed": 5}); x = [ptr(json.loads(call(s, "t1")[1]), r["text"]) for _ in range(10)]
+    tctl(s, {"answers": list("abcd"), "seed": 5}); y = [ptr(json.loads(call(s, "t1")[1]), r["text"]) for _ in range(10)]
+    ok(x == y and len(set(x)) > 1, f"[{s}] seed: answers vary and the same seed repeats them")
+    ml = protos[s]["models_list"]; tctl(s, {"family": "fam", "version": "v9"})
+    it = ptr(json.loads(listed(s)), ml["items"])[0]; ok(it.get(ml["family"]) == "fam" and it.get(ml["version"]) == "v9", f"[{s}] family and version show in the model list")
+    for at in q.get("output_shape", {}).values():   # grammar: JSON back whenever the schema is sent, whatever the fault
+        tctl(s, {"grammar": True}, [{"shape": s, "model": "t1", "fault": "non_json"}]); body = sub(q["body"], "t1")
+        d = body
+        for k in at.split("/")[1:-1]: d = d.setdefault(k, {})
+        d[at.split("/")[-1]] = {"type": "object"}
+        st, b = http(f"{BASE}/{s}{sub(q['path'], 't1')}", json.dumps(body).encode(), {**sub(q["headers"], "t1"), "Content-Type": "application/json"})
+        t = ptr(json.loads(b), r["text"])
+        try: json.loads(t); j = True
+        except ValueError: j = False
+        ok(st == 200 and j, f"[{s}] grammar: JSON answer with a schema at {at} though non_json is set")
+        t2 = ptr(json.loads(call(s, "t1")[1]), r["text"])
+        ok(t2 == "this is not json", f"[{s}] grammar: no schema in the request, the non_json fault reaches it")
 print("\n".join(res)); sys.exit(any(r.startswith("FAIL") for r in res))
 PY
 python3 -I "$T/drive.py" "$T/out" "$R/.stella/protocols.json" >"$T/drive.out" 2>"$T/drive.err"; rc=$?

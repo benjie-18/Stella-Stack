@@ -253,6 +253,68 @@
       "required": ["approval_class", "ttl_s", "alert_code_queue", "alert_code_notice"],
       "additionalProperties": false
     },
+    "builder_roles": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true,
+      "description": "The roles that build (the QA loop's builder escalation applies to them only): each built-in preset ships an escalation_chain for every one. `check` refuses a role that is not an assignable role of the role table."
+    },
+    "cross_family": {
+      "type": "object",
+      "properties": {
+        "builder_role": {"type": "string", "minLength": 1},
+        "reviewer_roles": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "uniqueItems": true}
+      },
+      "required": ["builder_role", "reviewer_roles"],
+      "additionalProperties": false,
+      "description": "Cross-family review (F2b item C, body B2): under a preset whose cross_family_review is true, the resolver answers a role of reviewer_roles on a card with links of another model family (the probe records' family) than the first usable link of builder_role for the same card first, reordered only inside one class-order item; else, or when that is not reachable, the answer is a waiver (cross_family.status waived) that the host-side caller logs as routing.cross-family-waiver (STL-MDL-737). `check` refuses a role that is not an assignable role of the role table, and a builder_role that is also a reviewer role. Absent: no role is judged for cross-family review."
+    },
+    "escalation": {
+      "type": "object",
+      "properties": {
+        "purposes": {
+          "type": "object",
+          "propertyNames": {"$ref": "#/$defs/id"},
+          "additionalProperties": {"type": "string", "minLength": 1},
+          "description": "{purpose: role} (owner decision 2026-11-18, F2b item E): whose escalation chain bin/escalate.sh walks for a call of that purpose (the card's current rung of that role, state/rungs.json, default 1). A purpose with no row is refused (STL-MDL-747). `check` refuses a role that is not an assignable role of the role table."
+        }
+      },
+      "required": ["purposes"],
+      "additionalProperties": false,
+      "description": "The escalation calls of bin/escalate.sh. Absent: no purpose has a row, so every call is refused."
+    },
+    "effort": {
+      "type": "object",
+      "properties": {
+        "levels": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/id"},
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "The effort ids (a reasoning effort or thinking setting), lowest first: the only ids a link's parameters.effort and by_role may name (`check` refuses any other, here and in every link of the role assignments)."
+        },
+        "by_role": {
+          "type": "object",
+          "additionalProperties": {
+            "type": ["string", "object"],
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+            "properties": {
+              "default": {"$ref": "#/$defs/id"},
+              "tiers": {
+                "type": "object",
+                "additionalProperties": {"$ref": "#/$defs/id"},
+                "description": "Per task tier (task_tiers[]): the role's effort at that tier."
+              }
+            },
+            "additionalProperties": false
+          },
+          "description": "Per role of the role table: an effort id (the role's default), or {default, tiers}: its effort by task tier, else its default (the id form keeps a table of many roles a reference to the role table, not a copy of it, for the one-owner lint). `check` refuses a role, a tier or an effort id the data does not define."
+        }
+      },
+      "required": ["levels", "by_role"],
+      "additionalProperties": false,
+      "description": "Effort as data (F2b B3): every link the resolver answers carries `effort`: its parameters.effort when set, else by_role[role].tiers[tier], else by_role[role].default, else null. Absent: no effort id exists, so a link that names one is refused."
+    },
     "card_facts": {
       "type": "object",
       "properties": {
@@ -304,8 +366,46 @@
       },
       "required": ["backend", "backends"],
       "additionalProperties": false
+    },
+    "triage": {
+      "type": "object",
+      "description": "The triage router (bin/triage.py, F2b F): the role whose link classifies each input, the route tiers lowest first (an unsure verdict moves one up, the top stays, never down; the list is the only order), the id of the image route (the route only when the input carries an image, no tier), inside a project the route a message gets (`default`) unless the verdict is one of `keep` (a pure question), the confidence below which a verdict is unsure (`threshold`; bin/triage.py fit writes a fitted one to the triage calibration state, which then wins), the calls whose agreement is the confidence where the link gives no log probabilities, and how many labelled verdicts the optional classifier needs before it answers first.",
+      "properties": {
+        "role": {"type": "string", "minLength": 1, "description": "A role of the role table (an exempt role: local, never a crossing)."},
+        "tiers": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$", "maxLength": 64}},
+        "image_route": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$", "maxLength": 64},
+        "project": {
+          "type": "object",
+          "properties": {
+            "default": {"type": "string", "minLength": 1},
+            "keep": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+          },
+          "required": ["default", "keep"],
+          "additionalProperties": false
+        },
+        "threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "samples": {"type": "integer", "minimum": 1, "maximum": 16},
+        "min_labels": {"type": "integer", "minimum": 1}
+      },
+      "required": ["role", "tiers", "image_route", "project", "threshold", "samples", "min_labels"],
+      "additionalProperties": false
+    },
+    "probe": {
+      "type": "object",
+      "description": "The capability probe's settings (bin/probe.py): the token lengths of the context test (the probe runs them ascending), the chains planted at each (`needles` chains of `hops` hops: each hop is a code that the next code is looked up from), the share of the shortest length's score a longer length may lose and still count (`tolerance`), the output shapes strongest first (the ids a wire shape's request.output_shape names a pointer for, then none), how often a shape is tried before it counts as proved (`shape_trials`), and the repair retries of the structured-output helper.",
+      "properties": {
+        "lengths": {"type": "array", "minItems": 2, "maxItems": 16, "uniqueItems": true, "items": {"type": "integer", "minimum": 100}},
+        "needles": {"type": "integer", "minimum": 1, "maximum": 16},
+        "hops": {"type": "integer", "minimum": 1, "maximum": 8},
+        "tolerance": {"type": "number", "minimum": 0, "maximum": 1},
+        "output_shapes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64}},
+        "shape_trials": {"type": "integer", "minimum": 1, "maximum": 10},
+        "repair_retries": {"type": "integer", "minimum": 0, "maximum": 3}
+      },
+      "required": ["lengths", "needles", "hops", "tolerance", "output_shapes", "shape_trials", "repair_retries"],
+      "additionalProperties": false
     }
   },
-  "required": ["schema_version", "link_classes", "class_defaults", "task_tiers", "drivers", "exempt_roles", "card_roles", "workflow", "failover", "consent", "card_facts", "credentials"],
+  "required": ["schema_version", "link_classes", "class_defaults", "task_tiers", "drivers", "exempt_roles", "card_roles", "workflow", "failover", "consent", "card_facts", "credentials", "probe", "triage"],
   "additionalProperties": false
 }
