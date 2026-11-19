@@ -115,7 +115,7 @@ def translate(t, adapter, role):
             merge(settings, fill(tpls[feat], ctx))
         applied.append(feat)
     return {"adapter": adapter, "role": role, "settings": settings, "applied": applied, "unsupported": unsupported,
-            "supports": {f: sup.get(f, False) for f in FEATURES}, "output_style": t["output_styles"][pol["output_style"]],
+            "supports": {f: sup.get(f, False) for f in FEATURES}, "output_style": t["output_styles"][pol["output_style"]], "core_tools": pol["core_tools"],
             "notes": pol["working_notes"], "graph_first": pol["graph_first"]}
 
 def over(code, what, used, budget, role):
