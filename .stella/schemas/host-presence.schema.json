@@ -1,11 +1,26 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Host presence",
-  "description": "The host's facts about the owner's current host request (F3 B11, DC-10): its route, the paired device and its biometric, the on-screen indicator, the kill switch, each input source's own indicator, and whether the request is final. Written on the host only (index key host_presence, under the protected .supervisor tree); bin/host_access.py decide reads it and never trusts a request for these facts. A missing record refuses.",
+  "description": "The host's facts about the owner's current host request (F3 B11, DC-10): its route, the paired device and its biometric, the on-screen indicator, the kill switch, each input source's own indicator, and whether the request is final. Written on the host only (index key host_presence, under the protected .supervisor tree); bin/host_access.py decide reads it and never trusts a request for these facts. It is dated (at) and bound to one run and one owner request (run, request), so an old or another request's record never counts. A missing record refuses.",
   "type": "object",
   "properties": {
     "schema_version": {
       "const": 1
+    },
+    "at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "description": "UTC time the host wrote this record; decide() refuses it once older than host-policy.json presence_max_age_s, or dated in the future."
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "description": "The run this record is for; decide() refuses a request of another run."
+    },
+    "request": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "description": "The id the host wrote when the owner started the request; decide() refuses a request that names another."
     },
     "route": {
       "type": "string",
@@ -109,6 +124,9 @@
   },
   "required": [
     "schema_version",
+    "at",
+    "run",
+    "request",
     "route",
     "presence",
     "global_id",

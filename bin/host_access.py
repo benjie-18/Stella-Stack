@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Host-session and input-source risk decisions (F3 item H; body B11, AC10; design section 10, rulings DC-08, DC-09 amended, DC-10),
 stdlib only. Host side: refused in a worker environment (bin/worker_env.py, STL-CFG-312) before it reads anything.
-decide() is pure over data and host-written facts; it changes nothing. The request carries only {capability, role, run, target {app,
-domain}, action {type}, confirmation}: every other fact comes from a record, never from the request:
-  the capability's risk class and roles from the registry (index row capabilities; risk_class host_session | input_source);
+decide() is pure over data and host-written facts; it changes nothing. The request carries only {capability, role, run, request, target
+{app, domain}, action {type}, confirmation} (request: the id the host wrote when the owner started the request): every other fact comes
+from a record, never from the request:
+  the capability's risk class and roles from the registry (index row capabilities, validated with its schema; risk_class
+  host_session | input_source; status approved);
   the role's host_operator flag from the role table (absent = false; never a role's name);
   attended/background from the run record (index key adapter_runs, <dir>/<run>.json, written by the adapter);
   route, presence (indicator, kill switch, each input source's own indicator), device id + biometric and turn finality from the host
-  presence record (index key host_presence, written by the host);
+  presence record (index key host_presence, written by the host), which counts only when its run and request are the request's and its
+  at is at most host-policy.json presence_max_age_s old (not in the future);
   the vault ids from .stella/host-policy.json never_targets (stack data, not a setting), read before the owner's host access settings;
   what may run from the owner's host access settings (index row host-access: master, routes, apps, domains, input sources, actions
   {state off|ask|run, reversible}, overrides {route|app, reversible_only});
@@ -23,7 +26,7 @@ within its grace window. A silence timeout alone is never final.
 CLI: host_access.py decide --request FILE [--json]
 Exit: 0 allowed; 1 refused (the code and its plain message on stderr; with --json also {allowed: false, code, problem} on stdout);
 2 usage. No command ends in a traceback."""
-import argparse, hashlib, hmac, json, os, re, sys, time
+import argparse, calendar, hashlib, hmac, json, os, re, sys, time
 sys.dont_write_bytecode = True
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -33,7 +36,8 @@ import worker_env
 
 RISK = ("host_session", "input_source")   # the risk classes this module decides
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")   # capability, role, run, action and confirmation ids (no path separator)
-KEYS, NEEDED = {"capability", "role", "run", "target", "action", "confirmation"}, {"capability", "role", "run", "target", "action"}
+NEEDED = {"capability", "role", "run", "request", "target", "action"}
+KEYS = NEEDED | {"confirmation"}
 VOICE = {"voice_ptt", "voice_wake", "voice_toggle"}   # route kinds whose request is a spoken turn (the schema's enum)
 SUBMITTED = {"typed_host", "device"}   # route kinds whose request is final once submitted
 
@@ -59,9 +63,9 @@ def shape(q):
     """None when q is a request of DC-10's shape, else the problem."""
     t, a = q.get("target") if isinstance(q, dict) else None, q.get("action") if isinstance(q, dict) else None
     if not (isinstance(q, dict) and set(q) <= KEYS and NEEDED <= set(q)):
-        return "a request is {capability, role, run, target, action, confirmation} and nothing else (facts come from the records)"
-    if not all(isinstance(q[k], str) and ID.fullmatch(q[k]) for k in ("capability", "role", "run")):
-        return "capability, role and run are ids"
+        return "a request is {capability, role, run, request, target, action, confirmation} and nothing else (facts come from the records)"
+    if not all(isinstance(q[k], str) and ID.fullmatch(q[k]) for k in ("capability", "role", "run", "request")):
+        return "capability, role, run and request are ids"
     if not (isinstance(t, dict) and set(t) <= {"app", "domain"} and all(v is None or (isinstance(v, str) and ID.fullmatch(v)) for v in t.values())):
         return "target is {app, domain}, each an id or null"
     if not (isinstance(a, dict) and set(a) == {"type"} and isinstance(a["type"], str) and ID.fullmatch(a["type"])):
@@ -129,6 +133,8 @@ def confirmed(q):
         want = oa.digest(asked(q))
     except ValueError:
         return "the request cannot be bound to a confirmation"
+    if not isinstance(req.get("digest"), str):
+        return f"confirmation {rid} has no digest of its action"
     if not hmac.compare_digest(req["digest"].encode(), want.encode()):
         return f"confirmation {rid} is for another action"
     return None
@@ -141,19 +147,19 @@ def decide(q):
     cap, role, run, tgt, act = q["capability"], q["role"], q["run"], q["target"], q["action"]["type"]
     app, dom = low(tgt.get("app")), low(tgt.get("domain"))
     try:   # DC-09: the vault first, before the owner's settings are read
-        never = row("host-policy")["never_targets"]
+        hp = row("host-policy")
+        never = hp["never_targets"]
     except (sd.DataError, StopIteration, KeyError) as e:
         raise Refused("STL-GRD-622", f"the host policy cannot be read: {e}") from None
     need(app not in {low(x) for x in never["apps"]} and not (dom and any(dom == low(v) or dom.endswith("." + low(v)) for v in never["domains"])),
          "STL-GRD-623", "the target is the Stella vault, which is never a host target")
     try:
-        # shortcut: the registry is read without its schema until item C adds host_session/input_source to the risk_class enum; then sd.checked
-        reg = sd.load(next(r["path"] for r in sd.rows() if r["id"] == "capabilities"))
-        ent = next((e for e in reg["entries"] if isinstance(e, dict) and e.get("id") == cap), None)
+        ent = next((e for e in row("capabilities")["entries"] if e["id"] == cap), None)
         rt = roles.load()
     except (sd.DataError, StopIteration, KeyError, TypeError, roles.RolesError) as e:
         raise Refused("STL-GRD-622", f"the capability registry or the role table cannot be read: {e}") from None
-    need(ent is not None and ent.get("risk_class") in RISK, "STL-GRD-621", f"capability {cap} is not a host-session or input-source capability of the registry")
+    need(ent is not None and ent["risk_class"] in RISK and ent["status"] == "approved", "STL-GRD-621",
+         f"capability {cap} is not an approved host-session or input-source capability of the registry")
     need(isinstance(ent.get("allowed_roles"), list) and role in ent["allowed_roles"], "STL-GRD-621", f"capability {cap} is not granted to role {role}")
     need(isinstance(rt["roles"].get(role), dict) and rt["roles"][role].get("host_operator") is True, "STL-GRD-624",
          f"role {role} is not marked host_operator in the role table")
@@ -167,6 +173,12 @@ def decide(q):
     att = (rr.get("attended") is True or rr.get("unattended") is False) and rr.get("attended") is not False and rr.get("unattended") is not True
     need(att and rr.get("background") is False, "STL-GRD-626", f"run {run} is unattended or in the background (or its record does not say)")
     need(pres is not None, "STL-GRD-627", "there is no host presence record")
+    need(pres["run"] == run and pres["request"] == q["request"], "STL-GRD-627", f"the host presence record is for another run or request than run {run}, request {q['request']}")
+    try:   # the schema pins the format; a date that does not exist (Feb 30) is no time
+        age = time.time() - calendar.timegm(time.strptime(pres["at"], "%Y-%m-%dT%H:%M:%SZ"))
+    except ValueError:
+        age = -1
+    need(0 <= age <= hp["presence_max_age_s"], "STL-GRD-627", f"the host presence record is older than {hp['presence_max_age_s']} s or dated in the future")
     p = pres["presence"]
     need(p["indicator"] is True and p["kill_switch"] is True, "STL-GRD-628", "the on-screen indicator or the kill switch is not active")
     kind_cls = ent["risk_class"]

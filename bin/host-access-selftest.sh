@@ -3,16 +3,18 @@
 # DC-08, DC-09 (amended: vault ids in .stella/host-policy.json never_targets {apps, domains}) and DC-10).
 # Every section runs in its own scratch root (bash host-access-selftest.sh <section>); no argument runs them all.
 # Sections -> checks: roles = AC10-roles | presence = AC10-presence | app = AC10-app | askfirst = AC10-askfirst | run = AC10-run |
-#   off = AC10-off | override = AC10-override | vault = AC10-vault (DC-09) | final = AC10-final | device = AC10-device | input = AC10-input
+#   off = AC10-off | override = AC10-override | vault = AC10-vault (DC-09) | final = AC10-final | device = AC10-device | input = AC10-input |
+#   fresh = V1-05 (Gate B fix 1: a dated presence record bound to its run and request) | registry = V1-08 (registry schema, status, digest)
 # Every refusal case changes ONE fact of a baseline request that is allowed (checked in each section), so a refusal is that fact's.
 # Written test-first (F3 wave 1): exit codes and the code range STL-GRD-620..639 are asserted, never wording.
 # ASSUMPTIONS (names the design leaves open):
 #  A1 host_access.py decide --request FILE --json: exit 0 = allowed; exit 1 = refused with a STL-GRD-62x/63x code in its output.
-#  A2 the request (DC-10) is {capability, role, run: <run id>, target: {app, domain}, action: {type}, confirmation: <id or null>}.
+#  A2 the request (DC-10) is {capability, role, run: <run id>, request: <request id>, target: {app, domain}, action: {type},
+#     confirmation: <id or null>} (request: the id the host wrote when the owner started the request; V1-05).
 #  A3 the run record (DC-10, index key adapter_runs): planted as <adapter_runs>/<run>.json when the path is a folder, a line of
 #     <adapter_runs> when it ends .jsonl, else {schema_version, runs: [...]} when it ends .json; a record is
 #     {run, role, card, unattended, background, global_id, install_id}.
-#  A4 the host presence record (DC-10, index key host_presence, one JSON document): {schema_version, route, device: {id, biometric},
+#  A4 the host presence record (DC-10, index key host_presence, one JSON document): {schema_version, at, run, request (V1-05), route, device: {id, biometric},
 #     presence: {indicator, kill_switch, input_indicators: {<capability id>: bool}}, final: {state: submitted|closed|open,
 #     turn: {detector: semantic|silence, reopened_within_grace}}, global_id, install_id}.
 #  A5 host-access.json (DC-08, additive): routes[] {id, enabled, kind, device_id?}, actions[] {id, state off|ask|run, reversible},
@@ -23,7 +25,7 @@
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 ME=host-access-selftest
-SECTIONS="roles presence app askfirst run off override vault final device input"
+SECTIONS="roles presence app askfirst run off override vault final device input fresh registry"
 if [ $# = 0 ]; then
   f=0; for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || f=$((f+1)); done
   [ $f = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($f sections)"; [ $f = 0 ]; exit
@@ -93,9 +95,9 @@ plant_run() { # <run> <unattended> <background>
     *) mkdir -p "$R/$AR"; echo "$rec" >"$R/$AR/$1.json";;
   esac; }
 plant_run qa-run-att false false; plant_run qa-run-un true false; plant_run qa-run-bg false true
-PRES='{schema_version: 1, route: "qa-typed", device: null, presence: {indicator: true, kill_switch: true, input_indicators: {"qa-mic": true}}, final: {state: "submitted", turn: null}}'
+PRES='{schema_version: 1, at: (now | todate), run: "qa-run-att", request: "qa-req-h", route: "qa-typed", device: null, presence: {indicator: true, kill_switch: true, input_indicators: {"qa-mic": true}}, final: {state: "submitted", turn: null}}'
 pres() { [ -n "$HP" ] || return 0; mkdir -p "$(dirname "$R/$HP")"; jq -n --arg g "$(uuid)" --arg i "$IID" "$PRES | . + {global_id: \$g, install_id: \$i} | ${1:-.}" >"$R/$HP"; }
-REQ='{capability: "qa-host-act", role: $op, run: "qa-run-att", target: {app: "qa-editor", domain: "qa.example"}, action: {type: "qa-open"}, confirmation: null}'
+REQ='{capability: "qa-host-act", role: $op, run: "qa-run-att", request: "qa-req-h", target: {app: "qa-editor", domain: "qa.example"}, action: {type: "qa-open"}, confirmation: null}'
 # dec <tag> [jq filter on the baseline request]: decide on it; RC and $T/o/<tag>.out/.err
 dec() { jq -n --arg op "$OP" "$REQ | ${2:-.}" >"$T/o/$1.req"; run "$1" H decide --request "$T/o/$1.req" --json; }
 allowed() { [ "$RC" = 0 ]; }
@@ -197,6 +199,39 @@ input)   # AC10-input
   pres '.presence.input_indicators = {}'; dec i2 '.capability = "qa-mic"'; ok 'refused i2' "AC10-input no indicator fact for it: refused"
   ha '(.input_sources[] | select(.id == "qa-mic") | .enabled) = false'; pres; dec i3 '.capability = "qa-mic"'; ok 'refused i3' "AC10-input the input source switched off: refused"; ha_base
   pres; dec i4 '.capability = "qa-mic" | .role = "'"$(sed -n 2p <<<"$ROLES")"'"'; ok 'refused i4' "AC10-input a role without the host_operator flag: refused"
+  ;;
+fresh)   # V1-05 (Gate B fix 1): the presence record is dated (at, max age: host-policy.json presence_max_age_s) and bound to the run and request
+  base e "V1-05"
+  has() { [ "$RC" = 1 ] && grep -q "$2" "$T/o/$1.out"; }
+  MA=$(jq -r .presence_max_age_s "$HPOL")
+  pres ".at = (now - $MA - 30 | todate)"; dec e1; ok 'has e1 STL-GRD-627' "V1-05 a presence record older than presence_max_age_s: refused STL-GRD-627"
+  pres '.at = (now + 300 | todate)'; dec e2; ok 'has e2 STL-GRD-627' "V1-05 a presence record dated in the future: refused STL-GRD-627"
+  pres '.at = "2026-02-30T00:00:00Z"'; dec e2b; ok 'has e2b STL-GRD-627 && ! grep -q Traceback "$T/o/e2b.err"' "V1-05 a presence record dated on a day that does not exist: refused STL-GRD-627, no traceback"
+  pres '.run = "qa-run-other"'; dec e3; ok 'has e3 STL-GRD-627' "V1-05 a presence record bound to another run: refused STL-GRD-627"
+  pres '.request = "qa-req-other"'; dec e4; ok 'has e4 STL-GRD-627' "V1-05 a presence record bound to another request: refused STL-GRD-627"
+  pres; dec e5 'del(.request)'; ok 'has e5 STL-GRD-620' "V1-05 a request that names no request id: refused STL-GRD-620"
+  pres 'del(.at, .run, .request)'; dec e6; ok 'refused e6' "V1-05 an undated, unbound presence record (the old global snapshot): refused"
+  for k in at run request; do pres "del(.$k)"; dec "e7$k"; ok "refused e7$k" "V1-05 a presence record with no $k: refused"; done
+  ed .stella/host-policy.json '.presence_max_age_s = 3600'; pres '.at = (now - 600 | todate)'; dec e8
+  ok 'allowed' "V1-05 the max age is data: with presence_max_age_s 3600 a record 600 s old is allowed"
+  ed .stella/host-policy.json '.presence_max_age_s = 60'; dec e9; ok 'has e9 STL-GRD-627' "V1-05 ... with presence_max_age_s 60 the same record is refused STL-GRD-627"
+  ;;
+registry)   # V1-08 (Gate B fix 1): the registry is read with its schema, only an approved entry decides, a digest-less approval is a coded refusal
+  base g "V1-08"
+  has() { [ "$RC" = 1 ] && grep -q "$2" "$T/o/$1.out"; }
+  ent() { ed .stella/capabilities.json "(.entries[] | select(.id == \"qa-host-act\")) |= ($1)"; }
+  ent '.status = "proposed"'; dec g1; ok 'has g1 STL-GRD-621' "V1-08 a host capability whose status is proposed: refused STL-GRD-621"
+  ent '.status = "disabled"'; dec g2; ok 'has g2 STL-GRD-621' "V1-08 a host capability whose status is disabled: refused STL-GRD-621"
+  ent '.status = "approved" | .qa_extra = true'; dec g3; ok 'has g3 STL-GRD-622' "V1-08 a registry its schema refuses (an entry with a field the schema does not allow): refused STL-GRD-622"
+  ent 'del(.qa_extra)'; dec g4; ok 'allowed' "V1-08 control: the entry valid and approved again is allowed"
+  # an approval request (store record and trusted request line) with no digest: approvals.state stands in for the store and the log
+  PY='import sys, time; sys.path.insert(0, sys.argv[1]); import approvals, owner_auth as oa, host_access as h
+c = oa.policy()["voice_host_confirmation"]["action_class"]; t = time.time()
+req = {"approval_class": c, "requested_at": time.strftime(oa.TIME, time.gmtime(t)), "expires_at": time.strftime(oa.TIME, time.gmtime(t + 10))}
+approvals.state = lambda rid, v=None: ({"approval_class": c}, req, {"decision": "approved"}, "approved")
+sys.exit(h.main(["decide", "--request", sys.argv[2], "--json"]))'
+  dec g5 '.action.type = "qa-delete" | .confirmation = "qa-conf-nodigest"'; run g5 python3 -I -c "$PY" "$R/bin" "$T/o/g5.req"
+  ok 'has g5 STL-GRD-637 && ! grep -q Traceback "$T/o/g5.err"' "V1-08 an approved confirmation whose request has no digest: refused STL-GRD-637, no traceback"
   ;;
 esac
 finish
