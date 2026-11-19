@@ -2,6 +2,7 @@
   "schema_version": 1,
   "about": "No-progress patterns for the trusted tool stream (F3 item S, body B10). bin/stuck.py scan/watch read it. Thresholds per role; a role not listed gets default.",
   "poll_s": 2,
+  "revert_window": 8,
   "stop": {
     "argv": [
       "{python}",
@@ -15,15 +16,18 @@
   },
   "block": {
     "argv": [
-      "hermes",
-      "kanban",
+      "bash",
+      "-c",
+      ". \"$1\" && shift && kanban \"$@\"",
+      "stuck-block",
+      "{bin}/kanban-board.sh",
       "block",
       "{card}",
       "--kind",
       "{kind}",
       "{reason}"
     ],
-    "kind": "stuck",
+    "kind": "needs_input",
     "reason": "stuck: {pattern} ({detail}); run {run} stopped, evidence in the run-block event line"
   },
   "default": {

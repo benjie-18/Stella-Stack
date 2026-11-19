@@ -3,15 +3,15 @@
 (runs/<id>/events.jsonl under index key adapter_runs, written by the adapter) and finds no-progress patterns defined as data in
 .stella/stuck.json, thresholds per role (a role not listed gets "default"):
   repeat_action  N tool results in a row with the same signature, ok and output
-  repeat_error   N failed results in a row with the same output
+  repeat_error   N failed results in a row with the same action signature and the same output
   alternate      N results alternating A,B,A,B (A and B differ)
-  edit_revert    N times the worktree diff digest returns to an earlier digest after a change
+  edit_revert    N times the worktree diff digest returns to any of the last revert_window earlier digests (the working-notes file is not in the digest)
   tokens_no_diff usage tokens summed since the diff digest last changed reach N
 CLI (host only, STL-CFG-312 in a worker environment):
   stuck.py scan FILE [--role R] [--json]       matches of the file's events: {stuck, matches [{pattern, detail, evidence}]}; exit 0 even on a match
   stuck.py watch --run R --card C [--role R] [--events FILE]   follow the stream; on a match: stop argv (adapter.py stop --reason stuck),
         one trusted run-block line {pattern, kind, reason, evidence, card}, the block argv (data) for the card; exit 0 after a block
-        or when the run's result line is seen, 1 refused
+        or when the run record says the run ended (a result line in the stream does not end it), 1 refused
 Exit: 0 ok; 1 refused (the catalog code and its plain message on stderr); 2 usage."""
 import os, sys
 
@@ -66,8 +66,8 @@ def read_events(text):
     return out
 
 
-def scan(events, th):
-    """The first match of each pattern kind in th: [{pattern, detail, evidence [events]}]."""
+def scan(events, th, window):
+    """The first match of each pattern kind in th: [{pattern, detail, evidence [events]}]; window: how many earlier diff digests a revert may return to."""
     res = [e for e in events if e.get("type") == "tool_result"]
     found = []
 
@@ -90,7 +90,7 @@ def scan(events, th):
         if s:
             hit("repeat_action", f"the same action and result {len(s)} times", s)
     if "repeat_error" in th:
-        s = run_of("repeat_error", th["repeat_error"], lambda e: e.get("output"), lambda e: e.get("ok") is False)
+        s = run_of("repeat_error", th["repeat_error"], lambda e: (e.get("signature"), e.get("output")), lambda e: e.get("ok") is False)
         if s:
             hit("repeat_error", f"the same error {len(s)} times", s)
     if "alternate" in th:
@@ -111,7 +111,7 @@ def scan(events, th):
             if not d:
                 continue
             if chain and d != chain[-1]:
-                back = len(chain) > 1 and d == chain[-2] and not just   # a change right after a revert is the next edit, not a revert
+                back = d in chain[-window - 1:-1] and not just   # a change right after a revert is the next edit, not a revert
                 just = back
                 if back:
                     reverts += 1
@@ -156,7 +156,7 @@ def cmd_scan(a):
             events = read_events(f.read())
     except OSError as e:
         raise Stop(NOSTREAM, f"{a.file} cannot be read ({el.why(e)[:100]})") from None
-    m = scan(events, thresholds(doc, a.role))
+    m = scan(events, thresholds(doc, a.role), doc["revert_window"])
     if a.json:
         print(json.dumps({"stuck": bool(m), "role": a.role, "matches": m}))
     else:
@@ -168,7 +168,13 @@ def cmd_watch(a):
     doc = data()
     path = a.events or os.path.join(runs_dir(), a.run, STREAM)
     th = thresholds(doc, a.role)
+    rec = os.path.join(runs_dir(), a.run + ".json")
     while True:
+        try:
+            with open(rec, encoding="utf-8") as f:   # read before the stream: the adapter writes the last event before it records the end
+                ended = json.load(f).get("ended") is not None
+        except (OSError, ValueError, AttributeError):
+            raise Stop(NOSTREAM, f"the record of run {a.run} ({rec}) cannot be read") from None
         try:
             with open(path, encoding="utf-8") as f:
                 events = read_events(f.read())
@@ -176,10 +182,10 @@ def cmd_watch(a):
             events = []
         except OSError as e:
             raise Stop(NOSTREAM, f"{path} cannot be read ({el.why(e)[:100]})") from None
-        m = scan(events, th)
+        m = scan(events, th, doc["revert_window"])
         if m:
             break
-        if any(e.get("type") == "result" for e in events):
+        if ended:
             return 0
         time.sleep(doc["poll_s"])
     first = max(m, key=lambda x: x["pattern"] in DIFF_KINDS)   # a pattern that saw the worktree diff names the loop better than one that saw only signatures; ties keep file order
