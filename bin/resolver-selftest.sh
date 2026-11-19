@@ -68,8 +68,8 @@ TIER=$(j '.task_tiers[0].id' "$RT"); FACT=$(j '[.card_facts.when_missing | to_en
 GCLASS=$(j '[.class_rules | to_entries[] | select(.value.hosted == "grant") | .key][0] // empty' "$POL")
 NCLASS=$(j '[.class_rules | to_entries[] | select(.value.hosted == "never") | .key][0] // empty' "$POL")
 IID=$(j .install_id "$ROOT/$(p install)")
-read -r C_NOLINK C_UNKNOWN C_TERMS C_AGG C_HARD C_UNMET C_POLICY C_PRIV C_CROSS C_COOL SCORESTUB < <(python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import resolve as r
-print(r.NO_LINK, r.UNKNOWN, r.TERMS, r.AGGREGATOR, r.HARD, r.UNMET, r.POLICY, r.PRIVACY, r.CROSSING, r.COOLDOWN, r.STUB_SCORES)' "$BIN")
+read -r C_NOLINK C_UNKNOWN C_TERMS C_AGG C_HARD C_UNMET C_POLICY C_PRIV C_CROSS C_COOL < <(python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import resolve as r
+print(r.NO_LINK, r.UNKNOWN, r.TERMS, r.AGGREGATOR, r.HARD, r.UNMET, r.POLICY, r.PRIVACY, r.CROSSING, r.COOLDOWN)' "$BIN")
 ok '[ -n "$LOCAL" ] && [ -n "$FREE" ] && [ -n "$FRONT" ] && [ -n "$NR" ] && [ -n "$NR2" ] && [ -n "$CR" ] && [ -n "$ER" ] && [ -n "$ENGINE" ] && [ -n "$WORKER" ] && [ -n "$FACT" ] && [ -n "$GCLASS" ] && [ -n "$NCLASS" ]' \
   "0a the shipped data gives the ids this test needs (three link classes, roles of each kind, both kinds of driver, a card fact, a grant class, a never class)"
 ok 'for c in "$C_NOLINK" "$C_UNKNOWN" "$C_TERMS" "$C_AGG" "$C_HARD" "$C_UNMET" "$C_POLICY" "$C_PRIV" "$C_CROSS" "$C_COOL"; do jq -e --arg c "$c" ".alerts[] | select(.code == \$c and (.message | contains(\"{problem}\")))" "$ROOT/docs/hermes-local/alert-catalog.json" >/dev/null || exit 1; done' \
@@ -107,6 +107,7 @@ ed base role-assignments '.assignments = []'; preset base qa-all '{class_order: 
 facts base qa-card "$CLEAN"
 AWAY="[.chain[] | select(.link_class != \"$LOCAL\")]"   # the links that leave the machine (a class that is not hosted never labels one)
 
+SCORESTUB=routing-advertised-scores   # the id of the removed stub (cases 1d, 18f)
 # ---- 1: the answer ----
 rs base b --role "$NR" --project qa-proj --tier "$TIER" --driver "$ENGINE" --task qa-t
 ok 'passes base' "1 the fake catalog with a preset of every class is valid data"
@@ -316,8 +317,8 @@ mk bs3 bs1; state bs3 "{\"links\":{\"qa-free\":{\"until\":\"$SOON\"}},\"tasks\":
 mk bs4 bs1; edt bs4 --arg r "$NR" '.roles[$r].requirements.min_context_tokens = 4096'
 ed bs4 connections '.entries |= map(if .id == "qa-free" or .id == "qa-agg" or .id == "qa-local" then .models[].capabilities.context_tokens = 4095 else . end)'
 for r in bs1 bs2 bs3 bs4; do rs "$r" "$r" --role "$NR" --project qa-proj; done; rs bs1 bs5 --role "$NR" --project qa-proj --tier "$TIER"
-ok 'passes bs1 && J bs1 "$(first qa-free)" && J bs1 ".decision.rule == \"best_suited\" and (.decision.reason | test(\"qa-free/qa-free-m1\")) and (.stubs | index(\"$SCORESTUB\") != null)" && J bs1 "all(.chain[]; .link_class != \"$FRONT\")"' \
-  "9 a best-of group: the higher advertised score ranks first, with the reason and the scores stub; the needs class is not used for an unlisted tier"
+ok 'passes bs1 && J bs1 "$(first qa-free)" && J bs1 ".decision.rule == \"best_suited\" and (.decision.reason | test(\"qa-free/qa-free-m1\"))" && J bs1 "all(.chain[]; .link_class != \"$FRONT\")"' \
+  "9 a best-of group: the higher advertised score (the prior) ranks first, with the reason; the needs class is not used for an unlisted tier"
 ok 'J bs1 "[.chain[].connection] as \$c | ([\$c[0]] + [range(1; \$c | length) | select(\$c[.] != \$c[. - 1]) | \$c[.]]) | length == (unique | length)"' "9a the links of one connection stay adjacent in the ranked group"
 ok 'passes bs2 && J bs2 "$(first qa-local)"' "9b equal scores: the more private class ranks first"
 ok 'J bs3 "$(first qa-local)" && J bs3 "$(ent qa-free) | length == 2 and all(.status == \"cooldown\")"' "9c health ranks before score: links in cooldown fall behind"
@@ -582,5 +583,38 @@ mk lg2 base; mkdir -p "$T/lg2/.supervisor/logs" "$T/lg2/.supervisor/state"; LGRO
 rs lg2 q4 --role "$NR" --project qa-proj
 ok 'J q4 --arg c "$C_COOL" "$(ent qa-cli) | length > 0 and all(.[]; .status == \"cooldown\" and .code == \$c and (.reason | test(\"plan\")))"' "17e a cli-login link whose plan share is at the limit of the data (limit-signals plan_share_limit) is cooldown"
 ok '! jq -e ".entries[] | select(.id == \"routing-observed-quota\")" "$ROOT/$(p features)" >/dev/null && ! grep -q routing-observed-quota "$RS" && J b ".stubs == []"' "17f the routing-observed-quota stub is gone from features.json and from the resolver's answers (T-STUB-QUOTA)"
+
+# ---- 18: the ranking reads benchmark results (F2c item G), the advertised score is only the prior ----
+# bench <root> <connection> <model> <tasks> <score>: benchmark records of the role NR (the compare writer: a trusted event line each)
+bench() {
+  mkdir -p "$T/$1/.supervisor/logs" "$T/$1/.supervisor/state" "$T/$1/home"
+  HOME=$T/$1/home STELLA_ROOT=$T/$1 python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import compare
+r, c, m, n, s = sys.argv[2:7]
+compare.record_results([{"role": r, "connection": c, "model": m, "task": f"t{i}", "trial": 0, "passed": float(s) >= 0.5, "score": float(s), "ts": "2026-11-01T00:00:00Z", "suite_version": "s1"} for i in range(int(n))])' "$BIN" "$NR" "$2" "$3" "$4" "$5" || echo "bench failed: $*" >&2
+}
+sbf() { echo "$T/$1/$(jq -r .benchmark_results "$T/$1/.stella/data-files.json")"; }
+last() { echo "[.chain[] | select(.status == \"usable\")][-1].connection == \"$1\""; }
+MINT=$(jq -r .routing_min_tasks "$ROOT/.stella/model-check.json")
+mk rk bs1                      # free 0.9, local 0.1 advertised
+mk rk1 rk; bench rk1 qa-local qa-local-m1 "$MINT" 0.95; bench rk1 qa-free qa-free-m1 "$MINT" 0.2
+mk rk2 rk; bench rk2 qa-local qa-local-m1 $((MINT - 1)) 0.95
+mk rk3 rk; mk rk4 rk; bench rk3 qa-local qa-local-m1 "$MINT" 0.95; bench rk4 qa-local qa-local-m1 "$MINT" 0.95
+jq '.records |= map(.score = 0.0)' "$(sbf rk3)" >"$T/rk3.n" && mv "$T/rk3.n" "$(sbf rk3)"    # edited by hand: its trusted line no longer matches
+jq '.records |= map(.install_id = "00000000-0000-4000-8000-000000000000")' "$(sbf rk4)" >"$T/rk4.n" && mv "$T/rk4.n" "$(sbf rk4)"   # another install
+mk rk5 rk; mkdir -p "$T/rk5/.supervisor/state"; echo '{not json' >"$(sbf rk5)"
+mk rk6 rk; ed rk6 connections '.entries |= map(if .id == "qa-free" then .models |= map(del(.score)) else . end)'; bench rk6 qa-local qa-local-m1 "$MINT" 0.5
+for r in rk1 rk2 rk3 rk4 rk5 rk6; do : >"$AL"; rs "$r" "$r" --role "$NR" --project qa-proj; cp "$AL" "$T/o/$r.alerts"; done
+al() { grep -c "^$2 " "$T/o/$1.alerts"; }
+ok 'passes rk1 && J rk1 "$(first qa-local)" && J rk1 ".decision.reason | test(\"benchmark\") and test(\"n=$MINT\")"' "18a a link with benchmark results over the minimum sample ranks above a higher advertised score; the reason names the score, its source and n"
+ok 'J rk2 "$(first qa-free)" && J rk2 ".decision.reason | test(\"prior\")" && [ "$(al rk2 STL-MDL-781)" = 1 ] && [ "$(al rk2 STL-MDL-780)" = 0 ]' "18b a sample below the minimum keeps the advertised order, with one STL-MDL-781 line (the smaller sample would have changed the first pick)"
+ok 'J rk3 "$(first qa-free)" && J rk4 "$(first qa-free)" && [ "$(al rk3 STL-MDL-780)" = 0 ] && [ "$(al rk4 STL-MDL-781)" = 0 ]' "18c a record whose trusted line does not match, and a record of another install, are ignored (advertised order)"
+ok '[ "$(rc rk5)" = 0 ] && J rk5 "$(first qa-free)" && [ "$(al rk5 STL-MDL-780)" = 1 ]' "18d an unreadable benchmark file falls back to the advertised order with exactly one STL-MDL-780 line, no refusal"
+ok 'J rk6 "$(first qa-local)" && J rk6 "$(last qa-free)" && J rk6 ".decision.reason | test(\"none\")"' "18e a link with no benchmark and no advertised score ranks last"
+ok '! jq -e ".entries[] | select(.id == \"$SCORESTUB\")" "$ROOT/$(p features)" >/dev/null && ! grep -q "$SCORESTUB" "$RS" && J rk1 ".stubs == []"' "18f the routing-advertised-scores stub is gone from features.json and from the resolver"
+mk rk7 rk1; H0=$(cd "$T/rk7" && find .supervisor -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum); rs rk7 rk7 --role "$NR" --project qa-proj
+ok '[ "$H0" = "$(cd "$T/rk7" && find .supervisor -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum)" ] && J rk7 "$(first qa-local)"' "18g the resolver writes nothing under the root's state folder (read-only)"
+mk rk8 rk; ed rk8 connections --arg g "$(uuid)" '.entries += [(.entries[] | select(.id == "qa-local") | .id = "qa-fake" | .global_id = $g | .models = [(.models[0] | .id = "qa-fake-m1" | del(.score))])]'
+bench rk8 qa-fake qa-fake-m1 "$MINT" 0.99; rs rk8 rk8 --role "$NR" --project qa-proj
+ok 'passes rk8 && J rk8 "[.chain[] | select(.status == \"usable\")][0] | .connection == \"qa-fake\" and .model == \"qa-fake-m1\"" && J rk8 ".decision.reason | test(\"qa-fake/qa-fake-m1\")"' "18h fake entry: a provider and model added to the catalog and the benchmark file only are ranked first, with no code change"
 
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
