@@ -67,7 +67,7 @@ plant() { # <project> <role> <card> <amount> [minutes ago] [outcome] [input toke
 p, r, c, a, m, o, i, s, ps = sys.argv[2:11]
 ts = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=float(m))).strftime("%Y-%m-%dT%H:%M:%SZ")
 cost = {"amount": float(a), "currency": "QAC", "entry": "qa", "priced": True} if float(a) >= 0 else None
-rec = {"v": 1, "id": str(uuid.uuid4()), "install_id": "i", "ts": ts, "connection": os.environ.get("PC", "qa-c"), "model": os.environ.get("PM", "qa-m"), "role": r, "project": p, "card": c, "session": s,
+rec = {"v": 1, "id": str(uuid.uuid4()), "install_id": "00000000-0000-4000-8000-000000000000", "ts": ts, "connection": os.environ.get("PC", "qa-c"), "model": os.environ.get("PM", "qa-m"), "role": r, "project": p, "card": c, "session": s,
        "kind": "call", "outcome": o, "status": None, "tokens": {"input": int(i), "output": 10, "cache_write": 0, "cache_read": 0, "reasoning": 0},
        "latency_ms": 5, "batch": False, "cost": cost, "plan_share": None if ps == "null" else float(ps)}
 open(sys.argv[1], "a").write(json.dumps(rec) + "\n")' "$UL" "$1" "${2:-r-any}" "${3:-c-any}" "$4" "${5:-0.2}" "${6:-ok}" "${7:-100}" "${8:-s-$RANDOM$RANDOM}" "${9:-null}"
@@ -210,7 +210,7 @@ ok "[ \$(( \$(evn budget.anomaly) - $E0 )) = 4 ]" "T-BUD-ANOM one trusted event 
 ok "echo '$OUT' | jq -e '[.new[] | select(.kind == \"retry_loop\")][0].card == \"c-retry\" and ([.new[] | select(.kind == \"outlier_card\")][0].card == \"o5\")'" "T-BUD-ANOM the retry loop names card c-retry and the outlier is card o5, not the normal cards"
 OUT=$(BU anomalies --json)
 ok "echo '$OUT' | jq -e '.new == [] and (.known | length) == 4' && [ \$(nal STL-LIM-433) = 4 ]" "T-BUD-ANOM the same episodes again: no new alert (deduped by fingerprint)"
-: >"$UL"; plant p-q r-x c-q1 2 ok 100 s-q; plant p-q r-x c-q2 2 ok 200 s-q; plant p-q r-x c-q3 2 error 50 s-q2
+: >"$UL"; plant p-q r-x c-q1 2 5 ok 100 s-q; plant p-q r-x c-q2 2 5 ok 200 s-q; plant p-q r-x c-q3 2 5 error 50 s-q2
 OUT=$(BU anomalies --json)
 ok "echo '$OUT' | jq -e '.new == []'" "T-BUD-ANOM a quiet ledger (short rises, a single failure) raises nothing"
 
