@@ -808,6 +808,36 @@
       },
       "global_id": "6506fd37-b5a0-40b9-957e-52d0e9ee3580",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "levers",
+      "kind": "command",
+      "summary": "Cost levers: the batch lane (only a listed job kind that is not urgent, on a connection that offers batch; an urgent job never), the cache policy per connection with the lifetime chosen from the measured gap between calls, the prefix lint of consecutive prompts (a changed stable part or volatile text fails), the cache-hit rate per role from the ledger; the library also lays prompts out stable-first with tools only added, and fans parallel reviewers out after the first call's first token (a test double of the scheduler M1). Every rule is in .stella/levers.json.",
+      "keywords": [
+        "levers",
+        "batch",
+        "cache",
+        "prompt",
+        "prefix",
+        "lint",
+        "hit rate",
+        "fanout",
+        "lifetime",
+        "cost"
+      ],
+      "inputs": "lane --job FILE|- --json | policy --connection C [--records FILE] --json | lint-prefix PATH... --json | hitrate --by card|project|role|model|connection [--records FILE] --json | check --json",
+      "outputs": "JSON (lane: {lane, batch, reason}; policy: {kind, breakpoints, lifetime, gap_seconds, covered, source}; lint-prefix: {ok, compared}; hitrate: {by, groups, skipped}; check: {ok, entries}); exit 1 with a catalog code (STL-LIM-440 data unusable, 441 tool removed, 442 prefix lint failed, 443 fan-out stopped, 444 input unusable)",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/levers.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "c28b59ee-a8ba-4f80-a4a7-65084fca834f",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

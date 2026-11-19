@@ -1861,6 +1861,66 @@
       "check": "`python3 bin/cost.py --help`.",
       "related": "F2c item B; bin/cost.py, .stella/pricing.json",
       "resolvable": false
+    },
+    {
+      "code": "STL-LIM-440",
+      "area": "LIM",
+      "severity": "warning",
+      "title": "the cost levers file cannot be used",
+      "message": "The cost levers file is not valid: {problem}. Batch routing and cache policy cannot be used until it is fixed.",
+      "action": "fix what the message names in .stella/levers.json, then run `python3 bin/levers.py check`. See STL-LIM-440 in docs/alert-codes.md.",
+      "cause": "The file breaks its schema, names a connection the catalog does not have, repeats a connection, lists lifetimes out of order, or holds a pattern that is no regular expression.",
+      "check": "`python3 bin/levers.py check --json`; `python3 bin/stella_data.py check`.",
+      "related": "F2c item D; bin/levers.py, .stella/levers.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-441",
+      "area": "LIM",
+      "severity": "info",
+      "title": "a tool was removed or changed inside a session",
+      "message": "A tool list for a session was refused: {problem}. A removed or changed tool would change the cached prompt prefix.",
+      "action": "keep every tool of the session and add new ones at the end; start a new session to drop a tool. See STL-LIM-441 in docs/alert-codes.md.",
+      "cause": "A caller asked for a tool list that lacks, or redefines, a tool an earlier call of the session already sent.",
+      "check": "`python3 bin/levers.py --help`.",
+      "related": "F2c item D; bin/levers.py, .stella/levers.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-442",
+      "area": "LIM",
+      "severity": "info",
+      "title": "the prompt prefix changed or holds volatile text",
+      "message": "The prefix lint failed: {problem}. The provider cache would miss on this prompt.",
+      "action": "remove the timestamp, run id or other changing text from the stable part (move it to a changing part), then run `python3 bin/levers.py lint-prefix` again. See STL-LIM-442 in docs/alert-codes.md.",
+      "cause": "A stable part differs from the one before it, a part was removed, a changing part comes before a stable one, or a stable part matches a volatile pattern of .stella/levers.json.",
+      "check": "`python3 bin/levers.py lint-prefix PATH --json`.",
+      "related": "F2c item D; bin/levers.py, .stella/levers.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-443",
+      "area": "LIM",
+      "severity": "warning",
+      "title": "the parallel-reviewer fan-out stopped",
+      "message": "The fan-out of reviewers stopped: {problem}. No further reviewer was sent.",
+      "action": "check why the first reviewer call failed or gave no first token, then send the reviews again. See STL-LIM-443 in docs/alert-codes.md.",
+      "cause": "The first call failed, or gave no first token within the wait set in .stella/levers.json.",
+      "check": "`python3 bin/levers.py check --json`.",
+      "related": "F2c item D; bin/levers.py, .stella/levers.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-444",
+      "area": "LIM",
+      "severity": "info",
+      "title": "levers.py was given input it cannot use",
+      "message": "A levers command could not use its input: {problem}. Nothing was changed.",
+      "action": "fix the input the message names (a job needs a kind; --by is one of card, project, role, model, connection). See STL-LIM-444 in docs/alert-codes.md.",
+      "cause": "The job, option, path or prompt file given to levers.py was malformed, or the command failed in an unexpected way.",
+      "check": "`python3 bin/levers.py --help`.",
+      "related": "F2c item D; bin/levers.py, .stella/levers.json",
+      "resolvable": false
     }
   ]
 }
