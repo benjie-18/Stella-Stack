@@ -3,11 +3,12 @@
 bin/resolve.py gives it (resolve(ctx) -> the chain document, link_key(link)): no routing rule lives here, and a provider's answer can
 only move a task along that chain. Nothing here names a model, a provider, a host, a role, a preset or a link class: all are data.
 CLI (host only: every command refuses in a worker environment, STL-CFG-312; the output is always JSON):
-  route.py call --role R --project P [--card C] [--tier T] [--driver D] [--pending-tool-call] --task ID [--schema FILE] [--json]   (prompt on stdin)
+  route.py call --role R --project P [--card C] [--tier T] [--driver D] [--pending-tool-call] [--rung N] --task ID [--schema FILE] [--json]   (prompt on stdin)
       the engine loop's driver: calls the first link the task may use through its connection's wire shape (.stella/protocols.json),
       and on a failure moves on until a link answers. Output: {task, link {connection, model}, link_class, text, tool_calls, usage,
       model, switches, failure_history, refused, stubs}, plus logprobs (the per-token {token, logprob} items) when the link's answer has them
       at the wire shape's response.logprobs pointer (bin/triage.py reads the route label's probability from it).
+      --rung N (the escalation script): the chain is the resolver's rung walk from N (resolve(ctx) with ctx["rung"]): the served rung's link only.
       --schema FILE (F2b B): the answer must be JSON that meets the object schema in FILE, which gets a short `reasoning` string as its first
       property. The link's newest probe record (bin/probe.py) names the output shape: the schema goes at that wire-shape pointer; with none
       (or no record) it goes in the prompt. A wrong answer gets routing probe.repair_retries repair retries, then STL-MDL-736: never a guessed value.
@@ -249,7 +250,7 @@ def cleared_event(a, keys, detail):
 
 def ctx_of(a):
     """What the resolver and the consent gate are asked with."""
-    return {k: getattr(a, k, None) for k in ("role", "project", "card", "tier", "driver", "task", "tokens")}
+    return {k: getattr(a, k, None) for k in ("role", "project", "card", "tier", "driver", "task", "rung", "tokens")}
 
 
 # ---- one step: the next link the task uses ----
@@ -652,6 +653,7 @@ def main(argv):
             p.add_argument("--" + k, required=req)
         p.add_argument("--json", action="store_true")
     sub.choices["call"].add_argument("--pending-tool-call", action="store_true")
+    sub.choices["call"].add_argument("--rung", type=int, help="the chain is that rung of the role's escalation chain (resolve --rung): the escalation script's call")
     sub.choices["attempt"].add_argument("--tokens", type=int, help="the task's size in tokens: a link whose probed effective context is below it is not in the chain")
     sub.choices["call"].add_argument("--schema", help="a JSON Schema file: the answer must be JSON that meets it (one short `reasoning` property is added first)")
     p = sub.add_parser("result")

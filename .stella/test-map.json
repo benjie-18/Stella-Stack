@@ -2823,6 +2823,11 @@
       "why": "F2 W2: the test rig (mock provider server, fake CLI) and the wire-shape data it serves; the selftest starts them in a scratch root"
     },
     {
+      "globs": ["bin/mock_provider.py", ".stella/grants.json"],
+      "targets": ["escalate"],
+      "why": "F2b fix round (D83 via the resolver): the escalate selftest's rung walk on shipped-like data calls the mock through route.py, and its approval case writes a crossing grant"
+    },
+    {
       "globs": [
         "bin/presets-selftest.sh",
         ".stella/connections.json",
