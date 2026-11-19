@@ -99,7 +99,7 @@ REQ='{capability: "qa-host-act", role: $op, run: "qa-run-att", target: {app: "qa
 # dec <tag> [jq filter on the baseline request]: decide on it; RC and $T/o/<tag>.out/.err
 dec() { jq -n --arg op "$OP" "$REQ | ${2:-.}" >"$T/o/$1.req"; run "$1" H decide --request "$T/o/$1.req" --json; }
 allowed() { [ "$RC" = 0 ]; }
-refused() { [ "$RC" = 1 ] && out "$1" | grep -qE 'STL-GRD-6(2[0-9]|3[0-9])'; }
+refused() { [ "$RC" = 1 ] && out "$1" | grep >/dev/null -E 'STL-GRD-6(2[0-9]|3[0-9])'; }
 base() { pres; dec "$1-base"; ok 'allowed' "$2 control: the baseline request (operator role, attended run, owner present, typed route, allowed app, action set to run) is allowed"; }
 
 case $S in
