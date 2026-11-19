@@ -193,14 +193,11 @@ def fanout(shared, members, send, pol, timeout=None, t=None):
             res[i] = send(prompts[i]["text"], members[i], ev)
         except Exception as e:   # the type only: the text could repeat a value
             errs.append(type(e).__name__)
+            ev.set()   # wake the waiting caller at once; errs says it was a failure
     first = threading.Thread(target=run, args=(0, tok), daemon=True)
     first.start()
-    done = threading.Event()
-    threading.Thread(target=lambda: (first.join(), done.set()), daemon=True).start()
-    waited = 0.0
-    while not tok.is_set() and not done.is_set() and waited < wait:
-        tok.wait(0.02); waited += 0.02
-    if not tok.is_set():
+    tok.wait(wait)
+    if errs or not tok.is_set():
         raise Stop(FANOUT, "the first member call " + (f"failed ({errs[0]})" if errs else "gave no first token in time") + "; the others were not sent")
     rest = [threading.Thread(target=run, args=(i, threading.Event()), daemon=True) for i in range(1, len(members))]
     for th in rest:
