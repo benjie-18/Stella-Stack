@@ -2,7 +2,7 @@
 """Capability registry: find, describe, request and load capabilities by role (F3 item C; body B4, AC4). Stdlib only.
 Sources (index key capability_sources -> .stella/capability-sources.json): the registry, skill folders (SKILL.md frontmatter), MCP
 manifests and extension folders. A skill or server found in a source with no registry entry is HIDDEN from every role and raises one
-alert per search (fail closed). Visibility for a role: allowed_roles -> available, requestable_roles -> requestable (+ approval class),
+alert (once an hour per entry, not per search; fail closed). Visibility for a role: allowed_roles -> available, requestable_roles -> requestable (+ approval class),
 else hidden; a hidden id answers exactly like an unknown id (no existence leak). A risk class named in gated_risk_classes is never
 "available" unless bin/host_access.py decide allows the caller's own run and host request (--run, --host-request: {target, action,
 confirmation}; nothing is invented); else it shows as gated and load refuses it. A role's own platform toolsets (role table) are entries of that
@@ -12,7 +12,8 @@ CLI (host side; --role names a role of the role table):
   search WORDS... --role R [--limit N] [--json]    ranked by id / keywords / summary weights from the sources file
   describe ID --role R [--json]
   request ID --reason TEXT --card C --role R [--json]   one approval through bin/approvals.py (class from the entry)
-  load ID --role R --run RUN [--card C] [--json]    the definition; one trusted capability-load line (engine side only)
+  load ID --role R --run RUN [--card C] [--json]    the definition; one trusted capability-load line (engine side only); the run must be an
+                                                    adapter run record of this role (and card), as the capability server gets it from its token
   check-card --role R --card FILE [--json]          every skill / tool of a card JSON must be available to R
   prompt-line [--json]                              the capability line every role prompt carries
   lint [--json]                                     completeness lint (item R): every command file, skill, MCP server and extension of the sources
@@ -63,7 +64,7 @@ def host_allows(e, role, a):
         return False
     try:
         import host_access
-        host_access.decide({"capability": e["id"], "role": role, "run": run} | req)
+        host_access.decide(req | {"capability": e["id"], "role": role, "run": run})
         return True
     except Exception:
         return False
@@ -113,8 +114,8 @@ def frontmatter(text):
     return (n.group(1) if n else None), m.group(2)
 
 
-def skills(src):
-    """{skill name: SKILL.md path} of the skill folders (a folder that resolves outside the root is skipped)."""
+def skills(src, skipped=None):
+    """{skill name: SKILL.md path} of the skill folders (a folder that resolves outside the root is skipped; its name is added to `skipped`)."""
     out = {}
     for d in src["skill_folders"]:
         base = os.path.realpath(os.path.join(sd.ROOT, d))
@@ -125,19 +126,32 @@ def skills(src):
             if os.path.isfile(f) and os.path.realpath(f).startswith(base + os.sep):
                 name = frontmatter(open(f, encoding="utf-8", errors="replace").read())[0]
                 out[name if name and ID.fullmatch(name) else n] = f
+            elif skipped is not None and os.path.isfile(f):
+                skipped.add(n)
     return out
 
 
+def adapter_configs():
+    """The config file of every adapter's policy target (adapters data): an MCP server may be declared there as well."""
+    row = next(r for r in sd.rows() if r["id"] == "adapters")
+    return [e["policy"]["target"]["file"] for e in sd.load(row["path"])["entries"] if e.get("policy", {}).get("target", {}).get("file")]
+
+
 def found_ids(src):
-    """Every skill, MCP server and extension id the sources hold, registered or not."""
-    ids = set(skills(src))
-    for m in src["mcp_manifests"]:
+    """Every skill, MCP server and extension id the sources hold, registered or not (a skill folder skipped for leaving the root counts)."""
+    ids, skipped = set(), set()
+    ids |= set(skills(src, skipped)) | skipped
+    for m in src["mcp_manifests"] + adapter_configs():   # the CLI configs the adapters data names hold servers too
         p = os.path.join(sd.ROOT, m)
         if os.path.isfile(p):
             try:
-                ids |= set(json.load(open(p, encoding="utf-8")).get("mcpServers", {}))
+                doc = json.load(open(p, encoding="utf-8"))
+                for k in src["mcp_keys"]:
+                    if k in doc and not isinstance(doc[k], dict):
+                        raise ValueError(k)
+                    ids |= set(doc.get(k, {}))
             except (OSError, ValueError, AttributeError):
-                raise Refuse(667, f"{m} is not readable JSON", True) from None
+                raise Refuse("STL-GRD-667", f"{m} is not readable JSON", True) from None
     for d in src["extension_folders"]:
         p = os.path.join(sd.ROOT, d)
         for n in sorted(os.listdir(p)) if os.path.isdir(p) else ():
@@ -145,7 +159,7 @@ def found_ids(src):
                 try:
                     ids.add(json.load(open(os.path.join(p, n), encoding="utf-8"))["id"])
                 except (OSError, ValueError, KeyError, TypeError):
-                    raise Refuse(667, f"{d}/{n} is not a readable manifest", True) from None
+                    raise Refuse("STL-GRD-667", f"{d}/{n} is not a readable manifest", True) from None
     return ids
 
 
@@ -153,7 +167,7 @@ def find(entries, cid, role, src, a=None):
     for e in with_toolsets(entries, role, src):
         if e["id"] == cid and (v := visibility(e, role, src, a)):
             return e, v
-    raise Refuse(660, "unknown capability")   # hidden and unknown: one message, the id is not echoed
+    raise Refuse("STL-GRD-660", "unknown capability")   # hidden and unknown: one message, the id is not echoed
 
 
 def cmd_search(a, src, entries):
@@ -168,8 +182,11 @@ def cmd_search(a, src, entries):
             hits.append((-s, e["id"], shown(e, v, s)))
     hits.sort(key=lambda h: h[:2])   # deterministic: score, then id
     out = [h[2] for h in hits[:a.limit or src["default_limit"]]]
-    for n in sorted(found_ids(src) - {e["id"] for e in entries}):   # one alert per unregistered skill / server
-        sd.say("STL-GRD-661", f"{n} has no registry entry", alert=True)
+    import alert_catalog as ac
+    for n in sorted(found_ids(src) - {e["id"] for e in entries}):   # one alert per unregistered entry, then once an hour (the catalog's page policy), not one per search
+        due, f = ac.page_due("STL-GRD-661", n)
+        if due and sd.say("STL-GRD-661", f"{n} has no registry entry", alert=True):
+            ac.mark_paged(f)
     return out
 
 
@@ -191,55 +208,82 @@ def cmd_request(a, src, entries):
                           "new": {"role": a.role, "reason": a.reason[:500]}},
                          f"capability {what} {e['id']} for role {a.role}: {a.reason[:200]}", a.card, src["request_ttl_s"], requester=a.role)
     except (ap.Refusal, sd.DataError, ValueError) as ex:
-        raise Refuse(664, str(ex)[:180]) from None
+        raise Refuse("STL-GRD-664", str(ex)[:180]) from None
     except Exception as ex:   # EventError (a worker environment, a log that cannot be written)
-        raise Refuse(664, getattr(ex, "problem", type(ex).__name__)[:180]) from None
+        raise Refuse("STL-GRD-664", getattr(ex, "problem", type(ex).__name__)[:180]) from None
     return {"id": e["id"], "request_id": rec["id"], "approval_class": rec["approval_class"], "status": rec["status"]}
+
+
+def bind_run(a):
+    """The host CLI's load obeys the binding the capability server gets from its run token record: the run must be in the adapter run
+    records with this role and (when given) this card; the card of the line is the record's, never a self-declared one."""
+    if not RUN.fullmatch(a.run):
+        raise Refuse("STL-GRD-665", "the run or card id is not well formed")
+    try:
+        rec = json.load(open(sd.safe(f"{sd.load(sd.INDEX)['adapter_runs']}/{a.run}.json"), encoding="utf-8"))
+    except (OSError, ValueError, KeyError, sd.DataError):
+        rec = None
+    if not (isinstance(rec, dict) and rec.get("run") == a.run and rec.get("role") == a.role and a.card in (None, rec.get("card"))):
+        raise Refuse("STL-GRD-665", "the run is not a run of this role and card")
+    a.card = rec.get("card")
 
 
 def cmd_load(a, src, entries):
     e, v = find(entries, a.id, a.role, src, a)
     if v != "available":
-        raise Refuse(665, "the capability is not available to this role" if v == "requestable" else "the capability needs the host check first")
+        raise Refuse("STL-GRD-665", "the capability is not available to this role" if v == "requestable" else "the capability needs the host check first")
     if not RUN.fullmatch(a.run) or (a.card and not RUN.fullmatch(a.card)):
-        raise Refuse(665, "the run or card id is not well formed")
+        raise Refuse("STL-GRD-665", "the run or card id is not well formed")
     f = skills(src).get(e["id"]) if e["kind"] == "skill" else None
     d = e.get("definition", {})
     body = frontmatter(open(f, encoding="utf-8", errors="replace").read())[1] if f else d.get("text") or d.get("schema")
     if body is None:
-        raise Refuse(665, "the capability holds no definition")
+        raise Refuse("STL-GRD-665", "the capability holds no definition")
     import event_log as el
     new = {"run": a.run, "role": a.role, "capability": e["id"], "source": e["source"]} | ({"card": a.card} if a.card else {})
     try:
         el.append(el.build("capability-load", e["id"], new=new, who={"role": a.role}))
     except Exception as ex:   # EventError: a worker environment or an invalid line; no line, no load
-        raise Refuse(665, getattr(ex, "problem", type(ex).__name__)[:180]) from None
+        raise Refuse("STL-GRD-665", getattr(ex, "problem", type(ex).__name__)[:180]) from None
     return {"id": e["id"], "definition": body}
+
+
+def card_unavailable(card, role, src, entries):
+    """(ids, the ones the role may not use now) of a card's skills and tools: the one rule of check-card and the card hook. A field
+    must be a list of non-empty strings (ValueError otherwise); the role's own toolsets count as available to it."""
+    ids = []
+    for k in ("skills", "tools"):
+        v = card.get(k)
+        if v is None or v == []:
+            continue
+        if not (isinstance(v, list) and all(isinstance(i, str) and i for i in v)):
+            raise ValueError(f"{k} must be a list of capability ids")
+        ids += v
+    ok = {e["id"] for e in with_toolsets(entries, role, src) if visibility(e, role, src) == "available"}
+    return ids, [i for i in ids if i not in ok]
 
 
 def cmd_check_card(a, src, entries):
     try:
-        card = json.load(open(a.card, encoding="utf-8"))
-        ids = [i for k in ("skills", "tools") for i in card.get(k) or []]
-        assert all(isinstance(i, str) for i in ids)
-    except (OSError, ValueError, AttributeError, AssertionError, TypeError):
-        raise Refuse(666, "the card file is not readable JSON with lists of ids") from None
-    bad = [i for i in ids if not any(e["id"] == i and visibility(e, a.role, src) == "available" for e in with_toolsets(entries, a.role, src))]
+        ids, bad = card_unavailable(json.load(open(a.card, encoding="utf-8")), a.role, src, entries)
+    except (OSError, ValueError, AttributeError, TypeError):
+        raise Refuse("STL-GRD-666", "the card file is not readable JSON with lists of ids") from None
     if bad:
-        raise Refuse(666, "not available to the card's role: " + ", ".join(i[:64] for i in bad[:5]))
+        raise Refuse("STL-GRD-666", "not available to the card's role: " + ", ".join(i[:64] for i in bad[:5]))
     return {"ok": True, "checked": ids}
 
 
 def commands(src):
-    """Repo-relative path of every command file of the command folders (selftests excluded by the sources' patterns)."""
-    out = []
+    """Repo-relative path of every command file under the command folders, recursively: any file with the user x bit (any name or
+    extension) or matching a glob, minus the excludes (all matched case-insensitively on the file name)."""
+    out, hit = set(), lambda n, gs: any(fnmatch.fnmatchcase(n.casefold(), g.casefold()) for g in gs)
     for d in src["command_folders"]:
-        base = os.path.join(sd.ROOT, d)
-        for n in sorted(os.listdir(base)) if os.path.isdir(base) else ():
-            if os.path.isfile(os.path.join(base, n)) and any(fnmatch.fnmatch(n, g) for g in src["command_globs"]) \
-                    and not any(fnmatch.fnmatch(n, g) for g in src["command_exclude"]):
-                out.append(f"{d}/{n}")
-    return out
+        for top, _, names in os.walk(os.path.join(sd.ROOT, d)):
+            for n in names:
+                p = os.path.join(top, n)
+                if os.path.isfile(p) and (os.stat(p).st_mode & 0o100 or hit(n, src["command_globs"])) and not hit(n, src["command_exclude"]):
+                    out.add(os.path.relpath(p, sd.ROOT))
+    return sorted(out)
 
 
 def cmd_lint(a, src, entries):
@@ -274,7 +318,7 @@ def main(argv):
     try:
         if w := worker_env.reason():   # before reading anything: a worker asks the capability server (DC-05)
             if a.cmd in ("check-card", "prompt-line", "lint") or any(getattr(a, f, None) is not None for f in ("role", "card", "run", "host_request")):
-                raise Refuse(662, w + "; role, card and run come from the run token, through the capability server")
+                raise Refuse("STL-GRD-662", w + "; role, card and run come from the run token, through the capability server")
             import capabilities_mcp as mcp
             args = ({"query": " ".join(a.words)} if a.cmd == "search" else {}) | {
                 k: v for k in ("limit", "id", "reason") if (v := getattr(a, k, None)) is not None}
@@ -287,17 +331,19 @@ def main(argv):
             if missing := [f for f in need[a.cmd] if getattr(a, f[2:]) is None]:
                 p.error("the following arguments are required: " + ", ".join(missing))
             src = sources()
+            if a.cmd == "load" and role_ok(a.role):
+                bind_run(a)
             if getattr(a, "host_request", None):
                 try:
                     a.host_request = json.load(open(a.host_request, encoding="utf-8"))
                 except (OSError, ValueError):
-                    raise Refuse(667, "the host request file is not readable JSON") from None
+                    raise Refuse("STL-GRD-667", "the host request file is not readable JSON") from None
             if a.cmd == "prompt-line":
                 out = {"line": src["capability_prompt_line"]}
             elif a.cmd == "lint":
                 out = cmd_lint(a, src, registry())
             elif not role_ok(a.role):
-                raise Refuse(663, "the role is not in the role table")
+                raise Refuse("STL-GRD-663", "the role is not in the role table")
             else:
                 fn = {"check-card": cmd_check_card}.get(a.cmd) or globals()["cmd_" + a.cmd]
                 out = fn(a, src, registry())

@@ -37,7 +37,7 @@ import run_token
 import stella_data as sd
 import worker_env
 
-AUTH, HOST, BADREQ, BADCALL, FAILED, SERVE, UNREACHABLE, ANSWER = (f"STL-GRD-{n}" for n in range(675, 683))
+AUTH, HOST, BADREQ, BADCALL, FAILED, SERVE, UNREACHABLE, ANSWER = ("STL-GRD-675", "STL-GRD-676", "STL-GRD-677", "STL-GRD-678", "STL-GRD-679", "STL-GRD-680", "STL-GRD-681", "STL-GRD-682")
 STATE_KEY = "capabilities_mcp_state"
 STR, INT = {"type": "string"}, {"type": "integer", "minimum": 1}
 TOOLS = {   # name -> (description, properties, required); the role is never an argument
@@ -91,11 +91,11 @@ def tool_call(rec, params):
                               words=[args.get("query", "")], limit=args.get("limit"))
     try:
         if not cap.role_ok(a.role):
-            raise cap.Refuse(663, "the role of the run token is not in the role table")
+            raise cap.Refuse("STL-GRD-663", "the role of the run token is not in the role table")
         out = getattr(cap, "cmd_" + name)(a, cap.sources(), cap.registry())
     except cap.Refuse as r:
-        sd.say(f"STL-GRD-{r.code}", r.problem, alert=r.alert)   # the server's own stderr and alert log, as the CLI does
-        err = {"code": f"STL-GRD-{r.code}", "message": r.problem}
+        sd.say(r.full(), r.problem, alert=r.alert)   # the server's own stderr and alert log, as the CLI does
+        err = {"code": r.full(), "message": r.problem}
         return {"content": [{"type": "text", "text": json.dumps({"error": err})}], "structuredContent": {"error": err}, "isError": True}
     out = {"results": out} if isinstance(out, list) else out
     return {"content": [{"type": "text", "text": json.dumps(out)}], "structuredContent": out, "isError": False}

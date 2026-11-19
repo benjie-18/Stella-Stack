@@ -2385,7 +2385,7 @@
       "code": "STL-GRD-660",
       "area": "GRD",
       "severity": "warning",
-      "title": "a capability is unknown",
+      "title": "no such capability for this role",
       "message": "No capability with that id is known to this role: {problem}.",
       "action": "check the id with `python3 bin/capabilities.py search <words> --role <role>`.",
       "cause": "The id is not in the capability registry, or the registry entry is not visible to the role (a hidden one answers exactly like an unknown one).",
@@ -2403,7 +2403,8 @@
       "cause": "A folder or manifest named in .stella/capability-sources.json holds something the registry does not list. Nothing unregistered can be found or loaded.",
       "check": "`python3 bin/capabilities.py search <words> --role <role> --json`; `python3 bin/stella_data.py check`.",
       "related": "F3 item C; bin/capabilities.py, .stella/capability-sources.json",
-      "resolvable": false
+      "resolvable": false,
+      "page": "hourly"
     },
     {
       "code": "STL-GRD-662",
@@ -2448,7 +2449,7 @@
       "title": "a capability could not be loaded",
       "message": "The capability was not loaded: {problem}.",
       "action": "request it first (`python3 bin/capabilities.py request`), then load it.",
-      "cause": "The capability is not available to the role (a requestable one needs its approval first), its class needs the host check, it holds no definition, or the load line could not be written.",
+      "cause": "The capability is not available to the role (a requestable one needs its approval first), its class needs the host check, the run is not a run of this role and card, it holds no definition, or the load line could not be written.",
       "check": "`python3 bin/capabilities.py search <words> --role <role> --json`; `python3 bin/stella_data.py check`.",
       "related": "F3 item C; bin/capabilities.py, .stella/capability-sources.json",
       "resolvable": false
@@ -2878,7 +2879,7 @@
       "area": "GRD",
       "severity": "warning",
       "title": "a capability server call has no valid run token",
-      "message": "The capability server refused a request with no run token, or with one that is unknown, expired or revoked: {problem}.",
+      "message": "The capability server refused a request with no run token, or with one that is not recognised, expired or revoked: {problem}.",
       "action": "start the run again so it gets a fresh token; nothing for the owner unless it repeats.",
       "cause": "Only a run's own token opens the capability server, and the role, card and run come from that token. Nothing else of the request was read.",
       "check": "`python3 bin/stella_data.py check`; the server's state at the index key capabilities_mcp_state; `bash bin/capabilities-mcp-selftest.sh`.",
@@ -2913,7 +2914,7 @@
       "code": "STL-GRD-678",
       "area": "GRD",
       "severity": "warning",
-      "title": "a capability server method or tool is unknown",
+      "title": "a capability server method or tool is not served",
       "message": "The capability server refused a JSON-RPC method, tool or arguments it does not serve: {problem}.",
       "action": "list the tools with tools/list and call one with its arguments.",
       "cause": "The server serves initialize, ping, tools/list and tools/call with the tools search, describe, request and load.",

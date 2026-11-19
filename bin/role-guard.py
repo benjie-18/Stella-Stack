@@ -86,16 +86,11 @@ def paths(text):
 def capability_problems(a, role):
     """K (STL-GRD-683/684): every skill / tool id of the card must be available to the assignee's role (capabilities.py's own
     visibility; requestable is not enough). Unknown ids, a non-list field and an unreadable registry all refuse."""
-    ids = [(k, a.get(k)) for k in ("skills", "tools") if a.get(k) not in (None, [])]
-    if not ids:
+    if all(a.get(k) in (None, []) for k in ("skills", "tools")):
         return []
     try:
-        import capabilities as caps
-        if not all(isinstance(v, list) and all(isinstance(i, str) for i in v) for _, v in ids):
-            raise ValueError("skills and tools must be lists of capability ids")
-        src, entries = caps.sources(), caps.registry()
-        bad = [i for _, v in ids for i in v
-               if not any(e["id"] == i and caps.visibility(e, role, src) == "available" for e in entries)]
+        import capabilities as caps   # the one rule of the card fields, shared with `capabilities.py check-card`
+        bad = caps.card_unavailable(a, role, caps.sources(), caps.registry())[1]
     except Exception as e:
         roles.log_alert("STL-GRD-684", problem=f"{type(e).__name__}: {e}"[:300])
         return [f"[STL-GRD-684] the card's skills and tools cannot be checked ({type(e).__name__}), so no card with them is created now"]
