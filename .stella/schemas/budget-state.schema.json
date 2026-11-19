@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Budget state",
+  "description": "The budget state (index key budget_state; F2c C), written on the host only by bin/budget.py: soft thresholds already alerted (key: budget, key, period, cap, percent; value: time), holds (hold id: the hold and its approval request id), card estimates and actuals, anomaly episodes already alerted (fingerprint: time).",
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "soft": {"type": "object", "additionalProperties": {"type": "string"}},
+    "holds": {"type": "object", "additionalProperties": {"type": "object"}},
+    "cards": {"type": "object", "additionalProperties": {"type": "object"}},
+    "episodes": {"type": "object", "additionalProperties": {"type": "string"}}
+  },
+  "required": ["schema_version", "soft", "holds", "cards", "episodes"],
+  "additionalProperties": false
+}

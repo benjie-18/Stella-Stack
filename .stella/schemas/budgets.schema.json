@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Budgets",
+  "description": "Spending budgets and cost anomaly parameters read by bin/budget.py (F2c C). A budget is one scope (project, card or role, the usage record field of that name), one key (a name, or * for every key of the scope that has no budget of its own), a window of whole days (null: for ever), soft thresholds in percent of the cap, a hard cap in money, and/or a cap on the share of a subscription plan. At the hard cap a hold stops every call of that key and one approval request is raised; on_approve says what an approved owner-path answer does (raise the cap by a percent, or defer to a named link the data policy allows); no answer, a denial or an expiry leaves the hold in force (pause). Every number and every word the tool uses is here.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "approval": {
+      "type": "object",
+      "properties": {
+        "class": {"type": "string", "pattern": "^[a-z]+$", "description": "The approval class of the request (an enum value of the approval-request schema; check-data judges it)."},
+        "op": {"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,40}$", "description": "The op of the approval action; its target is op:hold id."},
+        "ttl_s": {"type": "integer", "minimum": 1, "maximum": 2592000, "description": "Seconds the request stays open; an expired request is a denial: the hold stays."},
+        "card_prefix": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,40}$", "description": "The card id of a request whose scope has no card is this prefix and the hold id."},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 1000, "description": "The request text; {scope} {key} {measure} {spent} {cap} {options} are filled in."},
+        "options": {
+          "type": "object",
+          "properties": {
+            "pause": {"type": "string", "minLength": 1, "maxLength": 300},
+            "defer": {"type": "string", "minLength": 1, "maxLength": 300},
+            "raise": {"type": "string", "minLength": 1, "maxLength": 300}
+          },
+          "required": ["pause", "defer", "raise"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["class", "op", "ttl_s", "card_prefix", "summary", "options"],
+      "additionalProperties": false
+    },
+    "budgets": {
+      "type": "array",
+      "maxItems": 2000,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]*$", "maxLength": 128},
+          "scope": {"enum": ["project", "card", "role"], "description": "The usage record field the budget sums over."},
+          "key": {"type": "string", "pattern": "^(\\*|[A-Za-z0-9][A-Za-z0-9_.:-]{0,127})$", "description": "A name, or * for every key of the scope without its own budget."},
+          "window_days": {"type": ["integer", "null"], "minimum": 1, "maximum": 3660, "description": "Whole days per period (periods are counted from 1970-01-01 UTC); null: one period for ever."},
+          "soft_percent": {"type": "array", "maxItems": 20, "uniqueItems": true, "items": {"type": "number", "minimum": 1, "maximum": 99}, "description": "Percent of the cap at which one alert is sent (each once per period and cap)."},
+          "hard": {
+            "type": ["object", "null"],
+            "properties": {
+              "amount": {"type": "number", "minimum": 0},
+              "currency": {"type": "string", "pattern": "^[A-Z]{3}$"}
+            },
+            "required": ["amount", "currency"],
+            "additionalProperties": false
+          },
+          "plan_share_cap": {"type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "The most of a subscription plan's limit (a fraction) the key may use in a period; null: none."},
+          "on_approve": {
+            "type": "object",
+            "properties": {
+              "option": {"enum": ["raise", "defer"]},
+              "raise_percent": {"type": ["number", "null"], "minimum": 1, "maximum": 10000},
+              "connection": {"type": ["string", "null"], "maxLength": 200},
+              "model": {"type": ["string", "null"], "maxLength": 200}
+            },
+            "required": ["option", "raise_percent", "connection", "model"],
+            "additionalProperties": false
+          },
+          "global_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+          "install_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+        },
+        "required": ["id", "scope", "key", "window_days", "soft_percent", "hard", "plan_share_cap", "on_approve"],
+        "additionalProperties": false
+      }
+    },
+    "estimate": {
+      "type": "object",
+      "properties": {
+        "min_history": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Closed cards of a kind needed before their median replaces the default."},
+        "kinds": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {"amount": {"type": "number", "minimum": 0}, "currency": {"type": "string", "pattern": "^[A-Z]{3}$"}},
+            "required": ["amount", "currency"],
+            "additionalProperties": false
+          },
+          "description": "The default estimate of a card kind with too little history."
+        }
+      },
+      "required": ["min_history", "kinds"],
+      "additionalProperties": false
+    },
+    "anomalies": {
+      "type": "object",
+      "properties": {
+        "spend_rate": {
+          "type": "object",
+          "properties": {
+            "window_minutes": {"type": "integer", "minimum": 1},
+            "trailing_windows": {"type": "integer", "minimum": 2, "maximum": 1000},
+            "factor": {"type": "number", "minimum": 1},
+            "min_amount": {"type": "number", "minimum": 0, "description": "The trailing median must be at least this to count as a baseline, and the current window at least this to count as a spike."},
+            "lookback_minutes": {"type": "integer", "minimum": 1}
+          },
+          "required": ["window_minutes", "trailing_windows", "factor", "min_amount", "lookback_minutes"],
+          "additionalProperties": false
+        },
+        "retry_loop": {
+          "type": "object",
+          "properties": {"min_calls": {"type": "integer", "minimum": 2}, "lookback_minutes": {"type": "integer", "minimum": 1}},
+          "required": ["min_calls", "lookback_minutes"],
+          "additionalProperties": false
+        },
+        "growing_session": {
+          "type": "object",
+          "properties": {"min_calls": {"type": "integer", "minimum": 2}, "lookback_minutes": {"type": "integer", "minimum": 1}},
+          "required": ["min_calls", "lookback_minutes"],
+          "additionalProperties": false
+        },
+        "outlier_card": {
+          "type": "object",
+          "properties": {"factor": {"type": "number", "minimum": 1}, "min_cards": {"type": "integer", "minimum": 2}, "lookback_minutes": {"type": "integer", "minimum": 1}},
+          "required": ["factor", "min_cards", "lookback_minutes"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["spend_rate", "retry_loop", "growing_session", "outlier_card"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["schema_version", "approval", "budgets", "estimate", "anomalies"],
+  "additionalProperties": false
+}

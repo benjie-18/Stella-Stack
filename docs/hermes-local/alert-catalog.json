@@ -1861,6 +1861,78 @@
       "check": "`python3 bin/cost.py --help`.",
       "related": "F2c item B; bin/cost.py, .stella/pricing.json",
       "resolvable": false
+    },
+    {
+      "code": "STL-LIM-430",
+      "area": "LIM",
+      "severity": "info",
+      "title": "a budget passed a soft threshold",
+      "message": "A budget is getting used up: {problem}. Nothing is stopped yet.",
+      "action": "look at the spending (`python3 bin/ledger.py report --by project`) and the budget in .stella/budgets.json. See STL-LIM-430 in docs/alert-codes.md.",
+      "cause": "Spending in a budget's period passed one of its soft thresholds (a percent of the cap, set in the budget).",
+      "check": "`python3 bin/budget.py check --json`; `python3 bin/stella_data.py get budgets`.",
+      "related": "F2c item C; bin/budget.py, .stella/budgets.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-431",
+      "area": "LIM",
+      "severity": "warning",
+      "title": "a budget hit its hard cap and is on hold",
+      "message": "A budget reached its hard cap: {problem}. Every call of that key is refused until you answer the approval request; with no answer it stays paused.",
+      "action": "answer the approval request (approve: the budget's own option runs, a raise or a deferral to an allowed link; deny: it stays paused), or raise the cap in .stella/budgets.json. See STL-LIM-431 in docs/alert-codes.md.",
+      "cause": "Spending passed the hard cap of a budget (money or plan share).",
+      "check": "`python3 bin/budget.py hold list --json`; `python3 bin/approvals.py status <request id>`.",
+      "related": "F2c item C; bin/budget.py, .stella/budgets.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-432",
+      "area": "LIM",
+      "severity": "warning",
+      "title": "a call was refused by a budget hold",
+      "message": "A call was refused: {problem}. Nothing moves in that scope until the hold is answered.",
+      "action": "answer the hold's approval request. See STL-LIM-432 in docs/alert-codes.md.",
+      "cause": "A hold made by a budget's hard cap is in force and has no approved answer (unanswered, denied, expired, or a deferral the data policy does not allow).",
+      "check": "`python3 bin/budget.py hold list --json`.",
+      "related": "F2c item C; bin/budget.py, .stella/budgets.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-433",
+      "area": "LIM",
+      "severity": "warning",
+      "title": "a cost anomaly was found",
+      "message": "Unusual spending was found: {problem}.",
+      "action": "look at the card or session the message names (`python3 bin/ledger.py report --by card`); the detector settings are in .stella/budgets.json. See STL-LIM-433 in docs/alert-codes.md.",
+      "cause": "One of the detectors (spend rate, retry loop, growing session, outlier card) matched; one alert per episode.",
+      "check": "`python3 bin/budget.py anomalies --json`.",
+      "related": "F2c item C; bin/budget.py, .stella/budgets.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-434",
+      "area": "LIM",
+      "severity": "warning",
+      "title": "the budget data or state cannot be used",
+      "message": "Budgets cannot be checked: {problem}. Calls that need a budget check are refused until it is fixed.",
+      "action": "fix the problem the message names in .stella/budgets.json, then run `python3 bin/budget.py check-data`. See STL-LIM-434 in docs/alert-codes.md.",
+      "cause": "The budgets file or the budget state file breaks its schema or cannot be read.",
+      "check": "`python3 bin/budget.py check-data --json`; `python3 bin/stella_data.py check`.",
+      "related": "F2c item C; bin/budget.py, .stella/budgets.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-435",
+      "area": "LIM",
+      "severity": "info",
+      "title": "budget.py was given input it cannot use",
+      "message": "A budget command could not use its input: {problem}. Nothing was changed.",
+      "action": "fix the input the message names. See STL-LIM-435 in docs/alert-codes.md.",
+      "cause": "The command or its option was not valid.",
+      "check": "`python3 bin/budget.py --help`.",
+      "related": "F2c item C; bin/budget.py, .stella/budgets.json",
+      "resolvable": false
     }
   ]
 }

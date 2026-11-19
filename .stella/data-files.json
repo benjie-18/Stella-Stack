@@ -327,7 +327,21 @@
       "record_kind": "setting",
       "global_id": "6bc5edc3-80b5-48aa-adbb-cd232e8b61aa",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "budgets",
+      "path": ".stella/budgets.json",
+      "schema": "budgets",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": "budgets",
+      "id_field": "id",
+      "record_kind": "setting",
+      "global_id": "442de288-ebe4-4a3b-9093-894e2a7a93ea",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ],
-  "spans": ".supervisor/logs/spans.jsonl"
+  "spans": ".supervisor/logs/spans.jsonl",
+  "budget_state": ".supervisor/state/budget-state.json"
 }

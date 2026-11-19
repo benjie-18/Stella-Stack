@@ -87,7 +87,7 @@ OM=$(jq -r --arg c "$OTHER" '.entries[] | select(.id == $c) | .models[0].id' "$R
 ed budgets.json --arg c "$LOCAL" --arg m "$LM" '.budgets += [
   {id: "qa-defer", scope: "project", key: "p-defer", window_days: 1, soft_percent: [], hard: {amount: 10, currency: "QAC"}, plan_share_cap: null, on_approve: {option: "defer", raise_percent: null, connection: $c, model: $m}},
   {id: "qa-nodefer", scope: "project", key: "p-nodefer", window_days: 1, soft_percent: [], hard: {amount: 10, currency: "QAC"}, plan_share_cap: null, on_approve: {option: "defer", raise_percent: null, connection: $c, model: $m}}]'
-ed data-policy.json '.projects["p-nodefer"] = {mode: "allowed_providers", allowed_providers: []}'
+ed data-policy.json --arg g "$(uuid)" --arg i "$IID" '.projects["p-nodefer"] = {mode: "allowed_providers", allowed_providers: [], global_id: $g, install_id: $i}'
 ok "BU check-data --json | jq -e '.ok == true'" "T-CORE-BUDGET the scratch budgets (a new project, card and role budget, added as data) pass check-data"
 
 # ---- T-BUD-SOFT: thresholds before the cap, each once ----
@@ -218,7 +218,8 @@ ok "echo '$OUT' | jq -e '.new == []'" "T-BUD-ANOM a quiet ledger (short rises, a
 ed budgets.json '.budgets[0].hard = {amount: -1, currency: "QAC"}'
 OUT=$(BU check --project p-soft --json 2>$T/err); RC=$?
 ok "[ $RC = 1 ] && grep -q STL-LIM-434 $T/err && echo '$OUT' | jq -e '.code == \"STL-LIM-434\"'" "a broken budgets file fails closed: STL-LIM-434, the call is refused"
-ok "BU check-data --json | jq -e '.ok == false'" "check-data names the broken row"
+OUT=$(BU check-data --json 2>/dev/null); RC=$?
+ok "[ $RC = 1 ] && echo '$OUT' | jq -e '.ok == false and (.problems[0] | test(\"hard\"))'" "check-data exits 1 and names the broken row"
 ok "! grep -rq 'sekret' $AL $EV" "no secret value in the alert or event logs"
 
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
