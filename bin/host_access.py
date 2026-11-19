@@ -4,7 +4,8 @@ stdlib only. Host side: refused in a worker environment (bin/worker_env.py, STL-
 decide() is pure over data and host-written facts; it changes nothing. The request carries only {capability, role, run, request, target
 {app, domain}, action {type}, confirmation} (request: the id the host wrote when the owner started the request): every other fact comes
 from a record, never from the request:
-  the capability's risk class and roles from the registry (index row capabilities; risk_class host_session | input_source);
+  the capability's risk class and roles from the registry (index row capabilities, validated with its schema; risk_class
+  host_session | input_source; status approved);
   the role's host_operator flag from the role table (absent = false; never a role's name);
   attended/background from the run record (index key adapter_runs, <dir>/<run>.json, written by the adapter);
   route, presence (indicator, kill switch, each input source's own indicator), device id + biometric and turn finality from the host
@@ -132,6 +133,8 @@ def confirmed(q):
         want = oa.digest(asked(q))
     except ValueError:
         return "the request cannot be bound to a confirmation"
+    if not isinstance(req.get("digest"), str):
+        return f"confirmation {rid} has no digest of its action"
     if not hmac.compare_digest(req["digest"].encode(), want.encode()):
         return f"confirmation {rid} is for another action"
     return None
@@ -151,13 +154,12 @@ def decide(q):
     need(app not in {low(x) for x in never["apps"]} and not (dom and any(dom == low(v) or dom.endswith("." + low(v)) for v in never["domains"])),
          "STL-GRD-623", "the target is the Stella vault, which is never a host target")
     try:
-        # shortcut: the registry is read without its schema until item C adds host_session/input_source to the risk_class enum; then sd.checked
-        reg = sd.load(next(r["path"] for r in sd.rows() if r["id"] == "capabilities"))
-        ent = next((e for e in reg["entries"] if isinstance(e, dict) and e.get("id") == cap), None)
+        ent = next((e for e in row("capabilities")["entries"] if e["id"] == cap), None)
         rt = roles.load()
     except (sd.DataError, StopIteration, KeyError, TypeError, roles.RolesError) as e:
         raise Refused("STL-GRD-622", f"the capability registry or the role table cannot be read: {e}") from None
-    need(ent is not None and ent.get("risk_class") in RISK, "STL-GRD-621", f"capability {cap} is not a host-session or input-source capability of the registry")
+    need(ent is not None and ent["risk_class"] in RISK and ent["status"] == "approved", "STL-GRD-621",
+         f"capability {cap} is not an approved host-session or input-source capability of the registry")
     need(isinstance(ent.get("allowed_roles"), list) and role in ent["allowed_roles"], "STL-GRD-621", f"capability {cap} is not granted to role {role}")
     need(isinstance(rt["roles"].get(role), dict) and rt["roles"][role].get("host_operator") is True, "STL-GRD-624",
          f"role {role} is not marked host_operator in the role table")
