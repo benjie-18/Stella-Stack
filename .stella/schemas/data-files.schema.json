@@ -56,6 +56,11 @@
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The triage router's fitted threshold (F2b F), one file (schema triage-calibration): written by bin/triage.py fit from the labelled verdicts, on the host only; a protected state path, not a data file (no role writes it, git never holds it)."
     },
+    "benchmark_results": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The benchmark results (F2c E), one file (schema benchmarks): one record per trial of a task for a role on a link, each with a trusted benchmark.recorded event line; read by bin/compare.py, which ignores invalid, foreign-install and unproved records; a protected state path, not a data file (no role writes it, git never holds it)."
+    },
     "card_facts": {
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
@@ -174,6 +179,7 @@
     "card_facts",
     "probe_records",
     "triage_calibration",
+    "benchmark_results",
     "agents_dir",
     "team_bodies",
     "team_preset",

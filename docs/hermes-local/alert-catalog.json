@@ -1696,6 +1696,54 @@
       "check": ".supervisor/logs/alerts.log (type, owner, mode); free disk space; ESCALATE_SUP_DIR when set.",
       "related": "F1c B6, D5; bin/owner_auth.py remote_change, .stella/owner-auth.json remote",
       "resolvable": false
+    },
+    {
+      "code": "STL-MDL-750",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "a comparison was given records it cannot use",
+      "message": "bin/compare.py refused its input: {problem}. Nothing was compared and nothing was changed.",
+      "action": "fix the records file (a JSON list of {task, trial, passed, score?}) and run the command again. See STL-MDL-750 in docs/alert-codes.md.",
+      "cause": "compare.py compare or stats was given a file it cannot read, that is not a JSON list, or whose records lack a task, a boolean passed or a score from 0 to 1.",
+      "check": "`python3 bin/compare.py compare --a A.json --b B.json --json`.",
+      "related": "F2c item E; bin/compare.py, .stella/model-check.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-MDL-751",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "a candidate broke a task of the regression set",
+      "message": "The candidate fails a task that earlier failed cards fixed and that must keep passing: {problem}. The comparison is refused whatever the mean score; nothing was changed.",
+      "action": "do not switch to this candidate; look at the named tasks. See STL-MDL-751 in docs/alert-codes.md.",
+      "cause": "compare.py compare was given a regression set and the candidate's trials of a set task passed less often than model-check.json regression_set.min_pass_rate, or were missing.",
+      "check": "`python3 bin/compare.py compare --a A.json --b B.json --regression R.json --json` names the tasks in `failed`.",
+      "related": "F2c item E; bin/compare.py, .stella/model-check.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-MDL-752",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "the comparison parameters cannot be used",
+      "message": "bin/compare.py cannot use .stella/model-check.json: {problem}. No comparison was made and no routing statistic was computed.",
+      "action": "fix the file (`python3 bin/stella_data.py check` names the problem), then run `python3 bin/compare.py check`. See STL-MDL-752 in docs/alert-codes.md.",
+      "cause": "The comparison parameters file is missing, fails its schema, or asks for pass_k above trials.",
+      "check": "`python3 bin/stella_data.py check`; `python3 bin/compare.py check --json`.",
+      "related": "F2c item E; bin/compare.py, .stella/model-check.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-MDL-753",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "the benchmark results cannot be used",
+      "message": "The benchmark results file or its trusted lines cannot be read or written: {problem}. Routing keeps the advertised scores until the file is usable.",
+      "action": "check the file at the index key benchmark_results and the event log; `python3 bin/compare.py check`. See STL-MDL-753 in docs/alert-codes.md.",
+      "cause": "The benchmark results file is not valid JSON, is not a document of schema benchmarks, a row given to compare.py record is invalid, or the event log cannot take the trusted benchmark.recorded line.",
+      "check": "`python3 bin/compare.py check --json`; `python3 bin/event_log.py --help`.",
+      "related": "F2c item E; bin/compare.py, .stella/model-check.json",
+      "resolvable": false
     }
   ]
 }

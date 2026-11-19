@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Model comparison parameters",
+  "description": "Every number that acts in a model or profile comparison (bin/compare.py, F2c item E) and in the weekly model check. Defaults chosen before any result was seen; the owner may change them here, no code names them. Scores are on a 0 to 1 scale.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "confidence": {"type": "number", "minimum": 0.5, "maximum": 0.999, "description": "Confidence level of the interval on the mean paired difference (0.95 = a 95% interval). Strictly above 0.5 and below 1: bin/compare.py rejects the ends."},
+    "trials": {"type": "integer", "minimum": 2, "maximum": 100, "description": "Trials of each task for each arm."},
+    "pass_k": {"type": "integer", "minimum": 1, "maximum": 100, "description": "k of pass^k: the chance that k trials of a task all pass. Not above trials (bin/compare.py check)."},
+    "margin": {"type": "number", "minimum": 0, "maximum": 1, "description": "Non-inferiority margin: a cheaper arm is accepted when the lower bound of the interval stays above minus this."},
+    "min_tasks": {"type": "integer", "minimum": 2, "maximum": 100000, "description": "Fewest paired tasks a comparison needs; fewer is inconclusive (min_sample)."},
+    "routing_min_tasks": {"type": "integer", "minimum": 1, "maximum": 100000, "description": "Fewest benchmark tasks of one link and role before the benchmark mean replaces the advertised score in routing."},
+    "stale_catalog_days": {"type": "integer", "minimum": 1, "maximum": 3650, "description": "Age in days after which a provider model list counts as stale in the weekly check (read by item F)."},
+    "regression_set": {
+      "type": "object",
+      "description": "The rule for the regression set (tasks from failed cards that must keep passing).",
+      "properties": {
+        "min_pass_rate": {"type": "number", "minimum": 0, "maximum": 1, "description": "Share of a set task's trials the candidate must pass; 1 means every trial."}
+      },
+      "required": ["min_pass_rate"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["schema_version", "confidence", "trials", "pass_k", "margin", "min_tasks", "routing_min_tasks", "stale_catalog_days", "regression_set"],
+  "additionalProperties": false
+}
