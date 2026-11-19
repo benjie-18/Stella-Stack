@@ -2778,6 +2778,30 @@
       "resolvable": false
     },
     {
+      "code": "STL-GRD-683",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a card names a skill or tool its role cannot use",
+      "message": "A card was refused: it names skills or tools that are not available to its assignee's role: {problem}.",
+      "action": "remove them from the card, or request them with bin/capabilities.py request and create the card after the owner approves.",
+      "cause": "Only a capability that is approved and in the role's allowed_roles may be named on a card; requestable, gated, hidden and unknown ids are all refused.",
+      "check": "`python3 bin/capabilities.py check-card --role <role> --card <file>`; `bash bin/role-guard-selftest.sh`.",
+      "related": "F3 item K; bin/role-guard.py (capability_problems), bin/capabilities.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-684",
+      "area": "GRD",
+      "severity": "critical",
+      "title": "a card's skills and tools cannot be checked",
+      "message": "A card with skills or tools was refused because they could not be checked: {problem}.",
+      "action": "run the check below; no card with skills or tools is created until the capability registry reads again.",
+      "cause": "The capability registry or its sources file is unreadable, or the card's skills or tools are not lists of ids.",
+      "check": "`python3 bin/capabilities.py check-card --role <role> --card <file>`; `bash bin/role-guard-selftest.sh`.",
+      "related": "F3 item K; bin/role-guard.py (capability_problems), bin/capabilities.py",
+      "resolvable": false
+    },
+    {
       "code": "STL-ESC-250",
       "area": "ESC",
       "severity": "warning",

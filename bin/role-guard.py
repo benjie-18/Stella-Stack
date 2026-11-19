@@ -83,6 +83,29 @@ def paths(text):
     return out
 
 
+def capability_problems(a, role):
+    """K (STL-GRD-683/684): every skill / tool id of the card must be available to the assignee's role (capabilities.py's own
+    visibility; requestable is not enough). Unknown ids, a non-list field and an unreadable registry all refuse."""
+    ids = [(k, a.get(k)) for k in ("skills", "tools") if a.get(k) not in (None, [])]
+    if not ids:
+        return []
+    try:
+        import capabilities as caps
+        if not all(isinstance(v, list) and all(isinstance(i, str) for i in v) for _, v in ids):
+            raise ValueError("skills and tools must be lists of capability ids")
+        src, entries = caps.sources(), caps.registry()
+        bad = [i for _, v in ids for i in v
+               if not any(e["id"] == i and caps.visibility(e, role, src) == "available" for e in entries)]
+    except Exception as e:
+        roles.log_alert("STL-GRD-684", problem=f"{type(e).__name__}: {e}"[:300])
+        return [f"[STL-GRD-684] the card's skills and tools cannot be checked ({type(e).__name__}), so no card with them is created now"]
+    if bad:
+        roles.log_alert("STL-GRD-683", problem=", ".join(i[:64] for i in bad[:5]))
+        return [f"[STL-GRD-683] not available to the {role} role: {', '.join(i[:64] for i in bad[:5])}. Remove them from skills and tools, "
+                "or request them first (bin/capabilities.py request)"]
+    return []
+
+
 def create_problems(d, a, profile, b):
     prof_rows = d["profiles"]
     workers = sorted(p for p, row in prof_rows.items() if d["roles"][row["role"]]["assignable"])
@@ -115,6 +138,7 @@ def create_problems(d, a, profile, b):
         parent_wts = [f"{r}/.worktrees/{p}" for r in repos for p in parents]
         if not wpath or os.path.normpath(str(wpath)) not in parent_wts:
             probs.append("set workspace_path to the worktree of a card listed in parents (<repo>/.worktrees/<parent id>)")
+    probs += capability_problems(a, row["role"])
     present = [k for k in roles.OVERRIDES if a.get(k)]
     bad = [k for k in present if k not in arole["allowed_overrides"]]
     if bad:
