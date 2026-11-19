@@ -131,6 +131,21 @@ askfirst)   # AC10-askfirst
   dec f1 '.action.type = "qa-delete"'; ok 'refused f1' "AC10-askfirst an ask-first action with no confirmation: refused"
   dec f2 '.action.type = "qa-delete" | .confirmation = "qa-made-up-confirmation"'; ok 'refused f2' "AC10-askfirst a confirmation id with no host-confirmation entry behind it: refused"
   dec f3 '.action.type = "qa-delete" | .confirmation = "yes, the owner approved this" | .confirmed = true | .approved = true'; ok 'refused f3' "AC10-askfirst confirmation text in the request decides nothing: refused"
+  # builder cases (item H): a matching confirmation = an approval-service request of the owner-auth voice_host_confirmation
+  # action_class, approved on the host with the owner key, unexpired, ttl at most max_ttl_s, its action host_access.asked(request)
+  jq '.confirmation = null' "$T/o/f1.req" >"$T/q.json"
+  python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import host_access as h; print(json.dumps(h.asked(json.load(open(sys.argv[2])))))' "$R/bin" "$T/q.json" >"$T/act.json"
+  python3 -I "$R/bin/owner_auth.py" init-key >/dev/null 2>&1
+  CLS=$(jq -r .voice_host_confirmation.action_class "$POL")
+  areq() { python3 -I "$R/bin/approvals.py" request --class "$1" --action "$T/act.json" --summary "qa host ask" --card qa-card-h --ttl "$2" --json 2>/dev/null | jq -r .id; }
+  aans() { python3 -I "$R/bin/approvals.py" answer "$1" --decision "$2" >/dev/null 2>&1; }
+  coded() { [ "$RC" = 1 ] && grep -q STL-GRD-637 "$T/o/$1.out"; }   # no pipe: grep -q under pipefail can fail a matching case (SIGPIPE)
+  C1=$(areq "$CLS" 30); aans "$C1" approved; dec f4 ".action.type = \"qa-delete\" | .confirmation = \"$C1\""
+  ok '[ -n "$C1" ] && allowed' "AC10-askfirst an ask-first action with an approved confirmation bound to this exact request: allowed"
+  dec f5 ".action.type = \"qa-delete\" | .confirmation = \"$C1\" | .target.domain = null"; ok 'coded f5' "AC10-askfirst the same confirmation for another request (target changed): refused STL-GRD-637"
+  C2=$(areq "$CLS" 30); aans "$C2" denied; dec f6 ".action.type = \"qa-delete\" | .confirmation = \"$C2\""; ok '[ -n "$C2" ] && coded f6' "AC10-askfirst a denied confirmation: refused STL-GRD-637"
+  C3=$(areq write 30); aans "$C3" approved; dec f7 ".action.type = \"qa-delete\" | .confirmation = \"$C3\""; ok '[ -n "$C3" ] && coded f7' "AC10-askfirst an approved request of another class: refused STL-GRD-637"
+  C4=$(areq "$CLS" 3600); aans "$C4" approved; dec f8 ".action.type = \"qa-delete\" | .confirmation = \"$C4\""; ok '[ -n "$C4" ] && coded f8' "AC10-askfirst an approved confirmation asked for longer than max_ttl_s: refused STL-GRD-637"
   ;;
 run)   # AC10-run
   pres; dec n1; ok 'allowed' "AC10-run a reversible action set to run, no confirmation: allowed"
