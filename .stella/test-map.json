@@ -319,6 +319,7 @@
   ],
   "full": [],
   "map": [
+    {"globs": [".stella/capability-sources.json"], "targets": ["cost", "escalate", "escalation-reply-poll", "failover", "kanban-board", "kanban-guard", "levers", "mock-provider", "model-check", "model-proxy", "probe", "profile-hooks", "prompt"], "why": "F3 glue: selftests the reach lint says can reach this file"},
     {
       "globs": [
         "bin/commit-guard-selftest.sh",
@@ -1151,6 +1152,18 @@
         "devices"
       ],
       "why": "from reach plus reading: from reading: bin/stella-apply.py stage() copies the index, the whole .stella/schemas folder and every json row for its whole-set check (bin/stella-apply.py:436-445); a schema is read where its data file is (bin/stella_data.py:31, the index's schema field)"
+    },
+    {
+      "globs": [
+        ".stella/capability-sources.json",
+        ".stella/schemas/capability-sources.schema.json"
+      ],
+      "targets": [
+        "capabilities",
+        "stella-apply",
+        "stella-data"
+      ],
+      "why": "read by bin/capabilities.py (the index key capability_sources) and checked by stella-data; stella-apply stages every json row and schema"
     },
     {
       "globs": [

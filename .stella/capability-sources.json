@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "skill_folders": [
+    ".claude/skills"
+  ],
+  "mcp_manifests": [
+    ".mcp.json"
+  ],
+  "extension_folders": [
+    ".stella/extensions"
+  ],
+  "ranking": {
+    "id": 3,
+    "keywords": 2,
+    "summary": 1
+  },
+  "default_limit": 10,
+  "request_ttl_s": 86400,
+  "gated_risk_classes": [
+    "host_session",
+    "input_source"
+  ],
+  "capability_prompt_line": "You have a small core toolset. For anything else, search the capability registry (capabilities search), then load only the definition you need (capabilities load); a capability you may only request needs an approval first.",
+  "semantic_ranking": false
+}

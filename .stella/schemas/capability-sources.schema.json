@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Capability sources and search settings",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "skill_folders": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+        "maxLength": 256
+      }
+    },
+    "mcp_manifests": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+        "maxLength": 256
+      }
+    },
+    "extension_folders": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+        "maxLength": 256
+      }
+    },
+    "ranking": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "keywords": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "summary": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "id",
+        "keywords",
+        "summary"
+      ],
+      "additionalProperties": false
+    },
+    "default_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "request_ttl_s": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 2592000
+    },
+    "gated_risk_classes": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "maxLength": 64
+      }
+    },
+    "capability_prompt_line": {
+      "type": "string",
+      "maxLength": 1024
+    },
+    "semantic_ranking": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schema_version",
+    "skill_folders",
+    "mcp_manifests",
+    "extension_folders",
+    "ranking",
+    "default_limit",
+    "request_ttl_s",
+    "gated_risk_classes",
+    "capability_prompt_line",
+    "semantic_ranking"
+  ],
+  "additionalProperties": false
+}

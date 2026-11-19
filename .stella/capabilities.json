@@ -563,16 +563,34 @@
       "id": "resolve",
       "kind": "command",
       "summary": "The ordered chain of model links a role may use right now, and why (presets, data policy, grants, card facts, health)",
-      "keywords": ["resolve", "model", "routing", "preset", "chain", "link", "fallback", "grant", "probe", "tokens", "cross-family"],
+      "keywords": [
+        "resolve",
+        "model",
+        "routing",
+        "preset",
+        "chain",
+        "link",
+        "fallback",
+        "grant",
+        "probe",
+        "tokens",
+        "cross-family"
+      ],
       "inputs": "a role, a project, optionally a card, task tier, driver and task id, and a rung N of the role's escalation chain (--rung; host-side callers only, refused in a worker environment)",
       "outputs": "JSON; exit 1 with a catalog code when no link is usable, a card app is refused or an id is unknown; every chain entry carries its effort; with --rung N >= 1: rung {requested, served, last, link, skipped[]}, STL-MDL-731 when no rung is left (escalate to the owner), and the CLI writes one trusted event line per skipped rung (STL-MDL-732) and one when the walk is exhausted",
-      "allowed_roles": ["dispatcher", "builder", "reviewer"],
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
       "risk_class": "read",
       "hosts": [],
       "secrets": [],
       "status": "approved",
       "source": "bin/resolve.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "094cf6cb-d48d-4b8e-8777-372777d9f60e",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -580,7 +598,15 @@
       "id": "route",
       "kind": "command",
       "summary": "Model call and failover along the resolver's chain: call (the engine loop), attempt (one link for a worker CLI's launcher) and result (how the attempt ended); cooldown, loop guard, mid-task checks, less-private notice, one trusted event line per pick and switch",
-      "keywords": ["route", "failover", "model call", "cooldown", "switch", "attempt", "chain"],
+      "keywords": [
+        "route",
+        "failover",
+        "model call",
+        "cooldown",
+        "switch",
+        "attempt",
+        "chain"
+      ],
       "inputs": "call|attempt --role R --project P [--card C] [--tier T] [--driver D] --task ID --json (call: prompt on stdin; [--rung N]: the chain is the resolver's rung N walk, bin/escalate.sh's call); result --task ID --link <connection>/<model> --outcome ok|<trigger id>",
       "outputs": "JSON {task, link, link_class, text, tool_calls, usage, model, switches, failure_history, refused, stubs}; exit 1 with a catalog code; exit 3 when a link needs a grant",
       "allowed_roles": [],
@@ -589,7 +615,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/route.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "648b0b49-8484-44b8-ac1f-2215cbb217f7",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -597,7 +625,14 @@
       "id": "probe",
       "kind": "command",
       "summary": "Capability probe of a model link (host only): tries the link through its wire shape and records tool calling, parallel tool calls, JSON, the strongest output shape it proves, family and effective context per model version in the probe records (protected state, index key probe_records); one probe.recorded event line per record; due lists the links whose model version has no record; check judges the file.",
-      "keywords": ["probe", "capability", "effective context", "output shape", "tool calling", "model version"],
+      "keywords": [
+        "probe",
+        "capability",
+        "effective context",
+        "output shape",
+        "tool calling",
+        "model version"
+      ],
       "inputs": "run --connection C --model M [--again] --json | due --json | show [--connection C] [--model M] --json | check --json",
       "outputs": "JSON (run: the record; due: {due, unreachable}; show: {records, problem}; check: {ok, records, problem}); exit 1 with a catalog code (STL-MDL-734 unknown link, 735 version already probed, 736 no usable answer, STL-CFG-312 in a worker environment)",
       "allowed_roles": [],
@@ -606,7 +641,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/probe.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "46fc96f9-0a61-4272-b945-15ff810c9410",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -614,7 +651,17 @@
       "id": "triage",
       "kind": "command",
       "summary": "Triage router (host only): a small local model, called through route.py for the router role, classifies one input (stdin) into a route of the routing data's triage tiers (or the image route when the input carries an image); confidence is the route label's token probability where the link gives it, else the agreement of triage.samples calls; unsure or below the threshold moves one tier up, never down; inside a project a message is work unless it is a confident pure question; one triage.verdict event line per verdict (its id); label records an owner override or reroute (triage.label); fit sets the threshold from the labelled verdicts (triage calibration state, triage.calibrated); an optional classifier behind the features.json flag triage-classifier (off by default).",
-      "keywords": ["triage", "router", "route", "classify", "confidence", "unsure", "label", "calibration", "threshold"],
+      "keywords": [
+        "triage",
+        "router",
+        "route",
+        "classify",
+        "confidence",
+        "unsure",
+        "label",
+        "calibration",
+        "threshold"
+      ],
       "inputs": "route [--project P] [--image] --json (message on stdin) | label --id ID --route R --source override|reroute --json | fit --json",
       "outputs": "JSON (route: {id, route, confidence, unsure, tier_moved, link, reasoning?}; label: {id, route, source, label_id}; fit: {threshold, labels}); exit 1 with a catalog code (STL-MDL-740 no verdict could be made, 741 label refused, 742 calibration refused, STL-CFG-312 in a worker environment)",
       "allowed_roles": [],
@@ -623,7 +670,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/triage.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "06c3c8c4-e0bf-485f-9745-d1cb7acf11e5",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -631,7 +680,16 @@
       "id": "team",
       "kind": "command",
       "summary": "Build team preset (host only): generate writes the Claude Code agent files (the folder of the data index key agents_dir) of every agent of the team preset (index key team_preset; role-assignments effort_modes agents: description, tools, link, fallbacks, escalation_chain) with the body texts of the folder team_bodies and a generated marker, one team.generated event line; check compares the preset, the files and the models the latest session log shows (a hand edit, a stale file, an agent on a model its preset does not list fail; an agent with no transcript is not seen; a file without the marker is unmanaged), one alert line on failure.",
-      "keywords": ["team", "build-team", "agents", "preset", "generate", "check", "session", "model"],
+      "keywords": [
+        "team",
+        "build-team",
+        "agents",
+        "preset",
+        "generate",
+        "check",
+        "session",
+        "model"
+      ],
       "inputs": "generate [--preset ID] [--out DIR] --json | check [--preset ID] [--sessions DIR] --json",
       "outputs": "JSON (generate: {preset, written}; check: {preset, ok, latest_session, agents[{agent, ok, session, problems}], stale, unmanaged}); exit 1 with a catalog code (STL-MDL-743 cannot generate or check, 744 a file differs or is stale, 745 an agent ran on a model its preset does not list)",
       "allowed_roles": [],
@@ -640,7 +698,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/team.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "3f4b000d-2b18-43a9-8b5e-1a7fedbf627b",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -648,7 +708,15 @@
       "id": "consent",
       "kind": "command",
       "summary": "Routing consent: the accept popup for a link that needs a grant, project-scoped grants applied through the apply tool, unattended queue; pending, complete, revoke",
-      "keywords": ["consent", "grant", "popup", "privacy", "crossing", "unattended", "revoke"],
+      "keywords": [
+        "consent",
+        "grant",
+        "popup",
+        "privacy",
+        "crossing",
+        "unattended",
+        "revoke"
+      ],
       "inputs": "pending --json | complete <request id> | revoke <grant id> --out <file>",
       "outputs": "JSON; exit 1 with a catalog code",
       "allowed_roles": [],
@@ -657,7 +725,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/consent.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "871e600f-685d-490a-a561-952c4f07be89",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -665,7 +735,13 @@
       "id": "credentials",
       "kind": "command",
       "summary": "The one interface for keys until the secrets broker: reports the state of the key backend the routing data names; a value is returned in-process to the model call only and never printed",
-      "keywords": ["credentials", "keys", "secrets", "backend", "broker"],
+      "keywords": [
+        "credentials",
+        "keys",
+        "secrets",
+        "backend",
+        "broker"
+      ],
       "inputs": "check [--json] [<secret name>...]",
       "outputs": "{backend, kind, ok, missing}; exit 0 when the backend holds every name, else 1 with a catalog code; never a value",
       "allowed_roles": [],
@@ -674,7 +750,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/credentials.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "9659b626-51ce-4dd0-84e8-1b7bd3fe20e5",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -682,7 +760,15 @@
       "id": "settings-explain",
       "kind": "command",
       "summary": "The effective settings of a project: each value, the active preset, Local only, each role's class order, pins and fallbacks, the grants in force, and whether each is inherited or overridden",
-      "keywords": ["settings", "explain", "effective", "preset", "inherited", "overridden", "grants"],
+      "keywords": [
+        "settings",
+        "explain",
+        "effective",
+        "preset",
+        "inherited",
+        "overridden",
+        "grants"
+      ],
       "inputs": "explain --project <id> [--json]",
       "outputs": "JSON or a plain table; exit 1 with a catalog code when the data is invalid",
       "allowed_roles": [],
@@ -691,7 +777,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/settings.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "e7002252-71bc-4836-a982-7190feee9682",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -699,7 +787,14 @@
       "id": "mock-provider",
       "kind": "tool",
       "summary": "Test rig: a local mock model server serving every wire shape of the protocols data, with faults on demand and an exact call counter",
-      "keywords": ["mock", "test rig", "provider", "fault", "protocol", "failover"],
+      "keywords": [
+        "mock",
+        "test rig",
+        "provider",
+        "fault",
+        "protocol",
+        "failover"
+      ],
       "inputs": "optional STELLA_ROOT; faults set by a POST to the control URL",
       "outputs": "first stdout line {port, control}; GET /_calls returns counts and the requests seen",
       "allowed_roles": [],
@@ -708,7 +803,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/mock_provider.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "67cf2d4b-deee-4ed2-822f-22ef97ae696a",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -716,7 +813,12 @@
       "id": "mock-cli",
       "kind": "tool",
       "summary": "Test rig: a fake coding CLI standing in for a cli-login connection; reports a usage limit, a timeout or a missing model on request",
-      "keywords": ["mock", "cli", "usage limit", "test rig"],
+      "keywords": [
+        "mock",
+        "cli",
+        "usage limit",
+        "test rig"
+      ],
       "inputs": "a prompt on stdin; MOCK_CLI_MODE, MOCK_CLI_SECONDS, MOCK_CLI_CALLS, MOCK_CLI_USAGE (a plan-share usage block on stderr)",
       "outputs": "a result JSON, or a non-zero exit with a message; a calls file with argv and env names",
       "allowed_roles": [],
@@ -725,7 +827,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/mock_cli.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "61fe38f7-5138-45b2-9fc9-4545ca128199",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -733,7 +837,16 @@
       "id": "compare",
       "kind": "command",
       "summary": "Sound comparison of two arms on the same tasks (paired trials, mean difference with a 95% t-interval, pass^k, non-inferiority margin, minimum sample, regression set) and routing stats from benchmark results (benchmark mean over the advertised score only above the minimum sample); record adds benchmark records with their trusted event lines (host only). Parameters are data in .stella/model-check.json.",
-      "keywords": ["compare", "benchmark", "confidence interval", "pass^k", "non-inferior", "regression set", "routing stats", "model check"],
+      "keywords": [
+        "compare",
+        "benchmark",
+        "confidence interval",
+        "pass^k",
+        "non-inferior",
+        "regression set",
+        "routing stats",
+        "model check"
+      ],
       "inputs": "compare --a FILE --b FILE [--cheaper] [--regression FILE] --json | stats [--prior FILE] --json | record --file FILE --json | check --json",
       "outputs": "JSON (compare: {decision better|worse|non_inferior|inconclusive, reason, n_tasks, mean_diff, ci, pass_k}; stats: a list of {role, connection, model, score, source, n, reason}; record: {recorded}; check: {ok, benchmark_records}); exit 1 with a catalog code (STL-MDL-750 bad input, 751 regression set failed, 752 parameters unusable, 753 benchmark results unusable, STL-CFG-312 record in a worker environment)",
       "allowed_roles": [],
@@ -742,7 +855,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/compare.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "091fbea8-a29e-472b-8535-7ba799f14db9",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -874,7 +989,17 @@
       "id": "model-check",
       "kind": "command",
       "summary": "The weekly model check (owner/engine command, host only): picks model links for preset roles from probe records, benchmark results with trusted lines and prices applied before the run, never from news, web text or model output; refuses any pick that widens exposure (link class, data policy, host, connection), lacks a probe record or ranks lower; applies each pick through the apply tool's engine exception (built-in presets while the owner setting MODEL_CHECK_BUILTIN is on, custom presets with a model_check grant), one event line and alert per pick, rollback from the trusted line, pricing refresh, pause and resume. Rules are data in .stella/model-check.json weekly.",
-      "keywords": ["model check", "weekly", "built-in preset", "model pick", "rollback", "pricing refresh", "engine", "benchmark", "probe"],
+      "keywords": [
+        "model check",
+        "weekly",
+        "built-in preset",
+        "model pick",
+        "rollback",
+        "pricing refresh",
+        "engine",
+        "benchmark",
+        "probe"
+      ],
       "inputs": "run [--dry-run] --json | status --json | rollback <pick id> --json | resume --json | check --json",
       "outputs": "JSON (run: {picks, refused, skipped, ignored, failing, pricing}; status: {state, picks}; rollback: {rollback, pick}; resume: {resumed}; check: {ok, problems}); exit 1 with a catalog code (STL-MDL-761 pick not applied, 762 paused now, 763 paused, 764 the apply tool refused the engine pick, 765 rollback refused, STL-CFG-312 worker environment)",
       "allowed_roles": [],
@@ -883,7 +1008,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/model_check.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "8af2c40b-6c3a-4df3-ae1e-a1342a996db5",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -964,6 +1091,42 @@
         "result": "shipped"
       },
       "global_id": "8e2dfc3f-a601-4158-bb84-b8c2fc708ade",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "capabilities",
+      "kind": "command",
+      "summary": "Find, describe, request and load capabilities by role: search ranks registry entries by id, keywords and summary (weights from .stella/capability-sources.json), a hidden id answers like an unknown one, request opens one approval through the approval service, load returns the definition and writes one trusted capability-load line (host side only); a skill or MCP server with no registry entry is hidden and raises an alert",
+      "keywords": [
+        "capability",
+        "search",
+        "describe",
+        "request",
+        "load",
+        "skill",
+        "mcp",
+        "registry",
+        "discover",
+        "lean tools",
+        "prompt-line",
+        "check-card"
+      ],
+      "inputs": "search words, a capability id, --role, --reason, --card, --run",
+      "outputs": "JSON or text; exit 1 with STL-GRD-660..667 when a capability is unknown or not visible to the role",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/capabilities.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "e59ac56f-e59c-4066-9305-a281d04a8254",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
