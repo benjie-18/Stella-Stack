@@ -13,7 +13,7 @@
 Exit: 0 ok; 1 refused or over budget ({code, problem} on stdout, catalog code and plain message on stderr); 2 usage.
 Codes: STL-LIM-450 run policy file unusable, 451 prefill over budget, 452 output over budget, 453 an input unusable (adapter, role, file).
 shortcut: a template's placeholders are whole-string or embedded text only (no nesting rules), upgrade when an adapter needs computed values."""
-import argparse, json, math, os, sys
+import argparse, json, math, os, shlex, sys
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -103,7 +103,7 @@ def translate(t, adapter, role):
     if ent is None:
         raise Stop(BADINPUT, f"there is no adapter {sd.idn(adapter)}", alert=False)
     sup, tpls = ent.get("supports") or {}, ent.get("run_policy") or {}
-    settings, applied, unsupported = {}, [], []
+    settings, applied, unsupported, hook = {}, [], [], None
     for feat, field in FEATURES.items():
         if sup.get(feat) is not True:
             unsupported.append(feat)
@@ -111,11 +111,15 @@ def translate(t, adapter, role):
         v = pol[field]
         ctx = dict(v) if isinstance(v, dict) else {}
         ctx["value"] = v
+        if feat == "hook":   # the log filter as a command on the CLI's shell-class tools (log_filter.py --hook); the caller installs it
+            hook = {"matcher": "|".join(n for n, t in (ent.get("tools") or {}).items() if t.get("class") == "shell"),
+                    "command": shlex.join([sys.executable, "-I", os.path.join(BIN, "log_filter.py"), "--role", role, "--hook"])}
+            ctx.update(hook)
         if feat in tpls:
             merge(settings, fill(tpls[feat], ctx))
         applied.append(feat)
     return {"adapter": adapter, "role": role, "settings": settings, "applied": applied, "unsupported": unsupported,
-            "supports": {f: sup.get(f, False) for f in FEATURES}, "output_style": t["output_styles"][pol["output_style"]], "core_tools": pol["core_tools"],
+            "supports": {f: sup.get(f, False) for f in FEATURES}, "output_style": t["output_styles"][pol["output_style"]], "core_tools": pol["core_tools"], "hook": hook,
             "notes": pol["working_notes"], "graph_first": pol["graph_first"]}
 
 def over(code, what, used, budget, role):

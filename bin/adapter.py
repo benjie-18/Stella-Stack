@@ -229,14 +229,17 @@ def pick_link(role, link, project, card):
 
 
 def box_prefix(role, aid, wt, label, cfg):
-    """(argv prefix, env) when the role's profile for this adapter is boxed (DC-02), else (None, {}); Stop when the plan fails."""
+    """(argv prefix, env) when the role's profile for this adapter is boxed (DC-02), else (None, {}) only for an entry that says unboxed in its
+    data (the fake and test adapters); Stop when the plan fails or no boxed profile exists (boxing is the default, never fail-open)."""
     import box, roles
     try:
         d = roles.load()
         sb = roles.sandbox(d) or {}
         profs = [p for p, row in d["profiles"].items() if row.get("role") == role and row.get("worker") == aid and p in sb.get("boxed_profiles", [])]
         if not profs:
-            return None, {}
+            if entry(aid).get("unboxed") is True:
+                return None, {}
+            raise Stop(C["box"], f"role {role} has no boxed profile for adapter {aid}, and the adapter's data does not say unboxed: the run is not started")
         home = pwd.getpwuid(os.getuid()).pw_dir
         root = os.environ.get("BOX_HERMES_ROOT") or f"{home}/.hermes"   # as box.merge_exec finds it
         top = os.path.dirname(os.path.realpath(os.path.join(wt, git(wt, "rev-parse", "--git-common-dir"))))
@@ -262,7 +265,7 @@ def endpoint(key):
 
 def merge(a, b):
     for k, v in b.items():
-        a[k] = merge(a[k], v) if isinstance(a.get(k), dict) and isinstance(v, dict) else v
+        a[k] = merge(a[k], v) if isinstance(a.get(k), dict) and isinstance(v, dict) else a[k] + v if isinstance(a.get(k), list) and isinstance(v, list) else v
     return a
 
 
@@ -514,7 +517,12 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
     probs = policy.problems()
     if probs or not e.get("policy"):
         raise Stop(C["prepare"], f"the policy of adapter {e['id']} cannot be generated: {probs[0][1][:140] if probs else 'no policy part'}")
-    settings = policy.merged({}, policy.render(e["id"], wt))
+    tr = json.loads(tool([os.path.join(BIN, "run_policy.py"), "translate", "--adapter", e["id"], "--role", a.role], C["prepare"], "translating the run policy"))
+    rend = policy.render(e["id"], wt)
+    hk = e["policy"].get("hook")
+    if tr["hook"] and hk:   # the log filter joins the policy hook's list in the generated config (the entry's own hook template and pointer)
+        rend[hk["pointer"]].append(policy.fill(hk["template"], tr["hook"]))
+    settings = policy.merged({}, rend)
     v = {"base_url": proxy or "", "model": model, "token_env": e.get("token_env") or "", "token": token, "worktree": wt}
     if ctype == "api" and st.get("settings"):
         merge(settings, policy.fill(st["settings"], v))
@@ -529,6 +537,8 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
         mfile = sfile
     else:
         mfile = write_json(os.path.join(cfg, "mcp.json"), mcp_doc)
+    merge(settings, tr["settings"])   # core tools only, compaction, clearing, the log filter hook: each where the entry says the CLI supports it
+    write_json(os.path.join(cfg, "run-policy.json"), tr)
     write_json(sfile, settings)
     attached = None
     if a.card_file:
@@ -538,8 +548,10 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
         except (OSError, ValueError, AttributeError):
             raise Stop(C["prepare"], "the card file is not readable JSON") from None
         attached = write_json(os.path.join(cfg, "attached.md"), "\n".join(lines) + "\n") if lines else None
-    r = json.loads(tool([os.path.join(BIN, "prompt.py"), "render", "--role", a.role, "--link", link, "--brief", a.brief_file, "--json"]
-                        + (["--attached", attached] if attached else []), C["prepare"], "rendering the prompt"))
+    text, notes = brief_text(a, tr, wt, run)
+    brief = write_json(os.path.join(cfg, "brief.md"), text)
+    r = json.loads(tool([os.path.join(BIN, "prompt.py"), "render", "--role", a.role, "--link", link, "--brief", brief, "--json"]
+                        + (["--attached", attached] if attached else []) + (["--notes", notes] if notes else []), C["prepare"], "rendering the prompt"))
     pfile = write_json(os.path.join(cfg, "prompt.md"), r["text"])
     argv = policy.fill(st["argv"], {"prompt_file": pfile, "prompt": r["text"], "model": model, "settings_file": sfile, "mcp_config": mfile, "worktree": wt})
     # the environment: env_keep names only, sandbox.env_unset gone (the entry's own token variable exempt), then the run's values
@@ -565,7 +577,8 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
     rec = {"schema_version": 1, "run": run, "role": a.role, "card": a.card, "conformance": not a.card, "project": a.project, "adapter": e["id"],
            "version": ver, "tested": tested, "link": link, "conn_type": ctype, "unattended": True, "background": not a.wait,
            "boxed": pre is not None, "worktree": wt, "base": base, "run_dir": rdir, "pid": None, "pgid": None, "started": now(),
-           "ended": None, "exit": None, "stopped": None, "global_id": str(uuid.uuid4()), "install_id": sd.install_id()}
+           "ended": None, "exit": None, "stopped": None,
+           "run_policy": {"applied": tr["applied"], "unsupported": tr["unsupported"], "hook": bool(tr["hook"] and e["policy"].get("hook"))}, "global_id": str(uuid.uuid4()), "install_id": sd.install_id()}
     out = {"run": run, "adapter": e["id"], "version": ver, "tested": tested, "link": link, "conn_type": ctype, "background": not a.wait}
     import ledger   # the run's lease: the link's slots, taken here and held by the CLI's process (as ledger.py hold does: it cannot run with a worker's env)
     try:
@@ -612,6 +625,21 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
     return 0
 
 
+def brief_text(a, tr, wt, run):
+    """(brief text with the run policy's output style and notes instruction, the card's working-notes file or None). The notes path is run-policy
+    data with {card} filled, relative to the worktree; a link out of the worktree is not read. prompt.py renders the notes (path and content)."""
+    try:
+        text = open(a.brief_file, encoding="utf-8").read()
+    except OSError:
+        raise Stop(C["prepare"], "the brief file cannot be read") from None
+    n = tr["notes"]
+    rel = n["path"].replace("{card}", a.card or run)
+    p = os.path.realpath(os.path.join(wt, rel))
+    return (text.rstrip("\n") + f"\n\n## Run policy\nOutput style: {tr['output_style']}\n"
+            f"Working notes: keep {rel} in the worktree with the sections {', '.join(n['sections'])}; read it first when it exists.\n",
+            p if inside(p, wt) and os.path.isfile(p) else None)
+
+
 def st_env(e):
     env = (e.get("start") or {}).get("env") or {}
     return [env.get("base_url_env"), env.get("token_env")]
@@ -638,10 +666,21 @@ def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None):
     if w is not None:
         os.write(w, json.dumps({"pid": p.pid}).encode()); os.close(w)
     s = Stream(run, rec, e, {"output_cap": d.get("output_cap", 4000)}, rx)
+    # the stuck watcher (engine side, outside the CLI's process group so a stuck stop does not kill it); a card-less run gets no card block
+    watch = subprocess.Popen([sys.executable, "-I", os.path.join(BIN, "stuck.py"), "watch", "--run", run, "--role", rec["role"]] + (["--card", rec["card"]] if rec["card"] else []),
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     for raw in p.stdout:
         s.line(raw)
     rc = p.wait()
     update(run, ended=now(), exit=rc)
+    try:   # the watcher ends on the result line or after its own stop and block; a stream with no result gets the stop grace, then the end
+        watch.wait(3 * d.get("stop_grace_s", 10))
+    except subprocess.TimeoutExpired:
+        watch.terminate()
+    with contextlib.suppress(Exception):   # over the output budget is flagged (event line, catalog code), never a stop
+        r = subprocess.run([sys.executable, "-I", os.path.join(BIN, "run_policy.py"), "output-check", "--role", rec["role"], "--events",
+                            os.path.join(runs_dir(), run, EVENTS)], capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        update(run, output_check=json.loads(r.stdout.strip().splitlines()[-1]))
     with contextlib.suppress(Exception):
         tool([os.path.join(BIN, "run_token.py"), "revoke", "--run", run], C["stop"], "revoking the run token")
     with contextlib.suppress(Exception):
@@ -652,6 +691,7 @@ def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None):
 def cmd_stop(a):
     rec = read_rec(a.run)
     pg = rec.get("pgid")
+    update(a.run, stopped=(a.reason or "stopped")[:200])   # before the kill: whoever sees the run ended also sees why
     if rec.get("exit") is None and type(pg) is int:
         grace = doc().get("stop_grace_s", 10)
         for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, grace)):
@@ -669,7 +709,6 @@ def cmd_stop(a):
         else:
             raise Stop(C["stop"], f"the process group of run {a.run} did not end")
     tool([os.path.join(BIN, "run_token.py"), "revoke", "--run", a.run], C["stop"], "revoking the run token")
-    update(a.run, stopped=(a.reason or "stopped")[:200])
     event("adapter.run-stopped", a.run, rec.get("role"), reason=(a.reason or "stopped")[:200], card=rec.get("card"))
     print(json.dumps({"run": a.run, "stopped": True}))
     return 0

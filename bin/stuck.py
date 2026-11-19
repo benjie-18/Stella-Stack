@@ -31,6 +31,7 @@ import worker_env
 
 DATA, STOPFAIL, BLOCKFAIL, NOSTREAM = "STL-ESC-250", "STL-ESC-251", "STL-ESC-252", "STL-ESC-253"
 ROW, KEY, STREAM = "stuck", "adapter_runs", "events.jsonl"
+DIFF_KINDS = ("edit_revert", "tokens_no_diff")
 KINDS = ("repeat_action", "repeat_error", "alternate", "edit_revert", "tokens_no_diff")
 
 
@@ -181,14 +182,22 @@ def cmd_watch(a):
         if any(e.get("type") == "result" for e in events):
             return 0
         time.sleep(doc["poll_s"])
-    first = m[0]
+    first = max(m, key=lambda x: x["pattern"] in DIFF_KINDS)   # a pattern that saw the worktree diff names the loop better than one that saw only signatures; ties keep file order
     vals = {"python": sys.executable, "bin": BIN, "run": a.run, "card": a.card, "kind": doc["block"]["kind"],
             "pattern": first["pattern"], "detail": first["detail"]}
     reason = doc["block"]["reason"].format_map(vals)
-    call(sub(doc["stop"]["argv"], vals), STOPFAIL, "the adapter stop")   # frees the lease with the run
+    # the evidence line and the card block come first: the stop ends the run, and a reader that sees the run ended must find both; a failing block never keeps the run alive
     el.append(el.build("run-block", f"run {a.run}", new={"pattern": first["pattern"], "kind": doc["block"]["kind"], "reason": reason,
                        "card": a.card, "evidence": first["evidence"]}, who={"role": a.role}))
-    call(sub(doc["block"]["argv"], {**vals, "reason": reason}), BLOCKFAIL, "the card block command")
+    blocked = None
+    try:
+        if a.card:
+            call(sub(doc["block"]["argv"], {**vals, "reason": reason}), BLOCKFAIL, "the card block command")
+    except Stop as x:
+        blocked = x
+    call(sub(doc["stop"]["argv"], vals), STOPFAIL, "the adapter stop")   # frees the lease with the run
+    if blocked:
+        raise blocked
     print(json.dumps({"run": a.run, "blocked": a.card, "pattern": first["pattern"], "reason": reason}))
     return 0
 
@@ -202,7 +211,7 @@ def main(argv):
     p.add_argument("--json", action="store_true")
     p = sub_.add_parser("watch")
     p.add_argument("--run", required=True)
-    p.add_argument("--card", required=True)
+    p.add_argument("--card", help="the card to block; a run with no card gets the run-block line and the stop only")
     p.add_argument("--role")
     p.add_argument("--events", help="the stream file (default: the run's events.jsonl)")
     a = ap.parse_args(argv)

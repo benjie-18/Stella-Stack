@@ -6,6 +6,7 @@ Actions: a JSON list between the prompt lines BEGIN-ACTIONS and END-ACTIONS (the
   process's environment) | mcp {tool, args} (JSON-RPC tools/call to the server the --mcp-config file names, with its headers) |
   model_call {prompt} (to the base URL and with the token of the variables its adapters.json entry names, in the entry's first wire
   shape) | env | usage {input, output} | say {text} | repeat {times, actions}.
+Any action may carry "step": ID; it is skipped (nothing emitted) when a read_notes before it showed "- ID" under the notes heading "done".
 Its adapters.json entry is the one the adapter's run_env.adapter variable names. Before a write, edit, read or shell it applies its
 --config the way the entry's policy says: a map pointer or a list item "Tool(pattern)" judges the action when it names a tool of
 the action's class in some adapter's tool map (the last matching map pattern decides; any matching list item denies); a write
@@ -15,7 +16,8 @@ answer, denies). A denied action prints a tool_result with ok false and "denied"
 Output: {"type":"tool_use","name","input"} {"type":"tool_result","name","ok","output"[,"error" when not ok]} {"type":"usage","input_tokens","output_tokens"}
 {"type":"result","text","exit":0}. Exit 0, or 1 when an action crashes.
 shortcut: pattern semantics are fnmatch on the raw and the absolute value, not each CLI's own; enough for a fake, not a CLI model."""
-import argparse, fnmatch, http.client, json, os, re, subprocess, sys, urllib.parse
+import argparse, fnmatch, http.client, json, os, re, subprocess, sys, time, urllib.parse
+PACE_S = 0.15
 
 VERSION = "0.3.0"
 BIN = os.path.dirname(os.path.abspath(__file__))
@@ -150,6 +152,17 @@ def fill(t, v):
     return t
 
 
+def done_steps(text):
+    """The list items ("- ID") under a "done" heading (any level, any case) of a notes file, up to the next heading."""
+    out, on = set(), False
+    for ln in text.splitlines():
+        h = re.match(r"#+\s*(.*?)\s*$", ln)
+        if h:
+            on = h[1].casefold() == "done"
+        elif on and ln.startswith("- "):
+            out.add(ln[2:].strip())
+    return out
+
 def act(ctx, a):
     op = a.get("op")
     inp = {k: v for k, v in a.items() if k != "op"}
@@ -160,6 +173,8 @@ def act(ctx, a):
         return
     if op == "usage":
         emit({"type": "usage", "input_tokens": int(a.get("input", 0)), "output_tokens": int(a.get("output", 0))})
+        return
+    if a.get("step") in getattr(ctx, "done", ()):   # a step the notes read earlier list as done is not done again (resume)
         return
     emit({"type": "tool_use", "name": op, "input": inp})
     why = denied(ctx, op, inp) if op in ("write", "edit", "read", "read_notes", "shell") else None
@@ -177,6 +192,8 @@ def act(ctx, a):
         elif op in ("read", "read_notes"):
             with open(path, encoding="utf-8", errors="replace") as f:
                 out = f.read(OUT_CAP)
+            if op == "read_notes":
+                ctx.done = getattr(ctx, "done", set()) | done_steps(out)
         elif op == "edit":
             with open(path, encoding="utf-8") as f:
                 text = f.read()
@@ -216,6 +233,8 @@ def act(ctx, a):
     except (OSError, KeyError, ValueError, http.client.HTTPException) as e:
         ok, out = False, f"{type(e).__name__}: {e}"
     emit({"type": "tool_result", "name": op, "ok": ok, "output": out, **({} if ok else {"error": out})})
+    if op in ("write", "edit"):   # a real CLI is slower than the adapter's per-result worktree digest; without the pause the digests all show the end state
+        time.sleep(PACE_S)
 
 
 def main(argv):
