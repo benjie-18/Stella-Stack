@@ -9,10 +9,11 @@ CLI (host only: every command refuses in a worker environment, STL-CFG-312; the 
       exempt role: local, never a crossing) with the verdict schema {route: one of the tiers or the image route, reasoning}. Confidence
       is never the model's own word: it is the probability of the route label's token where the link returns log probabilities (one call),
       else the share of the routing triage.samples calls that agree on the majority route. An answer that is not a verdict of the schema
-      (not JSON, a route outside the list, an image verdict on input with no --image) is unsure. Unsure, or confidence below the threshold
+      (not JSON, a route outside the list, an image verdict on input with no --image, a call no link can take because the message is beyond every
+      context: STL-MDL-710) is no vote; no vote at all is unsure (the votes that are verdicts decide, never the others). Unsure, or confidence below the threshold
       (the calibration file's fitted one when it exists, else routing triage.threshold): one tier up from the verdict's tier (from the
       lowest tier when there is none), the top stays, never down. Inside a project (--project) the route is triage.project.default unless
-      the verdict is confident and one of triage.project.keep. The image route is the route only with --image and an image verdict.
+      the verdict is confident and one of triage.project.keep. The image route is the route with --image whatever the verdict (image input never goes to a text tier), and only then.
       The optional classifier (the feature registry entry triage-classifier, off by default): with the flag on and at least triage.min_labels
       labelled verdicts, a naive Bayes over hashed words of the labelled messages answers first when it is confident enough; else the model.
   triage.py label --id ID --route R --source override|reroute [--json]   the owner's override or a reroute of a verdict: one `triage.label` line
@@ -20,7 +21,7 @@ CLI (host only: every command refuses in a worker environment, STL-CFG-312; the 
       the labelled ones (a verdict is right when the label equals the model's own route), written to the triage calibration state
       (index key triage_calibration, schema triage-calibration) with one `triage.calibrated` line
 Events: every verdict line holds the route served, the model's own route (raw), confidence, unsure, tier_moved and the message's word hashes
-(crc32 of each distinct word, at most MAX_WORDS: the classifier's features; the text itself is never logged).
+(crc32 of each distinct word, at most MAX_WORDS: the classifier's features, kept only while the classifier flag is on; the text itself is never logged).
 Exit: 0 ok; 1 refused or failed (the catalog code and its plain message on stderr, {code, problem} on stdout); 2 usage.
 shortcut: the whole event log is read for labels and for the classifier on each use (like the writer's own scan), upgrade with an index when it grows."""
 import os, sys
@@ -39,7 +40,7 @@ import event_log as el
 import stella_data as sd
 import worker_env
 
-FAILED, REFUSED_LABEL, REFUSED_FIT, UNEXPECTED, NOT_JSON = "STL-MDL-740", "STL-MDL-741", "STL-MDL-742", "STL-CFG-310", "STL-MDL-736"
+FAILED, REFUSED_LABEL, REFUSED_FIT, UNEXPECTED, NOT_JSON, NO_LINK = "STL-MDL-740", "STL-MDL-741", "STL-MDL-742", "STL-CFG-310", "STL-MDL-736", "STL-MDL-710"
 KEY, FLAG, MAX_WORDS, MAX_REASON = "triage_calibration", "triage-classifier", 64, 300   # shortcut: the two limits are code, upgrade when routing data carries them
 
 
@@ -122,7 +123,7 @@ def ask(role, project, task, schema_file, prompt):
     except (IndexError, ValueError):
         raise Stop(FAILED, "the triage call gave no readable answer") from None
     if p.returncode != 0:
-        if doc.get("code") == NOT_JSON:
+        if doc.get("code") in (NOT_JSON, NO_LINK):   # no link whose context holds the message (710) is no verdict either: unsure, one tier up
             return None, None, None
         raise Stop(FAILED, f"the triage call was refused ({str(doc.get('code'))[:20]})")
     try:
@@ -149,10 +150,10 @@ def cmd_route(a):
     cal = calibration()
     thr = cal["threshold"] if cal else t["threshold"]
     v, lab = history()
-    feats = words(text)
+    feat_on = sd.served(["features"]).get("features", {}).get(FLAG, {}).get("status") == "on"
+    feats = words(text) if feat_on else []   # no word hashes in the log while the classifier is off (F-PRIV)
     raw = conf = link = reasoning = None
     src = "model"
-    feat_on = sd.served(["features"]).get("features", {}).get(FLAG, {}).get("status") == "on"
     if feat_on and len(lab) >= t["min_labels"]:
         got = classifier(feats, v, lab)
         if got and got[1] >= thr:
@@ -177,20 +178,22 @@ def cmd_route(a):
                         lp = label_prob(lps, got["route"]) if isinstance(lps, list) else None
                     if not ok or lp is not None:
                         break   # no verdict: no more calls; a label probability: the one call is enough
-        if votes[0] is not None:
-            raw = max(set(votes), key=lambda r: (votes.count(r), r == votes[0]))
-            conf = lp if lp is not None else votes.count(raw) / t["samples"]
+        valid = [r for r in votes if r is not None]   # an answer that is no verdict is no vote
+        if valid:
+            raw = max(set(valid), key=lambda r: (valid.count(r), r == votes[0]))
+            conf = lp if lp is not None else valid.count(raw) / t["samples"]
         else:
             raw, conf = None, 0.0
     base = raw if raw in tiers else tiers[0]
     unsure = raw is None or conf < thr
-    if raw == img:
-        final = img   # the image route is no tier: it neither moves nor is set by the project rule
+    isimg = raw == img or a.image
+    if isimg:
+        final = img   # the image route is no tier: it neither moves nor is set by the project rule; input with an image never goes to a text tier (X1)
     else:
         final = tiers[min(tiers.index(base) + 1, len(tiers) - 1)] if unsure else base
         if a.project and (unsure or final not in t["project"]["keep"]):
             final = t["project"]["default"]
-    out = {"route": final, "confidence": round(conf, 4), "unsure": unsure, "tier_moved": final != (raw if raw == img else base)}
+    out = {"route": final, "confidence": round(conf, 4), "unsure": unsure, "tier_moved": final != (img if isimg else base)}
     ev = el.append(el.build("triage.verdict", f"triage verdict: route {final}", new={**out, "raw": raw, "source": src, "features": feats}))
     print(json.dumps({"id": ev["global_id"], **out, "link": link if src == "model" and isinstance(link, dict) else None,
                       **({"reasoning": el.scrub(reasoning)} if reasoning else {})}))
