@@ -26,6 +26,10 @@
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"
     },
+    "capability_sources": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"
+    },
     "owner_key": {
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",

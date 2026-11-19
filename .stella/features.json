@@ -396,6 +396,15 @@
       "flag": "otlp-export",
       "global_id": "34f8d89b-3b66-4b0e-8680-63ffccfe7fd7",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "capability-semantic-ranking",
+      "owner_phase": "F3",
+      "status": "off",
+      "depends_on": [],
+      "flag": "capability-semantic-ranking",
+      "global_id": "2b3119fc-364a-45af-8a2b-fc028141a5cf",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

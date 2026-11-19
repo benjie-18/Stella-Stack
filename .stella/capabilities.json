@@ -886,6 +886,23 @@
       "triage": {"result": "shipped"},
       "global_id": "8af2c40b-6c3a-4df3-ae1e-a1342a996db5",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "capabilities",
+      "kind": "command",
+      "summary": "Find, describe, request and load capabilities by role: search ranks registry entries by id, keywords and summary (weights from .stella/capability-sources.json), a hidden id answers like an unknown one, request opens one approval through the approval service, load returns the definition and writes one trusted capability-load line (host side only); a skill or MCP server with no registry entry is hidden and raises an alert",
+      "keywords": ["capability", "search", "describe", "request", "load", "skill", "mcp", "registry", "discover", "lean tools", "prompt-line", "check-card"],
+      "inputs": "search words, a capability id, --role, --reason, --card, --run",
+      "outputs": "JSON or text; exit 1 with STL-GRD-660..667 when a capability is unknown or not visible to the role",
+      "allowed_roles": ["dispatcher", "builder", "reviewer"],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/capabilities.py",
+      "triage": {"result": "shipped"},
+      "global_id": "e59ac56f-e59c-4066-9305-a281d04a8254",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

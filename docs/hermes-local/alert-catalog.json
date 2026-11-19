@@ -2092,6 +2092,102 @@
       "check": "`python3 bin/model_check.py status --json`; `python3 bin/event_log.py verify`.",
       "related": "F2c item F; bin/model_check.py, .stella/model-check.json (weekly)",
       "resolvable": false
+    },
+    {
+      "code": "STL-GRD-660",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a capability is unknown",
+      "message": "No capability with that id is known to this role: {problem}.",
+      "action": "check the id with `python3 bin/capabilities.py search <words> --role <role>`.",
+      "cause": "The id is not in the capability registry, or the registry entry is not visible to the role (a hidden one answers exactly like an unknown one).",
+      "check": "`python3 bin/capabilities.py search <words> --role <role> --json`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item C; bin/capabilities.py, .stella/capability-sources.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-661",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a skill or server has no registry entry",
+      "message": "A skill or MCP server was found with no entry in the capability registry, so it is hidden from every role: {problem}.",
+      "action": "add an entry to .stella/capabilities.json (through an ordinary apply) or remove the skill or server.",
+      "cause": "A folder or manifest named in .stella/capability-sources.json holds something the registry does not list. Nothing unregistered can be found or loaded.",
+      "check": "`python3 bin/capabilities.py search <words> --role <role> --json`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item C; bin/capabilities.py, .stella/capability-sources.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-662",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a worker cannot use the capability tool directly",
+      "message": "The capability tool was refused in a worker environment: {problem}.",
+      "action": "use the capability server tools; nothing for the owner unless they are missing.",
+      "cause": "A worker asks the capability server and never reads the registry itself; the server address or the run token is not set.",
+      "check": "`python3 bin/capabilities.py search <words> --role <role> --json`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item C; bin/capabilities.py, .stella/capability-sources.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-663",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "the capability role is not usable",
+      "message": "The role for a capability command is missing or not in the role table: {problem}.",
+      "action": "pass a role of the role table.",
+      "cause": "--role is required on the host and must name a role of the role table. Nothing is shown to an unknown role.",
+      "check": "`python3 bin/capabilities.py search <words> --role <role> --json`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item C; bin/capabilities.py, .stella/capability-sources.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-664",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a capability request could not be opened",
+      "message": "No approval was opened for the capability: {problem}.",
+      "action": "check `python3 bin/approvals.py status <id>` and the entry's request_approval.",
+      "cause": "The capability has no approval class, or the approval service refused the request.",
+      "check": "`python3 bin/capabilities.py search <words> --role <role> --json`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item C; bin/capabilities.py, .stella/capability-sources.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-665",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a capability could not be loaded",
+      "message": "The capability was not loaded: {problem}.",
+      "action": "request it first (`python3 bin/capabilities.py request`), then load it.",
+      "cause": "The capability is not available to the role (a requestable one needs its approval first), its class needs the host check, it holds no definition, or the load line could not be written.",
+      "check": "`python3 bin/capabilities.py search <words> --role <role> --json`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item C; bin/capabilities.py, .stella/capability-sources.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-666",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a card names a capability the role cannot use",
+      "message": "The card was refused: {problem}.",
+      "action": "change the card's skills and tools, or give the role the capability.",
+      "cause": "A skill or tool on the card is not available to the card's role (requestable is not enough).",
+      "check": "`python3 bin/capabilities.py search <words> --role <role> --json`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item C; bin/capabilities.py, .stella/capability-sources.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-667",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "the capability sources cannot be read",
+      "message": "The capability registry or its sources could not be read: {problem}.",
+      "action": "run `python3 bin/stella_data.py check`.",
+      "cause": ".stella/capability-sources.json, the registry or the role table is missing or invalid; nothing is shown.",
+      "check": "`python3 bin/capabilities.py search <words> --role <role> --json`; `python3 bin/stella_data.py check`.",
+      "related": "F3 item C; bin/capabilities.py, .stella/capability-sources.json",
+      "resolvable": false
     }
   ]
 }
