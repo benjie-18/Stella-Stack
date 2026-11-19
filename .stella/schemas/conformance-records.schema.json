@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Conformance records",
+  "description": "What bin/conformance.py run found (F3 item Q, DC-07): one record per adapter, version and role (a new run replaces the older record of the same three), with the sha256 digests of the adapter entry, its rendered policy and the role's run-policy section the run was made on. bin/adapter.py start's gate reads it. Engine-written state (index key conformance_records), not a data file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "records"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "adapter",
+          "version",
+          "role",
+          "link",
+          "conn_type",
+          "passed",
+          "cases",
+          "digests",
+          "at",
+          "global_id",
+          "install_id"
+        ],
+        "properties": {
+          "adapter": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1
+          },
+          "link": {
+            "type": "string",
+            "minLength": 1
+          },
+          "conn_type": {
+            "enum": [
+              "api",
+              "cli-login"
+            ]
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "cases": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "passed",
+                "run",
+                "detail"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "passed": {
+                  "type": "boolean"
+                },
+                "run": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "detail": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "digests": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "adapter",
+              "policy",
+              "run_policy"
+            ],
+            "properties": {
+              "adapter": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "policy": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "run_policy": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          },
+          "at": {
+            "type": "string"
+          },
+          "global_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "install_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

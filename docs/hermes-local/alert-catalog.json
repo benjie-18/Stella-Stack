@@ -3088,6 +3088,78 @@
       "check": "`python3 bin/run_policy.py check`; `python3 bin/stella_data.py check`.",
       "related": "F3 item X; bin/run_policy.py, bin/log_filter.py, .stella/run-policy.json",
       "resolvable": false
+    },
+    {
+      "code": "STL-GRD-690",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "the conformance cases or the data they read are unusable",
+      "message": "The conformance suite could not use its data: {problem}. No case was run.",
+      "action": "fix the conformance cases, the role table or the policy so that check passes. See STL-GRD-690 in docs/alert-codes.md.",
+      "cause": "The conformance cases file, the owner settings or secret names a case plants decoys from, or the token patterns cannot be read.",
+      "check": "`python3 bin/conformance.py run --adapter A --role R --json`; `python3 bin/stella_data.py check`; `bash bin/conformance-selftest.sh`.",
+      "related": "F3 item Q; bin/conformance.py, .stella/conformance.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-691",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "the adapter failed conformance for that role",
+      "message": "A worker adapter failed conformance: {problem}. Its record says failed, so the adapter cannot hold the role.",
+      "action": "read the failed cases in the record (index key conformance_records) and fix the adapter entry or its policy, then run the suite again. See STL-GRD-691 in docs/alert-codes.md.",
+      "cause": "At least one case's trusted evidence showed a refused action done, a planted value or token seen, no completion evidence, no working tool call or a prefill over budget.",
+      "check": "`python3 bin/conformance.py run --adapter A --role R --json`; `python3 bin/stella_data.py check`; `bash bin/conformance-selftest.sh`.",
+      "related": "F3 item Q; bin/conformance.py, .stella/conformance.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-692",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a conformance case could not be run",
+      "message": "A conformance case could not be run: {problem}. That case counts as failed.",
+      "action": "check that the adapter starts (adapter.py version and start), then run the suite again. See STL-GRD-692 in docs/alert-codes.md.",
+      "cause": "The adapter refused or failed to start the case run, the case ran past its time limit and was stopped, or the tool failed unexpectedly.",
+      "check": "`python3 bin/conformance.py run --adapter A --role R --json`; `python3 bin/stella_data.py check`; `bash bin/conformance-selftest.sh`.",
+      "related": "F3 item Q; bin/conformance.py, .stella/conformance.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-693",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "the conformance scratch worktree cannot be made",
+      "message": "The conformance suite could not make its scratch worktree: {problem}. Nothing was run.",
+      "action": "check the folder at the index key conformance_scratch is writable and git works. See STL-GRD-693 in docs/alert-codes.md.",
+      "cause": "The scratch folder under the conformance scratch root or its git worktree could not be created.",
+      "check": "`python3 bin/conformance.py run --adapter A --role R --json`; `python3 bin/stella_data.py check`; `bash bin/conformance-selftest.sh`.",
+      "related": "F3 item Q; bin/conformance.py, .stella/conformance.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-694",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "the conformance record cannot be written",
+      "message": "The conformance result could not be recorded: {problem}. The gate keeps the records it had.",
+      "action": "check the file at the index key conformance_records and the event log, then run the suite again. See STL-GRD-694 in docs/alert-codes.md.",
+      "cause": "The index names no records file, the file is unreadable or would break its schema, or the event log cannot take the line.",
+      "check": "`python3 bin/conformance.py run --adapter A --role R --json`; `python3 bin/stella_data.py check`; `bash bin/conformance-selftest.sh`.",
+      "related": "F3 item Q; bin/conformance.py, .stella/conformance.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-695",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "the canary key cannot be read",
+      "message": "The canary case could not read the link's key to look for it: {problem}. The case counts as failed.",
+      "action": "put the canary key in the scratch credential folder the routing data names for this run, then run the suite again. See STL-GRD-695 in docs/alert-codes.md.",
+      "cause": "The api link's secret is not in the key store backend, or the backend holds no key files.",
+      "check": "`python3 bin/conformance.py run --adapter A --role R --json`; `python3 bin/stella_data.py check`; `bash bin/conformance-selftest.sh`.",
+      "related": "F3 item Q; bin/conformance.py, .stella/conformance.json",
+      "resolvable": false
     }
   ]
 }

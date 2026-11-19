@@ -441,6 +441,18 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
+      "id": "conformance",
+      "path": ".stella/conformance.json",
+      "schema": "conformance",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "a611eeef-7242-4f90-af91-c22891e504b8",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
       "id": "policy",
       "path": ".stella/policy.json",
       "schema": "policy",
@@ -474,5 +486,6 @@
   "adapter_runs": ".supervisor/state/adapter-runs",
   "host_presence": ".supervisor/state/host-presence.json",
   "capabilities_mcp_state": ".supervisor/state/capabilities-mcp.json",
-  "conformance_scratch": ".scratch/conformance"
+  "conformance_scratch": ".scratch/conformance",
+  "conformance_records": ".supervisor/state/conformance-records.json"
 }

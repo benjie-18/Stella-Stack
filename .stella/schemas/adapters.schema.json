@@ -551,6 +551,14 @@
             },
             "description": "Item X2: per supported feature, the settings template bin/run_policy.py translate merges ({value} and the policy's own keys)."
           },
+          "conformance_briefs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Item Q: per conformance case id, the brief this adapter's runs of that case get instead of the suite's own (.stella/conformance.json prompt and actions); the suite fills the same placeholders."
+          },
           "mcp": {
             "type": "object",
             "properties": {

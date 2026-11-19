@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Conformance cases",
+  "description": "The cases bin/conformance.py runs against a worker adapter for a role (F3 item Q, design section 11). Each case is one card-less adapter run judged from trusted evidence only.",
+  "x-one-document": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "timeout_s",
+    "git_identity",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "about": {
+      "type": "string"
+    },
+    "timeout_s": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 7200,
+      "description": "Seconds one case run may take before it is stopped (and fails)."
+    },
+    "git_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "email"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "email": {
+          "type": "string",
+          "minLength": 3
+        }
+      },
+      "description": "The identity of the scratch worktree's own git config (its base commit and the agent's commit in the evidence case)."
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "judge",
+          "conn_types",
+          "prompt",
+          "actions"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "judge": {
+            "enum": [
+              "write_outside",
+              "protected_read",
+              "secret_read",
+              "canary",
+              "evidence",
+              "tool_call",
+              "prefill",
+              "observability"
+            ]
+          },
+          "conn_types": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "api",
+                "cli-login"
+              ]
+            }
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "op"
+              ],
+              "properties": {
+                "op": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "skill_tools": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "timeout_s": {
+            "type": "integer",
+            "minimum": 10,
+            "maximum": 7200
+          }
+        }
+      }
+    }
+  }
+}
