@@ -108,6 +108,7 @@ printf '.supervisor/\n' >"$R/.gitignore"
 git -C "$R" init -q && git -C "$R" add -A >/dev/null 2>&1 && git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qm base >/dev/null 2>&1 || fixture "git"
 python3 -I "$R/bin/owner_auth.py" init-key >/dev/null 2>&1 || fixture "no owner key"
 python3 -I -B "$R/bin/stella_data.py" check >"$T/o/fxcheck" 2>&1 || fixture "the scratch data does not pass check: $(grep -v '^warning' "$T/o/fxcheck" | head -c 400)"
+cp -r "$R" "$T/nb"   # a root with no benchmark history at all (T-MC-REFUSE d2): a benchmark file that is only missing proves nothing (CRT-02)
 
 # ---- benchmark results through compare.py record (trusted lines); qa-m1 the current pick ----
 bench() {  # <model> <score> <tasks>
@@ -147,17 +148,38 @@ ok 'reason d1 qa-np no_probe' "T-MC-REFUSE a model with no probe record for its 
 ok 'reason d1 qa-fail probe_unmet' "T-MC-REFUSE a model whose probe record fails the role is refused (probe_unmet)"
 ok 'reason d1 qa-lo worse' "T-MC-REFUSE a model that ranks lower on the role's benchmark is refused (worse)"
 ok 'reason d1 qa-inc inconclusive' "T-MC-REFUSE a model whose comparison is inconclusive is refused (inconclusive)"
-mv "$BF" "$T/c/bench.saved"; mc d2 run --dry-run --json; mv "$T/c/bench.saved" "$BF"
+(export STELLA_ROOT=$T/nb; python3 -I "$T/nb/bin/model_check.py" run --dry-run --json >"$T/o/d2.json" 2>"$T/o/d2.err"; echo $? >"$T/o/d2.rc")
 ok '[ "$(rc d2)" = 0 ] && J d2 "[.picks[] | select(.preset == \"$B1\" and .new.model == \"qa-m2\" and .reason == \"newer\")] | length == 2" && reason d2 qa-lo not_newer && reason d2 qa-inc not_newer' \
   "T-MC-REFUSE d2 no benchmark data: only a newer version of the same family with capabilities at least the current pick's (exit $(rc d2))"
 jq '.records[0].score = 1 | .records[0].task = "t-forged"' "$BF" >"$BF.n" && mv "$BF.n" "$BF"   # a hand edit: the record has no trusted line
 mc d3 run --dry-run --json
 ok '[ "$(rc d3)" = 0 ] && J d3 "[.picks[] | select(.preset == \"$B1\" and .new.model == \"qa-m2\" and .reason == \"better\")] | length == 2"' \
   "F-CVER-07 a hand-edited benchmark record proves nothing (no trusted line): the decision rests on the proved records only"
+# CRT-02 (red team RT-F-02): a benchmark file that cannot be read, proves nothing or is gone refuses; never the no-benchmark rule
+rebench() {  # <qa-m2 score>: a fresh benchmark file, all records proved by compare.py record
+  rm -f "$BF"
+  { bench qa-m1 0.5 10; bench qa-m2 "$1" 10; bench qa-lo 0.1 10; bench qa-inc 0.9 2; bench qa-cls 0.9 10; bench qa-np 0.9 10; bench qa-fail 0.9 10; bench qa-n 0.9 10; bench qa-w 0.9 10 qa-b; } | jq -s 'add' >"$T/c/bench2.json"
+  python3 -I "$R/bin/compare.py" record --file "$T/c/bench2.json" >"$T/o/bench2" 2>&1 || fixture "compare.py record failed: $(head -c 300 "$T/o/bench2")"
+}
+nopick() { J "$1" "[.picks[] | select(.preset == \"$B1\" and .new.model == \"qa-m2\")] | length == 0"; }
+rebench 0.1   # qa-m2 ranks LOWER than the current pick qa-m1 on the role's benchmark
+mc b0 run --dry-run --json
+ok '[ "$(rc b0)" = 0 ] && nopick b0 && reason b0 qa-m2 worse' "RT-F-02 control: qa-m2 ranks lower on the benchmark and is refused (worse)"
+cp "$BF" "$T/c/bf.good"; printf '{' >"$BF"   # the benchmark file cannot be parsed
+mc b1 run --dry-run --json
+ok '[ "$(rc b1)" = 0 ] && nopick b1 && reason b1 qa-m2 bench_unproved' "RT-F-02 a damaged benchmark file never lets the lower-ranked qa-m2 through (got: $(jq -c '[.picks[] | {m: .new.model, r: .reason}]' "$T/o/b1.json" 2>/dev/null))"
+jq '.records |= map(.trial += 100)' "$T/c/bf.good" >"$BF"   # valid JSON, every record hand-edited: none has a trusted line
+mc b2 run --dry-run --json
+ok '[ "$(rc b2)" = 0 ] && nopick b2 && reason b2 qa-m2 bench_unproved' "RT-F-02 hand-editing every benchmark record never lets the lower-ranked qa-m2 through (got: $(jq -c '[.picks[] | {m: .new.model, r: .reason}]' "$T/o/b2.json" 2>/dev/null))"
+rm -f "$BF"   # the file deleted
+mc b3 run --dry-run --json
+ok '[ "$(rc b3)" = 0 ] && nopick b3 && reason b3 qa-m2 bench_unproved' "RT-F-02 deleting the benchmark file never lets the lower-ranked qa-m2 through (got: $(jq -c '[.picks[] | {m: .new.model, r: .reason}]' "$T/o/b3.json" 2>/dev/null))"
+rebench 0.9   # back to the shared fixture: qa-m2 ranks higher
 
 # ---- T-MC-APPLY ----
 setting false; s0=$(sha); mc a0 run --json
 ok '[ "$(rc a0)" = 0 ] && [ "$(sha)" = "$s0" ] && J a0 "[.skipped[] | select(.preset == \"$B1\" and .reason == \"setting_off\")] | length == 1"' "T-MC-APPLY with the owner setting off a built-in preset is not changed (exit $(rc a0))"
+ok '[ "$(evn ".type == \"apply\" and .what == \"pricing\" and .who.user == \"$WID\"")" = 0 ]' "RT-F-04 with the owner setting off the engine writes no pricing row either (CRT-04)"
 setting ""; e0=$(evn ".type == \"apply\" and .who.user == \"$WID\""); mc a1 run --json
 ok '[ "$(rc a1)" = 0 ] && [ "$(link 0)" = qa-m2 ] && [ "$(link 1)" = qa-m2 ] && J a1 "[.picks[] | select(.applied)] | length == 2"' "T-MC-APPLY with the setting on (its default) the built-in preset's picks change (exit $(rc a1): $(head -c 300 "$T/o/a1.err"))"
 ok '[ "$(evn ".type == \"apply\" and .what == \"role-assignments\" and .who.user == \"$WID\" and (.detail | test(\" engine pick $PFX-\"))")" = 2 ] && python3 -I -B "$R/bin/event_log.py" verify' \
@@ -185,6 +207,14 @@ ok '[ "$(rc r2)" = 1 ] && grep -q "^STL-MDL-765" "$T/o/r2.err" && [ "$(sha)" = "
 printf '{"schema_version":2,"time":"2026-11-18T00:00:00Z","type":"apply","who":{"role":null,"channel":null,"user":"%s"},"what":"role-assignments","detail":"engine pick %s-forged","old":{},"new":{}}\n' "$WID" "$PFX" >>"$EV"
 mc r3 rollback "$PFX-forged" --json
 ok '[ "$(rc r3)" = 1 ] && grep -q "^STL-MDL-765" "$T/o/r3.err" && [ "$(sha)" = "$s0" ]' "T-MC-ROLLBACK F-CVER-05 a pick named only by an untrusted (unchained) line is refused: only a trusted event line is a source"
+# CRT-03 (red team RT-F-03): rollback is one step; a reversal's own line is never a pick to reverse
+R1=$(jq -r '.pick.id' "$T/o/r1.json")
+cp "$PF" "$T/c/probes.good"; jq '.records |= map(select(.model != "qa-m2"))' "$T/c/probes.good" >"$PF"   # qa-m2 no longer has any probe record
+s0=$(sha); mc r4 rollback "$R1" --json
+ok '[ "$(rc r4)" = 1 ] && grep -q "^STL-MDL-765" "$T/o/r4.err" && [ "$(sha)" = "$s0" ] && [ "$(link 0)" = qa-m1 ]' \
+  "RT-F-03 with the setting off and qa-m2 unprobed, 'rollback <the rollback's id>' ($R1) does not put qa-m2 back (rc $(rc r4), link 0 = $(link 0))"
+ok '! grep -q "rollback $R1" "$AL"' "RT-F-03 the rollback's own STL-MDL-760 alert does not offer to undo the rollback (rollback $R1)"
+cp "$T/c/probes.good" "$PF"
 setting ""
 
 # ---- T-MC-CUSTOM ----
@@ -201,6 +231,8 @@ jq '.model_check_grants[0].revoked_at = "2026-02-01T00:00:00Z"' "$GR" >"$GR.n" &
 mc c3 rollback "$PC" --json; mc c4 run --json
 ok '[ "$(rc c3)" = 0 ] && [ "$(rc c4)" = 0 ] && [ "$(link 0 qa-custom)" = qa-m1 ] && J c4 "[.skipped[] | select(.preset == \"qa-custom\" and .reason == \"no_grant\")] | length == 1"' \
   "T-MC-CUSTOM after the grant is revoked the custom preset is unchanged again (its rollback still works)"
+RC=$(jq -r '.pick.id' "$T/o/c3.json"); mc c5 rollback "$RC" --json
+ok '[ "$(rc c5)" = 1 ] && [ "$(link 0 qa-custom)" = qa-m1 ]' "RT-F-03b with the grant revoked, rolling back the rollback ($RC) does not change the custom preset again (rc $(rc c5), link 0 = $(link 0 qa-custom))"
 cp -r "$R" "$T/rg"; jq --arg b "$B1" '.model_check_grants[0].preset = $b | .model_check_grants[0].revoked_at = null' "$GR" >"$T/rg/.stella/grants.json"
 ok '! STELLA_ROOT=$T/rg python3 -I -B "$T/rg/bin/stella_data.py" check >"$T/o/rg" 2>&1 && grep -q "model_check_grants\[0\]: preset" "$T/o/rg"' "F-CVER-06 a model_check grant naming a built-in preset is refused by check (the setting decides there, never a grant)"
 
@@ -249,6 +281,36 @@ setting false
 ok "passz rv '{\"pick\":\"mc-qa\",\"reverses\":\"$P2\"}'" "F-CVER-04 a reversal matching the pick's trusted line is accepted with the setting off"
 ok "refz rv '{\"pick\":\"mc-qa\",\"reverses\":\"$P1\"}'" "F-CVER-04 a reversal against the trusted line of another link's pick is refused"
 setting ""
+# CRT-05 (red team RT-F-05): the proof under the lock runs the planner's own candidate rules (hosts, class order, probe age and version)
+cp "$PF" "$T/c/probes.good"
+jq '.records += [(.records[] | select(.connection == "qa-a" and .model == "qa-m2")) + {connection: "qa-h", model: "qa-h1", version: "1"}]' "$PF" >"$PF.n" && mv "$PF.n" "$PF"   # qa-h1 is probed and meets the role
+jq --arg b "$B1" --arg r "$ROLE" '.effort_modes[$b].roles[$r].escalation_chain[1] |= (.connection = "qa-h" | .model = "qa-h1") | .effort_modes[$b].changelog += [{at: "2026-11-18T00:00:00Z", by: "qa", what: "qa"}]' "$RA" >"$T/c/h1.json"
+ok 'refz h1' "RT-F-05 the engine proof refuses a link on a connection whose host the owner never approved"
+s0=$(sha); python3 -I "$T/other.py" "$R/bin/stella-apply.py" "$T/c/h1.json" - "$R/bin/model_check.py" >"$T/o/sp1" 2>&1; r=$?
+ok '[ $r = 1 ] && grep -q "^STL-MDL-764" "$T/o/sp1" && [ "$(sha)" = "$s0" ]' "RT-F-05 a host script that names the engine tool as argv[0] cannot write a built-in preset link on an unapproved host (rc $r)"
+jq '.records |= map(if .model == "qa-m1" then .probed_at = "2020-01-01T00:00:00Z" else . end)' "$T/c/probes.good" >"$PF"
+ok 'refz e1' "CRT-05 the engine proof refuses a pick whose probe record is older than stale_catalog_days"
+jq '.records |= map(if .model == "qa-m1" then .version = "0" else . end)' "$T/c/probes.good" >"$PF"
+ok 'refz e1' "CRT-05 the engine proof refuses a pick whose probe record is for another version than the model list shows"
+cp "$T/c/probes.good" "$PF"; ok 'passz e1' "CRT-05 control: with the probe records back the same pick passes the proof"
+# CRT-04: an engine apply of any other row is refused; of pricing only dated rows appended, existing rows kept, finite non-negative prices
+cat >"$T/frozen2.py" <<'P'
+import json, sys
+sys.path.insert(0, sys.argv[1]); import stella_data as sd
+old = json.load(open(sys.argv[3])); new = json.load(open(sys.argv[4]))
+print(json.dumps(sd.frozen(sys.argv[2], old, new, {"pick": "mc-qa"})))
+P
+PJ=$R/.stella/pricing.json
+pz() { python3 -I "$T/frozen2.py" "$R/bin" "$2" "$3" "$T/c/$1.json" >"$T/o/fz-$1" 2>&1 && jq -e "${4:-length == 1 and .[0][0] == \"STL-MDL-764\"}" "$T/o/fz-$1" >/dev/null; }
+ROW=$(jq -nc --arg i "$IID" '{id: "mc-qa-row", connection: "qa-a", model: "qa-m1", effective_from: "2026-11-18", source: "qa", currency: "USD", per_million: {input: 1, output: 1, cache_write: 0, cache_read: 0, reasoning: 0}, batch_discount: 0, global_id: "00000000-0000-4000-8000-000000000001", install_id: $i}')
+jq --argjson r "$ROW" '.entries += [$r]' "$PJ" >"$T/c/pr1.json"
+ok 'pz pr1 pricing "$PJ" "length == 0"' "CRT-04 control: the engine may append one dated pricing row"
+jq --argjson r "$ROW" '.entries += [$r | .per_million.input = -1]' "$PJ" >"$T/c/pr2.json"; ok 'pz pr2 pricing "$PJ"' "CRT-04 an appended pricing row with a negative price is refused"
+jq --argjson r "$ROW" '.entries += [$r | del(.effective_from)]' "$PJ" >"$T/c/pr3.json"; ok 'pz pr3 pricing "$PJ"' "CRT-04 an appended pricing row with no date is refused"
+jq '.entries |= .[1:]' "$PJ" >"$T/c/pr4.json"; ok 'pz pr4 pricing "$PJ"' "CRT-04 an engine apply that removes a pricing row is refused"
+jq '.entries[0].per_million.input += 1' "$PJ" >"$T/c/pr5.json"; ok 'pz pr5 pricing "$PJ"' "CRT-04 an engine apply that changes a pricing row is refused"
+setting false; ok 'pz pr1 pricing "$PJ"' "CRT-04 with the owner setting off an engine pricing apply is refused"; setting ""
+jq '.' "$GR" >"$T/c/gr1.json"; ok 'pz gr1 grants "$GR"' "CRT-04 an engine apply of a row that is neither presets nor pricing is refused"
 
 # ---- T-MC-STALE ----
 probes '.records |= map(.probed_at = "2020-01-01T00:00:00Z")'; s0=$(sha); mc s1 run --json
@@ -267,6 +329,12 @@ ok '[ "$(rc s4)" = 0 ] && [ "$(evn ".type == \"model_check.resume\"")" = 1 ] && 
   "F-CVER-08 resume clears the paused flag with one trusted line; the next run goes ahead"
 mc st status --json
 ok '[ "$(rc st)" = 0 ] && J st "[.picks[] | select(.pick == \"$P1\")] | length == 1"' "T-CORE-MODELCHECK status lists the picks from the trusted lines"
+# CRT-07 (red team RT-F-06): a switched-off connection's model list is not fetched (no key read)
+ed connections.json '(.entries[] | select(.id == "qa-a") | .enabled) = false'
+SF=$R/$(ix .model_check_state); l0=$(jq -r '.listed["qa-a"] // "none"' "$SF" 2>/dev/null)
+sleep 1; mc o1 run --json
+ok '[ "$(rc o1)" = 0 ] && [ "$(jq -r ".listed[\"qa-a\"] // \"none\"" "$SF")" = "$l0" ]' "RT-F-06 a switched-off connection's model list is not fetched (listed qa-a: $l0 -> $(jq -r '.listed["qa-a"] // "none"' "$SF"), exit $(rc o1))"
+ed connections.json '(.entries[] | select(.id == "qa-a") | .enabled) = true'
 ok 'clean' "T-CORE-MODELCHECK the fake key never shows in any line, alert or output"
 
 [ $fails -eq 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
