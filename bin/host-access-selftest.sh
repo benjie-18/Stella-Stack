@@ -173,7 +173,7 @@ vault)   # AC10-vault (DC-09: never_targets in .stella/host-policy.json, checked
   dec w1 '.target.app = "qa-vault"'; ok 'refused w1' "AC10-vault the vault app is refused although host-access enables it"
   dec w2 '.target.domain = "qa-vault.example"'; ok 'refused w2' "AC10-vault the vault domain is refused although host-access enables it"
   ha '.actions |= map(.state = "run" | .reversible = true)'; dec w3 '.target.app = "qa-vault"'; ok 'refused w3' "AC10-vault every action set to run and reversible: the vault is still refused"
-  ok 'jq -e ".never_targets.apps | index(\"qa-vault\")" "$HPOL" && ! grep -q never_targets "$HA"' "AC10-vault the vault ids live in host-policy.json (stack data), not in the owner's host-access settings"
+  ok '[ -s "$HPOL" ] && jq -e ".never_targets.apps | index(\"qa-vault\")" "$HPOL" && ! grep -q never_targets "$HA"' "AC10-vault the vault ids live in host-policy.json (stack data), not in the owner's host-access settings"
   ;;
 final)   # AC10-final
   pres '.route = "qa-voice" | .final = {state: "closed", turn: {detector: "semantic", reopened_within_grace: false}}'

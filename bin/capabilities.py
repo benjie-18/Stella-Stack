@@ -15,7 +15,7 @@ CLI (host side; --role names a role of the role table):
   load ID --role R --run RUN [--card C] [--json]    the definition; one trusted capability-load line (engine side only)
   check-card --role R --card FILE [--json]          every skill / tool of a card JSON must be available to R
   prompt-line [--json]                              the capability line every role prompt carries
-  check [--json]                                    completeness lint (item R): every command file, skill, MCP server and extension of the sources
+  lint [--json]                                     completeness lint (item R): every command file, skill, MCP server and extension of the sources
                                                     has a registry entry; STL-CFG-340 names the ones without
 In a worker environment (DC-05) search / describe / request / load go to the capability server (bin/capabilities_mcp.py) with the
 run token of the environment, without --role, --card or --run (role, card and run come from the token); nothing local is read or
@@ -242,7 +242,7 @@ def commands(src):
     return out
 
 
-def cmd_check(a, src, entries):
+def cmd_lint(a, src, entries):
     """The completeness lint (item R, body B5): every command file, skill, MCP server and extension of the sources has a registry entry."""
     cmds = commands(src)
     missing = [c for c in cmds if c not in {e["source"] for e in entries}] + sorted(found_ids(src) - {e["id"] for e in entries})
@@ -268,12 +268,12 @@ def main(argv):
     add("request", ("--role", True), ("--reason", True), ("--card", True)).add_argument("id")
     add("load", ("--role", True), ("--run", True), ("--card", False), ("--host-request", False), **hr).add_argument("id")
     add("check-card", ("--role", True), ("--card", True))
-    add("check")
+    add("lint")
     add("prompt-line")
     a = p.parse_args(argv)
     try:
         if w := worker_env.reason():   # before reading anything: a worker asks the capability server (DC-05)
-            if a.cmd in ("check-card", "prompt-line", "check") or any(getattr(a, f, None) is not None for f in ("role", "card", "run", "host_request")):
+            if a.cmd in ("check-card", "prompt-line", "lint") or any(getattr(a, f, None) is not None for f in ("role", "card", "run", "host_request")):
                 raise Refuse(662, w + "; role, card and run come from the run token, through the capability server")
             import capabilities_mcp as mcp
             args = ({"query": " ".join(a.words)} if a.cmd == "search" else {}) | {
@@ -294,8 +294,8 @@ def main(argv):
                     raise Refuse(667, "the host request file is not readable JSON") from None
             if a.cmd == "prompt-line":
                 out = {"line": src["capability_prompt_line"]}
-            elif a.cmd == "check":
-                out = cmd_check(a, src, registry())
+            elif a.cmd == "lint":
+                out = cmd_lint(a, src, registry())
             elif not role_ok(a.role):
                 raise Refuse(663, "the role is not in the role table")
             else:

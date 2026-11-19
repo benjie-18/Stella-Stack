@@ -360,6 +360,41 @@ done
 unset TREE_TOOL
 GM=$(sed -n 's/^GUARDS = \[("pre_tool_call", "\(.*\)",$/\1/p' /workspace/bin/register-escalation-hook.sh)
 ok '[ -n "$GM" ] && [[ kanban_comment =~ $GM ]] && [[ kanban_complete =~ $GM ]] && ! [[ kanban_show =~ $GM ]]' "A1-01: the registered role-guard matcher covers kanban_comment (and still not kanban_show)"
+# AC7-card-refused (F3 item K, design section 9; tests first): at creation the card's skills / tools (card schema fields) are checked for the
+# ASSIGNEE's role; a capability that role may not use (hidden, or only requestable) or an unknown id is refused with STL-GRD-683..689, a
+# card with only available ones goes through. Hermes's kanban_create takes "skills" today; "tools" is a card-schema field the guard reads
+# when present (assumption K1). The guard reads the registry of the stack root, STELLA_ROOT in tests, as every F3 core does (assumption K2).
+# Real guard processes on a scratch root holding the fixture entries (the judge would keep a stack module of an earlier row). The creator is the
+# dispatcher's hook, not a worker (assumption K3): its own stub hermes answers the board-wide running list `roles.py prove` asks for (none),
+# so worker_env says "not a worker"; every other call goes to the stub at the top of this file.
+mkdir -p "$T/kbin"; printf '#!/usr/bin/env bash\n[ "$1 $2 $3 $4 $5" = "kanban --board %s list --status" ] && { echo "[]"; exit 0; }\nexec %q "$@"\n' "$B" "$T/bin/hermes" >"$T/kbin/hermes"; chmod +x "$T/kbin/hermes"
+KR=$T/kroot; mkdir -p "$KR"; cp -r /workspace/.stella "$KR/"
+KIX=$KR/.stella/data-files.json; KRT=$(jq -r .role_table "$KIX"); mkdir -p "$KR/$(dirname "$KRT")"; cp "$RF" "$KR/$KRT"
+KCAP=$KR/$(jq -r '.files[] | select(.id == "capabilities") | .path' "$KIX")
+KAR=$(role "$WT"); KCRR=$(role "$CR"); KOTH=$(jq -r --arg a "$KAR" --arg c "$KCRR" '[.roles | keys[] | select(. != $a and . != $c)][0] // empty' "$RF")
+KCLS=$(jq -r '[.. | objects | select(has("approval_class")) | .approval_class.enum[]?] | map(select(. != "read"))[0] // empty' "$KR/.stella/schemas/approval-request.schema.json")
+kent() { jq -nc --arg id "$1" --arg k "$2" --argjson al "$3" --argjson rq "$4" --arg c "$KCLS" --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$IID" \
+  '{id: $id, kind: $k, summary: "qa card capability fixture", keywords: ["qa"], inputs: "none", outputs: "text", allowed_roles: $al, requestable_roles: $rq,
+    request_approval: $c, risk_class: "read", hosts: [], secrets: [], status: "approved", source: ("qa/" + $id), triage: {result: "shipped"},
+    definition: {text: "QA"}, global_id: $g, install_id: $i}'; }
+jq --argjson e "[$(kent qa-k-skill-ok skill "[\"$KAR\"]" '[]'),$(kent qa-k-tool-ok tool "[\"$KAR\"]" '[]'),$(kent qa-k-skill-req skill "[\"$KOTH\"]" "[\"$KAR\"]"),$(kent qa-k-skill-hid skill "[\"$KOTH\"]" '[]'),$(kent qa-k-tool-hid tool "[\"$KOTH\"]" '[]'),$(kent qa-k-skill-cr skill "[\"$KCRR\"]" '[]')]" '.entries += $e' "$KCAP" >"$KCAP.n" && mv "$KCAP.n" "$KCAP"
+# kc <jq filter adding skills/tools to the valid card>: the guard's exit code for $CR creating it for $WT, as a real process; output in $T/out
+kc() { local i pay; i=$(good "$WT" | jq -c "$1"); pay=$(jq -nc --arg p "$CR" --argjson i "$i" '{hook_event_name: "pre_tool_call", tool_name: "kanban_create", tool_input: $i, profile: $p, extra: {}}')
+  printf '%s' "$pay" | env STELLA_ROOT="$KR" PATH="$T/kbin:$PATH" python3 "$G" >"$T/out" 2>&1; echo $?; }
+kcode() { grep -qE 'STL-GRD-68[3-9]' "$T/out"; }
+ok '[ -n "$KOTH" ] && [ -n "$KCLS" ] && env STELLA_ROOT="$KR" PATH="$T/kbin:$PATH" python3 -I "$S/capabilities.py" describe qa-k-skill-ok --role "$KAR" --json >"$T/out" 2>&1 && ! env STELLA_ROOT="$KR" PATH="$T/kbin:$PATH" python3 -I "$S/capabilities.py" describe qa-k-skill-hid --role "$KAR" --json >/dev/null 2>&1' \
+  "AC7-card-refused precondition: the scratch registry holds the fixtures (qa-k-skill-ok available to $KAR, qa-k-skill-hid hidden from it)"
+ok '[ "$(kc ".skills = [\"qa-k-skill-ok\"] | .tools = [\"qa-k-tool-ok\"]")" = 0 ]' "AC7-card-refused a card whose skills and tools are all available to the assignee's role ($KAR): allowed"
+ok '[ "$(kc ".skills = [] | .tools = []")" = 0 ]' "AC7-card-refused empty skills and tools lists: allowed"
+ok '[ "$(kc ".skills = [\"qa-k-skill-hid\"]")" = 2 ] && kcode' "AC7-card-refused a skill hidden from the assignee's role: refused with STL-GRD-683..689"
+ok '[ "$(kc ".skills = [\"qa-k-skill-req\"]")" = 2 ] && kcode' "AC7-card-refused a skill the role may only request (requestable is not enough): refused with STL-GRD-683..689"
+ok '[ "$(kc ".skills = [\"qa-k-skill-ok\"] | .tools = [\"qa-k-tool-hid\"]")" = 2 ] && kcode' "AC7-card-refused a tool hidden from the role, next to an available skill: refused with STL-GRD-683..689"
+ok '[ "$(kc ".skills = [\"qa-k-skill-ok\", \"qa-k-no-such-capability\"]")" = 2 ] && kcode' "AC7-card-refused an unknown capability id: refused with STL-GRD-683..689"
+[ "$KCRR" != "$KAR" ] && ok '[ "$(kc ".skills = [\"qa-k-skill-cr\"]")" = 2 ] && kcode' "AC7-card-refused the card's role decides, not the creator's: a skill available to $KCRR only, on a card for $KAR: refused"
+cp "$KCAP" "$KCAP.keep"; echo '{"schema_version": 1, "entries": [' >"$KCAP"
+ok '[ "$(kc ".skills = [\"qa-k-skill-ok\"]")" = 2 ]' "AC7-card-refused the registry cannot be read: a card naming a skill is refused (fail closed)"
+mv "$KCAP.keep" "$KCAP"
+
 # T1 (r5): the two routes agree on every 10th run row (the judge and a real guard process, the same row), and a planted difference (the judge
 # given a copy of the guard whose refusal reads otherwise) is caught
 ragree() { local n=0 i=0 p e pay rc rrc args

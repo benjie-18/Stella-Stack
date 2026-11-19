@@ -3,7 +3,8 @@
 # Every section runs in its own scratch root (bash capabilities-selftest.sh <section>); no argument runs them all.
 # Sections -> checks: found = AC4-found | requestable = AC4-requestable | invisible = AC4-invisible | request = AC4-request-approval |
 #                     unknown = AC4-unknown | sources = T-SOURCES-UNKNOWN | gaps = item C round 2 (B4 role toolsets, outside install
-#                     escalation, host_session through bin/host_access.py decide; the builder's own cases)
+#                     escalation, host_session through bin/host_access.py decide; the builder's own cases) |
+#                     registry = T-REGISTRY-COMPLETE (F3 item R, tests first)
 # A fake skill is added to the scratch registry as DATA (a SKILL.md in a skill folder and a registry entry); three roles are taken
 # from the role table: one in allowed_roles, one in requestable_roles, one in neither.
 # Written test-first (F3 wave 1): exit codes, the code range STL-GRD-660..674 and the trusted event log are asserted, never wording.
@@ -15,10 +16,14 @@
 #     the first that ends .mcp.json (fallback the repo .mcp.json).
 #  A3 request opens an approval through bin/approvals.py: a trusted event line of type approval-request (event_log) naming the card.
 #  A4 the alert for an unregistered skill names it in the alert line (alerts.log under ESCALATE_SUP_DIR).
+#  A5 (item R) the registry lint is `capabilities.py lint [--json]`: exit 0 when complete, exit 1 naming each unregistered one with
+#     STL-CFG-340..344. A command is registered when an entry's source is its path (bin/x, bin/adapters/x; the registry's convention);
+#     a skill or MCP server when an entry's id is its name (as search finds them). "Executable" = the file's user x bit; a selftest is a
+#     file whose name holds "selftest" (the suite runner included).
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 ME=capabilities-selftest
-SECTIONS="found requestable invisible request unknown sources gaps"
+SECTIONS="found requestable invisible request unknown sources gaps registry"
 if [ $# = 0 ]; then
   f=0; for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || f=$((f+1)); done
   [ $f = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($f sections)"; [ $f = 0 ]; exit
@@ -202,22 +207,53 @@ PY
   ok '[ $RC = 0 ] && ! grep -q qa-host "$T/o/h6.out"' "gap3 a role outside allowed_roles never sees it, whatever decide says"
   run h7 C search qahost --role "$RA" --run qa-run-3 --host-request "$T/no-such.json" --json
   ok '[ $RC = 1 ] && out h7 | grep >/dev/null -E "$range"' "gap3 an unreadable host request file fails closed with a code"
-  # (R) the completeness lint: every command file, skill and MCP server has a registry entry
-  rm -rf "$R/$SK/qa-fake-skill" "$R/$SK/qa-unreg-skill"; ed .stella/capabilities.json '.entries |= map(select(.id | startswith("qa-") | not))'
-  run c1 C check --json
-  ok '[ $RC = 0 ]' "R-lint the shipped tree is complete (check exits 0)"
-  printf '#!/usr/bin/env bash\n' >"$R/bin/qa-new-tool.sh"; printf '#!/usr/bin/env bash\n' >"$R/bin/qa-new-tool-selftest.sh"; printf '#!/usr/bin/env bash\n' >"$R/bin/adapters/qa-new-adapter.sh"
-  run c2 C check --json
-  ok '[ $RC = 1 ] && out c2 | grep >/dev/null "STL-CFG-340" && out c2 | grep >/dev/null qa-new-tool.sh && out c2 | grep >/dev/null qa-new-adapter.sh && ! out c2 | grep >/dev/null qa-new-tool-selftest' "R-lint an unregistered command and adapter fail with STL-CFG-340 naming them; a selftest is not a command"
-  rm -f "$R/bin/qa-new-tool.sh" "$R/bin/adapters/qa-new-adapter.sh"
-  mkdir -p "$R/$SK/qa-lint-skill"; printf -- '---\nname: qa-lint-skill\ndescription: x\n---\nb\n' >"$R/$SK/qa-lint-skill/SKILL.md"
-  run c3 C check --json
-  ok '[ $RC = 1 ] && out c3 | grep >/dev/null "STL-CFG-340" && out c3 | grep >/dev/null qa-lint-skill' "R-lint an unregistered skill fails the lint"
-  rm -rf "$R/$SK/qa-lint-skill"; echo '{"mcpServers": {"qa-lint-server": {"command": "true"}}}' >"$R/$MCPF.n"; jq -s '.[0] * .[1]' "$R/$MCPF" "$R/$MCPF.n" >"$R/$MCPF.m"; mv "$R/$MCPF.m" "$R/$MCPF"; rm -f "$R/$MCPF.n"
-  run c4 C check --json
-  ok '[ $RC = 1 ] && out c4 | grep >/dev/null qa-lint-server' "R-lint an unregistered MCP server fails the lint"
-  run c5 WORKER python3 -I "$R/bin/capabilities.py" check --json
-  ok '[ $RC != 0 ] && out c5 | grep >/dev/null -E "STL-(CFG-312|GRD-662)"' "R-lint is refused in a worker environment"
+  # (R) the lint is the tester's (registry section); only the worker refusal is added here
+  run c5 WORKER python3 -I "$R/bin/capabilities.py" lint --json
+  ok '[ $RC != 0 ] && out c5 | grep >/dev/null -E "STL-(CFG-312|GRD-662)"' "R-lint is refused in a worker environment (host command)"
+  ;;
+registry)   # T-REGISTRY-COMPLETE
+  # the expected set, computed here from the tree (not from the lint): non-selftest executables under bin/ and bin/adapters/, every skill
+  # folder and every MCP server the capability sources name; each needs a registry entry (A5)
+  CAPF=$R/$(ix '.files[] | select(.id == "capabilities") | .path'); SRCF=$R/$(ix .capability_sources)
+  unreg() { local f n m
+    ( cd "$R" && find bin bin/adapters -maxdepth 1 -type f -perm -u+x ! -name '*selftest*' 2>/dev/null | sort -u ) | while read -r f; do
+      jq -e --arg s "$f" '[.entries[] | select(.source == $s)] | length > 0' "$CAPF" >/dev/null || echo "$f"; done
+    for d in $(jq -r '.skill_folders[]' "$SRCF"); do for f in "$R/$d"/*/SKILL.md; do [ -f "$f" ] || continue
+      n=$(sed -n '2,/^---/s/^name:[[:space:]]*\([^[:space:]]*\)[[:space:]]*$/\1/p' "$f" | head -1); n=${n:-$(basename "$(dirname "$f")")}
+      jq -e --arg s "$n" '[.entries[] | select(.id == $s)] | length > 0' "$CAPF" >/dev/null || echo "skill $n"; done; done
+    for m in $(jq -r '.mcp_manifests[]' "$SRCF"); do [ -f "$R/$m" ] || continue; for n in $(jq -r '.mcpServers // {} | keys[]' "$R/$m"); do
+      jq -e --arg s "$n" '[.entries[] | select(.id == $s)] | length > 0' "$CAPF" >/dev/null || echo "mcp $n"; done; done; }
+  ok '[ -s "$CAPF" ] && [ -s "$SRCF" ]' "T-REGISTRY-COMPLETE precondition: the registry and the capability sources are named by the index"
+  miss=$(unreg); nmiss=$(grep -c . <<<"$miss"); miss=$(tr '\n' ' ' <<<"$miss")
+  ok '[ -s "$CAPF" ] && [ -z "$miss" ]' "T-REGISTRY-COMPLETE every non-selftest bin/ and bin/adapters/ executable, skill folder and MCP server has a registry entry ($nmiss missing: $(cut -c1-300 <<<"$miss"))"
+  L() { python3 -I "$R/bin/capabilities.py" lint --json; }
+  lint_fails() { [ $RC = 1 ] && out "$1" | grep >/dev/null -F -- "$2" && out "$1" | grep >/dev/null -E 'STL-CFG-34[0-4]'; }
+  run l0 L
+  ok '[ $RC = 0 ] && ! out l0 | grep >/dev/null -E "STL-CFG-34[0-4]"' "T-REGISTRY-COMPLETE lint on the complete tree: exit 0, no STL-CFG-340..344"
+  printf '#!/usr/bin/env bash\ntrue\n' >"$R/bin/qa-unreg-cmd.sh"; chmod +x "$R/bin/qa-unreg-cmd.sh"
+  run l1 L
+  ok 'lint_fails l1 qa-unreg-cmd' "T-REGISTRY-COMPLETE a planted unregistered command in bin/: lint exit 1 naming it with STL-CFG-340..344"
+  ed .stella/capabilities.json --arg g "$(uuid)" --arg i "$IID" --arg a "$RA" '.entries += [{id: "qa-unreg-cmd", kind: "command", summary: "qa planted command", keywords: ["qa"],
+    inputs: "none", outputs: "text", allowed_roles: [$a], risk_class: "read", hosts: [], secrets: [], status: "approved", source: "bin/qa-unreg-cmd.sh",
+    triage: {result: "shipped"}, definition: {text: "QA"}, global_id: $g, install_id: $i}]'
+  run l2 L
+  ok '[ $RC = 0 ]' "T-REGISTRY-COMPLETE ... the same command once registered (an entry whose source is its path): lint exit 0"
+  mkdir -p "$R/bin/adapters"; printf '#!/usr/bin/env bash\ntrue\n' >"$R/bin/adapters/qa-unreg-adapter.sh"; chmod +x "$R/bin/adapters/qa-unreg-adapter.sh"
+  run l3 L
+  ok 'lint_fails l3 qa-unreg-adapter' "T-REGISTRY-COMPLETE a planted unregistered command in bin/adapters/: lint exit 1 naming it with STL-CFG-340..344"
+  rm -f "$R/bin/adapters/qa-unreg-adapter.sh"
+  printf '#!/usr/bin/env bash\ntrue\n' >"$R/bin/qa-lint-selftest.sh"; chmod +x "$R/bin/qa-lint-selftest.sh"
+  run l4 L
+  ok '[ $RC = 0 ]' "T-REGISTRY-COMPLETE a selftest needs no entry: an unregistered bin/*-selftest.sh leaves the lint at exit 0"
+  rm -f "$R/bin/qa-lint-selftest.sh"
+  mkdir -p "$R/$SK/qa-unreg-lint-skill"; printf -- '---\nname: qa-unreg-lint-skill\ndescription: qa\n---\nbody\n' >"$R/$SK/qa-unreg-lint-skill/SKILL.md"
+  run l5 L
+  ok 'lint_fails l5 qa-unreg-lint-skill' "T-REGISTRY-COMPLETE a planted unregistered skill folder: lint exit 1 naming it with STL-CFG-340..344"
+  rm -rf "$R/$SK/qa-unreg-lint-skill"
+  [ -f "$R/$MCPF" ] || echo '{"mcpServers": {}}' >"$R/$MCPF"
+  ed "$MCPF" '.mcpServers["qa-unreg-lint-server"] = {command: "true", args: []}'
+  run l6 L
+  ok 'lint_fails l6 qa-unreg-lint-server' "T-REGISTRY-COMPLETE a planted unregistered MCP server in a manifest: lint exit 1 naming it with STL-CFG-340..344"
   ;;
 esac
 finish
