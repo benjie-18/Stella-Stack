@@ -281,6 +281,55 @@ E" "HC8 field_limits.reason is data: the stored reason is cut where the data say
 cp "$T/sig.keep" "$SIG"
 ok "python3 -I -B $R/bin/stella_data.py check >/dev/null 2>&1" "HC the shipped data passes check after the edits are undone"
 
+# ---- fix round (red team A): status never costs a holder its slot, one key per connection, hostile headers and usage lines ----
+# A-RT-02: a status probe in a loop never makes a holder's acquire fail (qa-two has one connection slot, nobody else holds it)
+cat >"$T/probe.py" <<'E'
+import sys, time
+sys.path.insert(0, sys.argv[1]); import ledger
+t = time.time()
+while time.time() - t < float(sys.argv[2]):
+    ledger.in_use("qa-two", None, 1)
+E
+for _ in 1 2 3 4; do python3 -I -B "$T/probe.py" "$R/bin" 7 & done
+bad=0; for _ in $(seq 40); do L hold --connection qa-two --model qa-y -- true >/dev/null 2>&1 || bad=$((bad+1)); done; wait
+ok "[ $bad = 0 ]" "A-RT-02 a status probe running in parallel never makes a holder's acquire fail (refused with no holder: $bad of 40)"
+ok "PYL <<'E'
+import ledger, fcntl
+fd = ledger.take('qa-two', None, 1); assert fd is not None
+def boom(*a): raise AssertionError('the probe took a flock')
+ledger.fcntl.flock = boom
+assert ledger.in_use('qa-two', None, 1) == 1
+import os; os.close(fd); assert ledger.in_use('qa-two', None, 1) == 0
+E" "A-RT-02 counting slots takes no lock (no flock; asked with a non-taking probe) and sees a held slot"
+# A-RT-05: the connection's global_id is the same key as its id (slots, daily count, observed limits)
+G2=$(jq -r '.entries[] | select(.id == "qa-two") | .global_id' "$R/.stella/connections.json")
+GN=$(jq -r '.entries[] | select(.id == "qa-new") | .global_id' "$R/.stella/connections.json")
+L hold --connection qa-two --model qa-y -- "$T/hang.sh" & HPID=$!
+for _ in $(seq 100); do [ "$(L status --connection qa-two --model qa-y --json | jq .concurrency.in_use)" = 1 ] && break; sleep 0.1; done
+L hold --connection "$G2" --model qa-y -- true >/dev/null 2>&1; RC=$?
+kill $HPID 2>/dev/null; wait $HPID 2>/dev/null
+ok "[ $RC = 75 ]" "A-RT-05 a hold named by the connection's global_id takes the same slot as its id (exit $RC, wanted 75)"
+u0=$(L status --connection qa-new --model qa-m6 --json | jq .daily.used); rec "$GN" qa-m6 >/dev/null
+ok "[ \$(L status --connection qa-new --model qa-m6 --json | jq .daily.used) = $((u0 + 1)) ] && [ \"\$(tail -n 1 $UL | jq -r .connection)\" = qa-new ]" "A-RT-05 a record named by global_id is stored and counted under the connection's id"
+printf '{"error": {"message": "too many requests"}}' | L observe --connection "$GN" --model qa-m5 --status 429 --header 'Retry-After: 120' --json >/dev/null
+ok "L status --connection qa-new --model qa-m5 --json | jq -e '.observed.source == \"retry_after\"'" "A-RT-05 a limit observed through the global_id stops the link named by its id"
+# A-RT-04: a non-finite or text wait header is ignored (the data's default wait), never an error
+ed limit-signals.json '.default_wait_seconds = 200'
+for h in nan inf -inf 1e999 soon; do
+  printf '{"error": {"message": "too many requests"}}' | L observe --connection qa-two --model qa-y --status 429 --header "Retry-After: $h" --json >"$T/obs" 2>/dev/null; RC=$?
+  ok "[ $RC = 0 ] && jq -e '.until > \"$(date -u -d +100sec +%FT%TZ)\"' $T/obs" "A-RT-04 Retry-After: $h is ignored: the default wait is observed, no error"
+done
+cp "$T/sig.keep" "$SIG"
+# A-RT-07: a usage line that breaks the schema is skipped with one alert; it never raises and never turns plan share off for the others
+cp "$UL" "$T/ul.keep"; cp "$LS" "$T/ls.keep"; rm -f "$LS"   # no observed limit: it would force the plan share
+t0=$(L report --by model --json | jq .torn); rec "$CLI" "$CM" ok builder card-7 0.5 >/dev/null
+printf '{"connection":"%s","model":"%s","kind":"call","outcome":"ok","plan_share":0.9,"ts":"yesterday"}\n{"kind":"x"}\n{"connection":"%s","model":"%s","plan_share":"high","ts":"2099-01-01T00:00:00Z"}\n' "$CLI" "$CM" "$CLI" "$CM" >>"$UL"
+a0=$(wc -l <"$AL"); L status --connection "$CLI" --model "$CM" --json >"$T/st" 2>"$T/err"; RC=$?
+ok "[ $RC = 0 ] && jq -e '.plan_share == 0.5' $T/st && [ \$(( \$(wc -l <$AL) - $a0 )) = 1 ]" "A-RT-07 three bad usage lines (bad ts, no ts, a text plan share): skipped with one alert, the plan share of the good lines stays"
+ok "L report --by model --json | jq -e '.torn == $((t0 + 3))'" "A-RT-07 the skipped lines are counted as torn"
+ok "! L check --json" "A-RT-07 check still reports the lines that break the schema"
+cp "$T/ul.keep" "$UL"; cp "$T/ls.keep" "$LS"
+
 # ---- core contract ----
 ok "(STUB_WORKER_MARK=1 L status --connection qa-new --json 2>&1 || true) | grep -q STL-CFG-312" "T-CORE-LEDGER a worker environment is refused (STL-CFG-312)"
 L bogus 2>/dev/null; RC=$?
