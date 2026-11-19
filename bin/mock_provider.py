@@ -3,7 +3,7 @@
 path prefix /<shape id>, and a model list per shape. Nothing here names a shape, a model or a trigger beyond the fault ids.
 First stdout line: {"port": N, "control": URL}. POST the control document to that URL (it replaces models and faults; call counts stay):
   {"models": {shape: [model ids]}, "faults": [{"shape", "model", "fault", "calls"?, "seconds"?, "tokens"?}]}
-traits (control key "traits": [{"shape","model", answers, seed, logprob, recall_tokens, needle, grammar, tool_calls, family, version, cache_write, cache_read, reasoning}]): answers = texts the model gives (first, or one per call by a generator seeded with seed); logprob = per-token items at the shape's response.logprobs, the label token carrying it; recall_tokens = needles in the prompt found only below that many tokens (all of them, or where a sentence names two needles, keying the first to the second, the end of the chain from the prompt's last needle); grammar = a request with a schema at a request.output_shape pointer never gets the non_json fault; tool_calls = N well-formed tool calls (arguments {}) in every answer; family, version = shown in the model list; cache_write, cache_read, reasoning = token counts shown in the usage block at the shape's response.usage_extra pointers (a shape with none shows none).
+traits (control key "traits": [{"shape","model", answers, seed, logprob, recall_tokens, needle, grammar, tool_calls, family, version, cache_write, cache_read, reasoning}]): answers = texts the model gives (first, or one per call by a generator seeded with seed); logprob = per-token items at the shape's response.logprobs, the label token carrying it; recall_tokens = needles in the prompt found only below that many tokens (all of them, or where a sentence names two needles, keying the first to the second, the end of the chain from the prompt's last needle); grammar = a request with a schema at a request.output_shape pointer never gets the non_json fault; tool_calls = N well-formed tool calls (arguments {}) in every answer; family, version = shown in the model list; item = more fields of the model list item (an object merged in as given); cache_write, cache_read, reasoning = token counts shown in the usage block at the shape's response.usage_extra pointers (a shape with none shows none).
 faults: non_json (200 with text that is not JSON) rate_limit daily_cap server_error model_gone context_too_small (the shape's own error row for that trigger),
 timeout (no answer for `seconds`), malformed_tool_call (200 with a tool call whose arguments do not parse).
 A fault with "calls" fires that many times, without it until a new document. GET /_calls: {"counts": {"shape/model": n},
@@ -140,6 +140,7 @@ class H(http.server.BaseHTTPRequestHandler):
                 v = STATE["traits"].get((shape, m), {}).get("tr", {}).get(k)
                 if ml.get(k) and v is not None:
                     it[ml[k]] = v
+            it.update(STATE["traits"].get((shape, m), {}).get("tr", {}).get("item") or {})   # more fields of the item, as given (a price, a note)
             items.append(it)
         setptr(doc, ml["items"], items)
         self.send(200, doc)
