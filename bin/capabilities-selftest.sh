@@ -225,7 +225,7 @@ registry)   # T-REGISTRY-COMPLETE
       jq -e --arg s "$n" '[.entries[] | select(.id == $s)] | length > 0' "$CAPF" >/dev/null || echo "mcp $n"; done; done; }
   ok '[ -s "$CAPF" ] && [ -s "$SRCF" ]' "T-REGISTRY-COMPLETE precondition: the registry and the capability sources are named by the index"
   miss=$(unreg); nmiss=$(grep -c . <<<"$miss"); miss=$(tr '\n' ' ' <<<"$miss")
-  ok '[ -s "$CAPF" ] && [ -z "$miss" ]' "T-REGISTRY-COMPLETE every non-selftest bin/ and bin/adapters/ executable, skill folder and MCP server has a registry entry ($nmiss missing: $(cut -c1-300 <<<"$miss"))"
+  ok '[ -s "$CAPF" ] && [ -z "${miss// /}" ]' "T-REGISTRY-COMPLETE every non-selftest bin/ and bin/adapters/ executable, skill folder and MCP server has a registry entry ($nmiss missing: $(cut -c1-300 <<<"$miss"))"
   L() { python3 -I "$R/bin/capabilities.py" lint --json; }
   lint_fails() { [ $RC = 1 ] && out "$1" | grep >/dev/null -F -- "$2" && out "$1" | grep >/dev/null -E 'STL-CFG-34[0-4]'; }
   run l0 L
