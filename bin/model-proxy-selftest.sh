@@ -79,7 +79,7 @@ r = c.getresponse()
 print(json.dumps({"status": r.status, "headers": dict(r.getheaders()), "body": r.read().decode("utf-8", "replace")}))
 PYC
 get() { python3 -I "$T/cli.py" "$LO" "$PORT" GET "$1" '{}' ''; }
-post_ctl() { python3 -I "$T/cli.py" "$LO" "$PORT" POST "$CTL" '{"Content-Type": "application/json"}' "$1" >/dev/null; }
+post_ctl() { python3 -I "$T/cli.py" "$LO" "$PORT" POST "/${CTL#*://*/}" '{"Content-Type": "application/json"}' "$1" >/dev/null; }   # the control URL's path: the mock matches the path only
 calls() { get /_calls | jq -r '.body | fromjson | [.counts[]] | add // 0' 2>/dev/null || echo -1; }
 # ---- the fake api connection on the mock, its key in a folder backend ----
 SHAPE=$(jq -r '.entries[0].id' "$R/.stella/protocols.json"); HDR=$(jq -r '.entries[0].request.headers | keys[0]' "$R/.stella/protocols.json")
@@ -124,7 +124,7 @@ call() {
 st() { jq -r .status "$T/o/$1.json" 2>/dev/null; }
 refused() { local s; s=$(st "$1"); [ -n "$s" ] && [ "$s" != null ] && [ "$s" -ge 400 ] && grep -qE "$2" "$T/o/$1.json"; }
 last_up() { get /_calls | jq -c '.body | fromjson | .requests[-1] | .body |= (if type == "string" then (fromjson? // .) else . end)'; }   # the last request the mock got: {shape, model, headers, body}
-nolog() { ! grep -rqF -- "$1" "$R/.supervisor" "$T/sup" "$T/proxy.out" "$T/proxy.err" "$HOME" 2>/dev/null; }
+nolog() { ! grep -rqF --exclude-dir=qa-keys -- "$1" "$R/.supervisor" "$T/sup" "$T/proxy.out" "$T/proxy.err" "$HOME" 2>/dev/null; }
 ok '[ -n "$PORT" ] && [ -n "$DP" ] && python3 -I "$R/bin/stella_data.py" check' "precondition: the mock and the decoy run, the scratch data (fake connection, folder key backend) passes check"
 TOK=$(mint --run qa-run-1 --role builder --card qa-card-1 --link qa-api/qa-m1)
 
@@ -172,14 +172,14 @@ token)   # T-PROXY-TOKEN: unknown, expired, revoked and cli-login tokens refused
   T2=$(mint --run qa-run-2 --role builder --card qa-card-1 --link qa-api/qa-m2)
   call t6 "$T2" qa-m1; ok '[ "$(st t6)" = 200 ] && [ "$(last_up | jq -r .model)" = qa-m2 ]' "T-PROXY-TOKEN another run's token is pinned to its own model (qa-m2), whatever the client asks"
   run w1 WORKER python3 -I "$RT" mint --run qa-run-w --role builder --card qa-card-1 --link qa-api/qa-m1
-  ok '[ $RC != 0 ] && out w1 | grep -q STL-CFG-312 && ! grep -qE "[A-Za-z0-9_-]{43}" "$T/o/w1.out"' "T-PROXY-TOKEN mint refuses in a worker environment (STL-CFG-312), prints no token"
+  ok '[ $RC != 0 ] && out w1 | grep >/dev/null STL-CFG-312 && ! grep -qE "[A-Za-z0-9_-]{43}" "$T/o/w1.out"' "T-PROXY-TOKEN mint refuses in a worker environment (STL-CFG-312), prints no token"
   ;;
 ledger)   # T-PROXY-LEDGER: each call writes a ledger record and respects the budget gate
   UL=$R/$(ix .usage_ledger); u0=$(nl "$UL"); e0=$(nl "$EV")
   call l1 "$TOK" qa-m2
   ok '[ "$(st l1)" = 200 ] && [ "$(nl "$UL")" = $((u0 + 1)) ]' "T-PROXY-LEDGER one call: one usage ledger record"
   ok 'tail -n1 "$UL" | jq -e ".connection == \"qa-api\" and .model == \"qa-m1\" and .role == \"builder\" and .card == \"qa-card-1\" and (.tokens.input > 0)"' "T-PROXY-LEDGER the record names the connection, the pinned model, role and card, with the upstream's token counts"
-  ok '[ "$(nl "$EV")" -gt "$e0" ] && tail -n +$((e0 + 1)) "$EV" | grep -q qa-run-1 && ! grep -qF -- "$TOK" "$EV" && ! grep -qF -- "$KEY" "$EV"' "T-PROXY-LEDGER the call wrote an event line naming the run (no token, no key)"
+  ok '[ "$(nl "$EV")" -gt "$e0" ] && tail -n +$((e0 + 1)) "$EV" | grep >/dev/null qa-run-1 && ! grep -qF -- "$TOK" "$EV" && ! grep -qF -- "$KEY" "$EV"' "T-PROXY-LEDGER the call wrote an event line naming the run (no token, no key)"
   u1=$(nl "$UL"); call l2 "${TOK%????????}QAQAQAQA"
   ok 'refused l2 "STL-MDL-79[0-9]" && [ "$(nl "$UL")" = "$u1" ]' "T-PROXY-LEDGER a refused token writes no usage record"
   ed .stella/budgets.json --arg g "$(uuid)" --arg i "$IID" '.budgets += [{id: "qa-card-cap", scope: "card", key: "qa-card-capped", window_days: 1, soft_percent: [], hard: {amount: 10, currency: "QAC"}, plan_share_cap: null, on_approve: {option: "raise", raise_percent: 50, connection: null, model: null}, global_id: $g, install_id: $i}]'

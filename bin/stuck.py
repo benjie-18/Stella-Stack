@@ -101,7 +101,7 @@ def scan(events, th):
                 hit("alternate", f"two actions alternating {n} times", res[i:i + n])
                 break
     if "edit_revert" in th or "tokens_no_diff" in th:
-        seen, last, reverts, ev, tokens, span = [], None, 0, [], 0, []
+        chain, reverts, just, tokens, span = [], 0, False, 0, []   # chain: the distinct consecutive diff digests
         for e in events:
             if e.get("type") == "usage":
                 tokens += sum(v for v in (e.get("tokens") or {}).values() if isinstance(v, int))
@@ -109,18 +109,20 @@ def scan(events, th):
             d = e.get("diff") if e.get("type") == "tool_result" else None
             if not d:
                 continue
-            if last is not None and d != last:
-                if d in seen:
+            if chain and d != chain[-1]:
+                back = len(chain) > 1 and d == chain[-2] and not just   # a change right after a revert is the next edit, not a revert
+                just = back
+                if back:
                     reverts += 1
-                    ev = [e]
                     if reverts >= th.get("edit_revert", 10**9) and not any(f["pattern"] == "edit_revert" for f in found):
-                        hit("edit_revert", f"the diff went back to an earlier state {reverts} times", ev)
+                        hit("edit_revert", f"the diff went back to an earlier state {reverts} times", [e])
+                chain.append(d)
                 tokens, span = 0, []
-            seen.append(d)
-            last = d
-            if "tokens_no_diff" in th and tokens >= th["tokens_no_diff"] and not any(f["pattern"] == "tokens_no_diff" for f in found):
+            elif not chain:
+                chain.append(d)
+            if tokens >= th.get("tokens_no_diff", 10**18) and not any(f["pattern"] == "tokens_no_diff" for f in found):
                 hit("tokens_no_diff", f"{tokens} tokens with the diff unchanged", span[-10:] + [e])
-        if "tokens_no_diff" in th and tokens >= th["tokens_no_diff"] and not any(f["pattern"] == "tokens_no_diff" for f in found):
+        if tokens >= th.get("tokens_no_diff", 10**18) and not any(f["pattern"] == "tokens_no_diff" for f in found):
             hit("tokens_no_diff", f"{tokens} tokens with the diff unchanged", span[-10:])
     return found
 

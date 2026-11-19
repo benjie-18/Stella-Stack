@@ -61,7 +61,7 @@ WORKER() { env STUB_WORKER_MARK=1 "$@"; }   # a worker environment (a roles.json
 
 P() { python3 -I "$R/bin/policy.py" "$@"; }
 PJ=$R/.stella/policy.json; AD=$R/.stella/adapters.json; GEN=$R/docs/hermes-local/generated
-code() { out "$1" | grep -qE 'STL-GRD-61[0-9]'; }
+code() { out "$1" | grep >/dev/null -E 'STL-GRD-61[0-9]'; }
 adapters() { jq -r '.entries[]? | select(.policy) | .id' "$AD" 2>/dev/null; }
 mkdir -p "$T/wt"
 
@@ -78,11 +78,11 @@ regen)   # AC3-regen: one rule change regenerates every CLI's config
   run g1 P generate --all --write; ok '[ $RC = 0 ]' "AC3-regen regenerate after the rule change (exit 0)"
   run d2 P drift --json; ok '[ $RC = 0 ]' "AC3-regen drift clean again after the regeneration"
   for f in "$GEN"/*.json; do [ -f "$f" ] || continue
-    ok 'grep -qF qa-regen-canary "$f" || grep -qF policy.py "$f"' "AC3-regen committed config ${f#$R/} carries the new rule (or the policy hook)"
+    ok 'grep -qF qa-regen-canary "$f" || grep >/dev/null -F policy.py "$f"' "AC3-regen committed config ${f#$R/} carries the new rule (or the policy hook)"
   done
   for a in $ADS; do
     run "a-$a" P generate --adapter "$a" --worktree "$T/wt" --out "$T/o/gen-$a" --json
-    ok '[ $RC = 0 ] && { grep -qF qa-regen-canary "$T/o/gen-$a" || grep -qF policy.py "$T/o/gen-$a"; }' "AC3-regen adapter $a: its fresh config carries the changed rule"
+    ok '[ $RC = 0 ] && { grep -qF qa-regen-canary "$T/o/gen-$a" || grep >/dev/null -F policy.py "$T/o/gen-$a"; }' "AC3-regen adapter $a: its fresh config carries the changed rule"
   done
   ok 'ls "$GEN"/*.json >/dev/null && [ "$(sha256sum <"$R/.claude/settings.json")" = "$CS" ]' "AC3-regen the repo .claude/settings.json is never generated or touched"
   ;;
@@ -98,12 +98,12 @@ drift)   # AC3-drift: a hand edit of a generated config is caught
     jq '. + {"qa_unowned_key": 1}' "$T/gf.keep" >"$GF"
     run d1 P drift --json; ok '[ $RC = 0 ]' "AC3-drift an edit outside the owned pointers is not drift (exit 0)"
     jq --arg p "$PTR" 'setpath($p | ltrimstr("/") | split("/") | map(gsub("~1"; "/") | gsub("~0"; "~")); "qa-hand-edit")' "$T/gf.keep" >"$GF"
-    run d2 P drift --json; ok '[ $RC = 1 ] && code d2 && out d2 | grep -qF "$(basename "$GF")"' "AC3-drift a hand edit at an owned pointer: exit 1, STL-GRD-61x, the file named"
+    run d2 P drift --json; ok '[ $RC = 1 ] && code d2 && out d2 | grep >/dev/null -F "$(basename "$GF")"' "AC3-drift a hand edit at an owned pointer: exit 1, STL-GRD-61x, the file named"
     cp "$T/gf.keep" "$GF"; run d3 P drift --json; ok '[ $RC = 0 ]' "AC3-drift the restored file is clean again"
   fi
   cp "$R/opencode.json" "$T/oc.keep"
   jq '.permission.read["qa-hand-edit/**"] = "allow"' "$T/oc.keep" >"$R/opencode.json"
-  run d4 P drift --json; ok '[ $RC = 1 ] && code d4 && out d4 | grep -qF opencode.json' "AC3-drift a hand edit of the repo opencode.json permission block: exit 1, STL-GRD-61x, named"
+  run d4 P drift --json; ok '[ $RC = 1 ] && code d4 && out d4 | grep >/dev/null -F opencode.json' "AC3-drift a hand edit of the repo opencode.json permission block: exit 1, STL-GRD-61x, named"
   cp "$T/oc.keep" "$R/opencode.json"
   ;;
 render)   # AC2-policy-render: every active adapter's generated config holds the write boundary, protected and secret denies
@@ -137,11 +137,11 @@ secret)   # T-SECRET-DATA: the secret list lives only in policy data; secret-gua
   ed .stella/policy.json '(.rules[] | select(.kind == "secret_read") | .deny) += ["*.qacanary"]'
   ok '[ "$(term "$SG" "cat notes.qacanary")" = 2 ]' "T-SECRET-DATA a glob added to the policy rule is refused by secret-guard (exit 2)"
   ok '[ "$(term "$RO" "cat notes.qacanary")" = 2 ]' "T-SECRET-DATA ... and by read-only-terminal (exit 2)"
-  ok 'box_classes | grep -qF "*.qacanary"' "T-SECRET-DATA ... and box.py secret_classes() returns it"
+  ok 'box_classes | grep >/dev/null -F "*.qacanary"' "T-SECRET-DATA ... and box.py secret_classes() returns it"
   ok '[ "$(term "$SG" "cat .env.qaok")" = 2 ]' "T-SECRET-DATA control: .env.qaok is a secret before the allow list names it"
   ed .stella/policy.json '(.rules[] | select(.kind == "secret_read") | .allow) += [".env.qaok"]'
   ok '[ "$(term "$SG" "cat .env.qaok")" = 0 ] && [ "$(term "$SG" "cat .env.qabad")" = 2 ]' "T-SECRET-DATA an allow glob in the rule lets that one name through secret-guard, its neighbour stays refused"
-  ok 'box_classes | grep -qF ".env.qaok"' "T-SECRET-DATA box.py secret_classes() returns the allow glob from the rule"
+  ok 'box_classes | grep >/dev/null -F ".env.qaok"' "T-SECRET-DATA box.py secret_classes() returns the allow glob from the rule"
   cp "$PJ" "$T/pj.keep"; printf '{not json' >"$PJ"
   ok '[ "$(term "$SG" "cat qa-notes.txt")" = 2 ]' "T-SECRET-DATA unreadable policy file: secret-guard refuses every read (exit 2)"
   ok '[ "$(term "$RO" "cat qa-notes.txt")" = 2 ]' "T-SECRET-DATA unreadable policy file: read-only-terminal refuses every read (exit 2)"
@@ -178,7 +178,7 @@ shape)   # DC-12: a rule kind with neither a config shape nor a hook for an adap
   for k in secret_read write_boundary; do
     cp "$AD" "$T/ad.keep" 2>/dev/null
     ed .stella/adapters.json --arg a "$A" --arg k "$k" '(.entries[] | select(.id == $a)) |= walk(if type == "object" then del(.[$k]) elif type == "array" then map(select(. != $k)) else . end)'
-    run "c-$k" P check --json; ok '[ $RC = 1 ] && code "c-$k" && out "c-$k" | grep -qF -- "$A"' "DC-12 adapter $A with no shape and no hook for rule kind $k: check exit 1, STL-GRD-61x, the adapter named"
+    run "c-$k" P check --json; ok '[ $RC = 1 ] && code "c-$k" && out "c-$k" | grep >/dev/null -F -- "$A"' "DC-12 adapter $A with no shape and no hook for rule kind $k: check exit 1, STL-GRD-61x, the adapter named"
     cp "$T/ad.keep" "$AD" 2>/dev/null
   done
   ;;

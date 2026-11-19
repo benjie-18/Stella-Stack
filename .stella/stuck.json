@@ -30,7 +30,7 @@
     "repeat_action": 4,
     "repeat_error": 3,
     "alternate": 6,
-    "edit_revert": 1,
+    "edit_revert": 2,
     "tokens_no_diff": 200000
   },
   "roles": {}
