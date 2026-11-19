@@ -9,5 +9,7 @@
   "stale_catalog_days": 14,
   "regression_set": {
     "min_pass_rate": 1.0
-  }
+  },
+  "event_chunk": 100,
+  "read_cap_bytes": 8388608
 }

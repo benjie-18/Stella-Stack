@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Cost accounting (F2c item B), stdlib only: prices a usage record from the dated table of the data row pricing, turns it into an
-OpenTelemetry GenAI span, rolls records up, and (behind the features.json flag otlp-export, off) exports spans as OTLP/HTTP JSON.
+OpenTelemetry GenAI span (names, sources, status and the export form are the data row otlp-mapping; the token types the usage schema's; the
+cache hit rate, outcome classes and billing the limit-signals row), rolls records up, and (behind the features.json flag otlp-export, off) exports spans as OTLP/HTTP JSON.
 Usage record and span: the shapes in the F2c design (usage record: one JSON line per call; tokens input, output, cache_write, cache_read,
 reasoning, counted apart; cost {amount, currency, entry, priced}|null).
 Module: price(record, table) -> cost object | None; span_of(record); write_span(span); rollup(records, by); cache_hit_rate(records, by);
 usage_of(protocol, body) -> the five token counts of an answer (protocols.json response.usage and usage_extra); export(spans) -> count.
-  price     [--record FILE|-] --json   {cost, plan_share}: a cli-login record has cost null; a model with no row is cost.priced false and one STL-LIM-420
+  price     [--record FILE|-] --json   {cost, plan_share}: a plan-billed record (signals data: billing) has cost null; a model with no row is cost.priced false and one STL-LIM-420
   span      [--record FILE|-] [--write] --json   the span (--write appends it to the file of index key spans)
   rollup    --by card|project|role|model|connection [--records FILE] --json   calls, tokens, cost per currency, unpriced, cache_hit_rate per group
   check     --json   judge the table: schema, the connection and model are in the catalog, one row per link and date
@@ -20,12 +21,11 @@ from datetime import datetime
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
 import event_log as el
+import ledger as lg   # the limits core: token types, signals data, outcome classes
 import stella_data as sd
 
 UNPRICED, BADTABLE, EXPORT, BADINPUT = "STL-LIM-420", "STL-LIM-421", "STL-LIM-422", "STL-LIM-423"
 SPANS, LEDGER, FLAG, TABLE = "spans", "usage_ledger", "otlp-export", "pricing"   # index keys; the feature flag and the pricing row id (the app's subkind is the flag)
-NS = "stella"   # the attribute namespace of the span design, also the service name
-TYPES = ("input", "output", "cache_write", "cache_read", "reasoning")
 BY = ("card", "project", "role", "model", "connection")
 SAID = set()   # (connection, model) already alerted unpriced in this process
 
@@ -33,6 +33,16 @@ class Stop(Exception):
     def __init__(self, code, problem, alert=True):
         super().__init__(problem)
         self.code, self.problem, self.alert = code, problem, alert
+
+def types():
+    return lg.token_types()   # the usage schema's token types: a new one needs no code change
+
+def data(schema):
+    """The one data file of that schema (limit-signals, otlp-mapping): the policy values live there."""
+    try:
+        return lg.one_doc(schema)
+    except lg.Stop as x:
+        raise Stop(BADTABLE, x.problem)
 
 def _route():
     import route   # heavy: only where a call goes out or a pointer is read
@@ -57,6 +67,7 @@ def table_problems(table):
         c = cat.get(e["connection"]) or next((x for x in cat.values() if x.get("global_id") == e["connection"]), {})
         if e["model"] not in [m["id"] for m in c.get("models", [])]:
             out.append(f"row {sd.idn(e['id'])}: connection {sd.idn(e['connection'])} does not list model {sd.idn(e['model'])}")
+        out += [f"row {sd.idn(e['id'])}: no price for token type {sd.idn(t)}" for t in types() if t not in e["per_million"]]
         k = (e["connection"], e["model"], e["effective_from"])
         if k in seen:
             out.append(f"row {sd.idn(e['id'])}: this link already has a row from {e['effective_from']}")
@@ -64,8 +75,10 @@ def table_problems(table):
     return out
 
 def cli_links():
+    """The connections billed by plan (the signals data's billing per connection type): they have no cost, a plan share."""
+    sig = data("limit-signals")
     try:
-        return {i for i, c in sd.served(["connections"])["connections"].items() if c.get("type") == "cli-login"}
+        return {i for i, c in sd.served(["connections"])["connections"].items() if lg.plan_billed(sig, c)}
     except sd.DataError:
         return set()
 
@@ -74,14 +87,14 @@ def need(rec):
     """The record's fields cost.py reads, or a Stop: a record is data from outside this file."""
     t = rec.get("tokens") if isinstance(rec, dict) else None
     if not (isinstance(rec, dict) and all(isinstance(rec.get(k), str) and rec[k] for k in ("connection", "model", "ts"))
-            and isinstance(t, dict) and all(type(t.get(k, 0)) is int and t.get(k, 0) >= 0 for k in TYPES)):
+            and isinstance(t, dict) and all(type(t.get(k, 0)) is int and t.get(k, 0) >= 0 for k in types())):
         raise Stop(BADINPUT, "a usage record needs connection, model and ts (text) and token counts that are whole numbers", alert=False)
     return rec
 
 def price(rec, table, cli=None, alert=True):
-    """The cost object of one record: None for a cli-login connection (its plan_share speaks); else the newest table row for the link whose
+    """The cost object of one record: None for a plan-billed connection (its plan_share speaks); else the newest table row for the link whose
     effective_from is not after the call's ts prices the five token types apart (a batch call loses the row's batch_discount). No row:
-    {amount: None, priced: False} and one alert per model, never a guess. cli: the cli-login connection ids (default: the catalog's)."""
+    {amount: None, priced: False} and one alert per model, never a guess. cli: the plan-billed connection ids (default: the catalog's by the signals data)."""
     need(rec)
     if rec["connection"] in (cli_links() if cli is None else cli):
         return None
@@ -93,27 +106,40 @@ def price(rec, table, cli=None, alert=True):
             el.say(UNPRICED, f"model {sd.idn(rec['model'])} of connection {sd.idn(rec['connection'])} has no pricing row dated {rec['ts'][:10]} or earlier", alert=True)
         return {"amount": None, "currency": None, "entry": None, "priced": False}
     e = max(rows, key=lambda x: x["effective_from"])
-    amount = sum(rec["tokens"].get(t, 0) * e["per_million"][t] for t in TYPES) / 1e6
+    amount = sum(rec["tokens"].get(t, 0) * e["per_million"][t] for t in types()) / 1e6
     if rec.get("batch"):
         amount *= 1 - e["batch_discount"]
     return {"amount": round(amount, 10), "currency": e["currency"], "entry": e["id"], "priced": True}
 
 # ---- spans ----
+def _fill(text, ctx):
+    for k, v in ctx.items():
+        text = text.replace("{" + k + "}", v)
+    return text
+
+def _dig(rec, path):
+    for k in path.split("."):
+        rec = rec.get(k) if isinstance(rec, dict) else None
+    return rec
+
 def span_of(rec):
-    """The OpenTelemetry GenAI span of a usage record (attribute names as the design lists them; an unknown value is left out)."""
+    """The OpenTelemetry GenAI span of a usage record, built by the data row otlp-mapping (names, sources, status codes); an unknown value is left out."""
     need(rec)
+    m, sig = data("otlp-mapping"), data("limit-signals")
+    ctx = {"namespace": m["namespace"], "operation": m["operation"], "model": rec["model"]}
     dt = datetime.fromisoformat(rec["ts"].replace("Z", "+00:00"))
     start = int(dt.timestamp()) * 10**9 + dt.microsecond * 1000
     h = hashlib.sha256((rec.get("id") or json.dumps(rec, sort_keys=True)).encode()).hexdigest()
-    c, t = rec.get("cost"), rec["tokens"]
-    attrs = {"gen_ai.operation.name": "chat", "gen_ai.request.model": rec["model"], "gen_ai.provider.name": rec["connection"],
-             "gen_ai.usage.input_tokens": t.get("input", 0), "gen_ai.usage.output_tokens": t.get("output", 0),
-             "gen_ai.usage.cache_creation.input_tokens": t.get("cache_write", 0), "gen_ai.usage.cache_read.input_tokens": t.get("cache_read", 0),
-             "gen_ai.usage.reasoning.output_tokens": t.get("reasoning", 0), f"{NS}.role": rec.get("role"), f"{NS}.project": rec.get("project"),
-             f"{NS}.card": rec.get("card"), f"{NS}.cost": c["amount"] if c and c.get("priced") else None, f"{NS}.batch": bool(rec.get("batch"))}
-    return {"name": f"chat {rec['model']}", "trace_id": h[:32], "span_id": h[32:48], "start_time_unix_nano": start,
-            "end_time_unix_nano": start + int(rec.get("latency_ms") or 0) * 10**6, "status": 1 if rec.get("outcome", "ok") == "ok" else 2,
-            "attributes": {k: v for k, v in attrs.items() if v is not None}}
+    attrs = {}
+    for a in m["attributes"]:
+        v = _fill(a["value"], ctx) if "value" in a else _dig(rec, a["from"])
+        if v is None:
+            v = a.get("default")
+        if v is not None:
+            attrs[_fill(a["name"], ctx)] = v
+    return {"name": _fill(m["span_name"], ctx), "trace_id": h[:32], "span_id": h[32:48], "start_time_unix_nano": start,
+            "end_time_unix_nano": start + int(rec.get("latency_ms") or 0) * 10**6,
+            "status": m["status_codes"]["error" if lg.outcome_flag(sig, rec.get("outcome"), "is_error") else "ok"], "attributes": attrs}
 
 def write_span(span):
     """Append the span as one line to the file of index key spans (under its lock)."""
@@ -128,12 +154,12 @@ def rollup(records, by):
     """{group key: {calls, tokens per type, cost per currency, unpriced, plan_share, cache_hit_rate}} for records grouped by `by`."""
     if by not in BY:
         raise Stop(BADINPUT, f"--by is one of {', '.join(BY)}", alert=False)
-    g = {}
+    g, ty, rate = {}, types(), data("limit-signals")["cache_hit_rate"]
     for r in records:
         k = r.get(by)
-        x = g.setdefault("(none)" if k is None else str(k), {"calls": 0, "tokens": dict.fromkeys(TYPES, 0), "cost": {}, "unpriced": 0, "plan_share": 0})
+        x = g.setdefault("(none)" if k is None else str(k), {"calls": 0, "tokens": dict.fromkeys(types(), 0), "cost": {}, "unpriced": 0, "plan_share": 0})
         x["calls"] += 1
-        for t in TYPES:
+        for t in ty:
             x["tokens"][t] += (r.get("tokens") or {}).get(t, 0)
         c = r.get("cost")
         if c and c.get("priced"):
@@ -142,22 +168,23 @@ def rollup(records, by):
             x["unpriced"] += 1
         x["plan_share"] = round(x["plan_share"] + (r.get("plan_share") or 0), 10)
     for x in g.values():
-        x["cache_hit_rate"] = _rate(x["tokens"])
+        x["cache_hit_rate"] = _rate(x["tokens"], rate)
     return g
 
-def _rate(t):
-    d = t["input"] + t["cache_read"] + t["cache_write"]
-    return round(t["cache_read"] / d, 6) if d else None
+def _rate(t, rate):
+    d = sum(t.get(k, 0) for k in rate["denominator"])
+    return round(sum(t.get(k, 0) for k in rate["numerator"]) / d, 6) if d else None
 
 def cache_hit_rate(records, by="role"):
-    """{group: cache_read / (input + cache_read + cache_write)}; None for a group with nothing on the input side."""
+    """{group: the numerator token types / the denominator token types of the signals data's cache_hit_rate (shipped: cache_read / (input +
+    cache_read + cache_write))}; None for a group with nothing in the denominator."""
     return {k: v["cache_hit_rate"] for k, v in rollup(records, by).items()}
 
 # ---- usage of an answer ----
 def usage_of(protocol, body):
     """The five token counts an answer shows, per the shape's response.usage, usage_keys and usage_extra; 0 for what it does not show.
     A count the provider adds to input or output (usage_extra included_in) is taken out of it: the five are disjoint."""
-    r, out = protocol["response"], dict.fromkeys(TYPES, 0)
+    r, out = protocol["response"], dict.fromkeys(types(), 0)
     u = _route().ptr(body, r["usage"])
     if not isinstance(u, dict):
         return out
@@ -190,8 +217,9 @@ def _attr(k, v):
             else {"doubleValue": v} if isinstance(v, float) else {"stringValue": str(v)}}
 
 def otlp(spans):
-    return {"resourceSpans": [{"resource": {"attributes": [_attr("service.name", NS)]}, "scopeSpans": [{"scope": {"name": NS + "-cost"}, "spans": [
-        {"traceId": s["trace_id"], "spanId": s["span_id"], "name": s["name"], "kind": 3, "startTimeUnixNano": str(s["start_time_unix_nano"]),
+    m = data("otlp-mapping")
+    return {"resourceSpans": [{"resource": {"attributes": [_attr("service.name", m["service_name"])]}, "scopeSpans": [{"scope": {"name": m["scope_name"]}, "spans": [
+        {"traceId": s["trace_id"], "spanId": s["span_id"], "name": s["name"], "kind": m["kind"], "startTimeUnixNano": str(s["start_time_unix_nano"]),
          "endTimeUnixNano": str(s["end_time_unix_nano"]), "status": {"code": s["status"]}, "attributes": [_attr(k, v) for k, v in s["attributes"].items()]}
         for s in spans]}]}]}
 
@@ -201,7 +229,8 @@ def export(spans):
     if ep is None:
         return 0
     import credentials, urllib.error
-    route, h, hdr = _route(), ep["hosts"][0], {"Content-Type": "application/json"}
+    m = data("otlp-mapping")
+    route, h, hdr = _route(), ep["hosts"][0], dict(m["headers"])
     if ep["secrets"]:
         try:
             key = credentials.get(ep["secrets"][0])   # shortcut: the entry's first secret is the bearer token, as route.py's api key
@@ -210,12 +239,13 @@ def export(spans):
         forms = (key, json.dumps(key)[1:-1])
         route.KEYS.update(forms)
         el.SECRETS.update(forms)
-        hdr["Authorization"] = f"Bearer {key}"
+        hdr[m["auth"]["header"]] = f"{m['auth']['scheme']} {key}"
     try:
-        plain = ep.get("locality") == "local" or ipaddress.ip_address(h["host"]).is_loopback
+        loop = ipaddress.ip_address(h["host"]).is_loopback
     except ValueError:
-        plain = False   # TLS to every other host
-    req = urllib.request.Request(f"{'http' if plain else 'https'}://{h['host']}:{h['port']}/v1/traces", data=el.scrub(json.dumps(otlp(spans))).encode(), headers=hdr, method="POST")
+        loop = False
+    plain = ("local_endpoint" in m["plain_when"] and ep.get("locality") == "local") or ("loopback_host" in m["plain_when"] and loop)   # TLS to every other host
+    req = urllib.request.Request(f"{m['schemes']['plain' if plain else 'tls']}://{h['host']}:{h['port']}{m['path']}", data=el.scrub(json.dumps(otlp(spans))).encode(), headers=hdr, method="POST")
     try:
         status, _ = route.fetch(req, route.timeout_of())
     except Exception as e:   # the type only: the text could repeat a value
@@ -267,7 +297,7 @@ def cmd_rollup(a):
 
 def cmd_check(a):
     t = load_table()
-    bad = table_problems(t)
+    bad = table_problems(t) + [f"limit-signals cache_hit_rate names {sd.idn(k)}, which is no token type" for v in data("limit-signals")["cache_hit_rate"].values() for k in v if k not in types()]
     if bad:
         raise Stop(BADTABLE, bad[0] + (f" (and {len(bad) - 1} more)" if len(bad) > 1 else ""))
     print(json.dumps({"ok": True, "entries": len(t)}))

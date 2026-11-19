@@ -327,6 +327,18 @@
       "record_kind": "setting",
       "global_id": "6bc5edc3-80b5-48aa-adbb-cd232e8b61aa",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "otlp-mapping",
+      "path": ".stella/otlp-mapping.json",
+      "schema": "otlp-mapping",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "539167f1-1618-4629-aadb-9359d2ad630b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ],
   "spans": ".supervisor/logs/spans.jsonl"

@@ -16,7 +16,7 @@ worker environment, STL-CFG-312; JSON out, --json accepted everywhere):
         output) on stdin; prints the observed limit, or null when the answer is no limit.
   ledger.py report --by card|project|role|model|connection     calls, tokens and cost per key.
   ledger.py check                              the usage file and the state file against their schemas.
-Slots are flock files under <ledger_state path>.slots/. A daily cap counts the records of the UTC day (a `refused` record is no call).
+Slots are flock files under <ledger_state path>.slots/. A daily cap counts the records of the day of the signals data's day_reset clock (an outcome whose outcome_classes say it is no call is left out).
 Every state change that is no plain call record (a limit observed, a hold refused) is one trusted event line (bin/event_log.py).
 Exit: 0 ok; 1 refused or failed (catalog code and plain message on stderr, {code, problem} on stdout); 2 usage; 75, 76, 77 of hold.
 shortcut: the usage file is read whole on every status, hold and report; upgrade (an index or a daily counter file) when it grows past
@@ -30,7 +30,7 @@ if __name__ == "__main__" and not sys.flags.isolated:   # run directly: PYTHONPA
     except OSError:   # fail closed: a tool that counts limits does not go on with modules it cannot vouch for
         sys.exit("STL-CFG-310 ledger.py could not restart itself isolated (python3 -I); nothing was done")
 
-import argparse, contextlib, datetime, email.utils, fcntl, json, re, urllib.parse, uuid
+import argparse, contextlib, datetime, email.utils, fcntl, json, re, urllib.parse, uuid, zoneinfo
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -72,8 +72,22 @@ def when(s):
     return datetime.datetime.strptime(s, TS).replace(tzinfo=datetime.timezone.utc)
 
 
+def day_bounds(now):
+    """(start, end) in UTC of the day `now` is in, by the reset clock of the signals data (day_reset: a UTC offset or a zone name)."""
+    dr = signals()["day_reset"]
+    try:
+        if len(dr) != 1:
+            raise ValueError
+        tz = zoneinfo.ZoneInfo(dr["zone"]) if "zone" in dr else datetime.timezone(datetime.timedelta(minutes=dr["utc_offset_minutes"]))
+    except (ValueError, KeyError, OSError):   # an unknown zone is a KeyError (ZoneInfoNotFoundError)
+        raise Stop(BADFILE, "the signals data's day_reset is exactly one of utc_offset_minutes or a zone name the system knows")
+    start = now.astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    end = (start + datetime.timedelta(days=1)).replace(hour=0)
+    return start.astimezone(datetime.timezone.utc), end.astimezone(datetime.timezone.utc)
+
+
 def midnight(now):
-    return (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0)
+    return day_bounds(now)[1]
 
 
 # ---- the files ----
@@ -93,11 +107,32 @@ def slots_dir():
     return el.path(rel("ledger_state") + ".slots")
 
 
-def signals():
-    r = next((r for r in sd.rows() if r["schema"] == "limit-signals"), None)
+def one_doc(schema):
+    """The one data file of that schema (a Stop when the index has none or it breaks the schema)."""
+    r = next((r for r in sd.rows() if r["schema"] == schema), None)
     if r is None:
-        raise Stop(BADFILE, "the index has no limit-signals row")
-    return sd.checked(sd.load(r["path"]), r["path"], "limit-signals")
+        raise Stop(BADFILE, f"the index has no {schema} row")
+    return sd.checked(sd.load(r["path"]), r["path"], schema)
+
+
+def signals():
+    return one_doc("limit-signals")
+
+
+def token_types():
+    """The token types: the properties of the usage schema's tokens, the one list every other file follows."""
+    return list(sd.schema_of("usage")["properties"]["tokens"]["properties"])
+
+
+def outcome_flag(sig, outcome, flag):
+    """counts_as_call or is_error of an outcome word by the signals data; a word the data does not list is both."""
+    c = sig["outcome_classes"].get(outcome)
+    return c[flag] if c else True
+
+
+def plan_billed(sig, prov):
+    """True when the connection's type is billed by plan (no cost, a plan share) by the signals data's billing."""
+    return sig["billing"].get(prov.get("type")) == "plan"
 
 
 def limits_env():
@@ -242,9 +277,12 @@ def in_use(connection, model, n):
     return used
 
 
-def day_used(recs, connection, model, day):
-    return sum(1 for r in recs if r.get("kind") == "call" and r.get("outcome") != "refused" and r.get("connection") == connection
-               and model in (None, r.get("model")) and str(r.get("ts", ""))[:10] == day)
+def day_used(recs, connection, model, now):
+    """The calls of the link in the day `now` is in (the data's reset clock); an outcome that does not count as a call is left out."""
+    sig, (a, b) = signals(), day_bounds(now)
+    a, b = iso(a), iso(b)
+    return sum(1 for r in recs if r.get("kind") == "call" and outcome_flag(sig, r.get("outcome"), "counts_as_call") and r.get("connection") == connection
+               and model in (None, r.get("model")) and a <= str(r.get("ts", "")) < b)
 
 
 def active(doc, connection, model, now):
@@ -268,7 +306,7 @@ def acquire(connection, model, holder, now=None):
         recs, _ = lines()
         for s in scopes(prov, mod, model):
             where = f"{sd.idn(connection)}/{sd.idn(s['model'])}" if s["model"] else f"connection {sd.idn(connection)}"
-            if s["day"] is not None and day_used(recs, connection, s["model"], iso(now)[:10]) >= s["day"]:
+            if s["day"] is not None and day_used(recs, connection, s["model"], now) >= s["day"]:
                 raise Refusal("daily", f"{where}: the daily limit is used ({s['day']} calls) until {iso(midnight(now))}" + "".join(f"; {p}" for p in s["problems"]))
             if s["conc"] is not None:
                 fd = take(connection, s["model"], s["conc"])
@@ -278,9 +316,9 @@ def acquire(connection, model, holder, now=None):
     except Refusal as r:
         for fd in fds:
             os.close(fd)
-        with contextlib.suppress(el.EventError, sd.DataError):   # the refusal stands whether or not its line could be written
+        with contextlib.suppress(el.EventError, sd.DataError, Stop):   # the refusal stands whether or not its line could be written
             el.append(el.build("limit.hit", f"{r.kind} limit refused a call of {connection}/{model}", new={
-                "connection": connection, "model": model, "holder": str(holder)[:100], "kind": r.kind}))
+                "connection": connection, "model": model, "holder": str(holder)[:signals()["field_limits"]["holder"]], "kind": r.kind}))
         raise
     except BaseException:
         for fd in fds:
@@ -314,7 +352,7 @@ def record(call, cost=None):
     when the record breaks its schema, Stop(410) when the catalog has no such connection and model, nothing written."""
     if not isinstance(call, dict):
         raise Stop(INVALID, "a call record is a JSON object")
-    zero = dict.fromkeys(("input", "output", "cache_write", "cache_read", "reasoning"), 0)
+    zero = dict.fromkeys(token_types(), 0)
     rec = scrubbed({"v": 1, "id": str(uuid.uuid4()), "install_id": sd.install_id(), "ts": iso(utcnow()), "role": None, "project": None,
                     "card": None, "session": None, "kind": "call", "status": None, "latency_ms": 0, "batch": False, "cost": None,
                     "plan_share": None, **call, "tokens": {**zero, **(call.get("tokens") or {})}, **({"cost": cost} if cost is not None else {})})
@@ -345,7 +383,7 @@ def observe_limit(connection, model, source, until, reason, now=None):
     Returns the observation."""
     now = now or utcnow()
     link_of(catalog()[1], connection, model)
-    new = {"connection": connection, "model": model, "source": source, "until": iso(until), "reason": el.scrub(str(reason))[:300]}
+    new = {"connection": connection, "model": model, "source": source, "until": iso(until), "reason": el.scrub(str(reason))[:signals()["field_limits"]["reason"]]}
     p = state_path()
     el.preflight()   # no state change without its trusted line
     with el.locked(p + ".lock"):
@@ -362,15 +400,16 @@ def observe_limit(connection, model, source, until, reason, now=None):
 
 def seconds_of(v, now):
     """The wait a header value names: seconds, a duration (1m30s, 250ms), an epoch, an ISO time or an HTTP date; None when none fits."""
-    v = str(v).strip()
+    v, sig = str(v).strip(), signals()
     try:
         n = float(v)
-        return n - now.timestamp() if n > 1e9 else n
+        return n - now.timestamp() if n > sig["epoch_min_seconds"] else n
     except ValueError:
         pass
-    parts = re.findall(r"([0-9]+(?:\.[0-9]+)?)(ms|s|m|h|d)", v)
+    units = sig["duration_units"]
+    parts = re.findall(r"([0-9]+(?:\.[0-9]+)?)(" + "|".join(map(re.escape, sorted(units, key=len, reverse=True))) + ")", v) if units else []
     if parts and "".join(a + b for a, b in parts) == v:
-        return sum(float(a) * {"ms": .001, "s": 1, "m": 60, "h": 3600, "d": 86400}[b] for a, b in parts)
+        return sum(float(a) * units[b] for a, b in parts)
     for parse in (lambda: datetime.datetime.fromisoformat(v.replace("Z", "+00:00")), lambda: email.utils.parsedate_to_datetime(v)):
         try:
             t = parse()
@@ -382,8 +421,8 @@ def seconds_of(v, now):
 
 def observe_response(connection, model, status, headers, body, now=None):
     """Observe the limit an API answer shows, when the wire shape's `errors` classify it as one (rate_limit, daily_cap); the wait is
-    the retry-after header, else the longest reset header, else (daily cap) the next UTC midnight, else the data's default. None when
-    the answer is no limit."""
+    the first the signals data's limit_triggers lists for the trigger that gives a time (the retry-after header, the longest reset
+    header, the next reset of the daily clock, the default). None when the answer is no limit."""
     import route
     now = now or utcnow()
     _, cat, protos, _ = catalog()
@@ -392,24 +431,32 @@ def observe_response(connection, model, status, headers, body, now=None):
     if proto is None:
         raise Stop(UNKNOWN, f"connection {sd.idn(connection)} has no wire shape, so its answers cannot be classified")
     trigger = route.classify(proto, status, body)
-    if trigger not in ("rate_limit", "daily_cap"):
-        return None
     sig, h = signals(), {k.lower(): v for k, v in headers.items()}
+    if trigger not in sig["limit_triggers"]:
+        return None
     pick = lambda names: [s for s in (seconds_of(h[n], now) for n in names if n in h) if s is not None]
     ra, rs = pick(sig["headers"]["retry_after"]), pick(sig["headers"]["reset"])
-    if ra:
-        source, wait = "retry_after", max(ra)
-    elif rs:
-        source, wait = "reset_header", max(rs)
-    else:
-        source, wait = trigger, (midnight(now) - now).total_seconds() if trigger == "daily_cap" else sig["default_wait_seconds"]
-    wait = min(max(wait, 1), sig["max_wait_seconds"])
+    for src in sig["limit_triggers"][trigger]:
+        if src == "retry_after" and ra:
+            source, wait = src, max(ra)
+        elif src == "reset_header" and rs:
+            source, wait = src, max(rs)
+        elif src == "day_reset":
+            source, wait = trigger, (midnight(now) - now).total_seconds()
+        elif src == "default":
+            source, wait = trigger, sig["default_wait_seconds"]
+        else:
+            continue
+        break
+    else:   # no listed source gave a time: the default wait, never no wait
+        source, wait = trigger, sig["default_wait_seconds"]
+    wait = min(max(wait, sig["min_wait_seconds"]), sig["max_wait_seconds"])
     return observe_limit(connection, model, source, now + datetime.timedelta(seconds=wait), f"{trigger} (HTTP {status})", now)
 
 
 def cli_of(connection):
     prov, _ = link_of(catalog()[1], connection, None)
-    return prov.get("cli") if prov["type"] == "cli-login" else None
+    return prov.get("cli") if plan_billed(signals(), prov) else None
 
 
 def observe_cli_text(connection, model, text, now=None):
@@ -448,16 +495,17 @@ def status(connection, model=None, now=None):
             if conc is None or s["conc"] - used < conc["free"]:
                 conc = {"limit": s["conc"], "in_use": used, "free": s["conc"] - used}
         if s["day"] is not None:
-            u = day_used(recs, connection, s["model"], iso(now)[:10])
+            u = day_used(recs, connection, s["model"], now)
             if day is None or s["day"] - u < day["cap"] - day["used"]:
                 day = {"cap": s["day"], "used": u, "resets_at": iso(midnight(now))}
     o = active(state(), connection, model, now)
     share = None
-    if prov["type"] == "cli-login":
-        age = signals()["plan_share_max_age_seconds"]
+    sig = signals()
+    if plan_billed(sig, prov):
+        age = sig["plan_share_max_age_seconds"]
         got = [r for r in recs if r.get("connection") == connection and r.get("plan_share") is not None and
                (now - when(r["ts"])).total_seconds() <= age] if all(isinstance(r.get("ts"), str) for r in recs) else []
-        share = 1 if o and o["source"] == "cli_limit_error" else (max(got, key=lambda r: r["ts"])["plan_share"] if got else None)
+        share = sig["limit_error_plan_share"] if o and o["source"] == "cli_limit_error" else (max(got, key=lambda r: r["ts"])["plan_share"] if got else None)
     return {"concurrency": conc or {"limit": None, "in_use": 0, "free": None}, "daily": day or {"cap": None, "used": 0, "resets_at": None},
             "observed": {k: o[k] for k in ("until", "source", "reason")} if o else None, "plan_share": share, "problems": problems}
 
@@ -466,11 +514,11 @@ def report(by):
     if by not in BY:
         raise ValueError(by)
     recs, torn = lines()
-    groups = {}
+    groups, sig, types = {}, signals(), token_types()
     for r in recs:
-        g = groups.setdefault(str(r.get(BY[by]) or "(none)"), {"calls": 0, "errors": 0, "tokens": dict.fromkeys(("input", "output", "cache_write", "cache_read", "reasoning"), 0), "cost": {}, "unpriced": 0})
+        g = groups.setdefault(str(r.get(BY[by]) or "(none)"), {"calls": 0, "errors": 0, "tokens": dict.fromkeys(types, 0), "cost": {}, "unpriced": 0})
         g["calls"] += 1
-        g["errors"] += r.get("outcome") not in ("ok", "refused")
+        g["errors"] += outcome_flag(sig, r.get("outcome"), "is_error")
         for k, v in (r.get("tokens") or {}).items():
             if k in g["tokens"] and type(v) is int:
                 g["tokens"][k] += v

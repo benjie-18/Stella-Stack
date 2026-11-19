@@ -208,8 +208,8 @@ cp "$T/om.keep" "$OM"
 ed otlp-mapping.json '.namespace = "zz"'
 ok 'CO span --json --record "$RJSON" | jq -e ".attributes | has(\"zz.role\") and has(\"zz.cost\") and (has(\"stella.role\") | not)"' "HC1 the attribute namespace is data"
 cp "$T/om.keep" "$OM"
-ed otlp-mapping.json '.status_codes = {"ok": 7, "error": 9}'
-ok 'CO span --json --record "$RJSON" | jq -e ".status == 7"' "HC1 the span status codes are data"
+ed otlp-mapping.json '.status_codes = {"ok": 0, "error": 1}'
+ok 'CO span --json --record "$RJSON" | jq -e ".status == 0"' "HC1 the span status codes are data"
 cp "$T/om.keep" "$OM"
 ed otlp-mapping.json '.kind = 2 | .path = "/zz/t" | .service_name = "svc-zz" | .scope_name = "scope-zz" | .auth.header = "X-Key" | .auth.scheme = "Token"'
 : >"$T/got.jsonl"; ed connections.json '(.entries[] | select(.id == "qa-otlp") | .hosts[0].port) = '"$LP"
