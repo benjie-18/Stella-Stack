@@ -138,12 +138,21 @@ sxed role-assignments.json --arg r "$VR" --arg b "$BR" --arg f "$FC" --arg m "$F
 mock() { python3 -I -c 'import sys, urllib.request as u; o = u.build_opener(u.ProxyHandler({}))
 print(o.open(u.Request(sys.argv[1], data=sys.argv[2].encode(), method="POST") if len(sys.argv) > 2 else sys.argv[1], timeout=10).read().decode())' "$@"; }
 mock "$CTL" "$(jq -nc --arg s "$PS" --arg l "$LM" --arg f "$FM" '{models: {($s): [$l, $f]}, faults: [{shape: $s, model: $l, fault: "rate_limit"}]}')" >/dev/null
-n=$(runsg); echo hi | env STELLA_ROOT=$SW ESCALATE_SUP_DIR=$SG NO_PROXY="$LO" "$E" t_aaaa0902 judge why >"$T/walk.out" 2>"$T/walk.err"; wrc=$?
+FBC=/workspace/docs/hermes-local/fallback-routing.json   # the shipped prompt_block_patterns (D83 gates on a free-cloud rung)
+n=$(runsg); echo hi | env STELLA_ROOT=$SW ESCALATE_SUP_DIR=$SG NO_PROXY="$LO" FALLBACK_CONFIG=$FBC "$E" t_aaaa0902 judge why >"$T/walk.out" 2>"$T/walk.err"; wrc=$?
 calls=$(mock "${CTL%/*}/_calls" 2>/dev/null); [ "$wrc" = 0 ] || grep -v setlocale "$T/walk.err" | head -5 | sed 's/^/  why (walk): /'; [ "$wrc" = 0 ] || STELLA_ROOT=$SW python3 -I /workspace/bin/stella_data.py get --json connections 2>&1 >/dev/null | head -5 | sed 's/^/  why (catalog): /'
 ok '[ "$wrc" = 0 ] && jq -e --arg c "$FC" ".link.connection == \$c and .fallback == true and (.text | length > 0)" "$T/walk.out" >/dev/null && [ "$(runsg)" = "$n" ] &&
   jq -e --arg l "$PS/$LM" --arg f "$PS/$FM" ".counts[\$l] >= 1 and .counts[\$f] == 1" <<<"$calls" >/dev/null &&
   [ "$(jq -s "[.[] | select(.card == \"t_aaaa0902\" and .event == \"WALK\")] | length" "$SG/escalations.log")" = 2 ]' \
   "D83 via the resolver, shipped-like data: judge ($VR) rung 1 local is rate-limited, rung 2 (same link) cooling, rung 3 $FC answers through route.py: exit 0 (exit $wrc)"
+# D83 gate kept: a prompt that matches a prompt_block_patterns regex is never sent to the free-cloud rung (skipped; the local
+# rungs still cool, so the walk ends with no rung run and the call queues); the log names the pattern, never the prompt
+sk="sk-qa$(printf 'A%.0s' $(seq 24))"; f0=$(jq -r --arg f "$PS/$FM" '.counts[$f] // 0' <<<"$calls")
+echo "key $sk" | env STELLA_ROOT=$SW ESCALATE_SUP_DIR=$SG NO_PROXY="$LO" FALLBACK_CONFIG=$FBC "$E" t_aaaa0908 judge why >/dev/null 2>"$T/blk.err"; brc=$?
+calls=$(mock "${CTL%/*}/_calls" 2>/dev/null)
+ok '[ "$brc" != 0 ] && [ "$(jq -r --arg f "$PS/$FM" ".counts[\$f] // 0" <<<"$calls")" = "$f0" ] && ! grep -q "$sk" "$SG/escalations.log" &&
+  jq -se "any(.[]; .card == \"t_aaaa0908\" and .event == \"SKIP\" and (.detail | contains(\"prompt_block_patterns\")))" "$SG/escalations.log" >/dev/null' \
+  "D83 gate: a prompt matching a blocked pattern is not sent to the free-cloud rung (exit $brc, a SKIP line names the pattern, not the prompt)"
 kill "$MP" 2>/dev/null
 # Approval: a rung of the preset's last-resort class (outside its class order) needs the owner's crossing grant: without one it is
 # skipped (needs_grant) and no rung is left (STL-MDL-731, exit 4); with one in force the same call runs it.

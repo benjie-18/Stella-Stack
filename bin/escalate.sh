@@ -9,7 +9,7 @@
 #   rung whose model's limits.purposes holds the purpose: a link whose connection has a CLI on this script's CLI (another CLI:
 #   STL-MDL-746), any other link (local, API) through bin/route.py call --rung (owner decision 2026-11-18). A rung whose limit
 #   (slots, per day), cooldown or pool is exhausted (route.py: STL-MDL-723) is left for the next rung the resolver judges (D83's
-#   reroute, through the resolver; one WALK log line each); a rung outside the preset's class order runs only under the owner's
+#   reroute, through the resolver; one WALK log line each; D83's high-risk and prompt_block_patterns gates skip a free-cloud rung); a rung outside the preset's class order runs only under the owner's
 #   crossing grant (else the resolver skips it). One trusted event line per rung run, written after its limits passed (event_log.py);
 #   if it cannot be written, nothing runs.
 #   Only the supervisor runs this script: a call from a worker run is refused (STL-GRD-604, exit 3, not queued).
@@ -214,7 +214,20 @@ cat >"$prompt"
 # environment or the data, an answer this script cannot read, or an event-log code is exit 2; every other refusal is exit 3. Only
 # the queue and the owner keep the prompt.
 gone() { rm -f "$prompt"; refuse "$@"; }
-wq="" wwhy="" wmodel="" ask=$rung
+wq="" wwhy="" wmodel="" ask=$rung blocked=""
+# D83's gates, kept for the walk: a rung of the least private hosted link class (routing data: free cloud) is never sent a prompt
+# that matches a prompt_block_patterns regex of the fallback data, nor one of a "risk: high" card; it is skipped as a refused rung
+# is (the reason, never the prompt, in the log). Fail closed: an unreadable card or pattern list counts as a match.
+FREE=$(jq -r '[.link_classes[]? | select(.hosted == true)] | max_by(.privacy_rank) | .id // empty' <<<"$routing" 2>/dev/null)
+FALLBACK_CONFIG="${FALLBACK_CONFIG:-/workspace/docs/hermes-local/fallback-routing.json}"
+nofree=""
+# High risk: the word "high" within 40 characters of "risk", in either order and any spelling (zero-width and odd spaces normalised)
+jq -e '(.task.body // "") | gsub("[\u00ad\u180e\u200b-\u200f\u2060-\u2064\ufeff]"; "") | gsub("[\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]"; " ") | test("risk.{0,40}high|high.{0,40}risk"; "is")' <<<"$card_json" >/dev/null 2>&1
+[ $? = 1 ] || nofree="the card is high risk (or its body cannot be read)"
+if [ -z "$nofree" ]; then
+  pats=$(jq -r '.prompt_block_patterns | if type == "array" then map(strings) | .[] else error end' "$FALLBACK_CONFIG" 2>/dev/null) || nofree="the prompt_block_patterns of the fallback data cannot be read"
+  pi=0; while [ -z "$nofree" ] && IFS= read -r pat; do pi=$((pi+1)); [ -n "$pat" ] && grep -Eq -- "$pat" "$prompt" 2>/dev/null && nofree="the prompt matches blocked pattern #$pi (prompt_block_patterns)"; done <<<"$pats"
+fi
 walk() {  # walk <LIMIT|POOL_EXHAUSTED> <why>: leave the served rung for the next; a queue entry keeps the first rung's reason and model
   [ -n "$wq" ] || { wq=$1 wwhy=$2 wmodel=$model; }
   log WALK null none true null "$2; asking rung $((served + 1))"
@@ -236,8 +249,8 @@ stuck() {  # stuck <why no next rung runs>: the walk ends; the call queues for t
 while :; do
 res=$(python3 -I /workspace/bin/resolve.py resolve --role "$role" --project "$project" --card "$card" ${driver:+--driver "$driver"} --rung "$ask" --json 2>"$prompt.err"); rrc=$?
 rerr=$(head -c 4000 "$prompt.err"); rm -f "$prompt.err"
-IFS=$'\t' read -r rcode served status conn model rwhy < <(jq -r 'select(type == "object") | [.code // "-", (.rung.served // "-" | tostring),
-  (.rung.link.status // "-"), (.rung.link.connection // "-"), (.rung.link.model // "-"), ((.reason // "-") | tostring | gsub("[\t\n]"; " ") | .[:300])] | @tsv' <<<"$res" 2>/dev/null)
+IFS=$'\t' read -r rcode served status conn model lclass rwhy < <(jq -r 'select(type == "object") | [.code // "-", (.rung.served // "-" | tostring),
+  (.rung.link.status // "-"), (.rung.link.connection // "-"), (.rung.link.model // "-"), (.rung.link.link_class // "-"), ((.reason // "-") | tostring | gsub("[\t\n]"; " ") | .[:300])] | @tsv' <<<"$res" 2>/dev/null)
 skipped=$(jq -r '[.rung.skipped[]? | "rung \(.rung) \(.connection)/\(.model) \(.status) \(.code // "-")"] | join("; ")' <<<"$res" 2>/dev/null)
 [ "$conn" != - ] || conn=""; [ "$model" != - ] || model=""
 case "${rcode:-}" in
@@ -245,6 +258,7 @@ case "${rcode:-}" in
   -) [ "$rrc" = 0 ] && [[ $served =~ ^[1-9][0-9]*$ ]] && [ "$status" = usable ] && [ -n "$conn" ] && [ -n "$model" ] \
        || gone RESOLVER 2 "STL-MDL-710 the resolver's answer (exit $rrc) serves no usable rung $ask of role $role and names no code" ;;
   STL-MDL-731)
+    skipped="$skipped${blocked:+${skipped:+; }not sent: $blocked}"
     [ -z "$wq" ] || stuck "STL-MDL-731 no rung from $ask on: $rwhy${skipped:+; skipped: $skipped}"
     queue OWNER "STL-MDL-731 rung $rung of role $role: $rwhy"
     why="STL-MDL-731 no rung left for card $card ($purpose, role $role, rung $rung): $rwhy${skipped:+; skipped: $skipped}${qnote:+; $qnote}"
@@ -259,6 +273,11 @@ case "${rcode:-}" in
   *) nogo NO_RUNG 3 "$rcode the resolver serves no usable rung $ask of role $role for card $card: $rwhy${skipped:+; skipped: $skipped} (not queued)" ;;
 esac
 log RUNG null "" false null "rung asked $ask, served $served: $conn/$model${skipped:+; skipped: $skipped}"
+if [ -n "$FREE" ] && [ "$lclass" = "$FREE" ] && [ -n "$nofree" ]; then
+  blocked="${blocked:+$blocked; }rung $served $conn/$model ($nofree)"
+  log SKIP null none false null "rung $served $conn/$model, class $lclass, not sent: $nofree"
+  ask=$((served + 1)); continue
+fi
 # The served link is data: a connection with a CLI must have this script's (STL-MDL-746); its model's limits are the catalog's.
 link=$(jq -c --arg c "$conn" --arg m "$model" '[.entries[] | select(.kind == "provider" and .id == $c) | {cli, limits: ([.models[]? | select(.id == $m) | .limits][0] // {})}][0] // empty' <<<"$catalog" 2>/dev/null)
 [ -n "$link" ] || nogo NO_RUNG 3 "STL-MDL-711 rung $served of role $role is $conn/$model, which the catalog does not list"
