@@ -22,6 +22,7 @@
         "model": "/model",
         "logprobs": "/choices/0/logprobs/content",
         "usage_keys": ["prompt_tokens", "completion_tokens"],
+        "usage_extra": {"cache_read": {"pointer": "/prompt_tokens_details/cached_tokens", "included_in": "input"}, "reasoning": {"pointer": "/completion_tokens_details/reasoning_tokens", "included_in": "output"}},
         "tool_calls_sample": [{"id": "call-1", "type": "function", "function": {"name": "noop", "arguments": "{arguments}"}}]
       },
       "errors": [
@@ -55,6 +56,7 @@
         "usage": "/usage",
         "model": "/model",
         "usage_keys": ["input_tokens", "output_tokens"],
+        "usage_extra": {"cache_write": {"pointer": "/cache_creation_input_tokens", "included_in": null}, "cache_read": {"pointer": "/cache_read_input_tokens", "included_in": null}},
         "tool_calls_sample": {"type": "tool_use", "id": "call-1", "name": "noop", "input": "{arguments}"}
       },
       "errors": [
@@ -87,6 +89,7 @@
         "usage": "/usageMetadata",
         "model": "/modelVersion",
         "usage_keys": ["promptTokenCount", "candidatesTokenCount"],
+        "usage_extra": {"cache_read": {"pointer": "/cachedContentTokenCount", "included_in": "input"}, "reasoning": {"pointer": "/thoughtsTokenCount", "included_in": null}},
         "tool_calls_sample": {"functionCall": {"name": "noop", "args": "{arguments}"}}
       },
       "errors": [

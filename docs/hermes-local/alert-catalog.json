@@ -1815,6 +1815,51 @@
       "cause": "The benchmark results file is not valid JSON, is not a document of schema benchmarks, a row given to compare.py record is invalid, or the event log cannot take the trusted benchmark.recorded line.",
       "check": "`python3 bin/compare.py check --json`; `python3 bin/event_log.py --help`.",
       "related": "F2c item E; bin/compare.py, .stella/model-check.json",
+      "code": "STL-LIM-420",
+      "area": "LIM",
+      "severity": "warning",
+      "title": "a model has no price in the pricing table",
+      "message": "A call was recorded for a model that has no row in the pricing table, so its cost is not known: {problem}. It is counted as unpriced, never guessed.",
+      "action": "add a dated row for the model to .stella/pricing.json (its source named), then run `python3 bin/cost.py check`. See STL-LIM-420 in docs/alert-codes.md.",
+      "cause": "The pricing table has no row for this connection and model dated on or before the call.",
+      "check": "`python3 bin/cost.py check --json`; `python3 bin/stella_data.py get pricing`.",
+      "related": "F2c item B; bin/cost.py, .stella/pricing.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-421",
+      "area": "LIM",
+      "severity": "warning",
+      "title": "the pricing table cannot be used",
+      "message": "Costs cannot be computed because the pricing table is not valid: {problem}.",
+      "action": "fix the row the message names in .stella/pricing.json, then run `python3 bin/cost.py check`. See STL-LIM-421 in docs/alert-codes.md.",
+      "cause": "A row breaks the pricing schema, names a connection or model the catalog does not have, or repeats a link and date.",
+      "check": "`python3 bin/cost.py check --json`; `python3 bin/stella_data.py check`.",
+      "related": "F2c item B; bin/cost.py, .stella/pricing.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-422",
+      "area": "LIM",
+      "severity": "warning",
+      "title": "spans could not be exported",
+      "message": "The export of call spans to the observability endpoint failed: {problem}. The spans stay in the spans file.",
+      "action": "check the endpoint's host and port in its connections catalog entry, and that the receiver is running; then export again. See STL-LIM-422 in docs/alert-codes.md.",
+      "cause": "The OTLP endpoint refused, did not answer, or its key could not be read.",
+      "check": "`python3 bin/stella_data.py get connections`; `python3 bin/cost.py export --spans --json`.",
+      "related": "F2c item B; bin/cost.py, .stella/pricing.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-LIM-423",
+      "area": "LIM",
+      "severity": "info",
+      "title": "cost.py was given input it cannot use",
+      "message": "A cost command could not use its input: {problem}. Nothing was priced or written.",
+      "action": "fix the input the message names (a usage record needs connection, model, ts and whole-number token counts). See STL-LIM-423 in docs/alert-codes.md.",
+      "cause": "The record or option given to cost.py was malformed, or the command failed in an unexpected way.",
+      "check": "`python3 bin/cost.py --help`.",
+      "related": "F2c item B; bin/cost.py, .stella/pricing.json",
       "resolvable": false
     }
   ]

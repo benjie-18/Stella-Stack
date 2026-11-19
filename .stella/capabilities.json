@@ -776,6 +776,38 @@
       },
       "global_id": "707c88d5-230d-44d5-a0e7-e8808c285d03",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "cost",
+      "kind": "command",
+      "summary": "Cost accounting: prices a usage record from the dated pricing table (.stella/pricing.json; five token types priced apart, batch discount, a cli-login record has no cost and keeps its plan share, a model with no row is unpriced with one STL-LIM-420 alert), makes the OpenTelemetry GenAI span of a record (appended to the spans file, index key spans), rolls records up by card, project, role, model or connection with the cache-hit rate, judges the table (check), and exports spans as OTLP/HTTP JSON to the enabled otlp-export app of the connections catalog only while the features.json flag otlp-export is on (off by default; nothing is sent otherwise).",
+      "keywords": [
+        "cost",
+        "price",
+        "pricing",
+        "tokens",
+        "cache",
+        "reasoning",
+        "batch",
+        "span",
+        "opentelemetry",
+        "otlp",
+        "rollup",
+        "budget"
+      ],
+      "inputs": "price [--record FILE|-] --json | span [--record FILE|-] [--write] --json | rollup --by card|project|role|model|connection [--records FILE] --json | check --json | export [--record FILE|-|--spans] --json",
+      "outputs": "JSON (price: {cost, plan_share}; span: the span; rollup: {by, groups, skipped}; check: {ok, entries}; export: {exported, flag, reason?}); exit 1 with a catalog code (STL-LIM-421 table unusable, STL-LIM-422 export failed, STL-LIM-423 input unusable); STL-LIM-420 is an alert line, not a failure",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/cost.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "6506fd37-b5a0-40b9-957e-52d0e9ee3580",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

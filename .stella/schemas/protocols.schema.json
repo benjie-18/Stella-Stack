@@ -33,6 +33,16 @@
               "model": {"type": "string", "pattern": "^/"},
               "logprobs": {"type": "string", "pattern": "^/", "description": "Pointer to the list of per-token items ({token, logprob}) an answer carries when the link exposes log probabilities (used by the mock)."},
               "usage_keys": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string"}, "description": "Names of the input and output token counts inside usage (used by the mock to build an answer)."},
+              "usage_extra": {
+                "type": "object",
+                "description": "Optional (F2c B): where an answer shows the cache-write, cache-read and reasoning token counts, each as a pointer inside the usage object. included_in names the count the provider already adds them to (input or output: bin/cost.py takes them out so the five counts are disjoint), or null when it counts them apart. A shape that shows none of them has no usage_extra.",
+                "properties": {
+                  "cache_write": {"$ref": "#/$defs/usage_extra_key"},
+                  "cache_read": {"$ref": "#/$defs/usage_extra_key"},
+                  "reasoning": {"$ref": "#/$defs/usage_extra_key"}
+                },
+                "additionalProperties": false
+              },
               "tool_calls_sample": {"description": "The value found at the tool_calls pointer in an answer with a tool call; the string {arguments} is the tool arguments (used by the mock)."}
             },
             "required": ["text", "tool_calls", "usage", "model"],
@@ -71,6 +81,17 @@
         "required": ["id", "request", "response", "errors", "models_path", "models_list"],
         "additionalProperties": false
       }
+    }
+  },
+  "$defs": {
+    "usage_extra_key": {
+      "type": "object",
+      "properties": {
+        "pointer": {"type": "string", "pattern": "^/", "description": "RFC 6901 pointer inside the usage object."},
+        "included_in": {"enum": ["input", "output", null]}
+      },
+      "required": ["pointer", "included_in"],
+      "additionalProperties": false
     }
   },
   "required": ["schema_version", "entries"],

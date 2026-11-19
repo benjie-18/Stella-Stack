@@ -162,7 +162,8 @@
     {"file": ".claude/skills/stack-rules/SKILL.md", "literal": "verifier", "count": 1, "phase": "to place (F1 W5 r4: a hand-written Claude Code agent definition or skill text of the readiness work; no preset generates it and no phase removes these names yet: the owner decides where it goes)"},
     {"file": "bench/suite.json", "literal": "reviewer", "count": 1, "phase": "to place (F1 W5 r3: the English noun 'reviewer' in a scoring note, like the merge-card.sh rows; no profile is meant)"},
     {"file": "config/owner.example.env", "literal": "#escalations", "count": 1, "phase": "to place (F1 W5 r3: channel names in a comment of the owner example file; the names live in the connections catalog and the owner file)"},
-    {"file": "config/owner.example.env", "literal": "#supervisor", "count": 1, "phase": "to place (F1 W5 r3: channel names in a comment of the owner example file; the names live in the connections catalog and the owner file)"}
+    {"file": "config/owner.example.env", "literal": "#supervisor", "count": 1, "phase": "to place (F1 W5 r3: channel names in a comment of the owner example file; the names live in the connections catalog and the owner file)"},
+    {"file": "bin/cost.py", "literal": "stella", "count": 1, "phase": "F2c B (the OpenTelemetry attribute namespace the F2c design fixes: stella.role, stella.project, stella.card, stella.cost, stella.batch; one constant)"}
   ],
   "lists": [
     {"kind": "models", "owner": ".stella/connections.json", "path": "entries[].models", "id": "id"},

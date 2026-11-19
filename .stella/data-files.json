@@ -314,6 +314,20 @@
       "id_field": "schema_version",
       "global_id": "d7ae956a-da16-41f4-9d4d-d3722f5ba2c2",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "pricing",
+      "path": ".stella/pricing.json",
+      "schema": "pricing",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": "entries",
+      "id_field": "id",
+      "record_kind": "setting",
+      "global_id": "6bc5edc3-80b5-48aa-adbb-cd232e8b61aa",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
-  ]
+  ],
+  "spans": ".supervisor/logs/spans.jsonl"
 }

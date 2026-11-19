@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Pricing table",
+  "description": "The dated price list bin/cost.py prices a call from (F2c B). A row is one model of one connection from one date: per_million is the price of a million tokens of each of the five token types, batch_discount the fraction taken off a batch call. The newest row whose effective_from is not after the call's time applies; a model with no row is unpriced (never a guess). A price is the provider's published price with its source; the weekly model check refreshes the file. An empty list is valid.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "entries": {
+      "type": "array",
+      "maxItems": 5000,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]*$", "maxLength": 128},
+          "connection": {"type": "string", "x-ref": "connections", "description": "A connection of the catalog."},
+          "model": {"type": "string", "minLength": 1, "maxLength": 256, "description": "A model id of that connection (cost.py check judges the pair)."},
+          "effective_from": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z)?$", "description": "UTC date, or date and time ending in Z: compared as text with a call's ts."},
+          "source": {"type": "string", "minLength": 1, "maxLength": 1024, "description": "Where the price was read (a page, a date)."},
+          "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+          "per_million": {
+            "type": "object",
+            "properties": {
+              "input": {"type": "number", "minimum": 0},
+              "output": {"type": "number", "minimum": 0},
+              "cache_write": {"type": "number", "minimum": 0},
+              "cache_read": {"type": "number", "minimum": 0},
+              "reasoning": {"type": "number", "minimum": 0, "description": "Reasoning tokens are counted apart from output tokens; a provider that bills them as output has the output price here."}
+            },
+            "required": ["input", "output", "cache_write", "cache_read", "reasoning"],
+            "additionalProperties": false
+          },
+          "batch_discount": {"type": "number", "minimum": 0, "maximum": 1, "description": "The fraction taken off a batch call's amount (0.5 = half price, 0 = no discount)."},
+          "global_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+          "install_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+        },
+        "required": ["id", "connection", "model", "effective_from", "source", "currency", "per_million", "batch_discount"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["schema_version", "entries"],
+  "additionalProperties": false
+}

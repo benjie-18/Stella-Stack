@@ -420,6 +420,15 @@
       "flag": "triage-classifier",
       "global_id": "0e9a6e70-f416-486b-b6be-3f0b90643750",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "otlp-export",
+      "owner_phase": "F2c",
+      "status": "off",
+      "depends_on": [],
+      "flag": "otlp-export",
+      "global_id": "34f8d89b-3b66-4b0e-8680-63ffccfe7fd7",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }
