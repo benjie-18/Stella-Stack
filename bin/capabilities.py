@@ -4,7 +4,10 @@ Sources (index key capability_sources -> .stella/capability-sources.json): the r
 manifests and extension folders. A skill or server found in a source with no registry entry is HIDDEN from every role and raises one
 alert per search (fail closed). Visibility for a role: allowed_roles -> available, requestable_roles -> requestable (+ approval class),
 else hidden; a hidden id answers exactly like an unknown id (no existence leak). A risk class named in gated_risk_classes is never
-"available" from here: the host check (item H) decides, so it shows as gated and load refuses it.
+"available" unless bin/host_access.py decide allows the caller's own run and host request (--run, --host-request: {target, action,
+confirmation}; nothing is invented); else it shows as gated and load refuses it. A role's own platform toolsets (role table) are entries of that
+role alone. An entry not yet approved (an outside skill or server) is requestable only: the request is one approval request (an install
+escalation; no extensions-manager triage exists yet), nothing is installed here.
 CLI (host side; --role names a role of the role table):
   search WORDS... --role R [--limit N] [--json]    ranked by id / keywords / summary weights from the sources file
   describe ID --role R [--json]
@@ -12,6 +15,8 @@ CLI (host side; --role names a role of the role table):
   load ID --role R --run RUN [--card C] [--json]    the definition; one trusted capability-load line (engine side only)
   check-card --role R --card FILE [--json]          every skill / tool of a card JSON must be available to R
   prompt-line [--json]                              the capability line every role prompt carries
+  check [--json]                                    completeness lint (item R): every command file, skill, MCP server and extension of the sources
+                                                    has a registry entry; STL-CFG-340 names the ones without
 In a worker environment (DC-05) search / describe / request / load go to the capability server (bin/capabilities_mcp.py) with the
 run token of the environment, without --role, --card or --run (role, card and run come from the token); nothing local is read or
 written. Those flags, check-card and prompt-line are refused there (STL-GRD-662); a server that cannot be reached: STL-GRD-681.
