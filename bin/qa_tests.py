@@ -157,14 +157,14 @@ def run(copy, argv, timeout, scan=()):
         "--dir", "/tmp/qa-home", "--dir", "/tmp/qa-tmp", "--bind", real, real, "--chdir", real,
         "bash", "-c", 'echo started >&"$0" || exit 1; eval "exec $0>&-"; ulimit -f "$QA_FSIZE_KB" || exit 1; exec "$@"']   # one file (a deleted one held open too) stays within max_write_bytes
     env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL") if k in os.environ}
-    env.update(HOME="/tmp/qa-home", TMPDIR="/tmp/qa-tmp", PYTHONDONTWRITEBYTECODE="1", QA_FSIZE_KB=str(max(data()[0]["tests"]["max_write_bytes"] // 1024, 1)))
+    env.update(HOME="/tmp/qa-home", TMPDIR="/tmp/qa-tmp", PYTHONDONTWRITEBYTECODE="1", QA_FSIZE_KB=str(data()[0]["tests"]["max_write_bytes"] // 1024 + 1))   # one KiB over: a file cut there is over the limit, so the check names it (Q1-OF-CVER-11)
     sr, sw = os.pipe()
     tq = data()[0]["tests"]
     cap, over, wcap, wrote, stop = tq["max_output_bytes"], [], tq["max_write_bytes"], [], threading.Event()
 
     def used():   # bytes the copy takes on disk (links not followed); None when some of it cannot be read (Q1-OF-CVER-08: fail closed)
         n, blind = 0, []
-        for r, _, fs in os.walk(real, onerror=blind.append):
+        for r, _, fs in os.walk(real, onerror=lambda e: isinstance(e, FileNotFoundError) or blind.append(e)):   # a folder removed while the walk ran is not blind (Q1-OF-CVER-12)
             for f in fs:
                 try:
                     n += os.lstat(os.path.join(r, f)).st_blocks * 512
