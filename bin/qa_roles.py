@@ -32,10 +32,10 @@ def feature_on(fid):
 
 
 def cmd_run(o, d):
-    s = qa_findings.current(o, d)   # the card is opened and o.round is its open, frozen round
     fid = d.qa["stub_roles"]["feature"]
-    if not feature_on(fid):
+    if not feature_on(fid):   # first: with the stubs off nothing else is read or judged
         raise Refuse(STUB_OFF, f"the stub QA roles are off (features entry {fid}) and the real roles are not built yet")
+    s = qa_findings.current(o, d)   # the card is opened and o.round is its open, frozen round
     p = qa_loop.plan(o.card, s, d)
     jobs = [(r, sl["slot"]) for r, e in p["roles"].items() for sl in e["slots"]]
     cmd = lambda j: [sys.executable, "-I", os.path.join(BIN, "qa_stub_role.py"), "--card", o.card, "--round", str(o.round), "--role", j[0], "--slot", str(j[1])]

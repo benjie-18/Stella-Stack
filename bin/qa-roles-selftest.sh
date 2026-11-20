@@ -134,6 +134,14 @@ ok '[ $RC = 0 ] && slots "$CO" "$VR" | jq -e --argjson c "$WC" ".n == \$c" && sl
 ok 'jq -e --arg f "$STUBF" "any(.entries[]; .id == \$f and ([.due_phase] | flatten | index(\"D1\") != null))" "$FJ" && { python3 -I "$R/bin/stella_data.py" stubs --phase D1 --json || true; } | grep -q -- "\"$STUBF\""' \
   "AC5-stub-feature features.json $STUBF is a stub with due_phase D1 and stella_data.py stubs --phase D1 lists it"
 
+# ---- D-CHK-01 (checker, Q1): with the stub entry off, neither run nor a slot started directly records anything ----
+ed .stella/features.json --arg f "$STUBF" '(.entries[] | select(.id == $f) | .status) = "off"'
+S0=$(logsum); run s0 python3 -I "$QR" run --card "$CP" --round "$(rnd "$CP")"
+ok '[ $RC != 0 ] && coded s0 230 230 && [ "$(logsum)" = "$S0" ]' "D-CHK-01 qa_roles.py run refuses (STL-QA-230) while $STUBF is off, the trusted log unchanged"
+run s1 python3 -I "$R/bin/qa_stub_role.py" --card "$CP" --round "$(rnd "$CP")" --role "$VR" --slot 1
+ok '[ $RC != 0 ] && coded s1 230 230 && [ "$(logsum)" = "$S0" ]' "D-CHK-01 qa_stub_role.py started directly refuses (STL-QA-230) while $STUBF is off, the trusted log unchanged"
+ed .stella/features.json --arg f "$STUBF" '(.entries[] | select(.id == $f) | .status) = "on"'
+
 # ---- T-WORKER ----
 S0=$(logsum)
 for c in run diagnose; do

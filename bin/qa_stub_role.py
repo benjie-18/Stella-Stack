@@ -14,9 +14,10 @@ sys.path.insert(0, BIN)   # python3 -I does not add the script folder
 import event_log as el
 import qa_findings
 import qa_loop
+import qa_roles
 import qa_tests
 
-STUB_FAILED = "STL-QA-231"
+STUB_OFF, STUB_FAILED = "STL-QA-230", "STL-QA-231"
 MAX_FIXTURE = 1 << 16
 
 
@@ -51,6 +52,8 @@ def main(argv):
     o = ap.parse_args(argv)
     try:
         d = qa_loop.data()
+        if not qa_roles.feature_on(d.qa["stub_roles"]["feature"]):   # D-CHK-01: a slot started directly obeys the same switch as run
+            return el.fail(STUB_OFF, f"the stub QA roles are off (features entry {d.qa['stub_roles']['feature']}); slot {o.slot} of {o.role} not run")
         if not qa_loop.CARD.fullmatch(o.card) or o.role not in d.qa["roles"]:
             raise ValueError("the card id or the role is not one the QA loop data knows")
         fx = fixture(d, o.card, o.round, o.role)
