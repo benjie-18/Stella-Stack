@@ -350,10 +350,11 @@ agui)   # X1 C: AC1-conformance, AC2-canary (through conformance), AC1-holds-rol
   ok '[ $RC = 0 ] && spawned "$W1" qa-run-ag1 && done_ qa-run-ag1 && jq -e ".exit == 0" "$R/$AR/qa-run-ag1.json"' "AC1-holds-role adapter.py start --card of qa-agui for role $ROLE on that real record: started, the agent worked in the worktree, the run ended exit 0"
   ;;
 direct)   # X1 C: AC1-direct-provider: an agent that calls a provider host itself (the tripwire) fails conformance with a code
-  agui_setup; aent qa-agui-direct ".conformance_briefs = {provider_direct: $(ab '[{"op": "direct_call", "url": "{provider_url}"}, {"op": "say", "text": "done"}]')}"
+  agui_setup; aent qa-agui-direct ".conformance_briefs = {provider_direct: $(ab '[{"op": "model_call", "prompt": "say ok"}, {"op": "direct_call", "url": "{provider_url}"}, {"op": "say", "text": "done"}]')}"
   run c1 CONF run --adapter qa-agui-direct --role "$ROLE" --link qa-api/qa-m1 --json
   ok '[ $RC = 1 ] && caseis c1 provider_direct false && out c1 | grep -qE "$crange" && ! arec qa-agui-direct' "AC1-direct-provider the agent's direct call to the provider URL (tripwire) fails conformance: exit 1, provider_direct failed, STL-GRD-753..759, no passing record"
   ok 'caseis c1 write_outside true && caseis c1 canary true' "AC1-direct-provider control: in the same run the other cases passed (the failure is the direct call)"
+  ok 'jq -e "[.. | objects | select((.id // .name // .case) == \"provider_direct\") | .detail | select(.ended == true and .tripwire_hits >= 1)] | length == 1" "$T/o/c1.out"' "AC1-direct-provider (pass-2 tester) the agent reached its model and the run ended: provider_direct failed on the tripwire hit alone"
   ;;
 credcfg)   # X1 C: B2-credential-config: a credential or a provider host in the agent's own config refuses its start, and fails conformance
   agui_setup
@@ -363,10 +364,10 @@ credcfg)   # X1 C: B2-credential-config: a credential or a provider host in the 
   aent qa-agui-cfg '.config_files = ["qa-agui-config.json"]'
   W=$CRD/wt-cc1; mkwt "$W" >/dev/null 2>&1; printf '{"api_key": "%s"}\n' "$TK" >"$W/qa-agui-config.json"
   astart s1 qa-agui-cfg qa-run-cc1 "$W"
-  ok '[ $RC != 0 ] && out s1 | grep -qE "$crange" && none_ "$W" qa-run-cc1 && ! grep -rqF -- "$TK" "$EV" "$T/o/s1.out" "$T/o/s1.err"' "B2-credential-config a credential (catalog token pattern) in the agent's declared config file: start refused with STL-GRD-753..759 before spawning, the value in no output or event line"
+  ok '[ $RC != 0 ] && out s1 | grep -cE "$crange" >/dev/null && none_ "$W" qa-run-cc1 && ! grep -rqF -- "$TK" "$EV" "$T/o/s1.out" "$T/o/s1.err"' "B2-credential-config a credential (catalog token pattern) in the agent's declared config file: start refused with STL-GRD-753..759 before spawning, the value in no output or event line"
   W=$CRD/wt-cc2; mkwt "$W" >/dev/null 2>&1; printf '{"base_url": "https://%s/v1"}\n' "$PH" >"$W/qa-agui-config.json"
   astart s2 qa-agui-cfg qa-run-cc2 "$W"
-  ok '[ -n "$PH" ] && [ $RC != 0 ] && out s2 | grep -qE "$crange" && none_ "$W" qa-run-cc2' "B2-credential-config a provider host of the connections catalog ($PH) in the declared config file: start refused with a code before spawning"
+  ok '[ -n "$PH" ] && [ $RC != 0 ] && out s2 | grep -cE "$crange" >/dev/null && none_ "$W" qa-run-cc2' "B2-credential-config a provider host of the connections catalog ($PH) in the declared config file: start refused with a code before spawning"
   W=$CRD/wt-cc3; mkwt "$W" >/dev/null 2>&1; printf '{"theme": "plain"}\n' >"$W/qa-agui-config.json"
   astart s3 qa-agui-cfg qa-run-cc3 "$W"
   ok '[ $RC = 0 ] && spawned "$W" qa-run-cc3' "B2-credential-config control: the same entry with a clean declared config file starts"
