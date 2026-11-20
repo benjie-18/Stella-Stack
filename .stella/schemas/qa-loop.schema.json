@@ -122,10 +122,11 @@
         "properties": {
           "kind": {
             "enum": [
-              "tester",
-              "reviewer",
-              "attacker"
-            ]
+              "evidence",
+              "review",
+              "attack"
+            ],
+            "description": "what the role does in a round: evidence (runs the tests and makes the evidence), review (judges claims and criteria from the evidence; its fail or unverified fires the triggers of source verdict), attack (tries to break the frozen copy; extra_attacks adds to it)"
           },
           "depth": {
             "type": "object",
@@ -212,7 +213,7 @@
         "additionalProperties": false,
         "required": [
           "source",
-          "tester",
+          "evidence",
           "force_roles"
         ],
         "properties": {
@@ -225,12 +226,13 @@
             ],
             "description": "what fires the trigger: diff = match on the frozen diff at freeze; verdict = a validator or verifier verdict fail or unverified; fix = the fix grew past the original change or is the second fix attempt; owner = only the owner's trigger command"
           },
-          "tester": {
+          "evidence": {
             "enum": [
               "smoke",
               "quick",
               "full"
-            ]
+            ],
+            "description": "the depth the trigger gives roles of kind evidence (keyed by kind, like the plan's depth)"
           },
           "force_roles": {
             "type": "array",

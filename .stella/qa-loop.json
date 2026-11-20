@@ -43,7 +43,7 @@
   },
   "roles": {
     "tester": {
-      "kind": "tester",
+      "kind": "evidence",
       "depth": {
         "light": "smoke",
         "medium": "full",
@@ -56,7 +56,7 @@
       }
     },
     "validator": {
-      "kind": "reviewer",
+      "kind": "review",
       "depth": {
         "light": "quick",
         "medium": "full",
@@ -69,7 +69,7 @@
       }
     },
     "verifier": {
-      "kind": "reviewer",
+      "kind": "review",
       "depth": {
         "light": "quick",
         "medium": "full",
@@ -82,7 +82,7 @@
       }
     },
     "red-team": {
-      "kind": "attacker",
+      "kind": "attack",
       "depth": {
         "light": "off",
         "medium": "full",
@@ -117,7 +117,7 @@
   "triggers": {
     "security": {
       "source": "diff",
-      "tester": "full",
+      "evidence": "full",
       "force_roles": [
         "red-team"
       ],
@@ -166,17 +166,17 @@
     },
     "mismatch": {
       "source": "verdict",
-      "tester": "full",
+      "evidence": "full",
       "force_roles": []
     },
     "fix_grew": {
       "source": "fix",
-      "tester": "full",
+      "evidence": "full",
       "force_roles": []
     },
     "owner_full": {
       "source": "owner",
-      "tester": "full",
+      "evidence": "full",
       "force_roles": [
         "red-team"
       ]
