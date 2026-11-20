@@ -531,6 +531,12 @@ with `{stack}`, `request` template, `verdict` and `reason` pointers into the ans
 event line). `bin/gateway.py check | decide | lint`; a new action kind is registered with its hook, and `lint` fails a kind
 whose hook does not call `gateway.check` with it. The default evaluator is Cedar (`@cedar-policy/cedar-wasm`, pinned exactly in
 package.json and package-lock.json; `npm ci` installs it) through `bin/cedar_eval.mjs`.
+*Hooks (X1 G2):* the agent-runtime gates (`tool_call`, then the offered tool's `gateway_kind`), the capability MCP server's
+tools/call (`mcp_call`), the model proxy's upstream forward (`network_request`), `credentials.get` (`broker_call`) and host
+access decide (`host_session`). A coding CLI's policy hook asks the MCP server's PDP route (tools/call `gateway.decide`, role and
+project from the run token) when `adapter.py start` rendered it with `--gateway` (the run's mode is not off). A run's record keeps
+its start mode (`gateway.mode`); with `--card` its project is the card's board binding. In enforce a coding CLI with no policy
+hook is refused at start; applying this file stops the runs that started with the gateway off (and hookless ones under enforce).
 
 ### `.stella/settings.json` (settings registry)
 Every owner-editable setting: `key`, `label`, `type`, `validation`, `scope`, `sensitivity` (plain, identity_critical,
