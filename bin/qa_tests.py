@@ -4,15 +4,23 @@ environment). Every command runs the card's tests ({id, argv} JSON, argv never a
 directory under the index key qa_copies (the caller made it; refused anywhere else), each argv with that copy as its working
 folder, a private HOME and TMPDIR, killed at tests.timeout_s of .stella/qa-loop.json, in a box (see box_argv below). State goes
 out as one trusted line through bin/event_log.py; nothing here reads the untrusted stream.
+The run rule (run, fresh): no run ever writes the folder it is given. Every run works in a throwaway copy of it under
+qa_copies/<card>/ (made by fresh, removed after); a round copy (one a trusted qa.frozen line names) is first checked against
+that line's tree, hashed from its files by git in a scratch repository, and refused with STL-QA-186 when they differ.
+A finding's repro and the scheduled full-suite run go through the same two functions.
   baseline    --card C --copy DIR --tests J   qa.base-failures {tests: [failing ids], classes}: tests failing on the base copy,
               never charged to the builder.
   tests-first --card C --copy DIR --tests J   each test must fail on the base copy with a class of kind assertion; a pass, an
               error class (whatever else matched) or the runner's timeout kill refuses it (DG-6): qa.tests-first {accepted, refused}.
-  flaky       --card C --copy DIR --test J    reruns the test alone tests.reruns times in DIR; mixed results: qa.flaky, then a
-              quarantine row {test, card, expires} in qa_quarantine (atomic, under a lock) that bin/test-map.py select honours. Never
-              for a tests-first test of the same card (DG-9): that one stays a blocking finding. No round is used.
+  flaky       --card C --copy DIR --test J    reruns the test alone tests.reruns times in one throwaway copy of DIR; mixed
+              results: qa.flaky, then a quarantine row {test, card, expires, files} in qa_quarantine (atomic, under a lock) that
+              bin/test-map.py select honours. Never for a test the card owns (DG-9, own_tests): a tests-first test of the card, or
+              a test whose files (the test map's file of its id, the paths in its argv) the card changed from its base to its
+              frozen hash; that one stays a blocking finding. No round is used.
   mutants     --card C --copy DIR --file F --test J   the test must pass on the copy; then each operator of mutants.operators is
-              applied to the first line of F holding its find text, each in a fresh copy (no bytecode carried), up to
+              applied to one line of F holding its find text outside a string or a # comment: a line the card changed (base to
+              frozen hash) when it has a frozen round, each operator on a line no earlier one took where it can; each in a
+              fresh copy (no bytecode carried), up to
               mutants.cap_per_card applications counted over the card's trusted qa.mutants lines. qa.mutants {test, file, applied};
               a surviving mutant is a qa.finding of kind test against the test (status confirmed; the mildest severity that blocks
               on every tier). DIR is never changed.
@@ -27,17 +35,18 @@ if __name__ == "__main__" and not sys.flags.isolated:   # run directly: PYTHONPA
     except OSError:
         sys.exit("STL-CFG-310 qa_tests.py could not restart itself isolated (python3 -I); nothing was done")
 
-import argparse, calendar, hashlib, json, pwd, re, shutil, signal, stat, subprocess, tempfile, time, uuid
+import argparse, calendar, functools, hashlib, importlib.util, json, pwd, re, shutil, signal, stat, subprocess, tempfile, time, uuid
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)
 import box
 import event_log as el
+import qa_loop as ql
 import roles
 import stella_data as sd
 import worker_env
 
-DATA, INPUT, COPY, NOBOX, NOPASS, QUAR = (f"STL-QA-{n}" for n in range(180, 186))
+DATA, INPUT, COPY, NOBOX, NOPASS, QUAR, TREE = "STL-QA-180", "STL-QA-181", "STL-QA-182", "STL-QA-183", "STL-QA-184", "STL-QA-185", "STL-QA-186"
 ROW, ROUTING = "qa_loop", "routing"
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:@+/-]{0,199}")   # a test id: no white space, no leading dash
 CARD = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}")   # a card id is also a folder name under qa_copies
@@ -122,12 +131,28 @@ def hidden():
     return sorted(x for x in xs if not any(o != x and el.inside(x, o) for o in xs))   # a folder inside another is hidden with it
 
 
-def run(copy, argv, timeout):
-    """(exit code or None on the timeout kill, output) of argv in the box, cwd the copy. Stop when the box did not start."""
+MADE = set()   # real paths of the throwaway copies this process made (fresh): run() works in these and copies anything else first
+
+
+def run(copy, argv, timeout, scan=()):
+    """(exit code or None on the timeout kill, output) of argv in the box, cwd a throwaway copy: a folder not in MADE (a round or
+    base copy) is copied first by fresh() (which checks a round copy's tree) and the copy removed after, so no run ever writes
+    the folder it was given. A long output keeps its head and tail; each string of scan found anywhere in it is named on a last
+    line, so a class pattern in the cut middle still counts. Stop when the box did not start."""
+    real = os.path.realpath(copy)
+    if real not in MADE:
+        top = index_path("qa_copies")
+        if not el.inside(real, top) or real == top:
+            raise Stop(COPY, f"{copy} is not a folder inside the QA copies folder ({top}); tests never run anywhere else"[:200])
+        d = fresh(real, os.path.relpath(real, top).split(os.sep)[0])
+        try:
+            return run(d, argv, timeout, scan)
+        finally:
+            drop(d)
     # DG-7 asks for box.py exec; it refuses a standalone clone (not a linked worktree), so this box is the house flags (box.BASE)
-    # with the stack roots, the homes and /tmp hidden, no network, and only the copy writable.
+    # with the stack roots, the homes and /tmp hidden, no network, and only the throwaway copy writable.
     cmd = box.BASE + ["--unshare-net"] + [a for x in hidden() for a in ("--tmpfs", x)] + [
-        "--dir", "/tmp/qa-home", "--dir", "/tmp/qa-tmp", "--bind", copy, copy, "--chdir", copy,
+        "--dir", "/tmp/qa-home", "--dir", "/tmp/qa-tmp", "--bind", real, real, "--chdir", real,
         "bash", "-c", 'echo started >&"$0" || exit 1; eval "exec $0>&-"; exec "$@"']
     env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL") if k in os.environ}
     env.update(HOME="/tmp/qa-home", TMPDIR="/tmp/qa-tmp", PYTHONDONTWRITEBYTECODE="1")
@@ -135,7 +160,7 @@ def run(copy, argv, timeout):
     with tempfile.TemporaryFile() as log:
         try:
             p = subprocess.Popen(cmd + [str(sw), *argv], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, env=env,
-                                 cwd=copy, start_new_session=True, pass_fds=(sw,))
+                                 cwd=real, start_new_session=True, pass_fds=(sw,))
         except OSError as e:
             os.close(sr); os.close(sw)
             raise Stop(NOBOX, f"the box could not be started ({el.why(e)[:100]}); the tests never run outside it") from None
@@ -161,9 +186,17 @@ def run(copy, argv, timeout):
         size, half = log.seek(0, 2), MAX_OUT // 2
         log.seek(0)
         out = log.read(MAX_OUT if size <= MAX_OUT else half)
-        if size > MAX_OUT:   # the head and the tail of a long output: a class pattern sits at one end or the other
+        if size > MAX_OUT:   # the head and the tail of a long output, and which scan strings the whole of it holds (RT1-11)
+            want, seen, prev = [s.encode() for s in scan], set(), b""
+            log.seek(0)
+            for chunk in iter(lambda: log.read(MAX_OUT), b""):
+                w = prev + chunk
+                seen |= {s for s in want if s in w}
+                prev = w[-max(map(len, want), default=1):]   # a string cut by the chunk border is seen in the next window
             log.seek(size - half)
             out += log.read(half)
+            if seen:
+                out += b"\n[the cut middle of the output holds: " + b", ".join(sorted(seen)) + b"]\n"
     return rc, out.decode("utf-8", "replace")
 
 
@@ -182,7 +215,7 @@ def classify(rc, out, classes):
 
 
 def run_test(copy, t, q):
-    rc, out = run(copy, t["argv"], q["tests"]["timeout_s"])
+    rc, out = run(copy, t["argv"], q["tests"]["timeout_s"], [p for c in q["tests"]["classes"] for p in c["patterns"]])
     res, cid, kind = classify(rc, out, q["tests"]["classes"])
     return {"id": t["id"], "result": res, "class": cid, "kind": kind, "exit": rc}
 
@@ -193,7 +226,7 @@ def payload(d):
 
 
 def card_lines(card, type_):
-    return [payload(d) for d in el.proof_lines() if d.get("type") == type_ and d.get("what") == card]
+    return [payload(d) for d in el.proof_lines() if d.get("type") == type_ and ql.same(d.get("what"), card)]
 
 
 def write(type_, card, new):
@@ -214,15 +247,72 @@ def cmd_tests_first(a, q):
         if r["kind"] == "assertion":
             acc.append({"id": r["id"], "class": r["class"]})
         else:
-            ref.append({"id": r["id"], "class": r["class"], "why": "passes on the base copy" if r["result"] == "pass" else f"fails with a {r['kind']} class, not an assertion"})
+            ref.append({"id": r["id"], "class": r["class"], "why": "passes on the base copy" if r["result"] == "pass" else f"fails with a class of kind {r['kind']}, not an assertion"})
     new = {"accepted": acc, "refused": ref}
     write("qa.tests-first", a.card, new)
     return new
 
 
+@functools.cache
+def test_map():
+    """The test map, read by bin/test-map.py's own loader."""
+    try:
+        spec = importlib.util.spec_from_file_location("test_map", os.path.join(BIN, "test-map.py"))
+        tm = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tm)
+        return tm.load()
+    except Exception as e:
+        raise Stop(DATA, f"the test map cannot be read ({str(e)[:160] or type(e).__name__})") from None
+
+
+def files_of(test, paths=()):
+    """The repository files a test stands for: the test map's file of its id, and each relative path among paths (its argv)."""
+    out = {os.path.normpath(p) for p in paths if isinstance(p, str) and p and not os.path.isabs(p) and not p.startswith("-")}
+    try:
+        tf = test_map()["test_file"]
+        if isinstance(tf, str):
+            out.add(tf.replace("{name}", test))
+    except (Stop, KeyError, TypeError):
+        pass   # no test map: the argv paths alone
+    return out
+
+
+def frozen(card):
+    """(round copy, base, frozen hash, qa_loop data) of the card's last frozen round; None when it has none."""
+    d = ql.data()
+    s = ql.state(card, d)
+    f = s["frozen"]
+    return (el.path(f["copy"]), f.get("base") or s["base"], f["hash"], d) if f else None
+
+
+def changed_by(card):
+    """The paths the card changed from its base to its frozen hash (both sides of a rename), read in its round copy: set() when
+    it has no frozen round, None when the diff cannot be read (the caller fails closed)."""
+    try:
+        f = frozen(card)
+        c = ql.changed(*f) if f else ([], [])
+    except Exception:   # unreadable data, state or copy: unknown, never "nothing changed"
+        return None
+    return set(c[0]) if c else None
+
+
+def quarantine_rows():
+    """The unexpired rows of qa_quarantine; none when it cannot be read."""
+    try:
+        v = read_json(index_path("qa_quarantine"))
+    except Stop:
+        return []
+    rows = v.get("rows") if isinstance(v, dict) else None
+    return [r for r in rows or [] if isinstance(r, dict) and isinstance(r.get("test"), str) and (expiry(r.get("expires")) or 0) > time.time()]
+
+
 def own_tests(card):
-    """DG-9: the tests-first tests of the card (accepted or refused) are never quarantined for it."""
-    return {x["id"] for p in card_lines(card, "qa.tests-first") for k in ("accepted", "refused") for x in p.get(k) or [] if isinstance(x, dict)}
+    """DG-9: the tests never quarantined for the card: its tests-first tests (accepted or refused), and each quarantined test
+    whose files (its row's, or the test map's file of its id) the card changed; every quarantined one when that is unknown."""
+    own = {x["id"] for p in card_lines(card, "qa.tests-first") for k in ("accepted", "refused") for x in p.get(k) or [] if isinstance(x, dict)}
+    rows = quarantine_rows()
+    ch = changed_by(card) if rows else set()
+    return own | {r["test"] for r in rows if ch is None or files_of(r["test"], r.get("files") or []) & ch}
 
 
 def iso(t):
@@ -239,8 +329,8 @@ def expiry(v):
         return None
 
 
-def quarantine(test, card, until):
-    """Add the row {test, card, expires} to qa_quarantine: under its lock, written whole to a new file and renamed over it.
+def quarantine(test, card, until, files):
+    """Add the row {test, card, expires, files} to qa_quarantine: under its lock, written whole to a new file and renamed over it.
     Expired rows and an earlier row of the same test and card go; a file that is not JSON is replaced (it skips nothing anyway)."""
     p, now = index_path("qa_quarantine"), time.time()
     try:
@@ -255,7 +345,7 @@ def quarantine(test, card, until):
             except ValueError:
                 rows = []
             rows = [r for r in rows or [] if isinstance(r, dict) and (expiry(r.get("expires")) or 0) > now and (r.get("test"), r.get("card")) != (test, card)]
-            rows.append({"test": test, "card": card, "expires": until})
+            rows.append({"test": test, "card": card, "expires": until, "files": files})
             tmp = f"{p}.{uuid.uuid4().hex}.new"
             fd = el.open_file(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
             try:
@@ -274,18 +364,24 @@ def quarantine(test, card, until):
 
 def cmd_flaky(a, q):
     t = tests_of(a.test, True)[0]
-    rs = [run_test(a.copy, t, q)["result"] for _ in range(q["tests"]["reruns"])]
+    d = fresh(a.copy, a.card)   # one throwaway for every rerun: what a run leaves is what the next one meets, never in DIR
+    try:
+        rs = [run_test(d, t, q)["result"] for _ in range(q["tests"]["reruns"])]
+    finally:
+        drop(d)
     out = {"test": t["id"], "runs": rs, "flaky": len(set(rs)) > 1}
     if not out["flaky"]:
         return out
-    own = t["id"] in own_tests(a.card)
+    files = files_of(t["id"], t["argv"])
+    ch = changed_by(a.card)
+    own = t["id"] in own_tests(a.card) or ch is None or bool(files & ch)
     until = None if own else iso(time.time() + q["tests"]["quarantine_days"] * 86400)
     out.update(quarantined=not own, expires=until)
     if own:
-        out["why"] = "a tests-first test of this card: never quarantined for it, it stays a blocking finding"
+        out["why"] = "a tests-first test of this card or a test whose file it changed: never quarantined for it, it stays a blocking finding"
     write("qa.flaky", a.card, out)
     if not own:
-        quarantine(t["id"], a.card, until)
+        quarantine(t["id"], a.card, until, sorted(files))
     return out
 
 
@@ -302,16 +398,51 @@ def fingerprint(f):
     return qa_findings.fingerprint(f)
 
 
+def verify(src):
+    """A round copy (one a trusted qa.frozen line names) must still hold that line's tree: its files (its .git aside) are hashed
+    by git into a scratch repository, so the copy's own config, hooks, index and objects are never used. Stop otherwise; a
+    folder no qa.frozen line names passes."""
+    real = os.path.realpath(src)
+    trees = [p.get("tree") for p in (payload(d) for d in el.proof_lines() if d.get("type") == "qa.frozen")
+             if isinstance(p.get("copy"), str) and os.path.realpath(os.path.join(el.ROOT, p["copy"])) == real]
+    if not trees:
+        return
+    want, rel = trees[-1], os.path.relpath(real, el.ROOT)
+    q, _ = data()
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
+    try:
+        with tempfile.TemporaryDirectory() as g:
+            git = ["git", "-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false", f"--git-dir={g}", f"--work-tree={real}"]
+            fmt = ["--object-format=sha256"] if isinstance(want, str) and len(want) == 64 else []
+            for cmd in (["git", "init", "-q", "--bare", "--template=", *fmt, g], git + ["add", "-A", "--force", "--", "."], git + ["write-tree"]):
+                r = subprocess.run(cmd, cwd=real, env=env, capture_output=True, text=True, errors="replace", timeout=q["tests"]["timeout_s"])
+                if r.returncode:
+                    raise OSError(r.stdout.strip()[-120:] or f"git {cmd[1]} failed")
+    except (OSError, subprocess.SubprocessError) as e:
+        raise Stop(TREE, f"the round copy {rel} cannot be checked against its frozen tree ({str(e)[:100]}); nothing was run") from None
+    if r.stdout.strip() != want:
+        raise Stop(TREE, f"the round copy {rel} no longer holds the tree frozen for it; nothing was run in it"[:200])
+
+
 def fresh(src, card, rel=None, text=None):
-    """A fresh copy of src inside qa_copies/<card>/ with no bytecode (a stale .pyc can hide a same-size edit); rel gets text."""
+    """A throwaway copy of src inside qa_copies/<card>/ with no bytecode (a stale .pyc can hide a same-size edit), added to MADE;
+    rel gets text. A round copy is checked against its frozen tree first (verify)."""
+    verify(src)
     top = index_path("qa_copies")
-    d = os.path.join(top, card, "mutant-" + uuid.uuid4().hex[:12])
+    d = os.path.join(top, card, "run-" + uuid.uuid4().hex[:12])
     el.mkdirs(os.path.dirname(d), top)
     shutil.copytree(src, d, symlinks=True, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    MADE.add(os.path.realpath(d))
     if rel is not None:
         with open(os.path.join(d, rel), "w", encoding="utf-8") as f:
             f.write(text)
     return d
+
+
+def drop(d):
+    shutil.rmtree(d, ignore_errors=True)
+    MADE.discard(os.path.realpath(d))
 
 
 def in_fresh(a, t, q, rel=None, text=None):
@@ -319,7 +450,32 @@ def in_fresh(a, t, q, rel=None, text=None):
     try:
         return run_test(d, t, q)
     finally:
-        shutil.rmtree(d, ignore_errors=True)
+        drop(d)
+
+
+STR = re.compile(r"\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'")
+HUNK = re.compile(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@", re.M)
+
+
+def code_of(line):
+    """The line with each quoted string blanked (same length) and a # comment cut: an operator there is no code to mutate.
+    shortcut: a # that is code (shell $#, ${#x}) cuts the line early; read the file's language when a mutant needs those lines."""
+    return STR.sub(lambda m: m[0][0] + " " * (len(m[0]) - 2) + m[0][-1], line).split("#", 1)[0]
+
+
+def changed_lines(card, rel):
+    """The line numbers of rel the card added or changed (base to frozen hash, new side); None when the card has no frozen round
+    or the diff cannot be read: then every line is a candidate, as for a copy outside a round."""
+    try:
+        f = frozen(card)
+        if not f:
+            return None
+        r = ql.git(["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", "-U0", f[1], f[2], "--", rel], f[0], f[3])
+    except Exception:   # unreadable data, state or copy
+        return None
+    if r.returncode:
+        return None
+    return {n for m in HUNK.finditer(r.stdout) for n in range(int(m[1]), int(m[1]) + int(m[2] if m[2] is not None else 1))}
 
 
 def cmd_mutants(a, q, tiers):
@@ -341,17 +497,20 @@ def cmd_mutants(a, q, tiers):
     out = {"test": t["id"], "file": rel, "applied": [], "cap_left": max(left, 0)}
     if left <= 0:
         return out
-    if in_fresh(a, t, q)["result"] != "pass":
+    if run_test(a.copy, t, q)["result"] != "pass":
         raise Stop(NOPASS, f"the test {t['id']} does not pass on the copy, so no mutant can say anything about it")
     sev, frozen = severity(q, tiers), card_lines(a.card, "qa.frozen")
-    found = []
+    found, want, used = [], changed_lines(a.card, rel), set()
     for op in q["mutants"]["operators"]:
         if len(out["applied"]) >= left:
             break
-        n = next((i for i, ln in enumerate(lines) if op["find"] in ln), None)
-        if n is None:
+        cands = [i for i, ln in enumerate(lines) if (want is None or i + 1 in want) and op["find"] in code_of(ln)]
+        if not cands:
             continue
-        text = "".join(lines[:n] + [lines[n].replace(op["find"], op["replace"], 1)] + lines[n + 1:])
+        n = next((i for i in cands if i not in used), cands[0])   # spread: a line no earlier operator took, where there is one
+        used.add(n)
+        c = code_of(lines[n]).index(op["find"])
+        text = "".join(lines[:n] + [lines[n][:c] + op["replace"] + lines[n][c + len(op["find"]):]] + lines[n + 1:])
         killed = in_fresh(a, t, q, rel, text)["result"] != "pass"
         out["applied"].append({"operator": op["id"], "line": n + 1, "killed": killed})
         if not killed:

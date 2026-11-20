@@ -151,6 +151,53 @@ ok 'q1 && printf "{not json" >"$R/$QQ" && lists' "AC7-flaky a quarantine file th
 ok 'q1 && chmod 000 "$R/$QQ" && { [ -r "$R/$QQ" ] || lists; }' "AC7-flaky a quarantine file that cannot be read skips nothing"
 chmod 600 "$R/$QQ" 2>/dev/null
 
+# ---- fix round 1 (red team RT1 and pass 1): each card freezes round 1 on H1, which adds is_odd (impl.py lines 3-4) and touches tests/flaky.sh ----
+printf 'def is_odd(n):\n    return n %% 2 != 0\n' >>"$P/impl.py"; echo '# touched by the card' >>"$P/tests/flaky.sh"
+G "$P" commit -qam "the card's change"; H1=$(G "$P" rev-parse HEAD)
+frz() { opencard "$1"; python3 -I "$QL" freeze --card "$1" --repo "$P" --hash "$H1" >/dev/null 2>&1; echo "$R/$(python3 -I "$QL" status --card "$1" --json 2>/dev/null | jq -r .copy)"; }
+same() { [ -z "$(G "$1" status --porcelain --untracked-files=all)" ] && [ "$(G "$1" rev-parse 'HEAD^{tree}')" = "$(G "$P" rev-parse "$H1^{tree}")" ] && cmp -s "$1/impl.py" <(G "$P" show "$H1:impl.py"); }
+# RT1-01: no run ever writes the round copy; a round copy changed after its freeze is refused before any use (qa_tests runs and repro)
+C01=t_0a0f2008; RC01=$(frz "$C01"); jq -nc '{id: "qa-t-rewrite", argv: ["sh", "-c", "echo \"exit 0\" >impl.py; echo x >new.txt; exit 0"]}' >"$T/rw.json"; jq -sc . "$T/rw.json" >"$T/rws.json"
+ok 'same "$RC01"' "precondition: card $C01 froze round 1 on H1 and its round copy holds H1's tree"
+run r1 python3 -I "$QT" flaky --card "$C01" --copy "$RC01" --test "$T/rw.json"; a=$RC
+run r2 python3 -I "$QT" tests-first --card "$C01" --copy "$RC01" --tests "$T/rws.json"; b=$RC
+run r3 python3 -I "$QT" baseline --card "$C01" --copy "$RC01" --tests "$T/rws.json"; c=$RC
+ok '[ "$a$b$c" = 000 ] && same "$RC01"' "RT1-01 a test that rewrites its working folder, run by flaky, tests-first and baseline on the round copy, leaves the round copy as frozen (each run works in a throwaway copy)"
+QF=$R/bin/qa_findings.py; QE=$(ix .qa_evidence); E01=$R/$QE/$C01/1/e.txt; mkdir -p "$(dirname "$E01")"; echo evidence >"$E01"
+python3 -I "$QF" evidence --card "$C01" --round 1 --file "$E01" >/dev/null 2>&1
+TESTER=$(jq -r '[.roles | to_entries[] | select(.value.kind == "evidence") | .key][0]' "$QJ")
+SEV=$(jq -r --arg t "$TIER" '[.severities[] | select(.blocks_on == "all" or (.blocks_on | index($t)))][0].id' "$QJ")
+jq -n --arg s "$SEV" --arg e "$E01" '[{check: "rt1-01", file: "impl.py", lines: [1, 1], test: "qa-t-real", severity: $s, repro: ["sh", "-c", "exit 1"], evidence: [$e], static: false}]' >"$T/f01.json"
+FP=$(python3 -I "$QF" submit --card "$C01" --round 1 --role "$TESTER" --file "$T/f01.json" 2>/dev/null | jq -r '.findings[0] | select(.status == "pending") | .fingerprint')
+echo "# changed on the host after the freeze" >>"$RC01/impl.py"
+run r4 python3 -I "$QT" flaky --card "$C01" --copy "$RC01" --test "$T/rw.json"
+ok '[ $RC = 1 ] && grep -q STL-QA-186 "$T/o/r4.err"' "RT1-01 a round copy changed after its freeze is refused before use (STL-QA-186): its files no longer make the frozen tree"
+run r5 python3 -I "$QF" repro --card "$C01" --fingerprint "$FP"
+ok '[ -n "$FP" ] && [ $RC = 1 ] && coded r5 150 179 && [ "$(cnt qa.finding-confirmed "$C01")$(cnt qa.finding-unconfirmed "$C01")" = 00 ]' "RT1-01 the repro of a pending finding refuses that changed round copy too (the same check, in qa_tests.fresh): no repro line"
+# RT1-04 (DG-9): a test whose file the card changed is never quarantined for it, and never excused for it by another card's row
+C04=t_0a0f2009; RC04=$(frz "$C04"); rm -f "$CNT"; run d1 python3 -I "$QT" flaky --card "$C04" --copy "$RC04" --test "$T/fl.json"
+ok '[ $RC = 0 ] && jq -e ".flaky == true and .quarantined == false" "$T/o/d1.out" && ! quar "$TGT" "$C04"' "RT1-04 a flaky test whose file the card changed (tests/flaky.sh, base to frozen hash) gets no quarantine row for that card"
+EX() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import qa_findings as f; print("\n".join(sorted(f.exempt(sys.argv[2]))))' "$R/bin" "$1" 2>/dev/null; }
+ok 'quar "$TGT" "$CA" && EX "$CA" | grep -qx -- "$TGT" && ! EX "$C04" | grep -qx -- "$TGT"' "RT1-04 the row card $CA wrote for $TGT excuses it for $CA, never for $C04, which changed its file (qa_findings exempt)"
+TF0=$(jq -r .test_file "$R/.stella/test-map.json"); TF0=${TF0/'{name}'/$TGT}
+ok 'quar "$TGT" "" && [ -f "$R/$TF0" ] && o=$(SEL "$TF0") && [ "$o" != full ] && grep -qx -- "$TGT" <<<"$o"' "RT1-04 test-map.py select still names the quarantined $TGT for a change of its own test file $TF0"
+A0=${ALW[0]}; jq --arg t "$A0" '.rows += [{test: $t, card: "t_0a0f20ff", expires: "2999-01-01T00:00:00Z"}]' "$R/$QQ" >"$R/$QQ.n" && mv "$R/$QQ.n" "$R/$QQ"
+ok 'quar "$A0" "" && o=$(SEL "$FILE0") && [ "$o" != full ] && grep -qx -- "$A0" <<<"$o"' "QT-M4 an always gate ($A0) with a quarantine row is still selected for $FILE0"
+# RT1-09: mutants go to the lines the card changed, never into a string or a comment, spread over lines
+C09=t_0a0f200a; RC09=$(frz "$C09"); run m9 python3 -I "$QT" mutants --card "$C09" --copy "$RC09" --file impl.py --test "$T/real.json"
+ok '[ $RC = 0 ] && jq -e "(.applied | length) >= 1 and all(.applied[]; .line == 3 or .line == 4) and (.findings | length) >= 1" "$T/o/m9.out"' "RT1-09 mutants hit only impl.py lines 3-4, the ones the card changed; the real test never calls is_odd, so a mutant survives"
+CX=t_0a0f200b; DX=$R/$QC/$CX/plain; mkdir -p "$DX"; jq -nc '{id: "qa-t-weak", argv: ["python3", "-c", "import mod"]}' >"$T/weak.json"
+printf '_G = "== != <= >= and or True False"\nassert _G == "== != <= >= and or True False"\ndef f(x):\n    if x >= 0 and x != 5:\n        return True\n    return False\n' >"$DX/mod.py"
+run mx python3 -I "$QT" mutants --card "$CX" --copy "$DX" --file mod.py --test "$T/weak.json"
+ok '[ $RC = 0 ] && jq -e "(.findings | length) >= 1" "$T/o/mx.out"' "RT1-09 a decoy line holding every operator in a string (checked by an assert) does not absorb the mutants: the weak test leaves survivors"
+# RT1-11: an error class anywhere in a long output refuses a tests-first test; pass 1: the refusal reads plainly
+CL=t_0a0f200c; DL=$R/$QC/$CL/plain; mkdir -p "$DL"
+printf 'import sys\nn = int(sys.argv[1])\nprint("AssertionError: x")\nprint("." * n)\nprint("ModuleNotFoundError: No module named feature")\nprint("." * n)\nsys.exit(1)\n' >"$DL/t.py"
+{ tst qa-t-long python3 t.py 1200000; tst qa-t-short python3 t.py 10; } | jq -sc . >"$T/long.json"
+run tl python3 -I "$QT" tests-first --card "$CL" --copy "$DL" --tests "$T/long.json"
+ok 'jq -e "([.refused[].id] | index(\"qa-t-long\")) != null and ([.refused[].id] | index(\"qa-t-short\")) != null" "$T/o/tl.out"' "RT1-11 ModuleNotFoundError in the middle of a 2.4 MB output refuses the tests-first test, as it does in a short one"
+ok '[ -s "$T/o/tf.out" ] && ! grep -qE "a (error|unclassified|assertion)" "$T/o/tf.out" "$T/o/tl.out"' "pass 1 a tests-first refusal names its class kind plainly (never 'a error class')"
+
 # ---- T-WORKER: every command refuses in a worker environment, the trusted log untouched ----
 D=$(mkcopy t_0a0f2007); S0=$(logsum)
 for c in "baseline --tests $T/bl.json" "tests-first --tests $T/tf.json" "flaky --test $T/fl.json" "mutants --file impl.py --test $T/vac.json"; do

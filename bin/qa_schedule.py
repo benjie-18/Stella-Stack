@@ -6,10 +6,12 @@ only: refuses in a worker environment (STL-CFG-312) before anything is read or p
        copy (qa_loop.make_copy: a standalone clone under qa_copies, hooks off, removed after the run) through bin/qa_tests.py's box
        (qa_tests.run: no network, only the copy writable, killed at full_suite.timeout_s). The suite's argv is the "runner" of
        .stella/test-map.json (bin/test-map.py load), run at the copy's root with no argument; with test names it runs only those.
-       On a failure the failing tests (the runner's "FAIL <name>" lines) are bisected over the done hashes since the last green
+       On a failure the failing tests (the runner's "FAIL <name>" lines, a name or its test file's stem, kept when the test map's
+       test_file of the name is in the head's tree) are bisected over the done hashes since the last green
        run: the qa.passed hash (qa_loop.state) of each card not reopened since, that is an ancestor of HEAD and not of the last
-       green head, in commit order; each step runs only the failing tests in a fresh copy of that hash. The first hash where
-       they fail is the culprit: one trusted qa.reopened {card, hash, tests} per card done on it (qa_loop.state then gives done
+       green head, in commit order; each step runs only the failing tests whose test file that hash has (a test absent at a
+       hash is not failing there) in a fresh copy of it, and reads only their FAIL lines. The first hash where one fails is the
+       culprit: one trusted qa.reopened {card, hash, tests} per card done on it (qa_loop.state then gives done
        false for it). Then one trusted qa.full-run {repo, head, result, failing, last_green, culprit, reopened} (what = the
        repo's real path) per run, pass or fail.
 Output: JSON on stdout. Exit 0 (ran, or not due yet); 1 refused or a red suite no done card explains (catalog code, plain message
@@ -22,7 +24,7 @@ if __name__ == "__main__" and not sys.flags.isolated:   # run directly: PYTHONPA
     except OSError:
         sys.exit("STL-CFG-310 qa_schedule.py could not restart itself isolated (python3 -I); nothing was done")
 
-import argparse, importlib.util, json, re, shutil, time
+import argparse, json, re, shutil, time
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)
@@ -31,7 +33,7 @@ import qa_loop as ql
 import qa_tests as qt
 import stella_data as sd
 
-DATA, REPO, RED, COPY, FAILED = (f"STL-QA-{n}" for n in range(210, 215))
+DATA, REPO, RED, COPY, FAILED = "STL-QA-210", "STL-QA-211", "STL-QA-212", "STL-QA-213", "STL-QA-214"
 RUN, REOPENED = "qa.full-run", "qa.reopened"
 SCOPE = "_full-suite"   # the copies' folder under qa_copies: a card id starts with a letter or digit, so no card shares it
 FAIL = re.compile(r"^FAIL (\S+)", re.M)   # the runner's line for a failing test; it takes the name back to run only that test
@@ -44,17 +46,31 @@ class Stop(Exception):
 
 
 def runner():
-    """The suite's argv[0] relative to a copy's root: the test map's runner, read by bin/test-map.py's own loader."""
+    """(the suite's argv[0] relative to a copy's root, the test file pattern): the test map's runner and test_file, read by
+    bin/test-map.py's own loader (qa_tests.test_map)."""
     try:
-        spec = importlib.util.spec_from_file_location("test_map", os.path.join(BIN, "test-map.py"))
-        tm = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tm)
-        r = os.path.normpath(tm.load()["runner"])
-    except Exception as e:
-        raise Stop(DATA, f"the test map's runner cannot be read ({str(e)[:160] or type(e).__name__})") from None
+        m = qt.test_map()
+        r, tf = os.path.normpath(m["runner"]), m["test_file"]
+    except (qt.Stop, KeyError, TypeError) as e:
+        raise Stop(DATA, f"the test map's runner cannot be read ({getattr(e, 'problem', None) or type(e).__name__})"[:200]) from None
     if os.path.isabs(r) or r.split(os.sep)[0] == "..":
         raise Stop(DATA, "the test map's runner is not a path inside the repository")
-    return r
+    if not isinstance(tf, str) or tf.count("{name}") != 1:
+        raise Stop(DATA, "the test map's test_file is not one {name} pattern")
+    return r, tf
+
+
+def names_of(out, tf):
+    """The test names of the runner's FAIL lines: a line names a test by its name or by its file's stem (test_file's base name
+    without its extension, e.g. <name>-selftest)."""
+    stem = os.path.splitext(os.path.basename(tf))[0]
+    pat = re.compile(re.escape(stem).replace(re.escape("{name}"), "(.+)")) if "{name}" in stem else None
+    return sorted({m[1] if (m := pat and pat.fullmatch(n)) else n for n in FAIL.findall(out)})
+
+
+def present(repo, h, name, tf, d):
+    """The test's file (test_file) is in h's tree. A test absent at a hash is not failing there (RT1-05)."""
+    return ql.git(["cat-file", "-e", f"{h}:{tf.replace('{name}', name)}"], repo, d).returncode == 0
 
 
 def when(v):
@@ -65,17 +81,18 @@ def when(v):
         return qt.expiry(v)
 
 
-def suite(repo, h, n, rel, d, names=()):
-    """(exit code or None at the timeout kill, failing test names) of the runner on h in a fresh copy, removed after."""
+def suite(repo, h, n, rel, tf, d, names=()):
+    """(exit code or None at the timeout kill, failing test names) of the runner on h in a fresh clone, removed after."""
     try:
         copy, _ = ql.make_copy(repo, h, SCOPE, n, d)
     except ql.Refuse as e:
         raise Stop(COPY, f"the copy of {h[:12]}: {e.problem}"[:200]) from None
+    qt.MADE.add(os.path.realpath(copy))   # a clone made for this run alone is already a throwaway: qa_tests.run works in it
     try:
         rc, out = qt.run(copy, [os.path.join(copy, rel), *names], d.qa["full_suite"]["timeout_s"])
     finally:
-        shutil.rmtree(copy, ignore_errors=True)
-    return rc, sorted(set(FAIL.findall(out)))
+        qt.drop(copy)
+    return rc, names_of(out, tf)
 
 
 def done_hashes(repo, head, green, d):
@@ -103,7 +120,7 @@ def tick(o, d):
     head = r.stdout.strip() if r and r.returncode == 0 else ""
     if not ql.HASH.fullmatch(head):
         raise Stop(REPO, f"{o.repo[:120]} is not a git repository with a commit checked out")
-    rel = runner()
+    rel, tf = runner()
     top = el.path(d.idx["qa_copies"])
     with el.locked(os.path.join(top, SCOPE + ".lock")):   # a tick that waited here sees the run before it and is not due
         runs = [(l.get("time"), ql.payload(l, d.envelope)) for l in el.proof_lines() if l.get("type") == RUN and l.get("what") == repo]
@@ -111,7 +128,8 @@ def tick(o, d):
         if last is not None and now - last < d.qa["full_suite"]["interval_s"]:
             return {"ran": False, "repo": repo, "due": last + d.qa["full_suite"]["interval_s"]}, None
         green = next((p.get("head") for _, p in reversed(runs) if p.get("result") == "pass"), None)
-        rc, failing = suite(repo, head, "head", rel, d)
+        rc, failing = suite(repo, head, "head", rel, tf, d)
+        failing = [t for t in failing if present(repo, head, t, tf, d)]   # a name with no test file at the head is no test of it
         new = {"repo": repo, "head": head, "result": "pass" if rc == 0 else "timeout" if rc is None else "fail",
                "failing": failing[:ql.CAP], "last_green": green, "culprit": None, "reopened": []}
         problem = None
@@ -122,8 +140,9 @@ def tick(o, d):
             hs, lo, hi, tests = list(cands), -1, len(cands), failing
             while hi - lo > 1:   # the first done hash where the failing tests fail; the last green head (lo) passed them
                 mid = (lo + hi) // 2
-                mrc, mf = suite(repo, hs[mid], f"bisect-{mid}", rel, d, failing)
-                lo, hi, tests = (mid, hi, tests) if mrc == 0 else (lo, mid, mf or failing)
+                here = [t for t in failing if present(repo, hs[mid], t, tf, d)]   # absent there: not failing there
+                mf = [t for t in suite(repo, hs[mid], f"bisect-{mid}", rel, tf, d, here)[1] if t in here] if here else []
+                lo, hi, tests = (mid, hi, tests) if not mf else (lo, mid, mf)
             if hi == len(hs):
                 problem = f"the failing tests ({', '.join(failing[:5])}) fail on {head[:12]} but on no done card's hash since the last green run"
             else:
