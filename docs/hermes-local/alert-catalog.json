@@ -3235,6 +3235,66 @@
       "resolvable": false
     },
     {
+      "code": "STL-QA-210",
+      "area": "QA",
+      "severity": "warning",
+      "title": "scheduled full-suite data cannot be used",
+      "message": "The scheduled full-suite run could not start: {problem}. Nothing was run and nothing was recorded.",
+      "action": "fix the file the message names (.stella/qa-loop.json, .stella/test-map.json or the data index) and run the data check. See STL-QA-210 in docs/alert-codes.md.",
+      "cause": "The qa-loop data, the index key qa_copies or the test map's runner is missing, breaks its schema or points outside the repository.",
+      "check": "`python3 -I bin/stella_data.py check`; `python3 -I bin/test-map.py check`.",
+      "related": "Q1 item C2; bin/qa_schedule.py, .stella/qa-loop.json full_suite",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-211",
+      "area": "QA",
+      "severity": "warning",
+      "title": "scheduled full-suite input refused",
+      "message": "The scheduled full-suite tick was refused: {problem}. Nothing was run and nothing was recorded.",
+      "action": "point --repo at a git repository with a commit checked out (and give --now as epoch seconds or ISO-8601 UTC), then run the tick again. See STL-QA-211 in docs/alert-codes.md.",
+      "cause": "The --repo folder is missing, is not a git repository or has no commit; or --now cannot be read as a time.",
+      "check": "`git -C <repo> rev-parse HEAD`; the crontab line in bin/crontab.txt.",
+      "related": "Q1 item C2; bin/qa_schedule.py, .stella/qa-loop.json full_suite",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-212",
+      "area": "QA",
+      "severity": "warning",
+      "title": "full suite red with no culprit card",
+      "message": "The scheduled full-suite run is red and no done card could be reopened: {problem}. The run is recorded; no card was reopened.",
+      "action": "read the failing tests named in the message, fix the head (or the runner) and let the next tick run. See STL-QA-212 in docs/alert-codes.md.",
+      "cause": "The suite failed without a FAIL line naming a test (a crash or the timeout kill), or the failing tests also fail on every done hash since the last green run (the cause is a commit no done card owns).",
+      "check": "`python3 -I bin/event_log.py tail --json` (the last qa.full-run line); run the runner of .stella/test-map.json on the head.",
+      "related": "Q1 item C2; bin/qa_schedule.py, .stella/qa-loop.json full_suite",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-213",
+      "area": "QA",
+      "severity": "warning",
+      "title": "scheduled full-suite copy could not be made",
+      "message": "The disposable copy for the scheduled full-suite run could not be made: {problem}. Nothing more was run; no qa.full-run line was written.",
+      "action": "check the repository and the QA copies folder (index key qa_copies), then let the next tick run. See STL-QA-213 in docs/alert-codes.md.",
+      "cause": "git could not clone or check out the commit into the QA copies folder, or the copy's folder is a link.",
+      "check": "`jq -r .qa_copies .stella/data-files.json`; `git -C <repo> cat-file -t <hash>`.",
+      "related": "Q1 item C2; bin/qa_schedule.py, .stella/qa-loop.json full_suite",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-214",
+      "area": "QA",
+      "severity": "warning",
+      "title": "the scheduled full-suite tool failed",
+      "message": "The scheduled full-suite tool stopped on an unexpected problem: {problem}. Nothing more was written after it.",
+      "action": "run the tick by hand to see the problem, fix it and let the next tick run. See STL-QA-214 in docs/alert-codes.md.",
+      "cause": "An unexpected error inside bin/qa_schedule.py (the exception type is named).",
+      "check": "`python3 -I bin/qa_schedule.py tick --repo <repo>`; `bash bin/qa-schedule-selftest.sh`.",
+      "related": "Q1 item C2; bin/qa_schedule.py, .stella/qa-loop.json full_suite",
+      "resolvable": false
+    },
+    {
       "code": "STL-QA-100",
       "area": "QA",
       "severity": "warning",

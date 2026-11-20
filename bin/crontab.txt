@@ -3,3 +3,5 @@
 */15 * * * * WATCHDOG_STEP_TIMEOUT=1200 WATCHDOG_TRIGGER=cron /workspace/bin/watchdog.sh >/dev/null 2>&1
 # T16 #escalations thread replies: record and unblock (D28), every minute
 * * * * * /workspace/bin/escalation-reply-poll.sh >/dev/null 2>&1
+# Q1 C2 scheduled full suite with bisection: the tick runs only when full_suite.interval_s (.stella/qa-loop.json) has passed since the last run; a red run reopens the culprit card
+7,37 * * * * python3 -I /workspace/bin/qa_schedule.py tick --repo /workspace >/dev/null 2>&1
