@@ -230,5 +230,15 @@ read -r OC_RC OC_LEN OC_S OC_NAMED <"$T/o/oc.out" 2>/dev/null
 ok '[ $RC = 0 ] && python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import qa_tests" "$R/bin" && [ "$OC_RC" = None ] && [ "$OC_LEN" -le 1100000 ] && [ "$OC_NAMED" = True ] && [ "$OC_S" -lt 30 ]' \
   "RTF-08 a test printing 300 MiB under a 1 MiB tests.max_output_bytes is stopped at the cap: the runner's kill (no exit code), the output kept within the cap and naming max_output_bytes (rc $OC_RC, $OC_LEN bytes, $OC_S s)"
 ok 'python3 -I "$R/bin/stella_data.py" check' "RTF-08 the copy's data with tests.max_output_bytes passes check"
+# Q1-OF-CVER-02: what a test writes into its throwaway copy (host disk) is bounded by tests.max_write_bytes
+ed .stella/qa-loop.json '.tests.max_write_bytes = 8388608'
+CW=t_0a0f20f2; opencard "$CW"; D=$(mkcopy "$CW")
+QR() { python3 -I -c 'import json, sys, time; sys.path.insert(0, sys.argv[1]); import qa_tests as q; t = time.time(); rc, out = q.run(sys.argv[2], json.loads(sys.argv[3]), 60); print(rc, int(time.time() - t), "max_write_bytes" in out)' "$R/bin" "$D" "$1"; }
+run ow QR '["bash", "-c", "head -c 52428800 /dev/zero >junk.bin; sleep 20; echo 1 passed"]'
+read -r OW_RC OW_S OW_NAMED <"$T/o/ow.out" 2>/dev/null
+run ow2 QR '["bash", "-c", "head -c 1048576 /dev/zero >small.bin; echo 1 passed"]'
+read -r OW2_RC _ _ <"$T/o/ow2.out" 2>/dev/null
+ok '[ "$OW_RC" = None ] && [ "$OW_NAMED" = True ] && [ "$OW_S" -lt 15 ] && [ "$OW2_RC" = 0 ] && python3 -I "$R/bin/stella_data.py" check' \
+  "Q1-OF-CVER-02 a test writing 50 MiB into its copy under an 8 MiB tests.max_write_bytes is killed while it runs (rc $OW_RC, $OW_S s, named: $OW_NAMED); one writing 1 MiB passes (rc $OW2_RC)"
 ok 'python3 -I "$R/bin/event_log.py" verify' "precondition: the trusted log of the scratch root verifies after the run"
 finish

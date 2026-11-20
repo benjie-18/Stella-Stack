@@ -482,6 +482,17 @@ limits)   # owner fixes after Q1 (2026-11-20): RTF-08 (a size limit per project,
   C=t_0a000042; RC_=$T/b42; B=$(mkrepo "$RC_"); open_ $C "$LIGHT" "$B"; printf '++ token = 1\n' >"$RC_/notes.txt"; H=$(step "$RC_" a.txt r1); frz $C "$RC_" "$H"
   K=t_0a000043; RK_=$T/b43; B=$(mkrepo "$RK_"); open_ $K "$LIGHT" "$B"; printf '++ nothing to see\n' >"$RK_/notes.txt"; H=$(step "$RK_" a.txt r1); frz $K "$RK_" "$H"
   ok 'fired $C && ! fired $K && [ "$(cnt qa.frozen $C)" = 1 ]' "Q1-CVER-04 an added line whose text starts with '++ ' is scanned: 'token' on it fires $SEC (the control line with no trigger word does not)"
+  # Q1-OF-CVER-01: a carriage return or another line-break character inside an added line must not hide the rest of the line from the scan
+  C=t_0a000044; RD_=$T/b44; B=$(mkrepo "$RD_"); open_ $C "$LIGHT" "$B"; printf 'x=1\rpassword=2\n' >"$RD_/notes.txt"; H=$(step "$RD_" a.txt r1); frz $C "$RD_" "$H"
+  K=t_0a000045; RE_=$T/b45; B=$(mkrepo "$RE_"); open_ $K "$LIGHT" "$B"; printf 'x=1\fpassword=2\n' >"$RE_/notes.txt"; H=$(step "$RE_" a.txt r1); frz $K "$RE_" "$H"
+  ok 'fired $C && fired $K' "Q1-OF-CVER-01 'password' after a carriage return (and after a form feed) in an added line still fires $SEC"
+  # Q1-OF-CVER-03: the limit counts the history the copy clones too, checked in the builder's repo before anything is cloned
+  cp "$QJ" "$T/qj.orig"; ed .stella/qa-loop.json '.tests.max_copy_bytes = {default: 8192, projects: {}}'
+  C=t_0a000046; RF_=$T/b46; B=$(mkrepo "$RF_"); open_ $C "$MEDIUM" "$B"; head -c 65536 /dev/urandom >"$RF_/blob.bin"; step "$RF_" a.txt big >/dev/null; rm "$RF_/blob.bin"; H=$(step "$RF_" a.txt r1)
+  run f46 QL freeze --card $C --repo "$RF_" --hash "$H"
+  ok '[ "$(rc f46)" != 0 ] && [ "$(rc f46)" != 2 ] && coded f46 && grep -q max_copy_bytes "$T/o/f46.out" "$T/o/f46.err" && [ "$(cnt qa.frozen $C)" = 0 ] && [ -z "$(ls -A "$R/$QCP/$C" 2>/dev/null)" ]' \
+    "Q1-OF-CVER-03 a small tip whose history holds 64 KiB of random data, under an 8 KiB limit: freeze is refused before anything is cloned (no copy left)"
+  cp "$T/qj.orig" "$QJ"
   ;;
 esac
 finish
