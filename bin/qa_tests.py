@@ -37,7 +37,7 @@ if __name__ == "__main__" and not sys.flags.isolated:   # run directly: PYTHONPA
     except OSError:
         sys.exit("STL-CFG-310 qa_tests.py could not restart itself isolated (python3 -I); nothing was done")
 
-import argparse, calendar, functools, hashlib, importlib.util, json, pwd, re, shutil, signal, stat, subprocess, tempfile, time, uuid
+import argparse, calendar, functools, hashlib, importlib.util, json, pwd, re, shutil, signal, stat, subprocess, tempfile, threading, time, uuid
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)
@@ -137,7 +137,7 @@ MADE = set()   # real paths of the throwaway copies this process made (fresh): r
 
 
 def run(copy, argv, timeout, scan=()):
-    """(exit code or None on the timeout kill, output) of argv in the box, cwd a throwaway copy: a folder not in MADE (a round or
+    """(exit code or None on the runner's kill: timeout or tests.max_output_bytes, output) of argv in the box, cwd a throwaway copy: a folder not in MADE (a round or
     base copy) is copied first by fresh() (which checks a round copy's tree) and the copy removed after, so no run ever writes
     the folder it was given. A long output keeps its head and tail; each string of scan found anywhere in it is named on a last
     line, so a class pattern in the cut middle still counts. Stop when the box did not start."""
@@ -159,23 +159,41 @@ def run(copy, argv, timeout, scan=()):
     env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL") if k in os.environ}
     env.update(HOME="/tmp/qa-home", TMPDIR="/tmp/qa-tmp", PYTHONDONTWRITEBYTECODE="1")
     sr, sw = os.pipe()
+    cap, over = data()[0]["tests"]["max_output_bytes"], []
+
+    def kill():
+        try:
+            os.killpg(p.pid, signal.SIGKILL)   # the box dies with its launcher (--die-with-parent), and every process in it
+        except ProcessLookupError:
+            pass
+
+    def pump():   # RTF-08: the output reaches the host file only up to max_output_bytes; past it the run is killed
+        for chunk in iter(lambda: p.stdout.read(1 << 16), b""):
+            room = cap - log.tell()
+            log.write(chunk[:max(room, 0)])
+            if len(chunk) > room:
+                over.append(True)
+                kill()
+                break
+
     with tempfile.TemporaryFile() as log:
         try:
-            p = subprocess.Popen(cmd + [str(sw), *argv], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, env=env,
+            p = subprocess.Popen(cmd + [str(sw), *argv], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
                                  cwd=real, start_new_session=True, pass_fds=(sw,))
         except OSError as e:
             os.close(sr); os.close(sw)
             raise Stop(NOBOX, f"the box could not be started ({el.why(e)[:100]}); the tests never run outside it") from None
         os.close(sw)
+        reader = threading.Thread(target=pump, daemon=True)
+        reader.start()
         try:
             rc = p.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             rc = None
-            try:
-                os.killpg(p.pid, signal.SIGKILL)   # the box dies with its launcher (--die-with-parent), and every process in it
-            except ProcessLookupError:
-                pass
+            kill()
             p.wait()
+        reader.join(10)   # shortcut: a process left holding the pipe past 10 s is not read further; the box kills it with its launcher
+        rc = None if over else rc
         os.set_blocking(sr, False)
         try:
             started = os.read(sr, 64).startswith(b"started")
@@ -199,6 +217,8 @@ def run(copy, argv, timeout, scan=()):
             out += log.read(half)
             if seen:
                 out += b"\n[the cut middle of the output holds: " + b", ".join(sorted(seen)) + b"]\n"
+        if over:
+            out += f"\n[the output passed tests.max_output_bytes ({cap}): the run was killed]\n".encode()
     return rc, out.decode("utf-8", "replace")
 
 
@@ -379,7 +399,7 @@ def base_runs(card, copy, t, q):
         f = frozen(card)
         d = f[3] if f else ql.data()
         repo, base = (f[0], f[1]) if f else (copy, ql.state(card, d)["base"])
-        dest = ql.make_copy(repo, base, card, "base-" + uuid.uuid4().hex[:12], d)[0]
+        dest = ql.make_copy(repo, base, card, "base-" + uuid.uuid4().hex[:12], d, ql.state(card, d)["project"])[0]
     except Exception:   # no base, no state, or the base not in the copy: unknown, never "flaky on the base too"
         return None
     MADE.add(os.path.realpath(dest))

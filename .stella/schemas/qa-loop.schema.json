@@ -278,7 +278,9 @@
         "quarantine_days",
         "timeout_s",
         "classes",
-        "max_repros"
+        "max_repros",
+        "max_copy_bytes",
+        "max_output_bytes"
       ],
       "properties": {
         "reruns": {
@@ -293,6 +295,33 @@
         "timeout_s": {
           "type": "integer",
           "minimum": 1
+        },
+        "max_copy_bytes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "default",
+            "projects"
+          ],
+          "description": "RTF-08: the bytes a round copy's checked-out tree may hold (every blob of git ls-tree -r -l), checked before the checkout; a tree over it is refused at freeze. default: every project; projects: {project id: bytes}, the owner's own limit for a project",
+          "properties": {
+            "default": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "projects": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "description": "RTF-08: the bytes of output one test run may write to the host; past it the run is killed (the runner's kill, as at timeout_s) and the output kept is cut at the cap"
         },
         "max_repros": {
           "type": "integer",

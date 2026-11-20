@@ -293,8 +293,15 @@ def git(args, cwd, d):
                           capture_output=True, text=True, errors="replace", timeout=d.qa["tests"]["timeout_s"])
 
 
-def make_copy(repo, h, card, n, d):
-    """(copy folder, tree id): H cloned standalone under qa_copies/<card>/round-<n>, checked out on a branch of its own."""
+def copy_limit(project, d):
+    """The bytes a round copy's checked-out tree may hold (RTF-08): the project's own limit, else the default (qa-loop tests.max_copy_bytes)."""
+    m = d.qa["tests"]["max_copy_bytes"]
+    return m["projects"].get(project, m["default"])
+
+
+def make_copy(repo, h, card, n, d, project=None):
+    """(copy folder, tree id): H cloned standalone under qa_copies/<card>/round-<n>, checked out on a branch of its own. The tree's
+    size (git ls-tree -r -l: every blob) is checked against the project's limit before the checkout, so nothing big is written out."""
     base = el.path(d.idx["qa_copies"])
     el.mkdirs(os.path.join(base, card))
     dest = os.path.join(base, card, f"round-{n}")
@@ -304,11 +311,16 @@ def make_copy(repo, h, card, n, d):
         shutil.rmtree(dest)   # a copy left by a freeze that wrote no line
     try:
         steps = (["clone", "--quiet", "--no-local", "--no-checkout", "--no-hardlinks", "-c", f"core.hooksPath={os.devnull}", "--", repo, dest], None), \
-                (["checkout", "--quiet", "-b", f"qa/{card}/round-{n}", h], dest)
+                (["ls-tree", "-r", "-l", "-z", h], dest), (["checkout", "--quiet", "-b", f"qa/{card}/round-{n}", h], dest)
         for args, cwd in steps:
             r = git(args, cwd, d)
             if r.returncode:
                 raise Refuse(NO_COPY, f"git {args[0]} failed (exit {r.returncode}): {r.stdout.strip()[-160:]}")
+            if args[0] == "ls-tree":   # <mode> <type> <object> <size>\t<path>; a submodule's size is "-"
+                size, cap = sum(int(e.split(None, 4)[3]) for e in r.stdout.split("\0") if e and e.split(None, 4)[1] == "blob"), copy_limit(project, d)
+                if size > cap:
+                    raise Refuse(NO_COPY, f"the frozen tree holds {size} bytes, over the limit of {cap} for project {project} "
+                                          f"(qa-loop tests.max_copy_bytes: the owner may set the project's own); nothing was checked out")
         head, tree = (git(["rev-parse", "--verify", x], dest, d).stdout.strip() for x in ("HEAD", "HEAD^{tree}"))
         if head != h or not HASH.fullmatch(tree):
             raise Refuse(NO_COPY, "the copy's HEAD is not the commit asked for")
@@ -330,8 +342,15 @@ def changed(dest, a, b, d):
     names, patch = diff(dest, a, b, d, "--name-only", "-z"), diff(dest, a, b, d, "-U0")
     if names.returncode or patch.returncode:
         return None
-    # shortcut: an added line whose text starts with "++ " is read as a file header and not scanned; parse hunks if that matters
-    return [p for p in names.stdout.split("\0") if p], [l[1:] for l in patch.stdout.splitlines() if l.startswith("+") and not l.startswith("+++ ")]
+    added, hunk = [], False
+    for l in patch.stdout.splitlines():   # Q1-CVER-04: a file's header lines come before its first @@, so "+++ " inside a hunk is an added line
+        if l.startswith("diff --git "):
+            hunk = False
+        elif l.startswith("@@"):
+            hunk = True
+        elif hunk and l.startswith("+"):
+            added.append(l[1:])
+    return [p for p in names.stdout.split("\0") if p], added
 
 
 def glob(p, g):
@@ -387,7 +406,7 @@ def cmd_freeze(o, d):
     repo = os.path.abspath(o.repo)
     if not os.path.isdir(repo):
         raise Refuse(BAD, "the repository path is not a folder")
-    dest, tree = make_copy(repo, o.hash, o.card, n, d)
+    dest, tree = make_copy(repo, o.hash, o.card, n, d, s["project"])
     for tid, src, ev in fired(s, d, dest, o.hash, n):
         put(o.card, "qa.triggered", {"id": tid, "source": src, "evidence": ev, "round": n}, f"trigger {tid} fired at the round {n} freeze")
     put(o.card, "qa.frozen", {"round": n, "hash": o.hash, "tree": tree, "rung": s["rung"], "depth": s["depth"],
@@ -526,6 +545,7 @@ def project_rung(card, role, rung, d):
                 v = {}
             if not isinstance(v, dict):
                 raise ValueError("it is not a JSON object")
+            card = card.lower()   # RTF-09: the board's id form (t_ and lowercase hex), the key bin/escalate.sh reads
             v[card] = {**(v[card] if isinstance(v.get(card), dict) else {}), role: rung}
             tmp = f"{p}.{os.getpid()}.new"
             fd = el.open_file(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
