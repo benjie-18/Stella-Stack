@@ -537,7 +537,7 @@
     {
       "id": "loopback-api-double",
       "kind": "command",
-      "summary": "The loopback API's test double: serves the contract's endpoints on the IPv4 loopback address and a free port with the loopback guard in front, and does nothing else (until E1 builds the real API)",
+      "summary": "The loopback API's test double: serves the contract's endpoints on the IPv4 loopback address and a free port with the loopback guard in front, and does nothing else but serve the run-ui endpoint's body (a run's generative UI read stream, bin/agui_ui.py read) after the guard (until E1 builds the real API)",
       "keywords": [
         "loopback",
         "api",
@@ -546,7 +546,7 @@
         "http"
       ],
       "inputs": "--port P (0 = a free port) and --session F ({api_token, csrf_token})",
-      "outputs": "the bound port on the first stdout line; HTTP 200 {ok: true} or 4xx {ok: false, code[, cause], message} per request; STL-OWN-858/859 when it cannot start",
+      "outputs": "the bound port on the first stdout line; HTTP 200 {ok: true, endpoint[, run, records]} or 4xx {ok: false, code[, cause], message} per request; STL-OWN-858/859 when it cannot start",
       "allowed_roles": [],
       "risk_class": "write",
       "hosts": [],
@@ -2950,6 +2950,33 @@
         "result": "pending"
       },
       "global_id": "55bae943-7bde-48d9-9bd4-868c76c8c62e",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-ui",
+      "kind": "command",
+      "summary": "Generative UI passthrough (host only, engine side): agent widgets (AG-UI UI events) are judged against the component allowlist .stella/ui-components.json, stripped and redacted, then kept in a per-run read stream (index key ui_streams) with one trusted event line each; read serves the stream (the loopback API's run-ui endpoint); act turns a stored widget's listed action into one approval request (approvals.py request) and never answers, approves or runs anything",
+      "keywords": [
+        "ag-ui",
+        "generative ui",
+        "widget",
+        "component",
+        "allowlist",
+        "read stream",
+        "approval"
+      ],
+      "inputs": "read --run R [--after SEQ] [--json] | act --run R --seq N --action A [--json]; library ingest(run, payload, ctx)",
+      "outputs": "read: JSON {run, records}; act: JSON {ok, id, run, seq, action, approval_class}; exit 1 with a catalog code (STL-GRD-720..726, STL-OWN-829, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/agui_ui.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "41aeb32b-e4d9-4f58-b5e7-2d799fe436cf",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

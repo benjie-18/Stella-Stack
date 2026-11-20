@@ -23,6 +23,14 @@
       "scope": "owner-write",
       "global_id": "ab987f44-c015-4251-838c-6efac01fcbbc",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "run-ui",
+      "method": "GET",
+      "path": "/api/runs/{run}/ui",
+      "scope": "read",
+      "global_id": "55faab44-87ae-4afc-8bab-a2560c47db22",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

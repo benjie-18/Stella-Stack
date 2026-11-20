@@ -7287,6 +7287,15 @@
         "agui-ui"
       ],
       "why": "X1 wave 1 tests (items A, U): selftests the reach lint says can reach these files"
+    },
+    {
+      "globs": [
+        "bin/agui_ui.py"
+      ],
+      "targets": [
+        "loopback"
+      ],
+      "why": "X1 item U: bin/loopback-api-double.py imports bin/agui_ui.py to serve the run-ui endpoint's body, so the loopback selftest can reach it"
     }
   ]
 }
