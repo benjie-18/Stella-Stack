@@ -1230,8 +1230,8 @@
         "done",
         "status"
       ],
-      "inputs": "open --card C --project P --tier T --base H --builder-role R [--trigger ID]... | raise --card C --tier T --reason TEXT | trigger --card C --id ID | freeze --card C --repo PATH --hash H | plan --card C --json | status --card C [--head H] --json | done --card C --hash H",
-      "outputs": "JSON (one line per trusted event line written; plan and status as JSON); exit 1 with a catalog code (STL-QA-100..108, STL-CFG-312 in a worker environment), and with --json {card, code, problem}; done exits 0 only when the last round passed on exactly that hash",
+      "inputs": "open --card C --project P --tier T --base H --builder-role R [--trigger ID]... | raise --card C --tier T --reason TEXT | trigger --card C --id ID | freeze --card C --repo PATH --hash H | plan --card C --json | status --card C [--head H] --json | done --card C --hash H | close --card C",
+      "outputs": "JSON (one line per trusted event line written; plan and status as JSON); exit 1 with a catalog code (STL-QA-100..113, STL-CFG-312 in a worker environment), and with --json {card, code, problem}; done exits 0 only when the last round passed on exactly that hash",
       "allowed_roles": [],
       "risk_class": "write",
       "hosts": [],
