@@ -228,7 +228,7 @@ def jload(path, label=None):
 
 STATE = ("event_log", "backup_dir", "applied_state", "role_table", "owner_key", "approval_store", "event_writer_state", "routing_state",
          "card_facts", "probe_records", "triage_calibration", "benchmark_results", "usage_ledger", "ledger_state", "spans", "budget_state", "model_check_state",
-         "run_tokens", "model_proxy_state", "adapter_runs", "host_presence", "capabilities_mcp_state", "conformance_records", "untrusted_events")   # the index keys that name a path; the last is the agents' stream (untrusted())
+         "run_tokens", "model_proxy_state", "adapter_runs", "host_presence", "capabilities_mcp_state", "conformance_records", "qa_evidence", "qa_copies", "qa_quarantine", "qa_rungs", "untrusted_events")   # the index keys that name a path; the last is the agents' stream (untrusted())
 
 
 def untrusted(idx):

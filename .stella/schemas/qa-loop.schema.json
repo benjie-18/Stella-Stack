@@ -1,0 +1,399 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QA loop",
+  "x-one-document": true,
+  "description": "QA loop mechanics (phase Q1). Ids are checked against routing and role-assignments data by bin/stella_data.py check.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "about",
+    "severities",
+    "rounds",
+    "depth_bump",
+    "roles",
+    "presets",
+    "local_only",
+    "triggers",
+    "tests",
+    "mutants",
+    "full_suite",
+    "diagnosis",
+    "stub_roles"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "about": {
+      "type": "string"
+    },
+    "severities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "blocks_on"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "blocks_on": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "tier ids on which a finding of this severity blocks done"
+          }
+        }
+      }
+    },
+    "rounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "normal",
+        "climb_rung",
+        "cap_climb",
+        "cap_no_climb"
+      ],
+      "properties": {
+        "normal": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "climb_rung": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cap_climb": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cap_no_climb": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "depth_bump": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to",
+        "after_failed_round"
+      ],
+      "properties": {
+        "from": {
+          "type": "string",
+          "minLength": 1
+        },
+        "to": {
+          "type": "string",
+          "minLength": 1
+        },
+        "after_failed_round": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "roles": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "depth",
+          "count"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "tester",
+              "reviewer",
+              "attacker"
+            ]
+          },
+          "depth": {
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^[a-z0-9][a-z0-9._-]*$"
+            },
+            "additionalProperties": {
+              "enum": [
+                "off",
+                "smoke",
+                "quick",
+                "full"
+              ]
+            }
+          },
+          "count": {
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^[a-z0-9][a-z0-9._-]*$"
+            },
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16
+            }
+          }
+        }
+      }
+    },
+    "presets": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "max_tier",
+          "extra_attacks",
+          "counts"
+        ],
+        "properties": {
+          "max_tier": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "description": "the deepest tier this preset runs (null: no cap); never suppresses a trigger's forced roles"
+          },
+          "extra_attacks": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8
+          },
+          "counts": {
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^[a-z0-9][a-z0-9._-]*$"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "propertyNames": {
+                "pattern": "^[a-z0-9][a-z0-9._-]*$"
+              },
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 16
+              }
+            }
+          }
+        }
+      }
+    },
+    "local_only": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "count",
+        "parallel"
+      ],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "parallel": {
+          "type": "boolean"
+        }
+      }
+    },
+    "triggers": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tester",
+          "force_roles"
+        ],
+        "properties": {
+          "tester": {
+            "enum": [
+              "smoke",
+              "quick",
+              "full"
+            ]
+          },
+          "force_roles": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reruns",
+        "quarantine_days",
+        "timeout_s",
+        "classes"
+      ],
+      "properties": {
+        "reruns": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 50
+        },
+        "quarantine_days": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeout_s": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "classes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "kind",
+              "exit_codes",
+              "patterns"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]*$"
+              },
+              "kind": {
+                "enum": [
+                  "assertion",
+                  "error",
+                  "timeout"
+                ]
+              },
+              "exit_codes": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              },
+              "patterns": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "mutants": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cap_per_card",
+        "operators"
+      ],
+      "properties": {
+        "cap_per_card": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "operators": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "find",
+              "replace"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]*$"
+              },
+              "find": {
+                "type": "string",
+                "minLength": 1
+              },
+              "replace": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "full_suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interval_s"
+      ],
+      "properties": {
+        "interval_s": {
+          "type": "integer",
+          "minimum": 60
+        }
+      }
+    },
+    "diagnosis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "flag"
+      ],
+      "properties": {
+        "flag": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "stub_roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "feature"
+      ],
+      "properties": {
+        "feature": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

@@ -8,6 +8,10 @@
     "F2",
     "F2b",
     "F2c",
+    "F3",
+    "Q1",
+    "P1",
+    "D1",
     "B1",
     "E1",
     "E2",
@@ -436,6 +440,26 @@
       "due_phase": "W1",
       "replaced_by": "the shared graph built in W1 (query it first, then read only the files it points to); run-policy graph_first is a stub until then",
       "global_id": "0ac5d514-cdae-4f48-a0ac-67357b0a4321",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "qa-stub-roles",
+      "owner_phase": "Q1",
+      "status": "on",
+      "depends_on": [],
+      "flag": null,
+      "due_phase": "D1",
+      "replaced_by": "the real QA roles (tester, validator, verifier, red team) built in D1; until then bin/qa_roles.py runs each QA slot as a deterministic test double (bin/qa_stub_role.py) so the planner (P1) can run a card end to end",
+      "global_id": "7044a6b3-fbd2-404d-aca0-9976f6122f7a",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "qa-round2-diagnosis",
+      "owner_phase": "Q1",
+      "status": "off",
+      "depends_on": [],
+      "flag": "qa-round2-diagnosis",
+      "global_id": "f8a7c1fb-a7b0-4894-be15-785a093c718c",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
