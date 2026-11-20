@@ -735,6 +735,8 @@
           "--verbose",
           "--allowedTools",
           "Bash,mcp__stella-capabilities",
+          "--disallowedTools",
+          "Skill",
           "--model",
           "{model}",
           "--settings",
