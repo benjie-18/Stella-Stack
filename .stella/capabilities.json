@@ -2655,7 +2655,7 @@
         "test"
       ],
       "inputs": "baseline|tests-first --card C --copy DIR --tests J | flaky --card C --copy DIR --test J | mutants --card C --copy DIR --file F --test J (J a JSON file: a list of {id, argv} or one)",
-      "outputs": "JSON: baseline {tests, classes}; tests-first {accepted, refused}; flaky {test, runs, flaky, quarantined, expires}; mutants {test, file, applied, cap_left, findings}; exit 1 with a catalog code (STL-QA-180..185, STL-CFG-312 worker environment)",
+      "outputs": "JSON: baseline {tests, classes}; tests-first {accepted, refused}; flaky {test, runs, flaky, quarantined, expires}; mutants {test, file, applied, cap_left, findings}; exit 1 with a catalog code (STL-QA-180..186, STL-CFG-312 worker environment)",
       "allowed_roles": [],
       "risk_class": "write",
       "hosts": [],
