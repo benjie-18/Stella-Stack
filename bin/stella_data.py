@@ -1342,10 +1342,11 @@ def qa_depths():
 
 def rule_qa_loop(c):
     """The QA loop data against routing and the presets (phase Q1, design DG-3), every line QA_DATA: role, tier, preset and
-    trigger ids are the ids of routing (card_roles, task_tiers, workflow.triggers) and of role-assignments (effort_modes); a
+    trigger ids are the ids of routing (card_roles, task_tiers, workflow.triggers) and of role-assignments (effort_modes: a
+    preset id that names none is a Warned line, never applied, so removing a preset is judged by the preset rules alone); a
     trigger's word patterns compile. Every role workflow.required_roles lists (always, or under a trigger that can fire) is a
-    QA role with count >= 1 on every tier, in every presets.<id>.counts entry, and when_local_only.count >= 1; one required
-    always runs (depth not off) on every tier; one required when trigger T is one of triggers[T].force_roles. The QA loop tool
+    QA role with count >= 1 on every tier the QA roles name, in every presets.<id>.counts entry, and when_local_only.count >= 1;
+    one required always runs (depth not off) on each of those tiers; one required when trigger T is one of triggers[T].force_roles. The QA loop tool
     reads this file through served(), so its plan fails closed on the same lines."""
     P = c["P"]
     off = qa_depths()[0]
@@ -1367,9 +1368,10 @@ def rule_qa_loop(c):
                 for f in ("depth", "count"):
                     for t in x[f]:
                         tier(t, f"roles[{kname(r)}].{f}")
+            W = lambda m: P(rid, Warned(QA_DATA, m))   # a preset id that names no preset never applies: warned, so a preset can still be removed
             for p, x in q["presets"].items():
                 if p not in modes:
-                    E(f"presets: {nm(p, modes, 'a key')} is not a preset (role-assignments effort_modes)")
+                    W(f"presets: {nm(p, modes, 'a key')} is not a preset (role-assignments effort_modes)")
                 if x["max_tier"] is not None:
                     tier(x["max_tier"], f"presets[{kname(p)}].max_tier")
                 for r, cs in x["counts"].items():
@@ -1379,7 +1381,7 @@ def rule_qa_loop(c):
                         tier(t, f"presets[{kname(p)}].counts[{kname(r)}]")
             for i, p in enumerate(q["when_local_only"]["presets"]):
                 if p not in modes:
-                    E(f"when_local_only.presets[{i}]: {nm(p, modes, 'it')} is not a preset (role-assignments effort_modes)")
+                    W(f"when_local_only.presets[{i}]: {nm(p, modes, 'it')} is not a preset (role-assignments effort_modes)")
             for k, t in q["triggers"].items():
                 if k not in wf["triggers"]:
                     E(f"triggers: {nm(k, wf['triggers'], 'a key')} is not a trigger of the routing data (workflow.triggers)")
@@ -1393,13 +1395,16 @@ def rule_qa_loop(c):
                         E(f"triggers[{kname(k)}].match.words[{i}] is not a regular expression")
             if q["when_local_only"]["count"] < 1:
                 E("when_local_only.count is below 1: under Local only no role would run")
+            covered = [t for t in tiers if any(t in x[f] for x in q["roles"].values() for f in ("depth", "count"))]   # a tier no QA role names is not judged here
             for r, w in need:
-                why = f"which the workflow requires ({'always' if w == 'always' else 'when ' + idn(w, True) + ' fires'}; routing workflow.required_roles)"
+                if r not in roles:
+                    continue   # an unknown required role is the routing rule's refusal
+                why = f"which the workflow requires ({'always' if w == 'always' else 'when ' + nm(w, wf['triggers'], 'its trigger') + ' fires'}; routing workflow.required_roles)"
                 x = q["roles"].get(r)
                 if x is None:
                     E(f"roles has no entry for {idn(r, True)}, {why}")
                     continue
-                for t in tiers:
+                for t in covered:
                     if x["count"].get(t, 0) < 1:
                         E(f"roles[{kname(r)}].count gives {idn(t, True)} no slot (count 0 or missing) for {idn(r, True)}, {why}")
                     if w == "always" and x["depth"].get(t, off) == off:
@@ -1407,7 +1412,7 @@ def rule_qa_loop(c):
                 for p, pr in q["presets"].items():
                     for t, n in pr["counts"].get(r, {}).items():
                         if n < 1:
-                            E(f"presets[{kname(p)}].counts[{kname(r)}] gives {idn(t, True)} count 0, {why}")
+                            E(f"presets[{kname(p)}].counts[{kname(r)}] gives {nm(t, tiers, 'a tier')} count 0, {why}")
                 if w != "always" and r not in q["triggers"].get(w, {}).get("force_roles", []):
                     E(f"triggers[{kname(w)}].force_roles does not list {idn(r, True)}, {why}")
 

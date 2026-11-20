@@ -339,6 +339,8 @@ def plan(card, s, d):
     """The round's plan (module docstring)."""
     q, depths, tiers = d.qa, d.depths, d.tiers
     off, deeper = depths[0], lambda a, b: b if depths.index(b) > depths.index(a) else a
+    if not any(s["depth"] in x[f] for x in q["roles"].values() for f in ("depth", "count")):   # check judges only the tiers QA roles name
+        raise Refuse(QA_DATA, f"no QA role names the card's depth {s['depth']}: the QA loop data has no plan for it")
     pre = q["presets"].get(s["preset"]) or {"max_tier": None, "extra_attacks": 0, "counts": {}}
     capped = s["depth"] if pre["max_tier"] is None or tiers.index(s["depth"]) <= tiers.index(pre["max_tier"]) else pre["max_tier"]
     lo = q["when_local_only"]
