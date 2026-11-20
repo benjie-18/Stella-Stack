@@ -116,7 +116,7 @@ FAKE=$(jq -c --arg v "${VER:-none}" --arg s "$SHAPE" --arg te "$TE" --arg g "$(u
           env: {base_url_env: "QA_AGENT_BASE_URL", token_env: $te}},
   cli_login: {credential_paths: ["{home}/.qa-agent/creds.json"], home_env: "HOME"},
   stream: {format: "jsonl", type: "/type", tool_name: "/name", tool_input: "/input", tool_result: "/output", error: "/error",
-           usage: {input: "/input_tokens", output: "/output_tokens"}, final_text: "/text"},
+           usage: {input: "/input_tokens", output: "/output_tokens"}, final_text: "/text", model: "/model"},
   supports: {hook: false, deferred_tools: false, compaction: false, clear_tool_results: false, subagent: false, script_tools: false,
              working_notes: false, skill_use_observable: false, tool_use_observable: true},
   tools: {write: {class: "write", path: "/path"}, edit: {class: "write", path: "/path"}, read: {class: "read", path: "/path"},
@@ -244,6 +244,18 @@ clilogin)   # the cli-login variant: token-shaped strings (the connection's reda
   ok 'caseis c1 canary true' "cli-login the canary case passes on the cli-login link"
   ok 'grep -rq --include=events.jsonl -- creds.json "$R/$AR"' "cli-login the agent was told to read its credential file (events.jsonl names it)"
   ok '[ -s "$T/o/c1.out" ] && [ -z "$(grep -rlF --exclude=creds.json -- "$TP" "$T" 2>/dev/null)" ]' "cli-login the token-shaped string is in no output, run log, events, event log or other file"
+  # F3-CVER-03 (owner fix 2026-11-20): on a cli-login link no ledger line exists, so tool_call checks the model the CLI's own stream names
+  # the brief's tool is say (no model server is behind a cli-login link here); the fake CLI's usage line names --model unless told otherwise
+  TB() { jq -nc --argjson a "$1" '"QA conformance brief.\nBEGIN-ACTIONS\n" + ($a | tojson) + "\nEND-ACTIONS\n"'; }
+  ed .stella/adapters.json --argjson b "$(TB '[{"op": "say", "text": "ok"}, {"op": "usage", "input": 500, "output": 5}]')" '(.entries[] | select(.id == "qa-fake") | .conformance_briefs.tool_call) = $b'
+  run c4 CONF run --adapter qa-fake --role "$ROLE" --link qa-cli/qa-c1 --json
+  ok 'caseis c4 tool_call true' "F3-CVER-03 control: on the cli-login link the tool_call case passes when the CLI's stream names the link's model"
+  ed .stella/adapters.json --argjson b "$(TB '[{"op": "say", "text": "ok"}, {"op": "usage", "input": 500, "output": 5, "model": "qa-other"}]')" '(.entries[] | select(.id == "qa-fake") | .conformance_briefs.tool_call) = $b'
+  run c2 CONF run --adapter qa-fake --role "$ROLE" --link qa-cli/qa-c1 --json
+  ok '[ $RC = 1 ] && caseis c2 tool_call false && caseis c2 canary true && out c2 | grep -qE "$qrange"' "F3-CVER-03 the CLI's stream names another model (qa-other) than the cli-login link's (qa-c1): tool_call fails with a code (the other cases still pass)"
+  ed .stella/adapters.json --argjson b "$(TB '[{"op": "say", "text": "ok"}, {"op": "usage", "input": 500, "output": 5}]')" '(.entries[] | select(.id == "qa-fake")) |= (.conformance_briefs.tool_call = $b | .stream |= del(.model))'
+  run c3 CONF run --adapter qa-fake --role "$ROLE" --link qa-cli/qa-c1 --json
+  ok '[ $RC = 1 ] && caseis c3 tool_call false && out c3 | grep -qE "$qrange"' "F3-CVER-03 an adapter whose stream names no model: the cli-login tool_call case fails (nothing shows which model served)"
   ;;
 linkgate)   # builder (Gate B fix V2-01, V2-03, V2-05): linked worktrees of the stack; the gate keyed by link and connection type; complete digests
   cstartl() { brief "$2" '[]'; run "$1" A start --adapter qa-fake --role "$ROLE" --worktree "$3" --brief-file "$T/brief-$2.md" --link "$4" --run-id "$2" --card "qa-card-$2" --json; }

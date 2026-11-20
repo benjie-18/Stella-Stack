@@ -221,5 +221,14 @@ for c in "baseline --tests $T/bl.json" "tests-first --tests $T/tf.json" "flaky -
   run w env STUB_WORKER_MARK=1 python3 -I "$QT" "$1" --card t_0a0f2007 --copy "$D" "${@:2}"
   ok '[ $RC != 0 ] && c312 w && [ "$(logsum)" = "$S0" ]' "T-WORKER qa_tests.py $1 refuses in a worker environment (STL-CFG-312), the trusted log unchanged"
 done
+# ---- RTF-08 (owner fix 2026-11-20): a test's output past tests.max_output_bytes stops the run at the cap (no unbounded host temp file) ----
+ed .stella/qa-loop.json '.tests.max_output_bytes = 1048576'
+CO=t_0a0f20f1; opencard "$CO"; D=$(mkcopy "$CO")
+run oc python3 -I -c 'import json, sys, time; sys.path.insert(0, sys.argv[1]); import qa_tests as q; t = time.time(); rc, out = q.run(sys.argv[2], json.loads(sys.argv[3]), 60); print(rc, len(out.encode()), int(time.time() - t), "max_output_bytes" in out)' \
+  "$R/bin" "$D" '["python3", "-c", "import sys\nfor _ in range(300): sys.stdout.write(\"x\" * 1048576)\nprint(\"1 passed\")"]'
+read -r OC_RC OC_LEN OC_S OC_NAMED <"$T/o/oc.out" 2>/dev/null
+ok '[ $RC = 0 ] && python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import qa_tests" "$R/bin" && [ "$OC_RC" = None ] && [ "$OC_LEN" -le 1100000 ] && [ "$OC_NAMED" = True ] && [ "$OC_S" -lt 30 ]' \
+  "RTF-08 a test printing 300 MiB under a 1 MiB tests.max_output_bytes is stopped at the cap: the runner's kill (no exit code), the output kept within the cap and naming max_output_bytes (rc $OC_RC, $OC_LEN bytes, $OC_S s)"
+ok 'python3 -I "$R/bin/stella_data.py" check' "RTF-08 the copy's data with tests.max_output_bytes passes check"
 ok 'python3 -I "$R/bin/event_log.py" verify' "precondition: the trusted log of the scratch root verifies after the run"
 finish

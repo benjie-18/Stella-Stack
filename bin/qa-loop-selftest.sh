@@ -8,6 +8,7 @@
 #   worker T-WORKER   copy DG-7   merge DG-8 (bin/merge-card.sh's QA check on a scratch repo, run here: merge-card-selftest is shared)
 #   rt1    fix round 1: RT1-06 (rename, case), RT1-07 (card id case), RT1-08 (open once), QL-M2, RT1-12 (reopen at cap), DG-1 evidence, close --json
 #   rtf    fix cycle 2: RTF-01 (a verdict per slot), RTF-02 (.gitattributes), RTF-04 (blocking judged at close), RTF-05 (one lock per card)
+#   limits owner fixes: RTF-08 (copy size limit per project), RTF-09 (rungs.json key), Q1-CVER-04 (an added "++ " line is scanned)
 # A mock builder: each round is a new commit of a scratch git repo; findings, evidence and verdicts go through bin/qa_findings.py
 # (item B) as design.md specifies. Exit codes, catalog codes, JSON fields and trusted event lines are asserted, never wording.
 # ASSUMPTIONS (what design.md leaves open; nothing else is assumed):
@@ -21,7 +22,7 @@
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 ME=qa-loop-selftest
-SECTIONS="climb stop3 depth bind trust plan data worker copy merge rt1 rtf"
+SECTIONS="climb stop3 depth bind trust plan data worker copy merge rt1 rtf limits"
 if [ $# = 0 ]; then
   f=0; for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || f=$((f+1)); done
   [ $f = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($f sections)"; [ $f = 0 ]; exit
@@ -462,6 +463,25 @@ PY
   run l37 python3 -I "$T/lock.py" "$R" $K $K "$(jq -nc --arg r "$R" --arg c $K --arg f "$T/f37.json" --arg t "$TESTER" '["python3", "-I", ($r + "/bin/qa_findings.py"), "submit", "--card", $c, "--round", "1", "--role", $t, "--file", $f]')"
   ok '[ "$(rc l36)" = 0 ] && isdone $C "$H" && [ "$(rc l37)" = 0 ] && [ "$(cnt qa.finding $K)" = 1 ]' \
     "RTF-05 close and submit wait while the card's lock is held (taken under another spelling of the id): nothing written, then each runs once it is free"
+  ;;
+limits)   # owner fixes after Q1 (2026-11-20): RTF-08 (a size limit per project, in data, before checkout), RTF-09 (rungs.json keyed by the board's id), Q1-CVER-04 ("++ " lines)
+  fired() { lines qa.triggered "$1" | jq -e --arg t "$SEC" '[.[] | select(.id == $t)] | length == 1' >/dev/null; }
+  cp "$QJ" "$T/qj.orig"; ed .stella/qa-loop.json '.tests.max_copy_bytes = {default: 4096, projects: {}}'
+  C=t_0a000040; RA_=$T/b40; B=$(mkrepo "$RA_"); open_ $C "$MEDIUM" "$B"; head -c 8192 /dev/zero | tr '\0' x >"$RA_/big.txt"; H=$(step "$RA_" a.txt r1)
+  run f40 QL freeze --card $C --repo "$RA_" --hash "$H"
+  ok 'data_ok && [ "$(rc f40)" != 0 ] && [ "$(rc f40)" != 2 ] && coded f40 && grep -q max_copy_bytes "$T/o/f40.out" "$T/o/f40.err" && [ "$(cnt qa.frozen $C)" = 0 ] && [ -z "$(ls -A "$R/$QCP/$C" 2>/dev/null)" ]' \
+    "RTF-08 a frozen tree over the default limit (8 KiB of 4 KiB): freeze is refused (coded, names max_copy_bytes) before any checkout: no qa.frozen line, no copy left"
+  ed .stella/qa-loop.json --arg p "$P" '.tests.max_copy_bytes.projects[$p] = 65536'
+  frz $C "$RA_" "$H"
+  ok 'data_ok && [ "$(cnt qa.frozen $C)" = 1 ]' "RTF-08 the card's project has its own limit in the data (64 KiB): the same freeze goes through"
+  cp "$T/qj.orig" "$QJ"
+  C=T_0A000041; RB_=$T/b41; B=$(mkrepo "$RB_"); open_ $C "$MEDIUM" "$B"
+  python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import qa_loop as q; d = q.data(); s = q.state(sys.argv[2], d); q.project_rung(s["card"], s["builder_role"], 2, d)' "$R/bin" t_0a000041 2>>"$T/o/last"
+  ER=$(jq -er --arg c t_0a000041 --arg r "$BR" 'if type == "object" and ((.[$c] // {}) | type == "object") then .[$c][$r] // 1 else error end | select(type == "number" and . == floor and . >= 1 and . <= 999)' "$R/$QRG" 2>/dev/null)
+  ok '[ "$ER" = 2 ] && jq -e "has(\"T_0A000041\") | not" "$R/$QRG"' "RTF-09 a loop opened as T_0A000041 climbs to rung 2: rungs.json holds it under the board's id t_0a000041, read the way bin/escalate.sh reads it ($ER)"
+  C=t_0a000042; RC_=$T/b42; B=$(mkrepo "$RC_"); open_ $C "$LIGHT" "$B"; printf '++ token = 1\n' >"$RC_/notes.txt"; H=$(step "$RC_" a.txt r1); frz $C "$RC_" "$H"
+  K=t_0a000043; RK_=$T/b43; B=$(mkrepo "$RK_"); open_ $K "$LIGHT" "$B"; printf '++ nothing to see\n' >"$RK_/notes.txt"; H=$(step "$RK_" a.txt r1); frz $K "$RK_" "$H"
+  ok 'fired $C && ! fired $K && [ "$(cnt qa.frozen $C)" = 1 ]' "Q1-CVER-04 an added line whose text starts with '++ ' is scanned: 'token' on it fires $SEC (the control line with no trigger word does not)"
   ;;
 esac
 finish
