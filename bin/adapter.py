@@ -271,9 +271,14 @@ def box_prefix(role, aid, wt, label, cfg):
             proj = [p["repo"] for p in roles.board_projects(roles.board()) if p["repo"]]
         except Exception:
             proj = []   # no readable board: only the stack's own linked worktrees can be boxed (fail closed for the rest)
+        top = os.path.realpath(os.path.dirname(os.path.realpath(os.path.join(wt, git(wt, "rev-parse", "--git-common-dir")))))
+        if top != os.path.realpath(sd.ROOT) and top not in {os.path.realpath(p) for p in proj}:
+            # the box hides the stack root's protected paths but walks the worktree's repo: they must be one tree (live finding B)
+            raise Stop(C["box"], f"the worktree's repository is neither the stack root nor a project of the board: the run is not started")
         argv, over = box.box_argv(d, profs[0], {"card": label, "workspace": wt, "branch": git(wt, "rev-parse", "--abbrev-ref", "HEAD")},
                                   hermes_root=root, home=home, roots=proj, stack_root=sd.ROOT)
-        return argv + ["--ro-bind", cfg, cfg, "--chdir", wt], over   # the run's config folder, read-only, nothing else of the state
+        at = next((i for i, x in enumerate(argv) if x == "--remount-ro"), len(argv))   # before the read-only remounts, so its parents can be made
+        return argv[:at] + ["--ro-bind", cfg, cfg] + argv[at:] + ["--chdir", wt], over   # the run's config folder, read-only, nothing else of the state
     except Stop:
         raise
     except Exception as e:   # BoxError, RolesError, OSError: fail closed
