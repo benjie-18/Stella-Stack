@@ -263,6 +263,7 @@
   "not_tests": [
     "bin/selftests.sh",
     "bin/test-map.py",
+    "bin/qa_tests.py",
     ".stella/test-map.json",
     ".stella/schemas/test-map.schema.json",
     "bench/tasks/*",
@@ -3172,6 +3173,7 @@
     {"globs": ["bin/qa_loop.py", ".stella/qa-loop.json", ".stella/schemas/qa-loop.schema.json"], "targets": ["qa-findings", "qa-roles", "qa-schedule", "qa-tests"], "why": "Q1 tests-first (item T2): the QA loop modules read the qa-loop data and the round state of bin/qa_loop.py (design.md)"},
     {"globs": ["bin/qa_findings.py"], "targets": ["qa-findings", "qa-roles"], "why": "Q1 tests-first (item T2): item B; the stub roles submit through it (item D)"},
     {"globs": ["bin/qa_tests.py"], "targets": ["qa-tests"], "why": "Q1 tests-first (item T2): item C1"},
+    {"globs": [".stella/policy.json", "bin/box.py", "bin/policy.py"], "targets": ["qa-tests"], "why": "Q1 item C1: bin/qa_tests.py runs each test in a box made from bin/box.py's flags (box imports roles and the policy)"},
     {"globs": ["bin/qa_schedule.py"], "targets": ["qa-schedule"], "why": "Q1 tests-first (item T2): item C2"},
     {"globs": ["bin/qa_roles.py", "bin/qa_stub_role.py"], "targets": ["qa-roles"], "why": "Q1 tests-first (item T2): item D"},
     {"globs": ["bin/qa-loop-selftest.sh"], "targets": ["qa-loop"], "why": "Q1 tests-first (item T1): the selftest itself"},

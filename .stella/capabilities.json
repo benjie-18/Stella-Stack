@@ -2610,6 +2610,34 @@
       },
       "global_id": "1c748b6e-7e6b-4d4a-bb82-8aedb1d3a6cb",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "qa-tests",
+      "kind": "command",
+      "summary": "QA tests of a card (host only): run its {id, argv} tests in a disposable copy under qa_copies, boxed (no network, only the copy writable, private HOME and TMPDIR, killed at tests.timeout_s): baseline records the tests failing on the base hash, tests-first accepts only tests failing with an assertion class (a pass, an error class or a timeout refuses), flaky reruns a test and quarantines a mixed one with an expiry that test-map.py select honours (never a tests-first test of the same card), mutants applies the qa-loop.json operators in fresh copies and records a surviving mutant as a finding against the test; one trusted event line per result",
+      "keywords": [
+        "qa",
+        "tests first",
+        "baseline",
+        "flaky",
+        "quarantine",
+        "mutant",
+        "mutation",
+        "test"
+      ],
+      "inputs": "baseline|tests-first --card C --copy DIR --tests J | flaky --card C --copy DIR --test J | mutants --card C --copy DIR --file F --test J (J a JSON file: a list of {id, argv} or one)",
+      "outputs": "JSON: baseline {tests, classes}; tests-first {accepted, refused}; flaky {test, runs, flaky, quarantined, expires}; mutants {test, file, applied, cap_left, findings}; exit 1 with a catalog code (STL-QA-180..185, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/qa_tests.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "d4614afb-5252-462b-b3dd-860818087f66",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

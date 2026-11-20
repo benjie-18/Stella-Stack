@@ -3161,6 +3161,78 @@
       "check": "`python3 bin/conformance.py run --adapter A --role R --json`; `python3 bin/stella_data.py check`; `bash bin/conformance-selftest.sh`.",
       "related": "F3 item Q; bin/conformance.py, .stella/conformance.json",
       "resolvable": false
+    },
+    {
+      "code": "STL-QA-180",
+      "area": "QA",
+      "severity": "warning",
+      "title": "QA test data cannot be used",
+      "message": "A QA test step could not run: {problem}. No test was run and nothing was recorded.",
+      "action": "fix the file the message names (.stella/qa-loop.json or the data index) and run the data check. See STL-QA-180 in docs/alert-codes.md.",
+      "cause": "The qa-loop data or the index key it needs (qa_copies, qa_quarantine) is missing or breaks its schema.",
+      "check": "`python3 -I bin/stella_data.py check`.",
+      "related": "Q1 item C1; bin/qa_tests.py, .stella/qa-loop.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-181",
+      "area": "QA",
+      "severity": "warning",
+      "title": "QA test input refused",
+      "message": "A QA test step was refused: {problem}. Nothing was run and nothing was recorded.",
+      "action": "fix the tests file or the argument the message names and run the step again. See STL-QA-181 in docs/alert-codes.md.",
+      "cause": "The tests file is not JSON, too large or not a list of {id, argv} (argv a list of strings, never a shell string), the card id is malformed, or the mutant file is not a file inside the copy.",
+      "check": "The tests file named in the command; `python3 -I bin/qa_tests.py --help`.",
+      "related": "Q1 item C1; bin/qa_tests.py, .stella/qa-loop.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-182",
+      "area": "QA",
+      "severity": "warning",
+      "title": "QA copy refused",
+      "message": "A QA test step was refused: {problem}. The tests never run outside a disposable copy.",
+      "action": "make the copy under the QA copies folder (index key qa_copies) and run the step again. See STL-QA-182 in docs/alert-codes.md.",
+      "cause": "The --copy folder is missing, is a link, or lies outside the QA copies folder.",
+      "check": "`jq -r .qa_copies .stella/data-files.json`; the --copy path.",
+      "related": "Q1 item C1; bin/qa_tests.py, .stella/qa-loop.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-183",
+      "area": "QA",
+      "severity": "warning",
+      "title": "QA test box did not start",
+      "message": "The box for a card's tests could not start: {problem}. Nothing was recorded.",
+      "action": "check that bubblewrap (bwrap) runs on the host, then run the step again. See STL-QA-183 in docs/alert-codes.md.",
+      "cause": "bwrap is missing or cannot make the namespaces (user namespaces off, a mount refused).",
+      "check": "`bwrap --version`; `bwrap --unshare-user --ro-bind / / true`.",
+      "related": "Q1 item C1; bin/qa_tests.py, .stella/qa-loop.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-184",
+      "area": "QA",
+      "severity": "warning",
+      "title": "test does not pass before its mutants",
+      "message": "Mutant testing stopped: {problem}. Nothing was recorded.",
+      "action": "make the test pass on the copy first (a failing test kills every mutant and proves nothing), then run the mutants again. See STL-QA-184 in docs/alert-codes.md.",
+      "cause": "The test named fails on the unmutated copy, or the copy is not the hash it should be.",
+      "check": "Run the test's argv in the copy by hand.",
+      "related": "Q1 item C1; bin/qa_tests.py, .stella/qa-loop.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-185",
+      "area": "QA",
+      "severity": "warning",
+      "title": "flaky test quarantine row not written",
+      "message": "A flaky test was found and recorded in the trusted log, but {problem}. Until the row is written, the test is not skipped by test selection.",
+      "action": "fix the quarantine file or its folder (index key qa_quarantine) and run the flaky step again. See STL-QA-185 in docs/alert-codes.md.",
+      "cause": "The quarantine file or its lock cannot be written (permissions, a link, a full disk).",
+      "check": "`jq -r .qa_quarantine .stella/data-files.json`; that file and its folder.",
+      "related": "Q1 item C1; bin/qa_tests.py, .stella/qa-loop.json",
+      "resolvable": false
     }
   ]
 }
