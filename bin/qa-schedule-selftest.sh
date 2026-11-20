@@ -111,6 +111,24 @@ ok 'jq -e --arg c2 "$C2" --arg hb "$HB" --arg c1 "$C1" --arg c3 "$C3" "length ==
 ok '[ "$d2" = 0 ] && [ "$(done_rc "$C2" "$HB")" != 0 ]' "T-SCHED-REOPEN the reopened card's done goes false (done exit $d2 before)"
 ok '[ "$d1" = 0 ] && [ "$d3" = 0 ] && [ "$(done_rc "$C1" "$HA")" = 0 ] && [ "$(done_rc "$C3" "$HC")" = 0 ]' "T-SCHED-REOPEN the other two cards stay done"
 
+# ---- RT1-05: a test that does not exist yet at an older done hash is not failing there; the card that broke it is reopened ----
+S2=$T/srepo2; mkdir -p "$S2/bin" "$S2/$(dirname "$RUNNER")"; cp "$S/$RUNNER" "$S2/$RUNNER"; cp "$S/bin/alpha-selftest.sh" "$S2/bin/"
+G "$S2" init -q -b main; G "$S2" add -A; G "$S2" commit -qm base
+E1=t_0a0f3005 E2=t_0a0f3006 E3=t_0a0f3007 E4=t_0a0f3008
+echo 1 >"$S2/e1.txt"; G "$S2" add -A; G "$S2" commit -qm "card e1"; HE1=$(G "$S2" rev-parse HEAD)
+echo 2 >"$S2/e2.txt"; G "$S2" add -A; G "$S2" commit -qm "card e2"; HE2=$(G "$S2" rev-parse HEAD)
+printf 'grep -q v1 gamma.txt\n' >"$S2/bin/gamma-selftest.sh"; echo v1 >"$S2/gamma.txt"; G "$S2" add -A; G "$S2" commit -qm "card e3 adds gamma"; HE3=$(G "$S2" rev-parse HEAD)
+echo v2 >"$S2/gamma.txt"; G "$S2" commit -qam "card e4 breaks gamma"; HE4=$(G "$S2" rev-parse HEAD)
+for k in "$E1:$HE1" "$E2:$HE2" "$E3:$HE3" "$E4:$HE4"; do
+  plant qa.opened "${k%%:*}" "$(jq -nc --arg t "$TIER" --arg r "$BROLE" '{project: "p", tier: $t, base: null, builder_role: $r}')"
+  plant qa.frozen "${k%%:*}" "$(jq -nc --arg h "${k#*:}" '{round: 1, hash: $h}')"
+  plant qa.passed "${k%%:*}" "$(jq -nc --arg h "${k#*:}" '{round: 1, hash: $h}')"
+done
+run t5 python3 -I "$QS" tick --repo "$S2"
+ok '[ "$(cnt qa.reopened "$E4")" = 1 ] && [ "$(cnt qa.reopened "$E1")$(cnt qa.reopened "$E2")$(cnt qa.reopened "$E3")" = 000 ]' \
+  "RT1-05 gamma, added by $E3 and broken by $E4, is absent at the hashes of $E1 and $E2: only $E4 is reopened"
+ok '[ "$(done_rc "$E4" "$HE4")" != 0 ] && [ "$(done_rc "$E1" "$HE1")$(done_rc "$E2" "$HE2")$(done_rc "$E3" "$HE3")" = 000 ]' "RT1-05 the culprit's done goes false; the three innocent cards stay done"
+
 # ---- T-WORKER ----
 S0=$(logsum); run w env STUB_WORKER_MARK=1 python3 -I "$QS" tick --repo "$S"
 ok '[ $RC != 0 ] && c312 w && [ "$(logsum)" = "$S0" ]' "T-WORKER qa_schedule.py tick refuses in a worker environment (STL-CFG-312), the trusted log unchanged"
