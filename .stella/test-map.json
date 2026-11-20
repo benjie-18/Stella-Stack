@@ -7206,6 +7206,30 @@
     },
     {
       "globs": [
+        "bin/agent_runtime.py",
+        "bin/agent_tool.py",
+        ".stella/agent-protocols.json"
+      ],
+      "targets": [
+        "adapter",
+        "adapter-run",
+        "conformance",
+        "false-close-guard",
+        "stuck"
+      ],
+      "why": "X1 item A: bin/adapter.py runs the agent-runtime loop (and its digests read the protocol entry), so every selftest that reaches adapter.py reaches these"
+    },
+    {
+      "globs": [
+        ".stella/agent-protocols.json"
+      ],
+      "targets": [
+        "profile-hooks"
+      ],
+      "why": "X1 item A: the role table lists the agent protocols file among its boundary_paths"
+    },
+    {
+      "globs": [
         ".claude/settings.json",
         ".claude/skills/stack-rules/SKILL.md",
         ".stella/budgets.json",

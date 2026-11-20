@@ -2951,6 +2951,61 @@
       },
       "global_id": "55bae943-7bde-48d9-9bd4-868c76c8c62e",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agent-runtime",
+      "kind": "command",
+      "summary": "Agent-runtime adapter kind (engine side, called by adapter.py start): run an agent of any framework through a protocol of .stella/agent-protocols.json (AG-UI first), gate and run its tool calls, stream its messages and state; check its data",
+      "keywords": [
+        "agent runtime",
+        "ag-ui",
+        "agent",
+        "framework",
+        "adapter",
+        "protocol",
+        "tool call",
+        "gates"
+      ],
+      "inputs": "check [--json]",
+      "outputs": "JSON {ok, problems}; exit 1 with STL-GRD-700 when the agent-runtime data has a problem",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/agent_runtime.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "b8535c67-e1b1-4315-af3c-757934ba6e54",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agent-tool",
+      "kind": "command",
+      "summary": "Executors of an agent runtime's tool calls (read, write, edit, shell, capability), run by agent_runtime.py after its gates as a child with the agent's own environment and box; paths are confined to the worktree again at open time",
+      "keywords": [
+        "agent runtime",
+        "executor",
+        "tool call",
+        "read",
+        "write",
+        "edit",
+        "shell"
+      ],
+      "inputs": "read|write|edit|shell|capability with {tool_name, tool_input, cwd} on stdin",
+      "outputs": "one JSON line {ok, output[, code][, exit]}; exit 1 with STL-GRD-708, 710 or 711 when refused or failed",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/agent_tool.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "998f4ee9-71b8-40f6-b167-66bc646c3863",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }
