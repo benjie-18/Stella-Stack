@@ -618,7 +618,7 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
     if probs or not e.get("policy"):
         raise Stop(C["prepare"], f"the policy of adapter {e['id']} cannot be generated: {probs[0][1][:140] if probs else 'no policy part'}")
     tr = json.loads(tool([os.path.join(BIN, "run_policy.py"), "translate", "--adapter", e["id"], "--role", a.role], C["prepare"], "translating the run policy"))
-    rend = policy.render(e["id"], wt)
+    rend = policy.render(e["id"], wt, stack=sd.ROOT)   # the run's own stack: its hook and its paths exist in the box (live finding I)
     hk = e["policy"].get("hook")
     if tr["hook"] and hk:   # the log filter joins the policy hook's list in the generated config (the entry's own hook template and pointer)
         rend[hk["pointer"]].append(policy.fill(hk["template"], tr["hook"]))

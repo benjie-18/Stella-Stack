@@ -95,19 +95,20 @@ def fill(t, v):
     return t
 
 
-def hook_command(ad, worktree):
-    cmd = ["python3", "-I", os.path.join(STACK, "bin", "policy.py"), "hook", "--adapter", ad["id"]]
+def hook_command(ad, worktree, stack=None):
+    cmd = ["python3", "-I", os.path.join(stack or STACK, "bin", "policy.py"), "hook", "--adapter", ad["id"]]
     return shlex.join(cmd) + (f' --worktree "{worktree}"' if worktree and worktree == ad["policy"].get("worktree_ref") else
                               f" --worktree {shlex.quote(worktree)}" if worktree else "")
 
 
-def render(aid, worktree=None, p=None, table=None, ads=None):
-    """{owned pointer: value} of adapter aid for worktree (None: the adapter's worktree_ref, which may be null)."""
+def render(aid, worktree=None, p=None, table=None, ads=None, stack=None):
+    """{owned pointer: value} of adapter aid for worktree (None: the adapter's worktree_ref, which may be null). stack: the stack folder the
+    rendered paths name; None is the installed stack (the committed generated files), a run passes the root it runs from (F3 live finding I)."""
     p, table, ads = p or roles.policy(), table or roles.load(), ads or roles.adapters()
     ad = ads[aid]
     pol = ad["policy"]
     wt = worktree if worktree is not None else pol.get("worktree_ref")
-    base = {"stack": STACK}
+    base = {"stack": stack or STACK}
     out = {}
     def put(ptr, form, key, value=None):
         if form == "map":
@@ -126,7 +127,7 @@ def render(aid, worktree=None, p=None, table=None, ads=None):
     h = pol.get("hook")
     if h:
         matcher = "|".join(n for n, t in ad["tools"].items() if t["class"] != "other")
-        out.setdefault(h["pointer"], []).append(fill(h["template"], {"matcher": matcher, "command": hook_command(ad, wt)}))
+        out.setdefault(h["pointer"], []).append(fill(h["template"], {"matcher": matcher, "command": hook_command(ad, wt, stack)}))
     for ptr in pol["target"]["owned_pointers"]:
         out.setdefault(ptr, {} if any(s["pointer"] == ptr and s["form"] == "map" for ss in pol.get("shapes", {}).values() for s in ss) else [])
     return out
