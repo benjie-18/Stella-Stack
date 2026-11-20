@@ -124,7 +124,7 @@ def sample(pat):
             return chr(a)
         if op is rp.IN:
             k, v = a[0]
-            return chr(v) if k is rp.LITERAL else chr(v[0]) if k is rp.RANGE else "0" if v is rp.CATEGORY_DIGIT else "a"
+            return chr(v) if k is rp.LITERAL else chr(v[0]) if k is rp.RANGE else {rp.CATEGORY_DIGIT: "0", rp.CATEGORY_SPACE: " "}.get(v, "a")
         if op in (rp.MAX_REPEAT, rp.MIN_REPEAT):
             return "".join(one(*a[2][0]) for _ in range(a[0])) if len(a[2]) == 1 else None
         if op is rp.SUBPATTERN:
@@ -215,16 +215,29 @@ def cred_config(ctx, wt, wt_base, rid):
         A.scan_config(e, wt)
     except A.Stop as x:
         return False, rid, {"problem": x.problem, "code": x.code if x.code != A.C["cfgscan"] else C["config"]}
-    canary = next(filter(None, map(sample, pats)), None)
+    samples = [sample(x) for x in pats]
+    if not all(samples):   # a pattern no canary can be made of would go untested: fail closed
+        return False, rid, {"problem": f"no canary credential can be made of {samples.count(None)} of {len(pats)} catalog patterns", "code": C["sample"]}
+    plants = [("credential", t) for t in dict.fromkeys(samples)] + [("host", h) for h in hosts]   # every pattern and host, not the first
     targets = [g for g in e.get("config_files") or [] if not g.startswith("{") and not re.search(r"[*?\[]", g)]
-    if targets and not (canary and hosts):
-        return False, rid, {"problem": "no canary credential or provider host can be made from the connections catalog", "code": C["sample"]}
+    if not pats or not hosts:
+        return False, rid, {"problem": "the connections catalog has no value pattern or no cloud provider host to plant", "code": C["sample"]}
     brief = os.path.join(wt_base, "brief.md")
     with open(brief, "w", encoding="utf-8") as f:
         f.write("conformance: this start must be refused\n")
     n = 0
+    for kind, text in plants:
+        # the start template, in a copy of the entry (the data is never touched): the scan must refuse it with the code of its kind
+        cp = {**e, "start": {**e["start"], "argv": [*e["start"]["argv"], text]}}
+        try:
+            A.scan_config(cp, wt)
+            return False, rid, {"problem": f"the config scan did not refuse a planted {kind} in the start template", "code": C["config"], "planted": n}
+        except A.Stop as x:
+            if x.code != A.C["cfgcred" if kind == "credential" else "cfghost"]:
+                return False, rid, {"problem": f"the config scan refused a planted {kind} in the start template with {x.code}: {x.problem}", "code": C["config"], "planted": n}
+        n += 1
     for g in targets:
-        for kind, text in (("credential", canary), ("host", hosts[0])):
+        for kind, text in plants:
             p = os.path.join(wt, g)
             os.makedirs(os.path.dirname(p), exist_ok=True)
             with open(p, "w", encoding="utf-8") as f:

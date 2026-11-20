@@ -377,6 +377,36 @@ credcfg)   # X1 C: B2-credential-config: a credential or a provider host in the 
   aent qa-agui-keyed '.config_files = ["{home}/.qa-agui/config.json"]'
   run c2 CONF run --adapter qa-agui-keyed --role "$ROLE" --link qa-api/qa-m1 --json
   ok '[ $RC = 1 ] && out c2 | grep -qE "$crange" && ! arec qa-agui-keyed && ! grep -rqF --exclude="*config.json" -- "$TK" "$T"' "B2-credential-config an agent that keeps a credential in its own config ({home} path) fails conformance with a code, no passing record, the value nowhere else"
+  # ---- X1 C pass 2: the scan fails closed; every catalog pattern, the start template and an entry with no declared file are tested ----
+  W=$CRD/wt-f1; mkwt "$W" >/dev/null 2>&1; printf '{"api_key": "%s"}\n' "$TK" >"$T/real-config.json"; ln -s "$T/real-config.json" "$W/qa-agui-config.json"
+  astart f1 qa-agui-cfg qa-run-f1 "$W"
+  ok '[ $RC != 0 ] && out f1 | grep -qE "$crange" && none_ "$W" qa-run-f1' "F1 a symlinked declared config file holding a credential: start refused with a code before spawning"
+  aent qa-agui-many '.config_files = ["qa-many/*", "qa-agui-config.json"]'
+  W=$CRD/wt-f2; mkwt "$W" >/dev/null 2>&1; mkdir "$W/qa-many"; for i in $(seq 401); do echo '{}' >"$W/qa-many/f$i.json"; done; printf '{"api_key": "%s"}\n' "$TK" >"$W/qa-agui-config.json"
+  astart f2 qa-agui-many qa-run-f2 "$W"
+  ok '[ $RC != 0 ] && out f2 | grep -qE "$crange" && none_ "$W" qa-run-f2' "F2 a keyed declared config file after 400 files matched by an earlier glob: start refused (or the limit refuses) with a code"
+  aent qa-agui-tplhost ".start.argv += [\"--upstream\", \"https://$PH/v1\"]"
+  W=$CRD/wt-f3; mkwt "$W" >/dev/null 2>&1
+  astart f3 qa-agui-tplhost qa-run-f3 "$W"
+  ok '[ -n "$PH" ] && [ $RC != 0 ] && out f3 | grep -qE "$crange"' "F3 a provider host of the catalog ($PH) in the start template: start refused with a code"
+  ed .stella/connections.json '(.entries[] | select(.id == "qa-api") | .redaction_patterns) = ["qatok-[0-9a-f]{32}", "qalast-[0-9a-f]{24}"]'
+  ed .stella/connections.json '.entries[-1].redaction_patterns = ((.entries[-1].redaction_patterns // []) + ["qaend-[0-9a-f]{16}"])'   # the very last pattern of the catalog, unique
+  TK2="qaend-$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  W=$CRD/wt-p2; mkwt "$W" >/dev/null 2>&1; printf '{"api_key": "%s"}\n' "$TK2" >"$W/qa-agui-config.json"
+  astart p2 qa-agui-cfg qa-run-p2 "$W"
+  ok '[ $RC != 0 ] && out p2 | grep -qE "$crange" && none_ "$W" qa-run-p2' "C3 a credential of the LAST catalog pattern in the declared config file: start refused with a code"
+  aent qa-agui-tplkey ".start.argv += [\"--key\", \"$TK2\"]"
+  W=$CRD/wt-p3; mkwt "$W" >/dev/null 2>&1
+  astart p3 qa-agui-tplkey qa-run-p3 "$W"
+  ok '[ $RC != 0 ] && out p3 | grep -qE "$crange" && none_ "$W" qa-run-p3' "C3 a credential in the start template: start refused with a code"
+  run c3 CONF run --adapter qa-agui-cfg --role "$ROLE" --link qa-api/qa-m1 --json
+  ok 'caseis c3 credential_config true && jq -e "[.cases[] | select(.id == \"credential_config\") | .detail.planted] | .[0] >= 5" "$T/o/c3.out"' "C3 with two catalog patterns the case plants each pattern and each host (planted count) and passes"
+  aent qa-agui-bare '.config_files = []'
+  run c4 CONF run --adapter qa-agui-bare --role "$ROLE" --link qa-api/qa-m1 --json
+  ok 'caseis c4 credential_config true && jq -e "[.cases[] | select(.id == \"credential_config\") | .detail.planted] | .[0] >= 1" "$T/o/c4.out"' "an entry with no declared config file: the case plants into the start template and tests something (planted count above 0)"
+  sed -i 's/^    scan_config(e, wt)$/    pass/' "$R/bin/adapter.py"
+  run c5 CONF run --adapter qa-agui-cfg --role "$ROLE" --link qa-api/qa-m1 --json
+  ok '[ $RC = 1 ] && caseis c5 credential_config false && out c5 | grep -qE "STL-GRD-756" && ! arec qa-agui-cfg' "C2 an adapter whose start does NOT refuse the planted config: the credential_config case fails with STL-GRD-756 and no passing record"
   ;;
 esac
 finish
