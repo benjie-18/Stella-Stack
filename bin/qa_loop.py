@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The QA loop's round state, tier floor, freeze and plan (phase Q1 item A1: design A1 with rulings DG-3, DG-5, DG-7), stdlib
+"""The QA loop's round state, tier floor, freeze, plan and close (phase Q1 items A1 and A2: design A1, A2 with rulings DG-1, DG-2,
+DG-3, DG-5, DG-7), stdlib
 only. Engine side, host only: every subcommand refuses in a worker environment (STL-CFG-312) before anything is read or parsed.
 No role, tier, preset, trigger, severity or path is named here: ids come from .stella/qa-loop.json, .stella/routing.json and the
 presets (through bin/resolve.py), paths from the index (qa_copies).
@@ -17,7 +18,7 @@ never read. Lines the fold reads (who writes them):
   qa.reopened {hash, tests}: not done until a round after it passes                                              (C2)
   qa.evidence {path, sha256, round}; qa.finding {fingerprint, round, role, severity, status, static, ...} (same fingerprint:
   roles merged, highest severity kept); qa.finding-confirmed | qa.finding-unconfirmed {fingerprint}: its status;
-  qa.verdict {round, role, result, evidence}: the last per round and role                                       (B)
+  qa.verdict {round, role, result, hash, evidence}: the last per round and role                                 (B)
 Before any climb the card is on rung 1 (bin/escalate.sh reads a card with no rungs.json entry as 1) and its cap is rounds.normal.
 CLI (on failure a catalog code and its plain message on stderr, one alert line, exit 1, and with --json {card, code, problem}
 on stdout; 2 usage):
@@ -42,6 +43,17 @@ on stdout; 2 usage):
        state, done, ...}; with --head, done also needs H to be the passed hash.
   done --card C --hash H                      exit 0 only when the last frozen round passed on exactly H and nothing was frozen
        or reopened after it (else STL-QA-106, no alert line).
+  close --card C                              the open round (else STL-QA-110): refused (STL-QA-109, nothing written) while a
+       finding of the round is pending its repro (DG-2). The fix list is qa_findings.merge() of the round's findings whose
+       evidence still holds. No blocking finding and no slot role's verdict other than pass: qa.passed {round, hash} when every
+       role the plan gives a slot has a trusted pass on the frozen hash with evidence that holds, else STL-QA-110 (the round
+       stays open, DG-1). A blocking finding or a failed verdict fails the round: after round rounds.normal the builder role
+       climbs (bin/resolve.py resolve --rung rounds.climb_rung: a served rung, in cooldown too, -> qa.climbed {from_rung,
+       to_rung, from_link, to_link, open, reason}, cap rounds.cap_climb, then the rungs.json projection (index qa_rungs) under
+       its lock, STL-QA-112 when it cannot be written; no higher rung (STL-MDL-731) -> qa.no-climb, cap rounds.cap_no_climb; any
+       other answer: STL-QA-111, nothing written); a card at depth_bump.from failing round after_failed_round or later ->
+       qa.depth-raised {depth: depth_bump.to}; then qa.round-failed {round, open}, or at the cap qa.escalated {round, open} and
+       one owner alert (STL-QA-113, the fix list) through bin/alert.sh: the card's QA loop is paused (freeze refuses).
 Python: state(card, d=None) -> the fold; data() -> the served documents; is_done(s, h=None); plan(card, s, d)."""
 import argparse, fnmatch, json, os, re, shutil, subprocess, sys, types
 
@@ -52,6 +64,7 @@ import stella_data as sd
 
 NOT_OPEN, LOWER, BAD, NOT_NOW, NO_COPY = "STL-QA-100", "STL-QA-101", "STL-QA-102", "STL-QA-103", "STL-QA-104"
 QA_DATA, NOT_DONE, ROUTING, FAILED = sd.QA_DATA, "STL-QA-106", "STL-QA-107", "STL-QA-108"
+PENDING, NOT_CLOSED, NO_CLIMB, RUNGS, ESCALATED = "STL-QA-109", "STL-QA-110", "STL-QA-111", "STL-QA-112", "STL-QA-113"   # close (A2)
 PREFIX = "qa."
 CLOSE = ("qa.passed", "qa.round-failed", "qa.escalated")
 NOT_FIX = ("void", "pending", "unconfirmed")   # finding statuses that are not on the fix list
@@ -141,7 +154,7 @@ def state(card, d=None):
         elif t.startswith("qa.finding-") and p.get("fingerprint") in s["findings"]:
             s["findings"][p["fingerprint"]]["status"] = t[len("qa.finding-"):]
         elif t == "qa.verdict" and isinstance(p.get("role"), str):
-            s["verdicts"].setdefault(rnd, {})[p["role"]] = {"result": p.get("result"), "evidence": p.get("evidence")}
+            s["verdicts"].setdefault(rnd, {})[p["role"]] = {"result": p.get("result"), "hash": p.get("hash"), "evidence": p.get("evidence")}
     s["depth"] = hi(s["tier"], raised)
     s["reopened"] = reopened > (s["passed"]["at"] if s["passed"] else -1)
     return s
@@ -424,7 +437,119 @@ def cmd_done(o, d):
     return 0
 
 
-CMDS = {"open": cmd_open, "raise": cmd_raise, "trigger": cmd_trigger, "freeze": cmd_freeze, "plan": cmd_plan, "status": cmd_status, "done": cmd_done}
+# ---- close: pass, fail, climb, cap (A2) ----
+def climb(card, s, d):
+    """{from_rung, to_rung, from_link, to_link} of the rung bin/resolve.py serves the card's builder role from
+    rounds.climb_rung on (its CLI: it logs the walk), None when the chain has no higher rung; Refuse on any other answer."""
+    import resolve
+    role, to = s["builder_role"] or d.rt["builder_roles"][0], d.qa["rounds"]["climb_rung"]
+    # shortcut: the resolver call shares the test runner's limit (tests.timeout_s), as git does here
+    r = subprocess.run([sys.executable, "-I", os.path.join(BIN, "resolve.py"), "resolve", "--role", role, "--project", str(s["project"]),
+                        "--card", card, "--rung", str(to), "--json"], capture_output=True, text=True, errors="replace",
+                       stdin=subprocess.DEVNULL, timeout=d.qa["tests"]["timeout_s"])
+    try:
+        out = json.loads(r.stdout)
+    except ValueError:
+        out = None
+    out = out if isinstance(out, dict) else {}
+    rung, code = out.get("rung") if isinstance(out.get("rung"), dict) else {}, out.get("code")
+    if type(rung.get("served")) is int and rung["served"] > s["rung"] and isinstance(rung.get("link"), dict) and code in (None, resolve.COOLDOWN):
+        try:
+            frm = resolve.link_key(resolve.role_view(role, s["project"], card)["escalation_chain"][s["rung"] - 1])
+        except Exception:
+            frm = None   # the record of where the card climbed from, not a decision: the climb stands without it
+        return {"from_rung": s["rung"], "to_rung": rung["served"], "from_link": frm, "to_link": resolve.link_key(rung["link"])}
+    if r.returncode == 1 and code == resolve.EXHAUSTED and rung.get("served") is None:
+        return None
+    raise Refuse(NO_CLIMB, f"resolve --rung {to} for role {role} answered {code or 'no code'} (exit {r.returncode}), served "
+                           f"{rung.get('served')}: no climb decision; the round stays open")
+
+
+def project_rung(card, role, rung, d):
+    """rungs.json (index qa_rungs) {card: {role: rung}} for bin/escalate.sh: under its lock, written whole and renamed over it.
+    A file that is not a JSON object is not overwritten (it holds other cards' rungs)."""
+    try:
+        p = el.path(d.idx["qa_rungs"])
+        with el.locked(p + ".lock"):
+            try:
+                with os.fdopen(el.open_file(p, os.O_RDONLY), "rb") as f:
+                    v = json.loads(f.read())
+            except FileNotFoundError:
+                v = {}
+            if not isinstance(v, dict):
+                raise ValueError("it is not a JSON object")
+            v[card] = {**(v[card] if isinstance(v.get(card), dict) else {}), role: rung}
+            tmp = f"{p}.{os.getpid()}.new"
+            fd = el.open_file(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(v, f, indent=1)
+                    f.write("\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp, p)
+            finally:
+                if os.path.lexists(tmp):
+                    os.unlink(tmp)
+    except (OSError, ValueError) as e:
+        # shortcut: the projection is written once, after the trusted line; rewrite it from the fold if a lost write ever matters
+        raise Refuse(RUNGS, f"{d.idx['qa_rungs']} was not written ({el.why(e) if isinstance(e, OSError) else e}); the trusted "
+                            f"qa.climbed line stands: set {card}.{role} to {rung} there by hand"[:300]) from None
+
+
+def alert_owner(card, n, fix):
+    """The escalation alert through bin/alert.sh; finding texts come from QA roles, so only plain characters reach the chat."""
+    items = "; ".join(f"{x.get('severity')} {x.get('file')}:{(x.get('lines') or ['?'])[0]} {x.get('check')} ({x['fingerprint'][:12]})" for x in fix)
+    text = re.sub(r"[^A-Za-z0-9_./:;(), -]", "?", f"card {card}, round {n}: " + (items or "no blocking finding, a role's verdict failed"))
+    # a send that fails never undoes the escalation: alert.sh logs its line first (as route.py does)
+    subprocess.run(["bash", os.path.join(BIN, "alert.sh"), ESCALATED, f"problem={el.scrub(text)}"], stdin=subprocess.DEVNULL, capture_output=True, timeout=60)
+
+
+def cmd_close(o, d):
+    s = opened(o, d)
+    n, f, q = s["round"], s["frozen"], d.qa
+    if s["escalated"] or not n or n in s["closed"]:
+        raise Refuse(NOT_CLOSED, f"card {o.card} has no open round (round {n}, escalated {s['escalated']})")
+    import qa_findings as qf
+    cur = [dict(x, fingerprint=k) for k, x in s["findings"].items() if x.get("round") == n]
+    pend = [x["fingerprint"][:12] for x in cur if x.get("status") == NOT_FIX[1]]
+    if pend:
+        raise Refuse(PENDING, f"round {n} has {len(pend)} finding(s) pending their repro ({', '.join(pend[:CAP])})")
+    cur = [x for x in cur if not x.get("evidence") or qf.holds(o.card, x["evidence"], s, d)]   # re-hashed: a changed file voids it
+    fix = qf.merge(cur, s["depth"], q, qf.exempt(o.card))
+    blocking = [x["fingerprint"] for x in fix if x["blocking"]][:CAP]
+    roles = [r for r, e in plan(o.card, s, d)["roles"].items() if e["slots"]]
+    v = s["verdicts"].get(n, {})
+    failed = [r for r in roles if r in v and v[r]["result"] != qf.RESULTS[0]]
+    if not blocking and not failed:
+        good = lambda x: x and x["result"] == qf.RESULTS[0] and x["hash"] == f["hash"] and qf.holds(o.card, x["evidence"], s, d)
+        missing = [r for r in roles if not good(v.get(r))]
+        if missing:
+            raise Refuse(NOT_CLOSED, f"round {n} is not finished: no trusted pass on the frozen hash with evidence that holds from {', '.join(missing)}")
+        put(o.card, "qa.passed", {"round": n, "hash": f["hash"]}, f"QA round {n} passed")
+        return 0
+    reason = f"round {n} failed: " + (f"{len(blocking)} blocking finding(s)" if blocking else f"verdict not pass from {', '.join(failed)}")
+    lines, cap, c = [], s["cap"], None
+    if n == q["rounds"]["normal"]:   # decided before any line is written: a refused answer changes nothing
+        c = climb(o.card, s, d)
+        cap = q["rounds"]["cap_climb"] if c else q["rounds"]["cap_no_climb"]
+        lines.append(("qa.climbed", {**c, "open": blocking, "reason": reason, "round": n}, f"QA climbs to rung {c['to_rung']}") if c else
+                     ("qa.no-climb", {"rung": s["rung"], "open": blocking, "reason": reason, "round": n}, "QA: no higher rung to climb to"))
+    b = q["depth_bump"]
+    if n < cap and s["depth"] == b["from"] and n >= b["after_failed_round"]:
+        lines.append(("qa.depth-raised", {"depth": b["to"], "from": s["depth"], "round": n}, f"QA depth raised to {b['to']}"))
+    lines.append(("qa.escalated", {"round": n, "open": blocking}, f"QA round {n} failed at the cap of {cap}: escalated to the owner") if n >= cap else
+                 ("qa.round-failed", {"round": n, "open": blocking}, reason))
+    for t, new, text in lines:
+        put(o.card, t, new, text)
+    if n >= cap:
+        alert_owner(o.card, n, [x for x in fix if x["blocking"]])
+    if c:
+        project_rung(o.card, s["builder_role"] or d.rt["builder_roles"][0], c["to_rung"], d)
+    return 0
+
+
+CMDS = {"open": cmd_open, "raise": cmd_raise, "trigger": cmd_trigger, "freeze": cmd_freeze, "plan": cmd_plan, "status": cmd_status, "done": cmd_done, "close": cmd_close}
 
 
 def main(argv):

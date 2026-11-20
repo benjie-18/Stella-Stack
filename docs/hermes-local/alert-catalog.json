@@ -3403,6 +3403,66 @@
       "resolvable": false
     },
     {
+      "code": "STL-QA-109",
+      "area": "QA",
+      "severity": "warning",
+      "title": "a QA round cannot close while a repro is pending",
+      "message": "Closing the card's QA round was refused: {problem}. Nothing was written; the round stays open.",
+      "action": "run each pending finding's repro (qa_findings.py repro --card C --fingerprint F), then close the round again. See STL-QA-109 in docs/alert-codes.md.",
+      "cause": "A blocking finding of the round, not static, was submitted with a repro that has not run yet (DG-2): only its repro confirms or clears it.",
+      "check": "qa_loop.py status --card C --json (pending); the event log (qa.finding, qa.finding-confirmed, qa.finding-unconfirmed).",
+      "related": "Q1 item A2 (design.md, rulings DG-1, DG-2, DG-8); bin/qa_loop.py close",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-110",
+      "area": "QA",
+      "severity": "warning",
+      "title": "the QA round cannot be closed now",
+      "message": "The card's QA round was not closed: {problem}. Nothing was written.",
+      "action": "let every role the round's plan names give its verdict with registered evidence, or freeze a round first; an escalated card waits for your decision. See STL-QA-110 in docs/alert-codes.md.",
+      "cause": "No round is frozen or open (none yet, already closed, or escalated), or a role the plan gives a slot has no trusted pass on the frozen hash whose evidence still holds (DG-1: a missing verdict is not a pass).",
+      "check": "qa_loop.py plan --card C --json; qa_loop.py status --card C --json; the event log (qa.verdict, qa.evidence lines).",
+      "related": "Q1 item A2 (design.md, rulings DG-1, DG-2, DG-8); bin/qa_loop.py close",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-111",
+      "area": "QA",
+      "severity": "warning",
+      "title": "the QA climb cannot be decided",
+      "message": "The card's QA round failed after its normal rounds, but the resolver gave no usable climb answer: {problem}. Nothing was written.",
+      "action": "fix what the resolver names (routing data, the event log, the preset's escalation chain), then close the round again. See STL-QA-111 in docs/alert-codes.md.",
+      "cause": "bin/resolve.py resolve --rung answered a configuration or event log code, withdrew its served rung, or did not answer; only a served rung (a climb) or STL-MDL-731 (no higher rung) decides.",
+      "check": "python3 -I bin/resolve.py resolve --role R --project P --card C --rung N --json.",
+      "related": "Q1 item A2 (design.md, rulings DG-1, DG-2, DG-8); bin/qa_loop.py close",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-112",
+      "area": "QA",
+      "severity": "warning",
+      "title": "the card's rung projection was not written",
+      "message": "The card climbed (the trusted qa.climbed line stands), but the rungs file bin/escalate.sh reads was not written: {problem}.",
+      "action": "fix the rungs file (it must be a JSON object, not a link) and set the card's rung as the message says; the trusted line wins on any mismatch. See STL-QA-112 in docs/alert-codes.md.",
+      "cause": "The rungs file is damaged, is a link, or its folder cannot be written.",
+      "check": ".supervisor/state/rungs.json; the event log (qa.climbed lines).",
+      "related": "Q1 item A2 (design.md, rulings DG-1, DG-2, DG-8); bin/qa_loop.py close",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-113",
+      "area": "QA",
+      "severity": "critical",
+      "title": "a card's QA loop reached its round cap",
+      "message": "A card's QA rounds kept failing up to the round cap, so its QA loop is paused for you: {problem}.",
+      "action": "read the fix list, then decide on the card yourself (fix it by hand, re-plan or drop it); no further round is frozen. See STL-QA-113 in docs/alert-codes.md.",
+      "cause": "The last allowed round (after a climb, or with no higher rung to climb to) still had blocking findings or a failed verdict.",
+      "check": "qa_loop.py status --card C --json (fix_list, state escalated); the event log (qa.escalated, qa.climbed, qa.no-climb).",
+      "related": "Q1 item A2 (design.md, rulings DG-1, DG-2, DG-8); bin/qa_loop.py close",
+      "resolvable": false
+    },
+    {
       "code": "STL-QA-150",
       "area": "QA",
       "severity": "warning",
