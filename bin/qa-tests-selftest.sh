@@ -234,11 +234,26 @@ ok 'python3 -I "$R/bin/stella_data.py" check' "RTF-08 the copy's data with tests
 ed .stella/qa-loop.json '.tests.max_write_bytes = 8388608'
 CW=t_0a0f20f2; opencard "$CW"; D=$(mkcopy "$CW")
 QR() { python3 -I -c 'import json, sys, time; sys.path.insert(0, sys.argv[1]); import qa_tests as q; t = time.time(); rc, out = q.run(sys.argv[2], json.loads(sys.argv[3]), 60); print(rc, int(time.time() - t), "max_write_bytes" in out)' "$R/bin" "$D" "$1"; }
-run ow QR '["bash", "-c", "head -c 52428800 /dev/zero >junk.bin; sleep 20; echo 1 passed"]'
+run ow QR '["bash", "-c", "for i in 1 2 3 4 5 6 7 8 9; do head -c 6291456 /dev/zero >junk$i.bin; done; sleep 20; echo 1 passed"]'
 read -r OW_RC OW_S OW_NAMED <"$T/o/ow.out" 2>/dev/null
 run ow2 QR '["bash", "-c", "head -c 1048576 /dev/zero >small.bin; echo 1 passed"]'
 read -r OW2_RC _ _ <"$T/o/ow2.out" 2>/dev/null
 ok '[ "$OW_RC" = None ] && [ "$OW_NAMED" = True ] && [ "$OW_S" -lt 15 ] && [ "$OW2_RC" = 0 ] && python3 -I "$R/bin/stella_data.py" check' \
-  "Q1-OF-CVER-02 a test writing 50 MiB into its copy under an 8 MiB tests.max_write_bytes is killed while it runs (rc $OW_RC, $OW_S s, named: $OW_NAMED); one writing 1 MiB passes (rc $OW2_RC)"
+  "Q1-OF-CVER-02 a test writing 54 MiB (9 files of 6 MiB) into its copy under an 8 MiB tests.max_write_bytes is killed while it runs (rc $OW_RC, $OW_S s, named: $OW_NAMED); one writing 1 MiB passes (rc $OW2_RC)"
+# Q1-OF-CVER-08: the write limit holds when the test hides what it wrote (a folder it cannot be read in, a deleted file it holds open)
+run ow3 QR '["bash", "-c", "mkdir d; for i in 1 2 3 4 5 6 7 8 9; do head -c 6291456 /dev/zero >d/junk$i.bin; done; chmod 000 d; sleep 20; echo 1 passed"]'
+read -r OW3_RC OW3_S _ <"$T/o/ow3.out" 2>/dev/null
+run ow4 python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import qa_tests as q; rc, out = q.run(sys.argv[2], json.loads(sys.argv[3]), 60); print(rc, "wrote=153" in out)' "$R/bin" "$D" \
+  '["bash", "-c", "exec 3>f; rm f; head -c 52428800 /dev/zero >&3; echo wrote=$?; exit 0"]'
+read -r OW4_RC OW4_CUT <"$T/o/ow4.out" 2>/dev/null
+ok '[ "$OW3_RC" = None ] && [ "$OW3_S" -lt 15 ] && [ "$OW4_CUT" = True ]' \
+  "Q1-OF-CVER-08 54 MiB written into a folder then made unreadable: killed (rc $OW3_RC, $OW3_S s); 50 MiB into a deleted file held open: the write stops at the file-size limit (SIGXFSZ: $OW4_CUT)"
+# Q1-OF-CVER-09: mutants count lines as git does (only \n ends a line): a CR inside an earlier line moves no mutant
+P9=$T/p9; mkdir -p "$P9"; printf '# a\rb\nx=1\n[ "$x" = 2 ] && exit 1\nexit 0\n' >"$P9/mod.sh"; G "$P9" init -q -b main; G "$P9" add -A; G "$P9" commit -qm base; B9=$(G "$P9" rev-parse HEAD)
+printf '# a\rb\nx=1\n[ "$x" == 2 ] && exit 1\nexit 0\n' >"$P9/mod.sh"; G "$P9" commit -qam card; H9=$(G "$P9" rev-parse HEAD)
+P7_=$P7; P7=$P9; C9=t_0a0f20f3; RC9=$(fz7 "$C9" "$B9" "$H9"); P7=$P7_
+jq -nc '{id: "qa-t-mod", argv: ["bash", "mod.sh"]}' >"$T/mod.json"
+run m19 python3 -I "$QT" mutants --card "$C9" --copy "$RC9" --file mod.sh --test "$T/mod.json"
+ok '[ $RC = 0 ] && jq -e "(.applied | length) >= 1 and all(.applied[]; .line == 3)" "$T/o/m19.out"' "Q1-OF-CVER-09 with a CR inside line 1, the mutant lands on line 3, the line the card changed (git's count)"
 ok 'python3 -I "$R/bin/event_log.py" verify' "precondition: the trusted log of the scratch root verifies after the run"
 finish

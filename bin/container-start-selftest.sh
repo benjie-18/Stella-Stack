@@ -41,6 +41,7 @@ run() { rm -f "$T/apply.ran"; env HOME="$T/home" PATH="$T/bin:$PATH" ESCALATE_SU
 run
 ok '[ "$rc" = 0 ] && ! grep -v setlocale "$T/err" | grep -q . && jq -e ".model" "$CFG" >/dev/null && [ -f "$T/home/.config/opencode/skills/anti-ai-slop-writing/SKILL.md" ] && [ -f "$T/apply.ran" ]' "all steps succeed: exit 0, config and skill in place, apply ran"
 ok '[ ! -e "$CFG.tmp" ] && [ ! -e "$T/sends" ]' "no temp file left, no alert"
+ok 'jq -e ".permission.execute[\"*\"] == \"deny\" and (.permission.skill | length > 0)" "$CFG" && jq -e ".permission.execute[\"*\"] == \"deny\"" /workspace/opencode.json' "Q1-OF-CVER-07 the repo's opencode.json and the user config made from it deny OpenCode's execute (code mode: session_move in it leaves the project folder)"
 ok '[ "$(HOME="$T/home" git config --global --get-all safe.directory)" = "$T/ws" ]' "D48: git safe.directory is the stack folder derived from the script's place, not typed"
 run
 ok '[ "$rc" = 0 ] && [ "$(HOME="$T/home" git config --global --get-all safe.directory | wc -l)" = 1 ]' "D48: a second start adds nothing (idempotent)"
