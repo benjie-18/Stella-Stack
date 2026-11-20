@@ -546,8 +546,8 @@ evaluator error: refused in enforce, would-refuse in audit. A run whose start re
 written and stops itself through the sweep path when the mode has left off (closes the start/apply race).
 *Engine git (X1 last cycle):* every engine git call on a run's worktree pins GIT_DIR / the common dir recorded at start (taken
 before the agent spawns; a linked worktree's gitdir lies outside it), with no system, global or system-attributes config; agents may
-not write `.git` or anything under a `.git` folder. Residual: a plain repository's own `<wt>/.git` (allowed for unboxed test adapters
-only; the box takes linked worktrees).
+not write `.git` or anything under a `.git` folder. A plain repository (unboxed test adapters only; its own `<wt>/.git` cannot be pinned): every
+filter driver its config names (includes too) is blanked on each engine git call, so a planted filter never runs.
 `logged_string_max`: a longer string input is logged as {`sha256`, `length`} (the evaluator gets it whole). The Cedar runner
 leaves null keys out of the context and passes a non-integer number as the string of its JSON text (`1.5` is `"1.5"`). A stop
 signals a run's process group only while its pid still has the start fingerprint kept in the record (`pid_start`).

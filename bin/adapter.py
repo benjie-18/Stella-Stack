@@ -111,7 +111,15 @@ def git(wt, *a, binary=False, inp=None, cfg=(), pin=None):
         if not (isinstance(pin.get("git_dir"), str) and isinstance(pin.get("git_common"), str)):
             raise Stop(C["worktree"], f"the run has no git folder pinned at its start, so git is not run in {wt}")
         env.update(GIT_DIR=pin["git_dir"], GIT_COMMON_DIR=pin["git_common"], GIT_WORK_TREE=wt)
-    r = subprocess.run(["git", *GIT_SAFE, *cfg, "-C", wt, *a], capture_output=True, timeout=120, env=env, input=inp,
+    # every filter driver the repository's config names (includes too) is blanked for this call: a plain repository's own .git lies in
+    # the worktree, so an agent may have planted one there (X1-CRT-01 residual, owner veto 2026-11-20); reading config runs nothing
+    f = subprocess.run(["git", *GIT_SAFE, "-C", wt, "config", "--includes", "--name-only", "--get-regexp", r"^filter\."], capture_output=True,
+                       timeout=120, env=env, stdin=subprocess.DEVNULL)
+    if f.returncode not in (0, 1):   # 1: no filter key at all
+        raise Stop(C["worktree"], f"git config could not be read in {wt}: the run's git is not trusted")
+    blank = [x for n in sorted({k.split(".", 1)[1].rsplit(".", 1)[0] for k in f.stdout.decode("utf-8", "replace").split() if k.count(".") >= 2})
+             for x in ("-c", f"filter.{n}.clean=", "-c", f"filter.{n}.smudge=", "-c", f"filter.{n}.process=", "-c", f"filter.{n}.required=false")]
+    r = subprocess.run(["git", *GIT_SAFE, *blank, *cfg, "-C", wt, *a], capture_output=True, timeout=120, env=env, input=inp,
                        **({} if inp is not None else {"stdin": subprocess.DEVNULL}))
     if r.returncode:
         raise Stop(C["worktree"], f"git {a[0]} failed in {wt}: {r.stderr.decode('utf-8', 'replace').strip()[-160:]}")
