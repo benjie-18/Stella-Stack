@@ -51,6 +51,7 @@ import argparse, contextlib, datetime, glob, hashlib, json, pwd, re, select, shu
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)
 import event_log as el
+import redact_all as redact
 import stella_data as sd
 import worker_env
 
@@ -406,11 +407,7 @@ class Stream:
         self.run, self.rec, self.s, self.tools = run, rec, e.get("stream") or {}, e.get("tools") or {}
         self.cap, self.rx, self.seq, self.last, self.rcap = a["output_cap"], token_rx, 0, None, a.get("read_cap_bytes", Stream.rcap)
         self.role = rec["role"]
-        self.pats = sd.value_pats()   # the catalog's value patterns; None (unreadable): every line is masked whole (fail closed)
-        try:
-            self.redk = el.redactor()
-        except (sd.DataError, OSError, KeyError, TypeError):
-            self.redk = lambda k: True
+        self.red = redact.redactor(self.count)   # values and keys alike (X1 A-CRT-01); unreadable patterns: every string *** (fail closed)
         d = os.path.join(runs_dir(), run)
         self.log = open(os.path.join(d, LOG), "a", encoding="utf-8")
         self.ev = open(os.path.join(d, EVENTS), "a", encoding="utf-8")
@@ -419,22 +416,6 @@ class Stream:
         if n:
             self.hits = self.hits or {}
             self.hits[k] = self.hits.get(k, 0) + n
-
-    def red(self, x):
-        """event_log's rules (values under redact keys, the catalog's value patterns, values seen under masked keys) and run tokens; each
-        pattern hit is counted by class (run_token, token), so a judge sees a token the masking hid (V2-04)."""
-        if isinstance(x, str):
-            if self.pats is None:
-                return el.MASK
-            x, n = self.rx.subn(el.MASK, x)
-            self.count("run_token", n)
-            for p in self.pats:
-                x, n = p.subn(el.MASK, x)
-                self.count("token", n)
-            return el.scrub(x)
-        if isinstance(x, dict):
-            return {k: el.MASK if self.redk(str(k)) else self.red(v) for k, v in x.items()}
-        return [self.red(v) for v in x] if isinstance(x, list) else x
 
     def filt(self, text):
         try:

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "about": "Agent-runtime protocols (X1 item A, design section A, ruling X1-DC-06): how bin/agent_runtime.py talks to an agent built on any framework. One entry per protocol; a second protocol is a new entry (another type map and pointers over the same transport), never code. request: the run input template ({thread}, {run}, {messages}, {tools}, {state}, {model}; a string that is exactly one placeholder takes the typed value). messages: the templates of the user prompt, an assistant tool call and a tool result. tool: the template of one offered tool (an adapters.json agent_tools row). events: type is the pointer of an event's type, map turns a protocol type into a Stella kind (a type not in map is ignored), pointers name the fields of the event. ready: the pointer of the port in the agent's one ready line on stdout (the agent binds port 0 itself). ui_custom_names: the custom event names that are generative UI events (handed to bin/agui_ui.py).",
+  "about": "Agent-runtime protocols (X1 item A, design section A, ruling X1-DC-06): how bin/agent_runtime.py talks to an agent built on any framework. One entry per protocol; a second protocol is a new entry (another type map and pointers over the same transport), never code. request: the run input template ({thread}, {run}, {messages}, {tools}, {state}, {model}; a string that is exactly one placeholder takes the typed value). messages: the templates of the user prompt, an assistant tool call and a tool result. tool: the template of one offered tool (an adapters.json agent_tools row). events: type is the pointer of an event's type, map turns a protocol type into a Stella kind (a type not in map is ignored), pointers name the fields of the event. ready: the pointer of the port in the agent's one ready line on stdout (the agent binds port 0 itself). ui_custom_names: the custom event names that are generative UI events (handed to bin/agui_ui.py). max_open and max_turn_bytes: how many messages and tool calls may be open in one turn and how many bytes they may hold together (over either: the run stops, STL-GRD-712).",
   "excerpt_chars": 240,
   "entries": [
     {
@@ -56,6 +56,8 @@
       },
       "ui_custom_names": ["ui"],
       "max_turns": 50,
+      "max_open": 16,
+      "max_turn_bytes": 4194304,
       "ready_timeout_s": 20,
       "turn_timeout_s": 300,
       "global_id": "59c7ca25-c353-4f3c-9fbe-6f4b9eb669b6",

@@ -35,14 +35,14 @@ sys.path.insert(0, BIN)
 import event_log as el
 import gateway
 import policy
+import redact_all as redact
 import stella_data as sd
 
 AGENT = policy.AGENT
 C = {"data": "STL-GRD-700", "ready": "STL-GRD-701", "socket": "STL-GRD-702", "unoffered": "STL-GRD-703", "agent_tool": "STL-GRD-704",
      "turns": "STL-GRD-705", "stream": "STL-GRD-706", "agent_error": "STL-GRD-707", "executor": "STL-GRD-708", "words": "STL-GRD-709",
-     "path": "STL-GRD-710", "input": "STL-GRD-711"}   # literal: the alert lint finds each sender by its code
+     "path": "STL-GRD-710", "input": "STL-GRD-711", "buffers": "STL-GRD-712", "call": "STL-GRD-713"}   # literal: the alert lint finds each sender by its code
 ROW, ADAPTERS = "agent-protocols", "adapters"
-GIT_VALUE = ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env")   # git words before the subcommand that take a value
 LOCK = threading.Lock()   # the run log: the agent's own output (a thread) and the loop's records
 
 
@@ -107,48 +107,26 @@ def offered(d, role, core):
 
 
 def words(e, cmd, wt):
-    """(code, why) when a shell command line names a git word of the commit rule or a board command of the dispatcher_only rule (DC-04),
-    read with the policy tool's shell grammar, at any place a word can start a command (after a wrapper, in bash -c '...')."""
+    """(code, why) when a shell command line names a guarded command against the commit or dispatcher rule (DC-04): the early check,
+    read with the policy tool's shell grammar at every word (a guarded name also by its base name, after a wrapper, in bash -c '...').
+    A command word the shell computes ($G, $(...)) is caught at exec time by the shell executor's shims (bin/agent_tool.py)."""
     import roles
-    p, table, ads = roles.policy(), roles.load(), roles.adapters()
-    kinds = e["policy"]["hook"]["kinds"]
-    g = policy.items("commit_rule", p, table, e, ads, wt) if "commit_rule" in kinds else {}
-    cmds = [c["command"].split() for c in policy.items("dispatcher_only", p, table, e, ads, wt)["command"]] if "dispatcher_only" in kinds else []
-    glob = {x["word"] for x in g.get("global", [])}
-    subs = {x["word"] for x in g.get("sub", [])}
-    opts = {x["word"] for x in g.get("option", [])}
-    subargs = [(x["sub"], x["word"]) for x in g.get("sub_args", [])]
-    def named(a, ws):   # a word, or an unambiguous prefix git accepts for a long option
-        k = a.split("=", 1)[0]
-        return k in ws or (k.startswith("--") and len(k) > 2 and any(w.startswith("--") and w.startswith(k) for w in ws))
+    rules = policy.agent_shell_rules(e, wt)
     try:
         views = list(policy._views(roles.ansi(cmd)))
     except ValueError:
         return "STL-GRD-617", "the command line cannot be parsed, so its git words cannot be judged"
     for toks in views:
-        for i, t in enumerate(toks):
-            base = t.rsplit("/", 1)[-1]
-            for c in cmds:
-                if base == c[0] and toks[i + 1:i + len(c)] == c[1:]:
-                    return C["words"], f"the command runs {' '.join(c)}, a board action this role's adapter may not take"
-            if base != "git" or not g:
-                continue
-            args = []
-            for a in toks[i + 1:]:
+        env = {t.split("=", 1)[0]: "" for t in toks if policy.ASSIGN.fullmatch(t)}   # NAME=value words anywhere: env of the command
+        for i in range(len(toks)):
+            argv = []
+            for a in toks[i:]:
                 if a in policy.SEP:
                     break
-                args.append(a)
-            j = 0
-            while j < len(args) and args[j].startswith("-"):
-                if named(args[j], glob):
-                    return C["words"], f"git {args[j].split('=', 1)[0]}: the commit rule denies it"
-                j += 2 if args[j] in GIT_VALUE else 1
-            sub, rest = (args[j], args[j + 1:]) if j < len(args) else ("", [])
-            hit = (sub if sub in subs else next((a for a in args if named(a, opts)), None)
-                   or next((a for s_, w in subargs if s_ == sub for a in rest
-                            if a == w or (re.fullmatch(r"-[A-Za-z]", w) and re.fullmatch(rf"-[A-Za-z]*{w[1]}[A-Za-z]*", a))), None))
-            if hit:
-                return C["words"], f"git {sub} {hit if hit != sub else ''}".rstrip() + ": the commit rule denies it"
+                argv.append(a)
+            why = policy.agent_shell_refusal(rules, argv, env)
+            if why:
+                return C["words"], why
     return None
 
 
@@ -159,7 +137,7 @@ def gates(e, names, name, inp, wt, ctx=None):
     (X1 G2): kind tool_call, then the kind the offered row names for its class (gateway_kind), each decision logged before the call
     runs; ctx {role, run, card, project, adapter}."""
     if name not in names or not isinstance((e.get("tools") or {}).get(name), dict):
-        return C["unoffered"], f"tool {sd.idn(str(name))[:80]} was not offered to this run"
+        return C["unoffered"], f"tool {redact.name(name, 80)} was not offered to this run"
     if not isinstance(inp, dict):
         return C["input"], "the tool call's arguments are not a JSON object"
     try:
@@ -362,25 +340,40 @@ class Run:
             r = c.getresponse()
             if r.status != 200:
                 raise Stop(C["stream"], f"the agent answered the run input with HTTP {r.status}")
-            bufs, calls, done = {}, {}, []
+            bufs, calls, done, held = {}, {}, [], [0]   # open messages; calls by id {name, args, ended}; ended ids in order; bytes held
+            def keep(b, piece):   # one buffer at most cap, all of the turn's at most max_turn_bytes, at most max_open open (A-CRT-03)
+                if sum(map(len, b)) < self.cap:
+                    b.append(piece)
+                    held[0] += len(piece)
+                if held[0] > pr["max_turn_bytes"]:
+                    raise Stop(C["buffers"], f"the agent's open messages and tool calls hold over {pr['max_turn_bytes']} bytes in one turn")
+            def opened():
+                if len(bufs) + sum(not c["ended"] for c in calls.values()) > pr["max_open"]:
+                    raise Stop(C["buffers"], f"the agent holds over {pr['max_open']} messages and tool calls open in one turn")
             for x in events(r, self.cap, time.monotonic() + pr["turn_timeout_s"]):
                 t = ev["map"].get(get(x, ev["type"])) if isinstance(get(x, ev["type"]), str) else None
-                mid, tid = ptr(x, "message_id"), ptr(x, "tool_id")
-                if t == "message_start":
-                    bufs[str(mid)] = []
-                elif t == "message_delta" and isinstance(ptr(x, "delta"), str):
-                    b = bufs.setdefault(str(mid), [])
-                    if sum(map(len, b)) < self.cap:
-                        b.append(ptr(x, "delta"))
+                mid, tid = str(ptr(x, "message_id")), str(ptr(x, "tool_id"))
+                if t in ("message_start", "message_delta") and mid not in bufs:
+                    bufs[mid] = []
+                    opened()
+                if t == "message_delta" and isinstance(ptr(x, "delta"), str):
+                    keep(bufs[mid], ptr(x, "delta"))
                 elif t == "message_end":
-                    self.message(mid, "".join(bufs.pop(str(mid), [])))
-                elif t == "tool_start":
-                    calls[str(tid)] = (ptr(x, "tool_name"), [])
-                elif t == "tool_args" and str(tid) in calls and isinstance(ptr(x, "args_delta"), str):
-                    if sum(map(len, calls[str(tid)][1])) < self.cap:
-                        calls[str(tid)][1].append(ptr(x, "args_delta"))
-                elif t == "tool_end" and str(tid) in calls:
-                    done.append(str(tid))
+                    b = bufs.pop(mid, [])
+                    held[0] -= sum(map(len, b))
+                    self.message(mid, "".join(b))
+                elif t == "tool_start":   # one call per id: started once, args only while open, ended once (A-CRT-04)
+                    if tid in calls:
+                        raise Stop(C["call"], "the agent started a tool call id twice")
+                    calls[tid] = {"name": ptr(x, "tool_name"), "args": [], "ended": False}
+                    opened()
+                elif t in ("tool_args", "tool_end") and (tid not in calls or calls[tid]["ended"]):
+                    raise Stop(C["call"], "the agent sent arguments or an end for a tool call that is not open")
+                elif t == "tool_args" and isinstance(ptr(x, "args_delta"), str):
+                    keep(calls[tid]["args"], ptr(x, "args_delta"))
+                elif t == "tool_end":
+                    calls[tid]["ended"] = True
+                    done.append(tid)
                 elif t == "tool_result":
                     raise Stop(C["agent_tool"], "the agent reported the result of a tool it ran itself: an agent-side tool cannot be gated")
                 elif t in ("state_snapshot", "state_delta"):
@@ -390,8 +383,10 @@ class Run:
                 elif t == "error":
                     raise Stop(C["agent_error"], "the agent reported a run error: " + self.s.red(str(ptr(x, "error")))[:200])
                 elif t == "lifecycle_end":
-                    return [(i, calls[i][0], "".join(calls[i][1])) for i in done], True
-            return [(i, calls[i][0], "".join(calls[i][1])) for i in done], False
+                    if not all(c["ended"] for c in calls.values()):   # DC-05: never exit 0, never a silent drop, with a call pending
+                        raise Stop(C["call"], "the agent ended its turn with a tool call started and never ended")
+                    return [(i, calls[i]["name"], "".join(calls[i]["args"])) for i in done], True
+            return [], False
         except (OSError, http.client.HTTPException) as x:
             raise Stop(C["stream"], f"the agent's event stream failed ({type(x).__name__})") from None
         finally:
@@ -404,15 +399,16 @@ class Run:
         except ValueError:
             inp = None
         shown = s.red(inp if isinstance(inp, dict) else {"value": raw[:s.cap]})
-        name = name if isinstance(name, str) else str(name)[:128]
-        self.put({"type": "tool_use", "name": name, "input": shown, "signature": self.ad.canon([name, shown])})
+        name = name if isinstance(name, str) else json.dumps(name)
+        shown_name = s.red(name)[:128]   # the name is agent text too (A-CRT-01): masked before it is cut
+        self.put({"type": "tool_use", "name": shown_name, "input": shown, "signature": self.ad.canon([shown_name, shown])})
         got = gates(self.e, rows, name, inp, wt, {"role": self.rec["role"], "run": self.rec["run"], "card": self.rec["card"],
                                                    "project": self.rec.get("project"), "adapter": self.e["id"]})
         r = {"ok": False, "code": got[0], "output": f"{got[0]} {got[1]}"} if got else \
             execute(rows[name], inp, wt, self.env, self.a["pre"], self.pr["turn_timeout_s"])
         out = s.filt(s.red(r.get("output") if isinstance(r.get("output"), str) else json.dumps(r.get("output"))))
-        self.put({"type": "tool_result", "name": name, "input": shown, "ok": r["ok"] is True, "output": out, "diff": s.diff(),
-                  "signature": self.ad.canon([name, shown])})
+        self.put({"type": "tool_result", "name": shown_name, "input": shown, "ok": r["ok"] is True, "output": out, "diff": s.diff(),
+                  "signature": self.ad.canon([shown_name, shown])})
         if got and got[0] == C["unoffered"]:
             raise Stop(*got)
         m = self.pr["messages"]
@@ -422,15 +418,15 @@ class Run:
     def go(self):
         pr = self.pr
         port = ready(self.p, pr, self.s)
-        host = listener(port, self.p.pid)
         rows = {t["name"]: t for t in offered(self.d, self.rec["role"], self.a["core"])}
         tdefs = [fill(pr["tool"], {"name": t["name"], "description": t["description"], "parameters": t["parameters"]}) for t in rows.values()]
         msgs = [fill(pr["messages"]["user"], {"id": uuid.uuid4().hex, "text": self.a["prompt"]})]
         for n in range(pr["max_turns"]):
+            host = listener(port, self.p.pid)   # DC-06 before every POST: a port handed to another process after a turn is refused (A-CRT-06)
             calls, ended = self.turn(host, port, msgs, tdefs, n)
+            if not ended:   # nothing of a turn that never ended runs
+                raise Stop(C["stream"], "the agent's event stream ended before the end of its turn")
             if not calls:
-                if not ended:
-                    raise Stop(C["stream"], "the agent's event stream ended before the end of its turn")
                 return 0
             for tid, name, raw in calls:
                 self.call(tid, name, raw, rows, msgs)
@@ -450,7 +446,7 @@ def loop(p, s, rec, e, env, d, agent):
         s.put({"type": "error", "name": None, "input": {}, "output": s.red(f"{code or ''} {problem}".strip())})
     with contextlib.suppress(Exception):
         if code:
-            el.say(code, f"run {rec['run']}: {problem}", alert=True)
+            el.say(code, s.red(f"run {rec['run']}: {problem}"), alert=True)
     return int(code[-3:]) if code else -1
 
 

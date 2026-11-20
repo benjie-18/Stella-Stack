@@ -184,6 +184,8 @@ def agent_tool_problems(d):
         need = AGENT_NEEDS.get(t["executor"]) or (("query",) if t.get("capability") == "search" else ("id",))
         if t["executor"] == "capability" and not t.get("capability"):
             out.append((AGENT_DATA, f"agent tool {n}: a capability executor needs its capability operation"))
+        if t["executor"] == "shell" and not (t.get("guarded") or {}).get("commit_rule"):
+            out.append((AGENT_DATA, f"agent tool {n}: a shell row names no guarded.commit_rule program, so the commit rule has no exec-time shim"))
         miss = [k for k in need if k not in t["inputs"]]
         if miss:
             out.append((AGENT_DATA, f"agent tool {n}: its inputs lack {', '.join(miss)}"))
@@ -218,6 +220,51 @@ def agent_problems(e, d):
         elif ptr and m.get(ptr) != t["inputs"].get(ptr):
             out.append((AGENT_DATA, f"adapter {aid}: its tool map judges {t['name']} on {m.get(ptr)}, the executor uses {t['inputs'].get(ptr)}"))
     return out
+
+
+GIT_VALUE = ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env")   # git words before the subcommand that take a value
+GIT_ENV = "GIT_CONFIG"   # git reads config from GIT_CONFIG_COUNT/KEY/VALUE and GIT_CONFIG_PARAMETERS: the -c rule through the environment
+
+
+def agent_shell_rules(ad, worktree):
+    """What the agent-runtime shell gates judge (DC-04), as plain JSON: the command names the commit rule guards (the agent_tools rows'
+    guarded.commit_rule), its deny_git words, and the dispatcher_only command word lists. One source for the engine's early check and
+    the executor's exec-time shims."""
+    p, table, ads = roles.policy(), roles.load(), roles.adapters()
+    kinds = ad["policy"]["hook"]["kinds"]
+    g = items("commit_rule", p, table, ad, ads, worktree) if "commit_rule" in kinds else {}
+    return {"git_names": sorted({n for t in roles._data("adapters")[0].get("agent_tools", []) for n in (t.get("guarded") or {}).get("commit_rule", [])}) if g else [],
+            "global": [x["word"] for x in g.get("global", [])], "sub": [x["word"] for x in g.get("sub", [])],
+            "option": [x["word"] for x in g.get("option", [])], "sub_args": [[x["sub"], x["word"]] for x in g.get("sub_args", [])],
+            "commands": [c["command"].split() for c in items("dispatcher_only", p, table, ad, ads, worktree)["command"]] if "dispatcher_only" in kinds else []}
+
+
+def agent_shell_refusal(rules, argv, env=None):
+    """Why one command (argv, the program by its base name; env its environment names) breaks the commit or dispatcher rule, else None."""
+    if not argv:
+        return None
+    base = argv[0].rsplit("/", 1)[-1]
+    for c in rules["commands"]:
+        if base == c[0] and argv[1:len(c)] == c[1:]:
+            return f"the command runs {' '.join(c)}, a board action this role's adapter may not take"
+    if base not in rules["git_names"]:
+        return None
+    bad = sorted(k for k in (env or {}) if k.startswith(GIT_ENV))
+    if bad:
+        return f"{base} with {bad[0]} set: config from the environment is refused like -c"
+    def named(a, ws):   # a word, or an unambiguous prefix git accepts for a long option
+        k = a.split("=", 1)[0]
+        return k in ws or (k.startswith("--") and len(k) > 2 and any(w.startswith("--") and w.startswith(k) for w in ws))
+    args, j = argv[1:], 0
+    while j < len(args) and args[j].startswith("-"):
+        if named(args[j], rules["global"]):
+            return f"{base} {args[j].split('=', 1)[0]}: the commit rule denies it"
+        j += 2 if args[j] in GIT_VALUE else 1
+    sub, rest = (args[j], args[j + 1:]) if j < len(args) else ("", [])
+    hit = (sub if sub in rules["sub"] else next((a for a in args if named(a, rules["option"])), None)
+           or next((a for s_, w in rules["sub_args"] if s_ == sub for a in rest
+                    if a == w or (re.fullmatch(r"-[A-Za-z]", w) and re.fullmatch(rf"-[A-Za-z]*{w[1]}[A-Za-z]*", a))), None))
+    return f"{base} {sub} {hit if hit != sub else ''}".rstrip() + ": the commit rule denies it" if hit else None
 
 
 def problems():

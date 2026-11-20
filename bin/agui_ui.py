@@ -25,7 +25,7 @@ import argparse, hashlib, json, os, re, sys, time, uuid
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
 import event_log as el
-import run_token
+import redact_all as redact
 import stella_data as sd
 import worker_env
 
@@ -60,27 +60,9 @@ def data():
 
 
 def redactor():
-    """x -> x redacted: values under event_log's redact keys ***, run tokens and the catalog's value patterns *** where they stand,
-    values seen under masked keys scrubbed. Patterns that cannot be read, or a string too long to scan: the whole string ***."""
-    pats, redk = None, (lambda k: True)
-    try:
-        if sd.value_pats() is not None:
-            pats = [re.compile(re.escape(run_token.gateway()["token"]["prefix"]) + r"[A-Za-z0-9_-]+"), *sd.value_pats()]
-            redk = el.redactor()
-    except Exception:   # fail closed: every string masked
-        pats = None
-
-    def red(x):
-        if isinstance(x, str):
-            if pats is None or len(x) > sd.MASK_LIMIT:
-                return el.MASK
-            for p in pats:
-                x = p.sub(el.MASK, x)
-            return el.scrub(x)
-        if isinstance(x, dict):
-            return {k: el.MASK if redk(str(k)) else red(v) for k, v in x.items()}
-        return [red(v) for v in x] if isinstance(x, list) else x
-    return red
+    """x -> x redacted by the one shared redactor (bin/redact_all.py: values and keys, run tokens and the catalog's value patterns, event_log's
+    redact keys); patterns that cannot be read, or a string longer than sd.MASK_LIMIT: the whole string ***."""
+    return redact.redactor(limit=sd.MASK_LIMIT)
 
 
 def stream(run):
@@ -136,7 +118,7 @@ def store(run, payload, ctx):
     cid = payload.get("component")
     comp = next((c for c in doc["components"] if c["id"] == cid), None)
     if comp is None:
-        raise Refusal("STL-GRD-721", f"component {sd.idn(cid)[:64]} is not in the allowlist")
+        raise Refusal("STL-GRD-721", f"component {redact.name(cid)} is not in the allowlist")
     props = payload.get("props", {})
     if not isinstance(props, dict):
         raise Refusal("STL-GRD-722", f"the props of component {cid} are {sd.desc(props)}, not an object")
@@ -151,7 +133,7 @@ def store(run, payload, ctx):
     ids = [a.get("id") for a in acts]
     bad = [i for i in ids if not (isinstance(i, str) and i in known)]
     if bad:
-        raise Refusal("STL-GRD-723", f"component {cid} lists no action {sd.idn(bad[0])[:64]}")
+        raise Refusal("STL-GRD-723", f"component {cid} lists no action {redact.name(bad[0])}")
     red = redactor()
     with el.locked(p[:-len(".jsonl")] + ".lock"):
         n = len(lines(p))
@@ -198,7 +180,7 @@ def act(run, seq, action):
     comp = next((c for c in doc["components"] if c["id"] == rec.get("component")), None)
     a = next((x for x in (comp or {}).get("actions", []) if x["id"] == action and {"id": action} in rec.get("actions", [])), None)
     if a is None:
-        raise Refusal("STL-GRD-723", f"widget {seq} of run {run} lists no action {sd.idn(action)[:64]}")
+        raise Refusal("STL-GRD-723", f"widget {seq} of run {run} lists no action {redact.name(action)}")
     try:
         with os.fdopen(el.open_file(os.path.join(el.path(sd.load(sd.INDEX)[RUNS]), run + ".json"), os.O_RDONLY), "rb") as f:
             rr = json.loads(f.read(el.MAX_FILE))
