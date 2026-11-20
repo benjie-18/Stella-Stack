@@ -62,6 +62,7 @@ C = {"data": "STL-GRD-640", "stub": "STL-GRD-641", "binary": "STL-GRD-642", "ver
      "prepare": "STL-GRD-650", "run": "STL-GRD-651", "spawn": "STL-GRD-652", "worktree": "STL-GRD-653", "stop": "STL-GRD-654",
      "cfgcred": "STL-GRD-754", "cfghost": "STL-GRD-755", "cfgscan": "STL-GRD-757",
      "hookless": "STL-GRD-745", "project": "STL-GRD-746", "sweep": "STL-GRD-749"}   # literal: the alert lint finds each sender by its code
+SCAN_FILES, SCAN_BYTES = 400, 1 << 20
 ROW, RUNS, RECORDS, SCRATCH = "adapters", "adapter_runs", "conformance_records", "conformance_scratch"
 AGENT = "agent-runtime"   # the adapter kind of X1 item A (bin/agent_runtime.py); an entry with no kind is a coding CLI
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
@@ -607,27 +608,35 @@ def scan_config(e, wt):
     """X1 item C preflight (both kinds): the entry's own config files (config_files globs relative to the worktree, or {home}/...) and its
     start template must hold no catalog value pattern (a credential) and no host of a cloud provider connection (a direct route around
     the proxy). Stop with a code before anything is spawned; the refusal names the file, never the value.
-    shortcut: a file is read to its first 1 MiB, and 400 files per entry."""
+    Limits (a larger entry is refused, never skipped): SCAN_FILES files, SCAN_BYTES per file."""
     pats, hosts = scan_data(e)
     home = os.environ.get((e.get("cli_login") or {}).get("home_env") or "HOME", "")
     todo = []
     for g in e.get("config_files") or []:
         for m in sorted(glob.glob(home + g[6:] if g.startswith("{home}") else os.path.join(glob.escape(wt), g))):
-            todo += [os.path.join(t, f) for t, _, fs in os.walk(m) for f in fs] if os.path.isdir(m) else [m]
-    for p in todo[:400]:
+            todo += [os.path.join(t, f) for t, _, fs in os.walk(m) for f in fs] if os.path.isdir(m) and not os.path.islink(m) else [m]
+    # fail closed: whatever cannot be read whole as a plain file (a link, a FIFO, a file over the cap, more files than the cap) refuses the start
+    if len(todo) > SCAN_FILES:
+        raise Stop(C["cfgscan"], f"adapter {e['id']}: its config files match more than {SCAN_FILES} files, so they cannot all be scanned")
+    for p in todo:
+        name = os.path.relpath(p, wt) if inside(p, wt) else "{home}/" + os.path.relpath(p, home)
         try:
             fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             with os.fdopen(fd, "rb") as f:
-                text = f.read(1 << 20).decode("utf-8", "replace") if stat.S_ISREG(os.fstat(fd).st_mode) else ""
+                raw = f.read(SCAN_BYTES + 1) if stat.S_ISREG(os.fstat(fd).st_mode) else None
         except OSError:
-            continue
-        name = os.path.relpath(p, wt) if inside(p, wt) else "{home}/" + os.path.relpath(p, home)
-        if any(x.search(text) for x in pats):
-            raise Stop(C["cfgcred"], f"adapter {e['id']}: its config file {sd.idn(name)} holds a credential (a value the connections catalog masks); keys reach an agent through the proxy only")
-        if any(h in text.lower() for h in hosts):
-            raise Stop(C["cfghost"], f"adapter {e['id']}: its config file {sd.idn(name)} names a provider host of the connections catalog; the agent must reach models through the proxy only")
-    if any(x.search(json.dumps(e.get("start") or {})) for x in pats):
-        raise Stop(C["cfgcred"], f"adapter {e['id']}: its start template holds a credential (a value the connections catalog masks)")
+            raw = None
+        if raw is None or len(raw) > SCAN_BYTES:
+            raise Stop(C["cfgscan"], f"adapter {e['id']}: its config file {sd.idn(name)} is not a plain file of at most {SCAN_BYTES} bytes, so it cannot be scanned")
+        hit(e, pats, hosts, raw.decode("utf-8", "replace"), f"its config file {sd.idn(name)}")
+    hit(e, pats, hosts, json.dumps(e.get("start") or {}), "its start template")
+
+
+def hit(e, pats, hosts, text, where):
+    if any(x.search(text) for x in pats):
+        raise Stop(C["cfgcred"], f"adapter {e['id']}: {where} holds a credential (a value the connections catalog masks); keys reach an agent through the proxy only")
+    if any(h in text.lower() for h in hosts):
+        raise Stop(C["cfghost"], f"adapter {e['id']}: {where} names a provider host of the connections catalog; the agent must reach models through the proxy only")
 
 
 def cmd_start(a):
