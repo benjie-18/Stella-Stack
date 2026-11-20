@@ -738,6 +738,23 @@
               "type": "string",
               "pattern": "^/"
             }
+          },
+          "guarded": {
+            "type": "object",
+            "propertyNames": {
+              "enum": [
+                "commit_rule"
+              ]
+            },
+            "additionalProperties": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_.+-]+$"
+              }
+            },
+            "description": "A shell row: the command names a rule kind guards in this tool's commands (commit_rule: the program whose deny_git words the rule lists). The shell executor puts a shim of each name (and of each dispatcher_only command's first word) first on PATH, which judges the real argv and environment before it runs the program (A-CRT-02)."
           }
         },
         "required": [

@@ -140,6 +140,11 @@
       },
       "inputs": {
         "command": "/command"
+      },
+      "guarded": {
+        "commit_rule": [
+          "git"
+        ]
       }
     },
     {

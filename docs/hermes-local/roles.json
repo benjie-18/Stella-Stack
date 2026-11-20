@@ -125,6 +125,7 @@
     "bin/stuck.py",
     ".stella/adapters.json",
     ".stella/agent-protocols.json",
+    "bin/loopback_guard.py",
     ".stella/conformance.json",
     ".stella/policy.json",
     ".stella/host-policy.json",
@@ -143,7 +144,8 @@
     "package-lock.json",
     "bin/agent_runtime.py",
     "bin/agent_tool.py",
-    "bin/agui_ui.py"
+    "bin/agui_ui.py",
+    "bin/redact_all.py"
   ],
   "write_tools": [
     "write_file",

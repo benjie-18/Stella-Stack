@@ -233,4 +233,16 @@ stopd
 # ---- nothing secret in any answer or log ----
 ok '[ -s "$T/bodies" ] && grep -q STL-OWN-85 "$T/bodies" && ! grep -qF -e "$TOK" -e "$CSRF" "$T/bodies" "$T/dbl.out" "$T/dbl.err" "$T/sup/logs/alerts.log" "$R/.supervisor/logs/alerts.log" 2>/dev/null' \
   "no response body, double output or alert log holds the API token or the CSRF token"
+
+# ---- U-CRT-01 / U-CVER-02: two endpoints of one method whose path templates can match one path are refused (judge would take the first) ----
+cp "$LC" "$T/lc.keep2"
+shadow() { jq --arg g "$(uuid)" --arg i "$IID" --arg m "$WM" --arg p "$1" '.endpoints = [{id: "zz-shadow", method: $m, path: $p, scope: "read", global_id: $g, install_id: $i}] + .endpoints' "$T/lc.keep2" >"$LC"
+  $PY -c 'import sys; sys.path.insert(0, sys.argv[1]); import loopback_guard as g
+try:
+    g.contract(); print("accepted")
+except g.Refusal as r:
+    print(r.code)' "$B" 2>&1; }
+SP1=$(shadow "${WPATH%/*}/{x}"); SP2=$(shadow "/qa/zz-other/{x}")
+cp "$T/lc.keep2" "$LC"
+ok '[ "$SP1" = STL-OWN-858 ] && [ "$SP2" = accepted ]' "U-CRT-01 a read template ${WPATH%/*}/{x} listed before the owner-write $WM $WPATH: contract() refuses it (858); a template that matches no other endpoint is accepted"
 finish

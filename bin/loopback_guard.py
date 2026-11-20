@@ -32,16 +32,25 @@ Refusal = owner_auth.Refusal
 
 
 def contract():
-    """The contract, valid (its schema, three distinct header names, each method + path once); else Refusal STL-OWN-858."""
+    """The contract, valid (its schema, three distinct header names, no two endpoints of one method that can match one path); else Refusal STL-OWN-858."""
     try:
         row = next(r for r in sd.rows() if r["id"] == CONTRACT)
         doc = sd.checked(sd.load(row["path"]), row["path"], row["schema"])
     except (sd.DataError, StopIteration) as e:
         raise Refusal("STL-OWN-858", str(e) or f"the index has no {CONTRACT} row") from None
-    keys = [(e["method"], e["path"]) for e in doc["endpoints"]]
-    if len({doc[k].lower() for k in HEADERS}) != len(HEADERS) or len(set(keys)) != len(keys):
-        raise Refusal("STL-OWN-858", f"{row['path']}: the token, CSRF and proof headers need three distinct names, and each method + path one endpoint")
+    eps = doc["endpoints"]
+    if len({doc[k].lower() for k in HEADERS}) != len(HEADERS) or any(a["method"] == b["method"] and overlap(a["path"], b["path"])
+                                                                     for i, a in enumerate(eps) for b in eps[i + 1:]):
+        raise Refusal("STL-OWN-858", f"{row['path']}: the token, CSRF and proof headers need three distinct names, and each request one endpoint"
+                                     " (two endpoints of one method whose paths can match the same path are refused: judge takes the first)")
     return doc
+
+def overlap(a, b):
+    """True when some path matches both endpoint path templates (U-CRT-01): segment by segment equal, or a {name} against a {name} or
+    against a literal that SEGMENT matches."""
+    t, u = a.split("/"), b.split("/")
+    var = lambda x: len(x) > 2 and x[0] == "{" and x[-1] == "}"
+    return len(t) == len(u) and all(x == y or (var(x) and (var(y) or SEGMENT.fullmatch(y))) or (var(y) and SEGMENT.fullmatch(x)) for x, y in zip(t, u))
 
 
 def match(template, path):

@@ -1848,7 +1848,7 @@
       "title": "the loopback API guard cannot judge requests",
       "message": "The local API refused a request because its guard cannot judge it: {problem}. Everything is refused until this is fixed.",
       "action": "run `bin/stella_data.py check loopback-api` and fix the contract, or restart the API with a valid session. See STL-OWN-858 in docs/alert-codes.md.",
-      "cause": "The loopback-api contract is missing, unreadable or invalid (its schema, three distinct header names, each method and path once), the session lacks its API token, CSRF token or bound port, or the request could not be read.",
+      "cause": "The loopback-api contract is missing, unreadable or invalid (its schema, three distinct header names, no two endpoints of one method whose paths can match the same path), the session lacks its API token, CSRF token or bound port, or the request could not be read.",
       "check": "the HTTP answer's code and message, and .supervisor/logs/alerts.log; `bin/loopback_guard.py check <request.json>` replays a request.",
       "related": "F1c B5/A5, D6; bin/loopback_guard.py, .stella/loopback-api.json, docs/contract/loopback-api.md",
       "resolvable": false
@@ -3793,7 +3793,7 @@
       "title": "an agent's port is not its own",
       "message": "An agent-runtime run was stopped: {problem}.",
       "action": "ask Stella to look at the agent; nothing was run for it.",
-      "cause": "The port the agent reported is not a listening loopback socket of the agent's own processes (another process holds it, or the agent listens on an outward address).",
+      "cause": "Before a run input is posted (every turn), the agent's port is not a listening loopback socket of the agent's own processes (another process holds it, it was handed to one after a turn, or the agent listens on an outward address).",
       "check": "`python3 bin/agent_runtime.py check`; the run record and its events.jsonl at the index key adapter_runs; `bash bin/agent-runtime-selftest.sh`.",
       "related": "X1 item A; bin/agent_runtime.py, bin/agent_tool.py, .stella/agent-protocols.json, .stella/adapters.json",
       "resolvable": false
@@ -3877,7 +3877,7 @@
       "title": "an agent's command was refused",
       "message": "An agent's shell command was refused: {problem}.",
       "action": "nothing; the command did not run.",
-      "cause": "The command names a git word the commit rule denies (git -c, git config, --no-verify, git add -A) or a board command the role's adapter may not run.",
+      "cause": "The command names a git word the commit rule denies (git -c, git config, --no-verify, git add -A), sets git config through the environment (GIT_CONFIG_*), or runs a board command the role's adapter may not run. The words are judged before the call and again when the command really runs (a shim of each guarded command first on PATH).",
       "check": "`python3 bin/agent_runtime.py check`; the run record and its events.jsonl at the index key adapter_runs; `bash bin/agent-runtime-selftest.sh`.",
       "related": "X1 item A; bin/agent_runtime.py, bin/agent_tool.py, .stella/agent-protocols.json, .stella/adapters.json",
       "resolvable": false
@@ -3889,7 +3889,7 @@
       "title": "an agent's tool call left its worktree",
       "message": "An agent's tool call was refused at open: {problem}.",
       "action": "nothing; nothing was read or written outside.",
-      "cause": "A path of the call leads outside the worktree and the run's temporary folder, through a link or directly, or is not a regular file.",
+      "cause": "A path of the call leads outside the worktree and the run's temporary folder, through a link or directly, is not a regular file, or (a write or edit) has a second name: a hard link may be a file outside the worktree.",
       "check": "`python3 bin/agent_runtime.py check`; the run record and its events.jsonl at the index key adapter_runs; `bash bin/agent-runtime-selftest.sh`.",
       "related": "X1 item A; bin/agent_runtime.py, bin/agent_tool.py, .stella/agent-protocols.json, .stella/adapters.json",
       "resolvable": false
@@ -4120,6 +4120,30 @@
       "cause": "After an owner apply that turned the gateway on, a running run that started with it off (or hookless under enforce) could not be stopped.",
       "check": "`python3 -I bin/gateway.py check --json`; `python3 -I bin/gateway.py lint`; `bash bin/gateway-hooks-selftest.sh`.",
       "related": "X1 item G2 (design.md, G2; rulings X1-DC-08, X1-DC-09); bin/adapter.py, bin/policy.py, bin/capabilities_mcp.py, .stella/gateway.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-712",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "an agent held too much open in one turn",
+      "message": "An agent-runtime run was stopped: {problem}.",
+      "action": "nothing, unless it repeats: then ask Stella to look at the agent or the protocol's limits.",
+      "cause": "More messages and tool calls were open in one turn than the protocol's max_open, or they held more bytes together than its max_turn_bytes (.stella/agent-protocols.json).",
+      "check": "`python3 bin/agent_runtime.py check`; the run record and its events.jsonl at the index key adapter_runs; `bash bin/agent-runtime-selftest.sh`.",
+      "related": "X1 item A; bin/agent_runtime.py, bin/agent_tool.py, .stella/agent-protocols.json, .stella/adapters.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-713",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "an agent's tool call was malformed",
+      "message": "An agent-runtime run was stopped: {problem}.",
+      "action": "ask Stella to look at the agent; the call did not run.",
+      "cause": "The agent started a tool call id twice, sent arguments or an end for a call that was not open (a second end would run it twice), or ended its turn with a call started and never ended.",
+      "check": "`python3 bin/agent_runtime.py check`; the run record and its events.jsonl at the index key adapter_runs; `bash bin/agent-runtime-selftest.sh`.",
+      "related": "X1 item A; bin/agent_runtime.py, bin/agent_tool.py, .stella/agent-protocols.json, .stella/adapters.json",
       "resolvable": false
     }
   ]

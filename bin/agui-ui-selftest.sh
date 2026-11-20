@@ -139,4 +139,13 @@ drop d1 "$M-a" "$(jq -nc --arg m "$M-a" '{component: "qa-unlisted-panel", props:
 drop d2 "$M-b" "$(jq -nc --arg m "$M-b" '{component: "qa-panel", props: {title: 12345, note: $m}, actions: [{id: "qa-go"}]}')" "T-ui-allowlist props outside the component's schema (title not a string) are dropped the same way"
 drop d3 "$M-c" "$(jq -nc --arg m "$M-c" '{component: "qa-panel", props: {title: $m}, actions: [{id: "qa-not-listed"}]}')" "T-ui-allowlist an action the component does not list is dropped the same way"
 ok '[ "$(al72)" -ge 3 ] && grep "STL-GRD-72[0-9]" "$AL" | grep -qvE "STL-GRD-7(0|1|3|4|5)[0-9]"' "T-ui-allowlist the alerts carry codes of item U's range (STL-GRD-720..729)"
+
+# ---- A-CRT-01 / A-CVER-01 (the UI sites): a run token or a catalog value as the component or action id: dropped, masked in the alert line ----
+TOKV="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import run_token; print(run_token.gateway()["token"]["prefix"])' "$R/bin")$(hex)"
+a0=$(nl "$AL"); e0=$(nl "$EV")
+ING n1 "$(jq -nc --arg c "$TOKV" '{component: $c, props: {}, actions: []}')"; N1=$(cat "$T/o/n1.out")
+ING n2 "$(jq -nc --arg c "$CAN" '{component: $c, props: {}, actions: []}')"; N2=$(cat "$T/o/n2.out")
+ING n3 "$(jq -nc --arg c "$CAN" '{component: "qa-panel", props: {title: "x"}, actions: [{id: $c}]}')"; N3=$(cat "$T/o/n3.out")
+ok '[ "$N1" = null ] && [ "$N2" = null ] && [ "$N3" = null ] && [ "$(tail -n +$((a0 + 1)) "$AL" | grep -c "STL-GRD-72[13]")" -ge 3 ] && ! tail -n +$((a0 + 1)) "$AL" | grep -qF -e "$TOKV" -e "$CAN" && ! tail -n +$((e0 + 1)) "$EV" | grep -qF -e "$TOKV" -e "$CAN"' \
+  "A-CRT-01 a run token or a catalog value as a component or action id: dropped (721, 723), the alert lines mask it"
 finish

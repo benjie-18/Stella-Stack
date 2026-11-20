@@ -292,4 +292,76 @@ ok '[ -n "$D1" ] && [ -n "$D2" ] && [ "$D1" != "$D2" ]' "DC-03 adapter.digests o
 WC=$T/wt-card-d3; mkwt "$WC" >/dev/null 2>&1
 go d3 qa-agui qa-run-d3 "$WC" '[]' --card qa-card-d3
 ok '[ $RC = 1 ] && out d3 | grep -c STL-GRD-647 >/dev/null && sleep 2 && [ ! -e "$WC/qamark-qa-run-d3.txt" ]' "DC-03 ... so start --card is refused STL-GRD-647 (the record passed on other data) and no agent is spawned"
+
+# ==== X1 fix round (reviews crt-AU and critical-verifier-AU): a hostile agent over bin/mock_agui_raw.py (the events a scenario lists) ====
+printf '#!/bin/sh\nexec python3 -I "%s/bin/mock_agui_raw.py" "$@"\n' "$R" >"$T/pb/qa-raw"; chmod +x "$T/pb/qa-raw"
+SCN=$T/scn.json; scn() { printf '%s' "$1" >"$SCN"; }
+ed .stella/adapters.json --argjson a "$(fake qa-raw "$PROTO" ".binary = \"qa-raw\" | .version_cmd = [\"qa-raw\", \"--version\"] | .tested_versions = [\"1.0\"]
+   | .start.argv = [\"qa-raw\", \"--scenario\", \"$SCN\", \"--token-env\", \"$TE\"]")" '.entries += [$a]'
+TOKRX="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import run_token; print(run_token.gateway()["token"]["prefix"])' "$R/bin")[A-Za-z0-9_-]{8,}"
+S='{"type":"RUN_STARTED","threadId":"t","runId":"r"}'; F='{"type":"RUN_FINISHED","threadId":"t","runId":"r"}'; END="[$S,$F]"
+TC() { jq -nc --arg id "$1" --arg n "$2" --arg a "$3" '[{type: "TOOL_CALL_START", toolCallId: $id, toolCallName: $n}, {type: "TOOL_CALL_ARGS", toolCallId: $id, delta: $a}, {type: "TOOL_CALL_END", toolCallId: $id}] | .[]' | paste -sd,; }
+xit() { rec "$1" | jq -r .exit 2>/dev/null; }
+# leak <run> <regex>: the value is in the run's folder (stream, run log), its peek, or an event / alert line written since the mark
+mark() { e0=$(nl "$EV"); a0=$(nl "$AL"); }
+leak() { { cat "$R/$AR/$1/events.jsonl" "$R/$AR/$1/run.log" "$T/o/$1-peek.out"; tail -n +$((e0 + 1)) "$EV"; tail -n +$((a0 + 1)) "$AL"; } 2>/dev/null | grep -qE -- "$2"; }
+
+# ---- A-CRT-01 / A-CVER-01: a run token and a catalog value as names (state keys, argument keys, tool name, UI component) never show ----
+W=$(wt z1); CAN="qatok-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+scn "$(jq -nc --arg c "$CAN" --argjson S "$S" --argjson F "$F" --arg a "$(jq -nc --arg c "$CAN" '{path: "README", ("@TOKEN@"): 1, ($c): 2}')" '{turns: [[$S,
+  {type: "TEXT_MESSAGE_START", messageId: "@TOKEN@"}, {type: "TEXT_MESSAGE_CONTENT", messageId: "@TOKEN@", delta: ("value @TOKEN@ and " + $c)}, {type: "TEXT_MESSAGE_END", messageId: "@TOKEN@"},
+  {type: "STATE_SNAPSHOT", snapshot: {v: "@TOKEN@", ("@TOKEN@"): "k", nested: {($c): 1}}},
+  {type: "CUSTOM", name: "ui", value: {component: "@TOKEN@", props: {}}}, {type: "CUSTOM", name: "ui", value: {component: $c, props: {}}},
+  {type: "TOOL_CALL_START", toolCallId: "r1", toolCallName: "read"}, {type: "TOOL_CALL_ARGS", toolCallId: "r1", delta: $a}, {type: "TOOL_CALL_END", toolCallId: "r1"}, $F], [$S, $F]]}')"
+mark; go z1 qa-raw qa-run-z1 "$W" '[]'; done_ qa-run-z1; d=$?; A logs --run qa-run-z1 >"$T/o/qa-run-z1-peek.out" 2>&1
+ok '[ $d = 0 ] && evq qa-run-z1 "select(.type == \"state\")" | grep -q . && [ "$(tail -n +$((a0 + 1)) "$AL" | grep -c STL-GRD-721)" -ge 2 ] && ! leak qa-run-z1 "$TOKRX" && ! leak qa-run-z1 "$CAN"' \
+  "A-CRT-01 a run token and a catalog value as state keys, argument keys, a message id and UI component names: in no run stream, run log, peek, event or alert line"
+W=$(wt z2); scn "{\"turns\": [[$S, $(TC t1 '@TOKEN@' '{"path":"README"}'), $F], $END]}"
+mark; go z2 qa-raw qa-run-z2 "$W" '[]'; done_ qa-run-z2; d=$?; A logs --run qa-run-z2 >"$T/o/qa-run-z2-peek.out" 2>&1
+ok '[ $d = 0 ] && [ "$(xit qa-run-z2)" = 703 ] && evq qa-run-z2 "select(.type == \"tool_result\" and .ok == false)" | grep -q . && ! leak qa-run-z2 "$TOKRX"' \
+  "A-CVER-01 the run token as the tool name: refused 703, the name masked in the stream, peek and the alert line"
+
+# ---- A-CRT-02 / A-CVER-02: commit and dispatcher rules at exec time (shims): shell-built command words, config through the environment ----
+printf '#!/bin/sh\necho "$*" >>"%s/hermes.log"\necho "[]"\n' "$T" >"$T/pb/hermes"; chmod +x "$T/pb/hermes"   # the board stub records each call
+W=$(wt z3)
+CMDS=('hermes kanban complete qa-z-lit' 'G=git; $G commit --no-verify --allow-empty -q -m qa-z-var' '$(printf git) commit --no-verify --allow-empty -q -m qa-z-subst'
+      'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit --allow-empty -q -m qa-z-envcfg'
+      'V=GIT_CONFIG; export ${V}_COUNT=1 ${V}_KEY_0=alias.ci ${V}_VALUE_0=commit; G=git; $G ci --allow-empty -q -m qa-z-envshim'
+      'H=hermes; $H kanban complete qa-z-var' 'git commit --allow-empty -q -m qa-z-plain')
+SH=""; i=0; for c in "${CMDS[@]}"; do i=$((i+1)); SH+=,$(TC "w$i" "$TS" "$(jq -nc --arg c "$c" '{command: $c}')"); done
+scn "{\"turns\": [[$S$SH, $F], $END]}"
+go z3 qa-raw qa-run-z3 "$W" '[]'; done_ qa-run-z3; d=$?; GL=$(git -C "$W" log --format=%s 2>/dev/null)
+ok '[ $d = 0 ] && grep -qx qa-z-plain <<<"$GL" && ! grep -qE "^qa-z-(var|subst|envcfg|envshim)$" <<<"$GL"' "A-CRT-02 \$G, \$(printf git), GIT_CONFIG_* (literal and shell-built) through the shell tool: no commit lands; the plain commit does"
+ok '[ $d = 0 ] && ! grep -qE "complete qa-z-(lit|var)" "$T/hermes.log" 2>/dev/null && [ "$(evq qa-run-z3 "select(.type == \"tool_result\" and .ok == false)" | grep -c STL-GRD-709)" -ge 6 ]' \
+  "A-CVER-02 dispatcher_only: hermes kanban complete, literal and as \$H, never runs; every refusal is STL-GRD-709"
+
+# ---- A-CRT-03: open messages and calls of one turn are bounded in number and bytes (STL-GRD-712) ----
+W=$(wt z4); scn "{\"turns\": [[$S, {\"repeat\": 40, \"event\": {\"type\": \"TEXT_MESSAGE_START\", \"messageId\": \"m@I@\"}}, $F], $END]}"
+go z4 qa-raw qa-run-z4 "$W" '[]'; done_ qa-run-z4
+W=$(wt z5); scn "{\"turns\": [[$S, {\"repeat\": 6, \"event\": {\"type\": \"TEXT_MESSAGE_CONTENT\", \"messageId\": \"m@I@\", \"delta\": \"@PAD@\"}, \"pad\": 1000000}, $F], $END]}"
+go z5 qa-raw qa-run-z5 "$W" '[]'; done_ qa-run-z5
+ok '[ "$(xit qa-run-z4)" = 712 ] && [ "$(xit qa-run-z5)" = 712 ]' "A-CRT-03 40 open messages, and 6 MB held open in one turn: the run stops STL-GRD-712 (exits $(xit qa-run-z4), $(xit qa-run-z5))"
+
+# ---- A-CRT-04: a call started and never ended fails the run; a second end never runs a call twice (STL-GRD-713) ----
+W=$(wt z6); scn "{\"turns\": [[$S, {\"type\":\"TOOL_CALL_START\",\"toolCallId\":\"p1\",\"toolCallName\":\"$TW\"}, {\"type\":\"TOOL_CALL_ARGS\",\"toolCallId\":\"p1\",\"delta\":\"{\\\"path\\\":\\\"p.txt\\\",\\\"content\\\":\\\"P\\\"}\"}, $F], $END]}"
+go z6 qa-raw qa-run-z6 "$W" '[]'; done_ qa-run-z6; W6=$W
+W=$(wt z7); scn "{\"turns\": [[$S, $(TC d1 "$TS" '{"command":"echo x >> twice.txt"}'), {\"type\":\"TOOL_CALL_END\",\"toolCallId\":\"d1\"}, $F], $END]}"
+go z7 qa-raw qa-run-z7 "$W" '[]'; done_ qa-run-z7
+ok '[ "$(xit qa-run-z6)" = 713 ] && [ ! -e "$W6/p.txt" ] && [ "$(xit qa-run-z7)" = 713 ] && [ "$(cat "$W/twice.txt" 2>/dev/null | wc -l)" -le 1 ]' \
+  "A-CRT-04 RUN_FINISHED with a call pending: exit 713 (never 0); a second TOOL_CALL_END: exit 713 and the call ran at most once"
+
+# ---- A-CRT-05: the write executor refuses a hard-linked target (it may be a file outside the worktree) ----
+W=$(wt z8); printf 'VICTIM\n' >"$T/outside/qa-victim.txt"
+scn "{\"turns\": [[$S, $(TC h1 "$TS" "$(jq -nc --arg c "ln $T/outside/qa-victim.txt hl.txt" '{command: $c}')"), $(TC h2 "$TW" '{"path":"hl.txt","content":"PWNED"}'), $F], $END]}"
+go z8 qa-raw qa-run-z8 "$W" '[]'; done_ qa-run-z8; d=$?
+ok '[ $d = 0 ] && [ "$(cat "$T/outside/qa-victim.txt")" = VICTIM ] && res qa-run-z8 hl.txt | jq -e "select(.name == \"$TW\" and .ok == false)" | grep -q STL-GRD-710' \
+  "A-CRT-05 a write to a hard link of a file outside the worktree is refused 710: the outside file is unchanged"
+
+# ---- DC-06 / A-CVER-02 / A-CRT-06: a port owned outside the agent's process tree is refused, before the first POST and before every later one ----
+W=$(wt z9); scn "{\"ready\": {\"port_of\": $PPORT}, \"turns\": [$END]}"
+go z9 qa-raw qa-run-z9 "$W" '[]'; done_ qa-run-z9
+W=$(wt z10); scn "{\"handoff\": true, \"turns\": [[$S, $(TC k1 "$TS" '{"command":"sleep 3"}'), $F], [$S, $(TC k2 "$TW" '{"path":"hijack.txt","content":"FOREIGN"}'), $F], $END]}"
+go z10 qa-raw qa-run-z10 "$W" '[]'; done_ qa-run-z10
+ok '[ "$(xit qa-run-z9)" = 702 ] && [ "$(xit qa-run-z10)" = 702 ] && [ ! -e "$W/hijack.txt" ]' "DC-06 the ready line names the proxy's port: 702; the port handed to a process outside the agent's tree after a turn: 702, its tool call never runs"
+pkill -f "$R/bin/mock_agui_raw.py" 2>/dev/null
 finish

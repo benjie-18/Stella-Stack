@@ -7294,7 +7294,8 @@
         ".stella/protocols.json",
         ".stella/connections.json",
         ".stella/schemas/adapters.schema.json",
-        ".stella/schemas/agent-protocols.schema.json"
+        ".stella/schemas/agent-protocols.schema.json",
+        "bin/redact_all.py"
       ],
       "targets": [
         "adapter",
@@ -7318,7 +7319,8 @@
         ".stella/loopback-api.json",
         ".stella/connections.json",
         ".stella/schemas/ui-components.schema.json",
-        ".stella/schemas/approval-request.schema.json"
+        ".stella/schemas/approval-request.schema.json",
+        "bin/redact_all.py"
       ],
       "targets": [
         "adapter",
@@ -7374,6 +7376,32 @@
         "profile-hooks"
       ],
       "why": "X1 item A: the role table lists the agent protocols file among its boundary_paths"
+    },
+    {
+      "globs": [
+        "bin/redact_all.py"
+      ],
+      "targets": [
+        "agent-runtime",
+        "agui-ui",
+        "adapter",
+        "adapter-run",
+        "conformance",
+        "false-close-guard",
+        "stuck"
+      ],
+      "why": "X1 fix A-CRT-01: the one redactor of agent-chosen values and names, used by the adapter run stream (adapter.py), the agent-runtime loop and the UI read stream (agui_ui.py)"
+    },
+    {
+      "globs": [
+        "bin/mock_agui_raw.py"
+      ],
+      "targets": [
+        "agent-runtime",
+        "conformance",
+        "gateway-hooks"
+      ],
+      "why": "X1 fix round: the raw-event AG-UI fixture the agent-runtime selftest's hostile-agent cases (crt-AU findings) run; the conformance and gateway-hooks selftests reuse the agent-runtime harness, so they reach it too"
     },
     {
       "globs": [
@@ -7461,7 +7489,8 @@
     },
     {
       "globs": [
-        "bin/agui_ui.py"
+        "bin/agui_ui.py",
+        "bin/redact_all.py"
       ],
       "targets": [
         "adapter",
@@ -7849,7 +7878,8 @@
     },
     {
       "globs": [
-        "bin/agui_ui.py"
+        "bin/agui_ui.py",
+        "bin/redact_all.py"
       ],
       "targets": [
         "alert-page",
