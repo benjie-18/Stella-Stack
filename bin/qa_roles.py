@@ -72,7 +72,8 @@ def cmd_diagnose(o, d):
         f.write(text)
     new = {"round": s["round"], "path": os.path.join(d.idx["qa_evidence"], o.card, str(s["round"]), "diagnosis-brief.md"),
            "sha256": hashlib.sha256(text.encode()).hexdigest()}
-    qa_findings.write("qa.diagnosed", o.card, new)
+    with qa_loop.card_lock(o.card, d):   # RTF-05 family: the card's one lock around its line
+        qa_findings.write("qa.diagnosed", o.card, new)
     print(json.dumps({"card": o.card, **new}))
     return 0
 

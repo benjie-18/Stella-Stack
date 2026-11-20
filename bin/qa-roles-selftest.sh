@@ -142,6 +142,10 @@ run s1 python3 -I "$R/bin/qa_stub_role.py" --card "$CP" --round "$(rnd "$CP")" -
 ok '[ $RC != 0 ] && coded s1 230 230 && [ "$(logsum)" = "$S0" ]' "D-CHK-01 qa_stub_role.py started directly refuses (STL-QA-230) while $STUBF is off, the trusted log unchanged"
 ed .stella/features.json --arg f "$STUBF" '(.entries[] | select(.id == $f) | .status) = "on"'
 
+# ---- RTF-01 seam (Q1 fix cycle 2): every stub slot's verdict lands on its own slot, so a round with $VR count 3 can close ----
+run cl python3 -I "$QL" close --card "$CP" --json
+ok '[ $RC = 0 ] && [ "$(cnt qa.passed "$CP")" = 1 ]' "RTF-01 seam: after the stub roles ran $VR x3 (each slot its own verdict), close passes the round (one qa.passed)"
+
 # ---- T-WORKER ----
 S0=$(logsum)
 for c in run diagnose; do

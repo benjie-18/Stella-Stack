@@ -148,7 +148,8 @@ def tick(o, d):
             else:
                 new.update(culprit=hs[hi], reopened=cands[hs[hi]])
                 for card in cands[hs[hi]]:
-                    el.append(el.build(REOPENED, card, new={"card": card, "hash": hs[hi], "tests": tests[:ql.CAP]}))
+                    with ql.card_lock(card, d):   # RTF-05 family: the card's one lock around its reopen line
+                        el.append(el.build(REOPENED, card, new={"card": card, "hash": hs[hi], "tests": tests[:ql.CAP]}))
         el.append(el.build(RUN, repo, new=new))
         return {"ran": True, **new}, problem
 

@@ -571,10 +571,11 @@ def main(argv):
             raise Stop(INPUT, "--card must be a card id (letters, digits and _.-)")
         q, tiers = data()
         a.copy = copy_dir(a.copy)
-        out = {"baseline": cmd_baseline, "tests-first": cmd_tests_first, "flaky": cmd_flaky}[a.cmd](a, q) if a.cmd != "mutants" else cmd_mutants(a, q, tiers)
+        with ql.card_lock(a.card, ql.data()):   # RTF-05 family: every writer of a card's trusted lines holds the card's one lock
+            out = {"baseline": cmd_baseline, "tests-first": cmd_tests_first, "flaky": cmd_flaky}[a.cmd](a, q) if a.cmd != "mutants" else cmd_mutants(a, q, tiers)
         print(json.dumps(out))
         return 0
-    except Stop as x:
+    except (Stop, ql.Refuse) as x:
         return el.fail(x.code, x.problem)
     except el.EventError as e:
         return el.fail(e.code, e.problem, e.extra)

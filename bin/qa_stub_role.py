@@ -70,7 +70,7 @@ def main(argv):
                 json.dump({"findings": [{"evidence": [rel], **x} for x in fx["findings"]]}, t)
                 t.flush()
                 call("submit", *base, "--role", o.role, "--file", t.name)
-        call("verdict", *base, "--role", o.role, "--result", str(fx.get("result")), "--evidence", rel)
+        call("verdict", *base, "--role", o.role, "--slot", str(o.slot), "--result", str(fx.get("result")), "--evidence", rel)
     except Exception as e:   # shortcut: one code for every failure of a slot; the text tells them apart
         return el.fail(STUB_FAILED, f"slot {o.slot} of {o.role}: {type(e).__name__}: {str(e)[:250]}")
     print(json.dumps({"card": o.card, "round": o.round, "role": o.role, "slot": o.slot, "ok": True}))

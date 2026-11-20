@@ -202,6 +202,10 @@ bind)   # AC2-bind, DG-1, DG-2
   ok '! isdone $C "$H1" && ! isdone $C "$H2"' "AC2-bind once the new hash is frozen, done is false for the old hash too"
   pass_round $C 2
   ok 'isdone $C "$H2" && ! isdone $C "$H1" && lines qa.passed $C | jq -e --arg h "$H2" ".[-1].hash == \$h and .[-1].round == 2"' "AC2-bind a new round passes on the new hash: done for it, not for the old one"
+  # QL-M4 (pass 3 tester): a freeze of the hash that just passed opens a round with no pass: done must wait for that round
+  frz $C "$REPO" "$H2"; FZ=$?
+  ok '{ [ $FZ = 0 ] && ! isdone $C "$H2" && stq $C ".done == false"; } || { [ $FZ != 0 ] && isdone $C "$H2"; }' \
+    "AC2-bind a new freeze of the passed hash: done --hash is refused until that round passes (or the freeze itself is refused and done stands)"
   # DG-2: a pending finding (blocking, not static, repro not run yet)
   D=t_0a000007; RD=$T/b7; BD=$(mkrepo "$RD"); open_ $D "$MEDIUM" "$BD"; HD=$(step "$RD" a.txt "round 1"); frz $D "$RD" "$HD"
   f=$(finding $D 1 "$BLOCK" ok.sh qa-pending); verdicts $D 1; n0=$(proof | jq length)
