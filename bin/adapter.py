@@ -638,6 +638,7 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
     else:
         mfile = write_json(os.path.join(cfg, "mcp.json"), mcp_doc)
     merge(settings, tr["settings"])   # core tools only, compaction, clearing, the log filter hook: each where the entry says the CLI supports it
+    merge(settings, e.get("run_settings") or {})   # the entry's fixed settings for every adapter run, e.g. its own skill loader off (skills come through capability load; F3-CVER-01)
     write_json(os.path.join(cfg, "run-policy.json"), tr)
     write_json(sfile, settings)
     attached = None

@@ -640,6 +640,10 @@
             "type": "integer",
             "minimum": 0,
             "description": "Tokens of the CLI's own fixed system prompt and built-in tool definitions; conformance allows the role's prefill budget plus this (owner decision 2026-11-20). Absent: 0."
+          },
+          "run_settings": {
+            "type": "object",
+            "description": "Settings merged into every adapter run's generated config (not the committed generated file), e.g. the CLI's own skill loader off so skills come only through capability load."
           }
         },
         "required": [

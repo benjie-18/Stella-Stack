@@ -480,7 +480,14 @@
         "stream (V2-06): a text part is no longer a result event (the run's end comes from the run record); tokens.input is taken as reported (whether it includes cached tokens is not checked)"
       ],
       "global_id": "b750e496-eb61-407e-91df-ee05aa734c4d",
-      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
+      "run_settings": {
+        "permission": {
+          "skill": {
+            "*": "deny"
+          }
+        }
+      }
     },
     {
       "id": "claude-code",
@@ -717,7 +724,8 @@
         "--version"
       ],
       "tested_versions": [
-        "2.1.328"
+        "2.1.328",
+        "2.1.329"
       ],
       "conn_types": [
         "api",
