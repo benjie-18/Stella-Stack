@@ -68,7 +68,7 @@ mapfile -t SEVS < <(jq -r '.severities[].id' "$QJ")
 SEVJ=$(jq -c '[.severities[].id]' "$QJ")
 S_HI=$(jq -r --arg l "$L" '[.severities[] | select(.blocks_on == "all" or ((.blocks_on | type) == "array" and (.blocks_on | index($l)) != null))][0].id // empty' "$QJ")
 S_MED=$(jq -r --arg l "$L" --arg m "$M" '[.severities[] | select((.blocks_on | type) == "array" and (.blocks_on | index($m)) != null and (.blocks_on | index($l)) == null)][0].id // empty' "$QJ")
-mapfile -t REV < <(jq -r '.roles | to_entries[] | select(.value.kind == "reviewer") | .key' "$QJ")
+mapfile -t REV < <(jq -r '.roles | to_entries[] | select(.value.kind == "review") | .key' "$QJ")
 R1=${REV[0]:-}; R2=${REV[1]:-${REV[0]:-}}
 BR=$(jq -r '.builder_roles[0]' "$RT")
 EVD=$(ix .qa_evidence)

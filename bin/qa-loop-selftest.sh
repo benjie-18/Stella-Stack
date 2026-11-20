@@ -65,9 +65,9 @@ QJ=$R/.stella/qa-loop.json; RT=$R/$(p routing); RA=$R/$(p role-assignments); DP=
 q() { jq -r "$@" "$QJ" 2>/dev/null; }
 LIGHT=$(q .depth_bump.from); MEDIUM=$(q .depth_bump.to); COMPLEX=$(jq -r '.task_tiers[-1].id' "$RT")
 BR=$(jq -r '.builder_roles[0]' "$RT"); SEL=$(jq -r .selection.global "$RA")
-TESTER=$(q '[.roles | to_entries[] | select(.value.kind == "tester") | .key][0]')
-ATTACKER=$(q '[.roles | to_entries[] | select(.value.kind == "attacker") | .key][0]')
-REV=$(q '[.roles | to_entries[] | select(.value.kind == "reviewer") | .key][-1]')
+TESTER=$(q '[.roles | to_entries[] | select(.value.kind == "evidence") | .key][0]')
+ATTACKER=$(q '[.roles | to_entries[] | select(.value.kind == "attack") | .key][0]')
+REV=$(q '[.roles | to_entries[] | select(.value.kind == "review") | .key][-1]')
 BLOCK=$(q --arg l "$LIGHT" '[.severities[] | select(.blocks_on == "all" or (.blocks_on | index($l)))][-1].id')     # blocks on a light card
 MEDSEV=$(q --arg l "$LIGHT" --arg m "$MEDIUM" '[.severities[] | select(.blocks_on != "all" and (.blocks_on | index($m)) and (.blocks_on | index($l) | not))][0].id')
 NORMAL=$(q .rounds.normal); CLIMB=$(q .rounds.climb_rung); CAPC=$(q .rounds.cap_climb); CAPN=$(q .rounds.cap_no_climb)

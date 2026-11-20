@@ -64,7 +64,7 @@ rnd() { local r; r=$(python3 -I "$QL" status --card "$1" --json 2>/dev/null | jq
 
 QR=$R/bin/qa_roles.py; QF=$R/bin/qa_findings.py
 M=$(jq -r .depth_bump.to "$QJ"); BR=$(jq -r '.builder_roles[0]' "$RT")
-VR=$(jq -r '[.roles | to_entries[] | select(.value.kind == "reviewer") | .key][-1] // empty' "$QJ")
+VR=$(jq -r '[.roles | to_entries[] | select(.value.kind == "review") | .key][-1] // empty' "$QJ")
 ed .stella/qa-loop.json --arg r "$VR" --arg m "$M" '.roles[$r].count[$m] = 3'
 FLAG=$(jq -r .diagnosis.flag "$QJ"); STUBF=$(jq -r .stub_roles.feature "$QJ"); FJ=$R/.stella/features.json
 ok '[ -n "$VR" ] && python3 -I "$R/bin/stella_data.py" check' "precondition: the copy's data checks with $VR count 3 on tier $M"

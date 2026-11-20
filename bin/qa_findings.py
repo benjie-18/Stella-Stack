@@ -12,7 +12,7 @@ CLI (on failure a catalog code STL-QA-150..155 and its plain message on stderr, 
 {card, code, problem} on stdout; 2 usage). --round must be the card's current round, frozen and not closed.
   evidence --card C --round N --file F        qa.evidence {path (root-relative), sha256, round}
   submit   --card C --round N --role R --file J   J: {"findings": [...]} or the list itself; each {check, file, lines: [a, b],
-           test, severity, repro: argv|null, evidence: [paths]|null, static: bool}; other keys (a reviewer's id, a detail text)
+           test, severity, repro: argv|null, evidence: [paths]|null, static: bool}; other keys (a role-assigned id, a detail text)
            are ignored. One qa.finding {fingerprint, round, role, status, ...} per finding. status: void (no evidence that holds;
            counts for nothing, and a void copy of a finding the round already has is not written), static, pending (blocking
            at the card's depth, not static, with a repro), unconfirmed (the same with no repro), reported (not blocking, not
@@ -20,7 +20,7 @@ CLI (on failure a catalog code STL-QA-150..155 and its plain message on stderr, 
   repro    --card C --fingerprint F           a pending finding of the round: its argv in a fresh copy of the frozen copy (box,
            tests.timeout_s); a non-zero exit or the timeout kill -> qa.finding-confirmed, exit 0 -> qa.finding-unconfirmed.
   verdict  --card C --round N --role R --result pass|fail|unverified --evidence P   qa.verdict {round, role, result, hash,
-           evidence: {path, sha256}}; refused without evidence that holds. A fail or unverified from a role of kind reviewer
+           evidence: {path, sha256}}; refused without evidence that holds. A fail or unverified from a role of kind review
            fires each trigger whose source is verdict (one qa.triggered line each, once per card).
   merge    --card C [--round N] --json         {card, round, depth, fix_list, blocking, pending}; see merge().
 Python: fingerprint(f); merge(findings, depth, qa, exempt=()); holds(card, entry, s=None)."""
@@ -37,7 +37,7 @@ BAD, EVID, ROUND, NOFIND, NORUN, FAILED = (f"STL-QA-{n}" for n in range(150, 156
 STRENGTH = ("void", "unconfirmed", "reported", "pending", "static", "confirmed")   # weakest first
 LISTED, BLOCKS = ("reported", "static", "confirmed"), ("static", "confirmed")   # statuses on the fix list; that can block
 RESULTS = ("pass", "fail", "unverified")
-REVIEWER, SRC_VERDICT = "reviewer", "verdict"   # the role kind whose fail fires the triggers of source verdict (qa-loop schema)
+REVIEWER, SRC_VERDICT = "review", "verdict"   # the role kind whose fail fires the triggers of source verdict (qa-loop schema)
 # shortcut: input caps in code (as bin/qa_tests.py has them), move to qa-loop.json when an owner needs to tune them
 MAX_FINDINGS, MAX_TEXT, MAX_PATH, MAX_EVIDENCE, MAX_ARGV, MAX_ARG = 200, 200, 400, 20, 64, 2000
 
@@ -49,7 +49,7 @@ class Refuse(Exception):
 
 
 def fingerprint(f):
-    """sha256 of the compact JSON [check, file, lines, test]: a finding's identity, whatever its wording or reviewer id."""
+    """sha256 of the compact JSON [check, file, lines, test]: a finding's identity, whatever its wording or role-assigned id."""
     return hashlib.sha256(json.dumps([f["check"], f["file"], f["lines"], f["test"]], separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
 
 
