@@ -1246,7 +1246,7 @@ pol = sa.owner_auth.policy(); j = lambda i: {"id": i, "format": "json"}; e = lam
 cases = [
     (j("host-access"), {"enabled": False, "routes": []}, {"enabled": True, "routes": []}, False, True, "host-access /enabled"),
     (j("host-access"), {"routes": []}, {"routes": [{"id": "r", "enabled": False}]}, False, True, "a route added (/routes/*/enabled)"),
-    (j("host-access"), {"routes": [{"id": "a", "enabled": True}]}, {"routes": [{"id": "b", "enabled": True}]}, False, False, "a route's id only"),
+    (j("host-access"), {"routes": [{"id": "a", "enabled": True}]}, {"routes": [{"id": "b", "enabled": True}]}, False, True, "a route's id only (F3 item H: ids are identity-critical, so renaming an enabled entry cannot move its permission without the owner proof)"),
     (j("host-access"), {"actions": [{"id": "a", "state": "ask"}]}, {"actions": [{"id": "a", "state": "run"}]}, False, True, "an action's state"),
     (j("data-policy"), {"privacy_grants": []}, {"privacy_grants": [{"x": 1}]}, False, True, "below /privacy_grants"),
     (j("data-policy"), {"default": "a", "privacy_grants": []}, {"default": "b", "privacy_grants": []}, False, False, "data-policy outside /privacy_grants"),

@@ -8,7 +8,7 @@
     },
     "entries": {
       "type": "array",
-      "maxItems": 128,
+      "maxItems": 256,
       "items": {
         "type": "object",
         "properties": {
@@ -62,7 +62,9 @@
               "send",
               "pay",
               "delete",
-              "sign_in"
+              "sign_in",
+              "host_session",
+              "input_source"
             ]
           },
           "hosts": {
@@ -119,6 +121,40 @@
             "type": "string",
             "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
             "description": "The UUID of the install that made the record (its .stella/install.json); a record moved from another install keeps it."
+          },
+          "requestable_roles": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          "core_for_roles": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          "request_approval": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "maxLength": 64
+          },
+          "definition": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string",
+                "maxLength": 16384
+              },
+              "schema": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": false
           }
         },
         "required": [

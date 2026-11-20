@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "about": "Cost levers (F2c D), read by bin/levers.py. batch_kinds: the job kinds that may wait for a discounted batch answer (never an urgent job). entries: per connection, whether it offers discounted batch processing and its prompt-cache policy (a connection with no row gets default_cache and no batch). fanout: the parallel-reviewer fan-out sends one call, waits for its first token, then sends the rest; the scheduler M1 that will own this wait does not exist yet, so the caller passes the wait as a callback and the code in bin/levers.py is a test double of it. lifetime_gap_percentile: the share of the measured gaps between calls (percent) the chosen lifetime must cover. layout: part order (the first group first), the text between parts, the name prefix of a tool part. lint.volatile_patterns: text that must never stand in a stable part (a timestamp, a run id): a pattern that matches there fails the prefix lint.",
+  "batch_kinds": [
+    "benchmark",
+    "model-check",
+    "harness-proposal",
+    "overnight-report"
+  ],
+  "default_cache": {
+    "kind": "breakpoints",
+    "breakpoints": [
+      "after_tools",
+      "after_stable"
+    ],
+    "lifetimes": [
+      {
+        "id": "short",
+        "seconds": 300
+      },
+      {
+        "id": "long",
+        "seconds": 3600
+      }
+    ]
+  },
+  "lifetime_gap_percentile": 90,
+  "layout": {
+    "order": [
+      "stable",
+      "changing"
+    ],
+    "separator": "\n",
+    "tool_part_prefix": "tool:"
+  },
+  "lint": {
+    "volatile_patterns": [
+      {
+        "id": "timestamp",
+        "pattern": "\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}"
+      },
+      {
+        "id": "epoch-seconds",
+        "pattern": "\\b1[0-9]{9}\\b"
+      },
+      {
+        "id": "uuid",
+        "pattern": "\\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\b"
+      },
+      {
+        "id": "run-id",
+        "pattern": "\\b(run|session|request)[ _:#-]*(id)?[ _:#-]*[A-Za-z]{0,3}-?[0-9a-f]{4,}\\b"
+      }
+    ]
+  },
+  "fanout": {
+    "first_token_timeout_s": 120
+  },
+  "entries": [
+    {
+      "id": "local-model-server-cache",
+      "connection": "local-model-server",
+      "batch": false,
+      "cache": {
+        "kind": "server-prefix"
+      },
+      "global_id": "e6abe721-3e2b-47da-b3be-3f4e526e5e88",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    }
+  ]
+}

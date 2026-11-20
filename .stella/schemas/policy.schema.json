@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Stack policy",
+  "description": "The stack rules written once (F3 item P): bin/roles.py policy() is the one loader (it also requires exactly one rule of each kind and the secret and commit rules whole); bin/policy.py renders the rules into each CLI's config through .stella/adapters.json. A value ending in #/<pointer> names where the data lives instead of copying it.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "about": {
+      "type": "string"
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+          },
+          "kind": {
+            "enum": [
+              "write_boundary",
+              "protected_read",
+              "secret_read",
+              "commit_rule",
+              "dispatcher_only",
+              "model_limits"
+            ]
+          },
+          "about": {
+            "type": "string"
+          },
+          "writable": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "description": "write_boundary: the writable paths; each starts with {worktree} or {run_tmp} (the run's temporary folder, the TMPDIR the CLI runs with) (policy.py check)"
+          },
+          "config_from": {
+            "type": "string",
+            "description": "write_boundary: where the CLI config names never written in a worktree live (adapters#/entries/*/config_files)"
+          },
+          "devices": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^/"
+            },
+            "description": "write_boundary: device paths a shell write may always name (globs: the null device, the standard streams)"
+          },
+          "paths_from": {
+            "type": "string"
+          },
+          "owner_from": {
+            "type": "string"
+          },
+          "deny": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "allow": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "file_deny": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "secret_read: file name globs judged only against a file path (file tools, an existing file a shell word names), never command text or box binds"
+          },
+          "file_allow": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "secret_read: file names file_deny never refuses (example, sample and template env files)"
+          },
+          "dirs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "text": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "glob_probes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "own_worktree_only": {
+            "type": "boolean"
+          },
+          "deny_git": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": {
+                "global": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sub": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "option": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sub_args": {
+                  "type": "object",
+                  "properties": {
+                    "sub": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "args": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "sub",
+                    "args"
+                  ],
+                  "additionalProperties": false
+                },
+                "why": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "why"
+              ]
+            }
+          },
+          "actions_from": {
+            "type": "string"
+          },
+          "commands": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "worker_model_from": {
+            "type": "string"
+          },
+          "forbidden_flags_key": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "sandbox": {
+      "type": "object",
+      "properties": {
+        "credential_dirs_hidden": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "writable": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "network": {
+          "type": "string",
+          "minLength": 1
+        },
+        "enforced_from": {
+          "type": "string",
+          "minLength": 1
+        },
+        "feature": {
+          "type": "string",
+          "minLength": 1
+        },
+        "about": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "credential_dirs_hidden",
+        "writable",
+        "network",
+        "enforced_from",
+        "feature"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "rules",
+    "sandbox"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "approval": {
+    "class": "pay",
+    "op": "budget-hold",
+    "ttl_s": 86400,
+    "card_prefix": "budget",
+    "summary": "Budget hold: {scope} {key} reached its cap ({measure} {spent} of {cap}). Every call of this {scope} is refused until you answer. Options: {options}.",
+    "options": {
+      "pause": "pause (the default: no answer, a denial or an expiry keeps the hold)",
+      "defer": "defer to a link the data policy allows (approve when the budget names one)",
+      "raise": "raise the cap (approve when the budget names a raise)"
+    }
+  },
+  "budgets": [
+    {
+      "id": "default-project",
+      "scope": "project",
+      "key": "*",
+      "window_days": 30,
+      "soft_percent": [
+        50,
+        80
+      ],
+      "hard": {
+        "amount": 100,
+        "currency": "USD"
+      },
+      "plan_share_cap": null,
+      "on_approve": {
+        "option": "raise",
+        "raise_percent": 25,
+        "connection": null,
+        "model": null
+      },
+      "global_id": "3b3e777d-8dcb-4d9e-a784-e359a7899904",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "default-card",
+      "scope": "card",
+      "key": "*",
+      "window_days": null,
+      "soft_percent": [
+        50,
+        80
+      ],
+      "hard": {
+        "amount": 20,
+        "currency": "USD"
+      },
+      "plan_share_cap": null,
+      "on_approve": {
+        "option": "raise",
+        "raise_percent": 25,
+        "connection": null,
+        "model": null
+      },
+      "global_id": "f34f4b39-88dd-4ffc-a701-1736265cb5d5",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "default-role",
+      "scope": "role",
+      "key": "*",
+      "window_days": 1,
+      "soft_percent": [
+        50,
+        80
+      ],
+      "hard": {
+        "amount": 50,
+        "currency": "USD"
+      },
+      "plan_share_cap": null,
+      "on_approve": {
+        "option": "raise",
+        "raise_percent": 25,
+        "connection": null,
+        "model": null
+      },
+      "global_id": "2e8c9ed2-8bcb-49b8-8910-9017166952dd",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    }
+  ],
+  "estimate": {
+    "min_history": 3,
+    "kinds": {}
+  },
+  "anomalies": {
+    "spend_rate": {
+      "window_minutes": 60,
+      "trailing_windows": 24,
+      "factor": 3,
+      "min_amount": 1,
+      "lookback_minutes": 1440
+    },
+    "retry_loop": {
+      "min_calls": 3,
+      "lookback_minutes": 1440
+    },
+    "growing_session": {
+      "min_calls": 5,
+      "lookback_minutes": 1440
+    },
+    "outlier_card": {
+      "factor": 3,
+      "min_cards": 4,
+      "lookback_minutes": 10080
+    }
+  },
+  "unnamed_keys": {
+    "project": "unnamed"
+  }
+}

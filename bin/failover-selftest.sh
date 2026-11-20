@@ -106,8 +106,8 @@ chain() {  # <connection/model[,status[,link class[,nomid]]]>...: the chain docu
 }
 shape_of() { jq -r --arg c "${1%%/*}" '.entries[] | select(.id == $c) | .protocol' "$R/.stella/connections.json"; }
 fault() { echo "{\"shape\":\"$(shape_of "$1")\",\"model\":\"${1#*/}\",\"fault\":\"$2\"${3:+,$3}}"; }   # <connection/model> <fault> [extra]
-fresh() {  # <faults JSON array>: no failover state, every fake model served with these faults, the call counts remembered
-  rm -f "$STATE"
+fresh() {  # <faults JSON array>: no failover state and no observed limit (the ledger's), every fake model served with these faults, the call counts remembered
+  rm -f "$STATE" "$R/$(ix .ledger_state)"
   jq -c --argjson f "${1:-[]}" '{models: ([.entries[] | select((.id | startswith("st-")) and .protocol != null)] | group_by(.protocol) | map({(.[0].protocol): [.[].models[].id]}) | add), faults: $f}' \
     "$R/.stella/connections.json" >"$T/ctl.json"
   python3 -I "$T/http.py" post "$CTL" "$T/ctl.json" >/dev/null 2>&1; python3 -I "$T/http.py" get "http://$LO:$PORT/_calls" >"$T/c0" 2>/dev/null
@@ -400,6 +400,77 @@ ok '[ $RC = 1 ] && J long ".code == \"STL-MDL-711\" and (.task | length) < 300" 
 jq -n '{links: {}, tasks: ([range(5000) | {key: "old-\(.)", value: {switches: 0, visited: [], history: [], last: null}}] | from_entries)}' >"$STATE"; call prune
 ok '[ $RC = 0 ] && jq -e ".tasks | length < 5000 and has(\"prune\") and has(\"old-4999\") and (has(\"old-0\") | not)" "$STATE"' "the state keeps a bounded number of task entries: a write drops the oldest ones"
 chain st-a/st-a-m1; fresh
+
+# ---- F2c A2: every call is a usage record, a limit answer is observed, a call holds its slot ----
+LG() { python3 -I "$R/bin/ledger.py" "$@"; }
+UL=$R/$(ix .usage_ledger); LS=$R/$(ix .ledger_state)
+ulast() { tail -n 1 "$UL" | jq -e "$@"; }   # the newest usage record
+chain st-a/st-a-m1; fresh; n0=$(grep -c . "$UL" 2>/dev/null || echo 0); call lg1 --card st-card
+ok '[ $RC = 0 ] && [ $(( $(grep -c . "$UL") - n0 )) = 1 ] && ulast --arg r "$ROLE" ".connection == \"st-a\" and .model == \"st-a-m1\" and .role == \$r and .project == \"st-project\" and .card == \"st-card\" and .session == \"lg1\" and .outcome == \"ok\" and .status == 200 and (.tokens | keys == [\"cache_read\", \"cache_write\", \"input\", \"output\", \"reasoning\"]) and (.tokens.input + .tokens.output > 0) and (.latency_ms | type == \"number\")"' \
+  "T-CALLERS-LEDGER: a call is one usage record with its role, project, card, task, status and the five token types the answer shows"
+ok 'ulast ".cost.priced == false" || ulast ".cost == null"' "the record carries its cost field (priced from the pricing table, or unpriced with no guess)"
+chain st-a/st-a-m1 st-b/st-b-m1; fresh "[$(fault st-a/st-a-m1 rate_limit)]"; rm -f "$LS"; call lg2
+ok '[ $RC = 0 ] && jq -s -e "any(.[]; .connection == \"st-a\" and .outcome == \"limit\" and .status == 429) and any(.[]; .connection == \"st-b\" and .outcome == \"ok\")" "$UL" && jq -e ".observed | map(select(.connection == \"st-a\" and .model == \"st-a-m1\")) | length == 1" "$LS" &&
+  jq -e ".links[\"st-a/st-a-m1\"].observed_limit | .source != null and .until != null" "$STATE"' \
+  "a limit answer (the wire shape row rate_limit) is one usage record with outcome limit, is observed by the ledger, and the cooldown entry carries that observed limit"
+ok '[ "$(LG status --connection st-a --model st-a-m1 --json | jq -r .observed.source)" != null ]' "the ledger's status shows the observed limit of the link"
+# every usage record is also one span (attribute names from the data row otlp-mapping, not from this test)
+SP=$R/$(ix .spans); OM=$R/$(ix '.files[] | select(.id == "otlp-mapping") | .path')
+an() { jq -r --arg f "$1" '.attributes[] | select(.from == $f) | .name' "$OM"; }   # <record field>: the span attribute the mapping names for it
+# no one wire shape shows all three extra types: one call per link (st-a, st-o are on different shapes), the traits give each answer cache_read 40, cache_write 7, reasoning 5
+fresh; jq -c --slurpfile c "$R/.stella/connections.json" '. + {traits: [$c[0].entries[] | select(.id == "st-a" or .id == "st-o") | .protocol as $p | .models[] | {shape: $p, model: .id, cache_read: 40, cache_write: 7, reasoning: 5}]}' "$T/ctl.json" >"$T/ctl2.json"
+python3 -I "$T/http.py" post "$CTL" "$T/ctl2.json" >/dev/null 2>&1; rm -f "$SP"
+chain st-a/st-a-m1; call sp1; chain st-o/st-o-m1; call sp1b
+ok '[ "$(grep -c . "$SP")" = 2 ] && jq -s -e --arg i "$(an tokens.input)" --arg o "$(an tokens.output)" --arg w "$(an tokens.cache_write)" --arg r "$(an tokens.cache_read)" --arg x "$(an tokens.reasoning)" --arg m "$(an model)" \
+  "all(.[].attributes; (.[\$i] > 0) and (.[\$o] > 0) and .[\$r] == 40 and (.[\$m] | startswith(\"st-\"))) and any(.[].attributes; .[\$w] == 7) and any(.[].attributes; .[\$x] == 5)" "$SP"' "a call is one span with the five token-type attributes and the model (names from otlp-mapping)"
+chain st-a/st-a-m1; fresh "[$(fault st-a/st-a-m1 "$CT")]"; rm -f "$SP"; call sp2
+ok '[ "$(grep -c . "$SP")" = 1 ] && tail -n 1 "$SP" | jq -e --argjson e "$(jq .status_codes.error "$OM")" ".status == \$e"' "a failed call is also one span (status from the mapping's status codes)"
+cat >"$T/srv429.py" <<'P'
+"""Selftest server: answers every POST with 429, the header Retry-After: <seconds> and a body that is no daily cap. First stdout line: its port."""
+import http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        b = b'{"error": {"message": "too many requests"}}'
+        self.send_response(429)
+        self.send_header("Retry-After", sys.argv[2])
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+s = http.server.ThreadingHTTPServer((sys.argv[1], 0), H)
+print(s.server_address[1], flush=True)
+s.serve_forever()
+P
+python3 -I "$T/srv429.py" "$LO" 777 >"$T/srv429.port" 2>/dev/null & S429=$!; disown   # not a job of this shell: its stop is not a line after the verdict
+for i in $(seq 100); do [ -s "$T/srv429.port" ] && break; sleep 0.1; done
+prov st-h "$SHAPE0" 100000; ed connections.json --argjson p "$(head -n1 "$T/srv429.port")" '(.entries[] | select(.id == "st-h") | .hosts[0].port) = $p'; recs
+chain st-h/st-h-m1 st-b/st-b-m1; fresh; rm -f "$LS"; call lg3
+ok '[ $RC = 0 ] && jq -e "[.observed[] | select(.connection == \"st-h\")] | length == 1 and (.[0].source == \"retry_after\") and ((.[0].until | fromdateiso8601) - now | . > 700 and . <= 777)" "$LS"' \
+  "the Retry-After header (its name is data: limit-signals) sets how long the limit is observed (777 s)"
+prov st-q "$SHAPE0" 100000; ed connections.json '(.entries[] | select(.id == "st-q") | .limits) = {max_concurrent: 1}'; recs
+chain st-q/st-q-m1 st-b/st-b-m1; fresh; ( exec python3 -I "$R/bin/ledger.py" hold --connection st-q --model st-q-m1 -- sleep 30 ) & HP=$!
+for _ in $(seq 100); do [ "$(LG status --connection st-q --model st-q-m1 --json | jq .concurrency.in_use)" = 1 ] && break; sleep 0.1; done
+call lg4; kill $HP 2>/dev/null; wait $HP 2>/dev/null
+ok '[ $RC = 0 ] && [ "$(cnt st-q/st-q-m1)" = 0 ] && [ "$(cnt st-b/st-b-m1)" = 1 ] && J lg4 ".link.connection == \"st-b\"" && grep -q "slot limit refused a call of st-q/st-q-m1" "$EV"' \
+  "T-LIM-CONC: a link whose slots another process holds is not called; the next link answers (one limit.hit line)"
+chain st-q/st-q-m1; fresh; call lg5
+ok '[ $RC = 0 ] && [ "$(cnt st-q/st-q-m1)" = 1 ] && [ "$(LG status --connection st-q --model st-q-m1 --json | jq .concurrency.in_use)" = 0 ]' "a call holds its slot while it runs and gives it back after"
+kill $S429 2>/dev/null
+
+# ---- the budget gate (F2c C, C-RT-08): route.py call asks bin/budget.py before any request is sent ----
+BUD=$R/.stella/budgets.json; BAK=$T/budgets.bak; cp "$BUD" "$BAK"; BST=$R/$(ix .budget_state); AL=$T/sup/logs/alerts.log
+ed budgets.json '.budgets = [{id: "fo-p", scope: "project", key: "st-project", window_days: 1, soft_percent: [], hard: {amount: 1, currency: "USD"}, plan_share_cap: null, on_approve: {option: "raise", raise_percent: 50, connection: null, model: null}}]'
+jq -nc --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{v: 1, id: "00000000-0000-4000-8000-000000000001", install_id: "00000000-0000-4000-8000-000000000000", ts: $t, connection: "x", model: "x", role: "r", project: "st-project", card: "c", session: "s", kind: "call", outcome: "ok", status: null,
+  tokens: {input: 1, output: 1, cache_write: 0, cache_read: 0, reasoning: 0}, latency_ms: 1, batch: false, cost: {amount: 5, currency: "USD", entry: "x", priced: true}, plan_share: null}' >>"$UL"
+N0=$(grep -c . "$UL"); chain st-a/st-a-m1; fresh; rm -f "$BST"; call bh1
+ok '[ $RC = 1 ] && J bh1 ".code == \"STL-LIM-432\"" && [ "$(cnt st-a/st-a-m1)" = 0 ] && [ "$(grep -c . "$UL")" = "$N0" ]' "a project at its hard cap: the call is refused with the hold's code, no request is sent, no usage record is written"
+ed budgets.json '.budgets[0].hard.amount = 1000'; rm -f "$BST"; fresh; call bh2
+ok '[ $RC = 0 ] && [ "$(cnt st-a/st-a-m1)" = 1 ] && J bh2 ".link.connection == \"st-a\""' "the same project under its cap: the call goes out"
+echo '{' >"$BUD"; A0=$(grep -c STL-LIM-434 "$AL" 2>/dev/null || true); fresh; call bh3
+ok '[ $RC = 1 ] && J bh3 ".code == \"STL-LIM-434\"" && [ "$(cnt st-a/st-a-m1)" = 0 ] && [ "$(grep -c STL-LIM-434 "$AL")" = "$((A0 + 1))" ]' "a budgets file that cannot be read: the call is refused with STL-LIM-434, one alert, no request sent"
+cp "$BAK" "$BUD"; rm -f "$BST"
 
 rm -f "$R/bin/resolve.py"; call nores
 ok '[ $RC = 1 ] && J nores ".code == \"STL-MDL-710\"" && [ "$(cnt st-a/st-a-m1)" = 0 ]' "with no resolver nothing is routed (STL-MDL-710)"

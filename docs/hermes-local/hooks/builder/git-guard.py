@@ -19,8 +19,25 @@ try:   # the main branch is the role table's main_branch (as bin/commit-guard.sh
     sys.path.insert(0, "/workspace/bin")
     import roles
     MB = roles.load()["main_branch"].lower()   # RT19-01: the repos sit on a case-insensitive mount
+    DENY = roles.policy_rule("commit_rule")["deny_git"]   # F3 DC-13: the git words a worker never runs are policy data (.stella/policy.json), one loader
 except Exception:
-    MB = None
+    MB, DENY = None, []   # unreadable: every git command is refused in check()
+GLOBAL = {e["global"]: e["why"] for e in DENY if "global" in e}
+SUBS = {e["sub"]: e["why"] for e in DENY if "sub" in e}
+OPTS = {e["option"]: e["why"] for e in DENY if "option" in e}
+SUB_ARGS = {}   # subcommand -> [(argument, why)]
+for _e in DENY:
+    if "sub_args" in _e:
+        SUB_ARGS.setdefault(_e["sub_args"]["sub"], []).extend((a, _e["why"]) for a in _e["sub_args"]["args"])
+
+
+def sub_arg(sub, rest):
+    """The why of the first argument of rest the commit rule refuses for sub: the word itself, or a one-letter option inside a group (-an)."""
+    for x, w in SUB_ARGS.get(sub, []):
+        short = re.fullmatch(r"-([a-zA-Z])", x)
+        if any(a == x or (short and re.fullmatch(rf"-[a-zA-Z]*{short[1]}[a-zA-Z]*", a)) for a in rest):
+            return w
+    return None
 MAIN = re.compile(r"(?:^|:)\+?(?:refs/heads/)?" + re.escape(MB or "") + "$", re.I)
 
 
@@ -110,8 +127,8 @@ def output_into_main(path):
 def why(args, env_targets=()):
     j, targets = 0, list(env_targets)
     while j < len(args) and args[j].startswith("-"):
-        if args[j] == "-c" or args[j].startswith("--config-env"):
-            return "git -c sets config"
+        if args[j].split("=", 1)[0] in GLOBAL:
+            return GLOBAL[args[j].split("=", 1)[0]]
         if args[j] in ("-C", "--git-dir", "--work-tree") and j + 1 < len(args):
             targets.append(args[j + 1])
         elif re.match(r"--(git-dir|work-tree)=", args[j]):
@@ -134,12 +151,12 @@ def why(args, env_targets=()):
     if sub in ("fetch", "pull") and (any(":" in a and MAIN.search(a) for a in rest) or any(":" in a and dest_is_main(a) for a in positional(rest)) or
                                      any(dest_is_main(v) for v in refmaps(rest))):
         return f"git {sub} into main"
-    if sub == "config":
-        return "git config"
-    if "--no-verify" in args or (sub == "commit" and any(re.fullmatch(r"-[a-zA-Z]*n[a-zA-Z]*", a) for a in rest)):
-        return "--no-verify skips the commit guard"
-    if sub == "add" and any(a in ("-A", "--all", ".", "./", ":/") or re.fullmatch(r"-[a-zA-Z]*A[a-zA-Z]*", a) for a in rest):
-        return "git add -A/--all/. sweeps unrelated files; add files by name"
+    if sub in SUBS:
+        return SUBS[sub]
+    if OPTS.keys() & set(args):
+        return OPTS[sorted(OPTS.keys() & set(args))[0]]
+    if sub_arg(sub, rest):
+        return sub_arg(sub, rest)
     if sub == "push" and (any(a in ("--all", "--mirror") or (len(a) > 2 and a.startswith("--") and ("--all".startswith(a) or "--mirror".startswith(a))) or a.lower() in (MB, "+" + MB, "refs/heads/" + MB) or
                               MAIN.search(a) for a in rest) or any(dest_is_main(a) for a in positional(rest))):
         return "git push to main"
@@ -152,7 +169,7 @@ def check(cmd):
             if t.rsplit("/", 1)[-1] != "git":
                 continue
             if MB is None:
-                return "the role table's main_branch cannot be read"
+                return "the role table's main_branch or the policy commit rule cannot be read"
             cfg_env = False   # RT20-04: GIT_CONFIG_COUNT/KEY_n/VALUE_n/PARAMETERS/GLOBAL/SYSTEM change remote.<n>.push, push.default, hooksPath
             env_targets = []   # K1c: GIT_DIR=, GIT_WORK_TREE=, GIT_COMMON_DIR= before git (also after env) are -C targets
             for u in reversed(toks[:i]):

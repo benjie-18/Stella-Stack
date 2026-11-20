@@ -1,0 +1,686 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Worker adapters",
+  "description": "One entry per coding CLI (F3): every CLI-specific name lives here. Item P: id, binary, token_env, model_flags, tools, policy. Item A: label, status, version_cmd, tested_versions, conn_types, protocols, start, cli_login, stream, supports, mcp, unverified and the top-level run_env, env_keep, output_cap, stop_grace_s. Item X2: run_policy templates.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "about": {
+      "type": "string"
+    },
+    "run_env": {
+      "type": "object",
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "capabilities_url": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "env_keep": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "uniqueItems": true
+    },
+    "output_cap": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "stop_grace_s": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 600
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+          },
+          "binary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "stub"
+            ],
+            "description": "stub: a CLI that is not installed (binary and version_cmd only); start fails closed with STL-GRD-641."
+          },
+          "token_env": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$",
+            "description": "The per-run token variable; policy.py check requires it among owner-auth worker_signals.token_env (DC-03)."
+          },
+          "model_flags": {
+            "type": "object",
+            "properties": {
+              "names": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "model": {
+                "type": "string"
+              },
+              "fallback": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string"
+              },
+              "mode_forbidden": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "skip": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "run": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "no_model": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "model_prefix": {
+                "type": "string"
+              },
+              "deny_patterns": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "names",
+              "model",
+              "fallback",
+              "mode",
+              "mode_forbidden",
+              "skip",
+              "run",
+              "no_model",
+              "model_prefix",
+              "deny_patterns"
+            ],
+            "additionalProperties": false,
+            "description": "What bin/policy.py renders as forbidden in every CLI's shell and docs/hermes-local/hooks/builder/model-guard.py judges: the CLI's command names, its model, fallback and permission-mode flags, the modes and flags that skip permissions, the flags only a model run takes, the words that run no model, the prefix a model name may carry."
+          },
+          "config_files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^/]"
+            },
+            "description": "Item P (RT3-07): the CLI's own project config files and folders (globs relative to a project folder) that would override the generated policy; the write_boundary rule denies writing them anywhere in a worktree."
+          },
+          "tools": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "class": {
+                  "enum": [
+                    "read",
+                    "write",
+                    "shell",
+                    "other"
+                  ]
+                },
+                "path": {
+                  "type": "string",
+                  "pattern": "^/"
+                },
+                "command": {
+                  "type": "string",
+                  "pattern": "^/"
+                }
+              },
+              "required": [
+                "class"
+              ],
+              "additionalProperties": false
+            },
+            "description": "DC-12: tool name -> class and the JSON pointers of its path or command in the tool input."
+          },
+          "policy": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"
+                  },
+                  "owned_pointers": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^/"
+                    }
+                  }
+                },
+                "required": [
+                  "file",
+                  "owned_pointers"
+                ],
+                "additionalProperties": false
+              },
+              "worktree_ref": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "fixed": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "pointer": {
+                      "type": "string",
+                      "pattern": "^/"
+                    },
+                    "key": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pointer",
+                    "key",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "shapes": {
+                "type": "object",
+                "propertyNames": {
+                  "enum": [
+                    "write_boundary",
+                    "protected_read",
+                    "secret_read",
+                    "commit_rule",
+                    "dispatcher_only",
+                    "model_limits"
+                  ]
+                },
+                "additionalProperties": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "pointer": {
+                        "type": "string",
+                        "pattern": "^/"
+                      },
+                      "form": {
+                        "enum": [
+                          "list",
+                          "map"
+                        ]
+                      },
+                      "value": {
+                        "type": "string"
+                      },
+                      "templates": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "minItems": 1
+                        }
+                      }
+                    },
+                    "required": [
+                      "pointer",
+                      "form",
+                      "templates"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "hook": {
+                "type": "object",
+                "properties": {
+                  "pointer": {
+                    "type": "string",
+                    "pattern": "^/"
+                  },
+                  "form": {
+                    "enum": [
+                      "list"
+                    ]
+                  },
+                  "kinds": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "enum": [
+                        "write_boundary",
+                        "protected_read",
+                        "secret_read",
+                        "commit_rule",
+                        "dispatcher_only",
+                        "model_limits"
+                      ]
+                    }
+                  },
+                  "template": {
+                    "type": "object"
+                  },
+                  "deny": {
+                    "type": "object"
+                  },
+                  "deny_exit": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2
+                  }
+                },
+                "required": [
+                  "pointer",
+                  "form",
+                  "kinds",
+                  "template",
+                  "deny"
+                ],
+                "additionalProperties": false
+              },
+              "unverified": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "target",
+              "shapes"
+            ],
+            "additionalProperties": false
+          },
+          "version_cmd": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "tested_versions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "conn_types": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "api",
+                "cli-login"
+              ]
+            },
+            "uniqueItems": true
+          },
+          "protocols": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "start": {
+            "type": "object",
+            "properties": {
+              "argv": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "env": {
+                "type": "object",
+                "properties": {
+                  "base_url_env": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                  },
+                  "token_env": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                  },
+                  "set": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                    },
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "settings": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "argv"
+            ],
+            "additionalProperties": false
+          },
+          "cli_login": {
+            "type": "object",
+            "properties": {
+              "credential_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "home_env": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+              }
+            },
+            "additionalProperties": false,
+            "description": "credential_paths are hidden by the sandbox policy and never read by the adapter."
+          },
+          "stream": {
+            "type": "object",
+            "properties": {
+              "format": {
+                "type": "string",
+                "enum": [
+                  "jsonl"
+                ]
+              },
+              "items": {
+                "$ref": "#/$defs/pointer"
+              },
+              "type": {
+                "$ref": "#/$defs/pointer"
+              },
+              "types": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "tool_use",
+                      "tool_result",
+                      "usage",
+                      "result",
+                      "error"
+                    ]
+                  }
+                }
+              },
+              "tool_name": {
+                "$ref": "#/$defs/pointer"
+              },
+              "tool_input": {
+                "$ref": "#/$defs/pointer"
+              },
+              "tool_result": {
+                "$ref": "#/$defs/pointer"
+              },
+              "ok": {
+                "$ref": "#/$defs/pointer"
+              },
+              "error": {
+                "$ref": "#/$defs/pointer"
+              },
+              "usage": {
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "type": [
+                      "string",
+                      "array"
+                    ],
+                    "pattern": "^(/[^/]*)*$",
+                    "items": {
+                      "$ref": "#/$defs/pointer"
+                    },
+                    "minItems": 1
+                  },
+                  "output": {
+                    "type": [
+                      "string",
+                      "array"
+                    ],
+                    "pattern": "^(/[^/]*)*$",
+                    "items": {
+                      "$ref": "#/$defs/pointer"
+                    },
+                    "minItems": 1
+                  }
+                },
+                "additionalProperties": false,
+                "description": "A count is the sum of the integers its pointer, or each pointer of a list, finds (e.g. input plus cache tokens)."
+              },
+              "final_text": {
+                "$ref": "#/$defs/pointer"
+              },
+              "tool_id": {
+                "$ref": "#/$defs/pointer",
+                "description": "A tool_use's id; result_id: the id its tool_result names. A result is matched to its call by it (parallel calls)."
+              },
+              "result_id": {
+                "$ref": "#/$defs/pointer"
+              },
+              "usage_key": {
+                "$ref": "#/$defs/pointer",
+                "description": "The message id a usage belongs to: a message given on several lines counts once (only what grows is added)."
+              }
+            },
+            "required": [
+              "format",
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          "supports": {
+            "type": "object",
+            "properties": {
+              "hook": {
+                "$ref": "#/$defs/flag"
+              },
+              "deferred_tools": {
+                "$ref": "#/$defs/flag"
+              },
+              "compaction": {
+                "$ref": "#/$defs/flag"
+              },
+              "clear_tool_results": {
+                "$ref": "#/$defs/flag"
+              },
+              "subagent": {
+                "$ref": "#/$defs/flag"
+              },
+              "script_tools": {
+                "$ref": "#/$defs/flag"
+              },
+              "working_notes": {
+                "$ref": "#/$defs/flag"
+              },
+              "skill_use_observable": {
+                "$ref": "#/$defs/flag"
+              },
+              "tool_use_observable": {
+                "$ref": "#/$defs/flag"
+              }
+            },
+            "additionalProperties": false
+          },
+          "run_policy": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object"
+            },
+            "description": "Item X2: per supported feature, the settings template bin/run_policy.py translate merges ({value} and the policy's own keys)."
+          },
+          "conformance_briefs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Item Q: per conformance case id, the brief this adapter's runs of that case get instead of the suite's own (.stella/conformance.json prompt and actions); the suite fills the same placeholders."
+          },
+          "mcp": {
+            "type": "object",
+            "properties": {
+              "into": {
+                "type": "string",
+                "enum": [
+                  "settings",
+                  "file"
+                ]
+              },
+              "template": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "into",
+              "template"
+            ],
+            "additionalProperties": false,
+            "description": "The capability server in the CLI's config form: {url}, {auth_header}, {auth_value}; into settings merges it into the settings file."
+          },
+          "unverified": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "global_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "install_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "unboxed": {
+            "type": "boolean",
+            "description": "Item X2 (DC-02): true only for an adapter that may run outside the OS box (the fake and test adapters). Absent or false: a run needs a boxed profile of the role for this adapter, else it is refused."
+          },
+          "prefill_baseline_tokens": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Tokens of the CLI's own fixed system prompt and built-in tool definitions; conformance allows the role's prefill budget plus this (owner decision 2026-11-20). Absent: 0."
+          },
+          "run_settings": {
+            "type": "object",
+            "description": "Settings merged into every adapter run's generated config (not the committed generated file), e.g. the CLI's own skill loader off so skills come only through capability load."
+          }
+        },
+        "required": [
+          "id",
+          "binary",
+          "global_id",
+          "install_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "read_cap_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Bytes the engine reads of one untracked file in an agent's worktree for the progress digest (V2-11); links are never followed."
+    }
+  },
+  "required": [
+    "schema_version",
+    "entries"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "pointer": {
+      "type": "string",
+      "pattern": "^(/[^/]*)*$"
+    },
+    "flag": {
+      "type": [
+        "boolean",
+        "string"
+      ],
+      "enum": [
+        true,
+        false,
+        "unverified"
+      ]
+    }
+  }
+}

@@ -49,7 +49,8 @@
     "bin/event_log.py",
     "bin/route.py",
     "bin/credentials.py",
-    "bin/consent.py"
+    "bin/consent.py",
+    "bin/model_check.py"
   ],
   "owner_commands_by_name": [
     "bin/merge-card.sh"
@@ -58,6 +59,8 @@
     "docs/hermes-local/alert-catalog.json",
     "package.json",
     "bin/approvals.py",
+    "bin/budget.py",
+    "bin/ledger.py",
     "bin/devices.py",
     "bin/event_untrusted.py",
     "bin/owner_auth.py",
@@ -102,7 +105,24 @@
     "bin/credentials.py",
     "bin/resolve.py",
     "bin/probe.py",
-    "bin/consent.py"
+    "bin/consent.py",
+    "bin/model_check.py",
+    "bin/compare.py",
+    "bin/cost.py",
+    "bin/conformance.py",
+    "bin/stuck.py",
+    ".stella/adapters.json",
+    ".stella/conformance.json",
+    ".stella/policy.json",
+    ".stella/host-policy.json",
+    "bin/adapter.py",
+    "bin/capabilities.py",
+    "bin/capabilities_mcp.py",
+    "bin/host_access.py",
+    "bin/log_filter.py",
+    "bin/policy.py",
+    "bin/run_policy.py",
+    "bin/run_token.py"
   ],
   "write_tools": [
     "write_file",

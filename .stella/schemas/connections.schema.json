@@ -214,6 +214,11 @@
                 ],
                 "minimum": 0,
                 "description": "The advertised suitability of the model (higher is better), a stub until the role benchmark (F2c): it ranks Standard's best-suited choice."
+              },
+              "family": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The model family (a key of family_map in .stella/prompt-profiles.json): picks the prompt profile."
               }
             },
             "required": [

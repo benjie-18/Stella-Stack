@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Stuck detection",
+  "description": "No-progress patterns and per-role thresholds for bin/stuck.py (F3 item S, body B10): repeat_action = N identical tool results in a row (same signature, ok and output); repeat_error = N failed results with the same output in a row; alternate = N results alternating A,B,A,B; edit_revert = N times the worktree diff returns to an earlier digest after a change; tokens_no_diff = usage tokens summed while the diff has not changed. stop and block are argv templates ({python} {bin} {run} {card} {kind} {reason} {pattern} {detail}).",
+  "x-one-document": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "poll_s",
+    "revert_window",
+    "stop",
+    "block",
+    "default",
+    "roles"
+  ],
+  "$defs": {
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      
+      "properties": {
+        "repeat_action": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "repeat_error": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "alternate": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "edit_revert": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tokens_no_diff": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "argv": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "about": {
+      "type": "string"
+    },
+    "poll_s": {
+      "type": "number",
+      "minimum": 0.1
+    },
+    "revert_window": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "how many earlier diff digests edit_revert counts a return to"
+    },
+    "stop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "argv"
+      ],
+      "properties": {
+        "argv": {
+          "$ref": "#/$defs/argv"
+        }
+      }
+    },
+    "block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "argv",
+        "kind",
+        "reason"
+      ],
+      "properties": {
+        "argv": {
+          "$ref": "#/$defs/argv"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "default": {
+      "$ref": "#/$defs/thresholds"
+    },
+    "roles": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/thresholds"
+      }
+    }
+  }
+}

@@ -41,7 +41,8 @@
           "cost": null,
           "limits": {
             "output_tokens": 8192
-          }
+          },
+          "family": "qwen"
         }
       ],
       "cost": null,
@@ -119,7 +120,8 @@
           "cost": null,
           "limits": {
             "per_day": "HAIKU_MAX_PER_DAY"
-          }
+          },
+          "family": "claude"
         },
         {
           "id": "sonnet",
@@ -133,7 +135,8 @@
           "probed_at": null,
           "probe_source": null,
           "cost": null,
-          "limits": null
+          "limits": null,
+          "family": "claude"
         },
         {
           "id": "opus",
@@ -153,7 +156,8 @@
             "purpose_models": {
               "plan": "opusplan"
             }
-          }
+          },
+          "family": "claude"
         }
       ],
       "cost": null,
@@ -179,6 +183,10 @@
       "concurrency_limit": 1,
       "credential_store": "engine_cli_store",
       "terms_ok": null,
+      "redaction_patterns": [
+        "sk-ant-oat[0-9]{2}-[A-Za-z0-9_-]{20,}",
+        "sk-ant-ort[0-9]{2}-[A-Za-z0-9_-]{20,}"
+      ],
       "global_id": "13c8eb10-3bc8-4adf-b361-cce9c550754b",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
       "link_class": "frontier"
@@ -226,7 +234,8 @@
             "streaming": null
           },
           "probed_at": "2026-11-10",
-          "probe_source": "live probe 2026-11-10, answered 200 (docs/hermes-local/fallback-routing.json, _chosen_by); capabilities not probed"
+          "probe_source": "live probe 2026-11-10, answered 200 (docs/hermes-local/fallback-routing.json, _chosen_by); capabilities not probed",
+          "family": "nemotron"
         }
       ],
       "cost": null,

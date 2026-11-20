@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OTLP span mapping",
+  "description": "How bin/cost.py turns a usage record into a span and sends spans (F2c B), as data: the attribute names and where each value comes from, the operation and span name, the namespace and service names, the span kind and status codes, the OTLP path, the headers and the auth header name and scheme, and which endpoints are reached without TLS. In a name, {namespace} is the namespace; in the span name, {operation} and {model}. An attribute takes its value from `value` (text; {operation} is replaced) or from `from` (a dotted path in the usage record, e.g. tokens.input); a missing value is `default`, and an attribute with no value is left out. The token types are those of the usage schema; a type with no attribute here is not exported.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "namespace": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "The prefix of the stack's own attributes."
+    },
+    "service_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "scope_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "operation": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "span_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "kind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5,
+      "description": "The OTLP span kind number."
+    },
+    "status_codes": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "error": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        }
+      },
+      "required": [
+        "ok",
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    "path": {
+      "type": "string",
+      "pattern": "^/[^ ]*$",
+      "maxLength": 200
+    },
+    "headers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 200
+      }
+    },
+    "auth": {
+      "type": "object",
+      "properties": {
+        "header": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]+$",
+          "maxLength": 100
+        },
+        "scheme": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50
+        }
+      },
+      "required": [
+        "header",
+        "scheme"
+      ],
+      "additionalProperties": false
+    },
+    "schemes": {
+      "type": "object",
+      "properties": {
+        "plain": {
+          "type": "string",
+          "pattern": "^[a-z]+$"
+        },
+        "tls": {
+          "type": "string",
+          "pattern": "^[a-z]+$"
+        }
+      },
+      "required": [
+        "plain",
+        "tls"
+      ],
+      "additionalProperties": false
+    },
+    "plain_when": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "local_endpoint",
+          "loopback_host"
+        ]
+      },
+      "description": "local_endpoint: the catalog entry is local; loopback_host: its host is a loopback address. Every other endpoint uses the tls scheme."
+    },
+    "attributes": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "default": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "namespace",
+    "service_name",
+    "scope_name",
+    "operation",
+    "span_name",
+    "kind",
+    "status_codes",
+    "path",
+    "headers",
+    "auth",
+    "schemes",
+    "plain_when",
+    "attributes"
+  ],
+  "additionalProperties": false
+}

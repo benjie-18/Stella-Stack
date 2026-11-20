@@ -279,7 +279,22 @@ mkdir -p "$F/elsewhere"; ln -s "$F/elsewhere" "$PH/home/.claude-link"
 ROLES_FILE=$T/roles3.json python3 "$T/plan.py" "$S" "$F" "$P" "$WT" card/x >"$T/plan.txt" 2>"$T/out"
 ok 'grep -q "^REFUSED.*symlink" "$T/plan.txt" && [ ! -e "$F/elsewhere/settings.json" ]; r=$?; head -c 300 "$T/plan.txt" >"$T/out"; [ $r = 0 ]' "2.45 a symlinked Claude config folder is refused and nothing is created through it (RT-A-04)"
 rm "$PH/home/.claude-link"
-ok 'S1=$(python3 -c "import ast,sys; t=ast.parse(open(\"/workspace/docs/hermes-local/hooks/builder/secret-guard.py\").read()); print(len([n for n in t.body if isinstance(n, ast.Assign) and n.targets[0].id==\"SECRETS\"]))"); [ "$S1" = 1 ]' "2.36 the secret classes still come from one constant in secret-guard.py (the box reads it, no copy)"
+# 2.36 (F3 ruling on DC-11): the secret classes moved from a constant in secret-guard.py to the policy's secret_read rule (.stella/policy.json),
+# read through roles.py; the box's classes are that rule, and neither the box nor the read guard holds a literal copy (still one source)
+cat >"$T/sc.py" <<'PY'
+import ast, json, os, sys
+sys.path.insert(0, sys.argv[1]); import roles, box
+rules = [r for r in json.load(open(os.path.join(roles.DATA_ROOT, ".stella/policy.json"), encoding="utf-8"))["rules"] if r["kind"] == "secret_read"]
+assert len(rules) == 1 and rules[0]["deny"], "exactly one secret_read rule, with deny globs"
+assert roles.policy_rule("secret_read") == rules[0], "the one loader reads that rule"
+assert box.secret_classes() == (list(rules[0]["deny"]), list(rules[0]["allow"])), "box.secret_classes() is the rule's deny and allow"
+deny = set(rules[0]["deny"])
+for f in sys.argv[2:]:
+    for n in ast.walk(ast.parse(open(f, encoding="utf-8").read())):
+        if isinstance(n, (ast.List, ast.Tuple, ast.Set)) and deny & {e.value for e in n.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)}:
+            raise SystemExit(f"{f}:{n.lineno} holds a literal copy of the secret classes")
+PY
+ok 'python3 -I "$T/sc.py" "$S" "$S/box.py" /workspace/docs/hermes-local/hooks/builder/secret-guard.py >"$T/out" 2>&1' "2.36 the secret classes come from one source, the policy's secret_read rule: box.secret_classes() equals it, no literal copy in box.py or secret-guard.py"
 
 
 # ---- 3. the real bwrap box (box_argv) on the scratch trees: the git-route attacks must fail inside and succeed outside

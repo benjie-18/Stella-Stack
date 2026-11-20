@@ -1,0 +1,865 @@
+{
+  "schema_version": 1,
+  "about": "Worker adapters (F3): one entry per coding CLI, every CLI-specific name in data. Item P owns id, binary, token_env, model_flags, config_files, tools (DC-12: tool name -> read|write|shell|other and the input pointers of its path or command) and policy (target file and owned pointers, one config shape list per policy rule kind, a hook where the CLI runs one, fixed entries, what could not be verified). In a template {name}, {home}, {tail}, {path}, {word}, {sub}, {command}, {binary}, {pattern} are the rule's items, {stack} the stack folder; the secret_read sets are name (every file name glob), prefix (a name glob that starts a word), suffix (a *-glob whose literal end ends a word, so *.key is not .keys()), home, tail (a home glob's last two parts, as the rule's text patterns name it), file (file_deny: for a read config only) and allow (allow and file_allow). Item A owns the rest; the schema describes each field.",
+  "run_env": {
+    "adapter": "STELLA_ADAPTER",
+    "capabilities_url": "STELLA_CAPABILITIES_URL"
+  },
+  "env_keep": [
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "TZ",
+    "TMPDIR",
+    "NO_PROXY",
+    "no_proxy",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy"
+  ],
+  "output_cap": 4000,
+  "stop_grace_s": 10,
+  "read_cap_bytes": 1048576,
+  "entries": [
+    {
+      "id": "opencode",
+      "label": "OpenCode",
+      "status": "active",
+      "binary": "opencode",
+      "token_env": "STELLA_RUN_TOKEN",
+      "tools": {
+        "read": {
+          "class": "read",
+          "path": "/path"
+        },
+        "edit": {
+          "class": "write",
+          "path": "/path"
+        },
+        "write": {
+          "class": "write",
+          "path": "/path"
+        },
+        "grep": {
+          "class": "read",
+          "path": "/path"
+        },
+        "glob": {
+          "class": "read",
+          "path": "/pattern"
+        },
+        "list": {
+          "class": "read",
+          "path": "/path"
+        },
+        "bash": {
+          "class": "shell",
+          "command": "/command"
+        },
+        "webfetch": {
+          "class": "other"
+        },
+        "task": {
+          "class": "other"
+        },
+        "shell": {
+          "class": "shell",
+          "command": "/command"
+        },
+        "skill": {
+          "class": "other"
+        }
+      },
+      "config_files": [
+        "opencode.json",
+        "opencode.jsonc",
+        ".opencode"
+      ],
+      "model_flags": {
+        "names": [
+          "opencode",
+          "@opencode/cli"
+        ],
+        "model": "--model",
+        "fallback": "-m",
+        "mode": "--agent",
+        "mode_forbidden": [],
+        "skip": [],
+        "run": [
+          "run"
+        ],
+        "no_model": [
+          "run",
+          "mini",
+          "acp",
+          "serve",
+          "api",
+          "--version",
+          "-v",
+          "--help",
+          "-h",
+          "upgrade",
+          "update",
+          "uninstall",
+          "debug",
+          "auth",
+          "mcp",
+          "plugin",
+          "models",
+          "stats",
+          "session",
+          "service",
+          "reload",
+          "pair"
+        ],
+        "model_prefix": "",
+        "deny_patterns": [
+          "*--model *",
+          "*--model=*",
+          "*-m *"
+        ]
+      },
+      "policy": {
+        "target": {
+          "file": "opencode.json",
+          "owned_pointers": [
+            "/permission/bash",
+            "/permission/edit",
+            "/permission/read",
+            "/permission/external_directory"
+          ]
+        },
+        "worktree_ref": null,
+        "fixed": [
+          {
+            "pointer": "/permission/bash",
+            "key": "bin/escalate.sh *",
+            "value": "allow"
+          },
+          {
+            "pointer": "/permission/bash",
+            "key": "{stack}/bin/escalate.sh *",
+            "value": "allow"
+          }
+        ],
+        "shapes": {
+          "model_limits": [
+            {
+              "pointer": "/permission/bash",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "forbidden": [
+                  "{binary} {pattern}",
+                  "* {binary} {pattern}",
+                  "*/{binary} {pattern}"
+                ]
+              }
+            }
+          ],
+          "protected_read": [
+            {
+              "pointer": "/permission/bash",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "owner": [
+                  "*{name}*"
+                ]
+              }
+            },
+            {
+              "pointer": "/permission/edit",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "owner": [
+                  "*{name}*"
+                ],
+                "repo": [
+                  "{path}",
+                  "{path}/*"
+                ],
+                "home": [
+                  "~/{home}/*"
+                ]
+              }
+            },
+            {
+              "pointer": "/permission/read",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "owner": [
+                  "*{name}*"
+                ],
+                "repo": [
+                  "{path}",
+                  "{path}/*"
+                ],
+                "home": [
+                  "~/{home}/*"
+                ]
+              }
+            }
+          ],
+          "secret_read": [
+            {
+              "pointer": "/permission/bash",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "prefix": [
+                  "*/{name}*",
+                  "* {name}*"
+                ],
+                "suffix": [
+                  "*{name}",
+                  "*{name} *",
+                  "*{name}'*",
+                  "*{name}\"*",
+                  "*{name};*",
+                  "*{name}|*",
+                  "*{name})*",
+                  "*{name}>*",
+                  "*{name}&*"
+                ],
+                "home": [
+                  "*/{home}*",
+                  "*~/{home}*"
+                ],
+                "tail": [
+                  "*{tail}*"
+                ]
+              }
+            },
+            {
+              "pointer": "/permission/read",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "name": [
+                  "{name}",
+                  "*/{name}"
+                ],
+                "home": [
+                  "*/{home}",
+                  "*/{home}/*"
+                ],
+                "file": [
+                  "{name}",
+                  "*/{name}"
+                ]
+              }
+            },
+            {
+              "pointer": "/permission/read",
+              "form": "map",
+              "value": "allow",
+              "templates": {
+                "allow": [
+                  "{name}",
+                  "*/{name}"
+                ]
+              }
+            }
+          ],
+          "commit_rule": [
+            {
+              "pointer": "/permission/bash",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "global": [
+                  "git {word} *",
+                  "git {word}=*"
+                ],
+                "sub": [
+                  "git {word}",
+                  "git {word} *",
+                  "git * {word} *"
+                ],
+                "option": [
+                  "git *{word}*"
+                ],
+                "sub_args": [
+                  "git {sub} {word}",
+                  "git {sub} {word} *",
+                  "git {sub} * {word}",
+                  "git {sub} * {word} *"
+                ]
+              }
+            }
+          ],
+          "dispatcher_only": [
+            {
+              "pointer": "/permission/bash",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "command": [
+                  "{command}",
+                  "{command} *"
+                ]
+              }
+            }
+          ],
+          "write_boundary": [
+            {
+              "pointer": "/permission/external_directory",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "outside": [
+                  "*"
+                ]
+              }
+            },
+            {
+              "pointer": "/permission/external_directory",
+              "form": "map",
+              "value": "allow",
+              "templates": {
+                "writable": [
+                  "{path}",
+                  "{path}/*"
+                ]
+              }
+            },
+            {
+              "pointer": "/permission/edit",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "config": [
+                  "{name}",
+                  "{name}/*",
+                  "*/{name}",
+                  "*/{name}/*"
+                ]
+              }
+            },
+            {
+              "pointer": "/permission/bash",
+              "form": "map",
+              "value": "deny",
+              "templates": {
+                "config": [
+                  "*{name}*"
+                ]
+              }
+            }
+          ]
+        },
+        "unverified": [
+          "pattern semantics (absolute or project-relative paths, * across /, which of two matching patterns wins) are taken from the patterns the repo config already used and the CLI binary's strings; opencode.ai is not on the firewall allowlist",
+          "external_directory gates every tool call (read, edit, write, list, grep, glob, bash) that names a path outside the project folder, not only writes; it is rendered from the write_boundary rule as deny for every path but the run's worktree and run tmp, so a read outside them (the stack's docs, a parent card's worktree) is denied too: the write boundary is stricter here than on the hook CLI",
+          "the tool input names (filePath, path, command) come from the CLI binary's strings",
+          "whether a ~/ pattern is expanded to the home folder (the protected home folders are written ~/<folder>/* so a project's own .claude or .hermes folder is not hit)",
+          "model_flags are read from `opencode --help` and `opencode run --help` (v2.0.26): --model (and its short form -m, kept in fallback since the CLI has no fallback flag), --agent (an agent of the config may name a model; no value is forbidden), no flag that skips permissions (--auto approves only what is not denied). Every subcommand is in no_model because a run without --model uses the configured default, which container-start pins to the resolver's worker link; the model guard then judges only an explicit --model or -m. @opencode/cli is the npm package name (npx form)",
+          "config_files: OpenCode reads a project opencode.json, opencode.jsonc and .opencode/ (from the working folder up to the git root) above the OPENCODE_CONFIG file (OpenCode config docs, not run here), so the write_boundary rule denies writing them anywhere in the worktree (RT3-07)"
+        ]
+      },
+      "version_cmd": [
+        "opencode",
+        "--version"
+      ],
+      "tested_versions": [
+        "2.0.26"
+      ],
+      "conn_types": [
+        "api",
+        "cli-login"
+      ],
+      "protocols": [
+        "chat-completions"
+      ],
+      "start": {
+        "argv": [
+          "opencode",
+          "run",
+          "--standalone",
+          "--auto",
+          "--format",
+          "json",
+          "--model",
+          "stella/{model}",
+          "{prompt}"
+        ],
+        "env": {
+          "token_env": "STELLA_RUN_TOKEN",
+          "set": {
+            "OPENCODE_CONFIG": "{settings_file}",
+            "OPENCODE_CONFIG_CONTENT": "{settings_json}",
+            "OPENCODE_DISABLE_PROJECT_CONFIG": "1"
+          }
+        },
+        "settings": {
+          "provider": {
+            "stella": {
+              "npm": "@ai-sdk/openai-compatible",
+              "name": "Stella model proxy",
+              "options": {
+                "baseURL": "{base_url}/v1",
+                "apiKey": "{env:STELLA_RUN_TOKEN}"
+              },
+              "models": {
+                "{model}": {}
+              }
+            }
+          }
+        }
+      },
+      "cli_login": {
+        "credential_paths": [
+          "{home}/.local/share/opencode/auth.json"
+        ],
+        "home_env": "HOME"
+      },
+      "stream": {
+        "format": "jsonl",
+        "type": "/type",
+        "types": {
+          "tool_use": [
+            "tool_use",
+            "tool_result"
+          ],
+          "step_finish": "usage",
+          "error": "error"
+        },
+        "tool_name": "/part/tool",
+        "tool_input": "/part/state/input",
+        "tool_result": "/part/state/output",
+        "error": "/part/state/error",
+        "usage": {
+          "input": "/part/tokens/input",
+          "output": "/part/tokens/output"
+        },
+        "final_text": "/part/text"
+      },
+      "supports": {
+        "hook": false,
+        "deferred_tools": "unverified",
+        "compaction": "unverified",
+        "clear_tool_results": "unverified",
+        "subagent": "unverified",
+        "script_tools": "unverified",
+        "working_notes": "unverified",
+        "skill_use_observable": "unverified",
+        "tool_use_observable": "unverified"
+      },
+      "mcp": {
+        "into": "settings",
+        "template": {
+          "mcp": {
+            "stella-capabilities": {
+              "type": "remote",
+              "url": "{url}",
+              "headers": {
+                "{auth_header}": "{auth_value}"
+              },
+              "enabled": true
+            }
+          }
+        }
+      },
+      "unverified": [
+        "run flags (run, --standalone, --auto, --format json, --model provider/model) are from `opencode run --help` (v2.0.26); a real run was not made here",
+        "OPENCODE_CONFIG as the config file variable is from the binary's strings; the provider block (openai-compatible, baseURL, {env:VAR} apiKey) and the mcp remote form follow the OpenCode docs, not run here",
+        "the --format json event names and pointers (type, part.tool, part.state.input/output, part.tokens, part.text) are not verified against a real run",
+        "a cli-login run (OpenCode's own provider login) is not tried",
+        "run policy (item X2): opencode run --help (2.0.26) shows no hook, compaction, deferred-tool or subagent flag and no config key for them was verified, so every run-policy feature is unverified or false and translate lists them as unsupported; the brief carries the notes file and the output style for every adapter",
+        "RT3-07 adapter half: the generated config also rides in OPENCODE_CONFIG_CONTENT (inline config, the last and highest source in the OpenCode config docs' precedence list) and OPENCODE_DISABLE_PROJECT_CONFIG is set; both names are in the 2.0.26 binary's strings, neither was tried live (running the CLI was refused here), and whether {env:VAR} is substituted in inline config is not checked (OPENCODE_CONFIG keeps the file form)",
+        "stream (V2-06): a text part is no longer a result event (the run's end comes from the run record); tokens.input is taken as reported (whether it includes cached tokens is not checked)"
+      ],
+      "global_id": "b750e496-eb61-407e-91df-ee05aa734c4d",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
+      "run_settings": {
+        "permission": {
+          "skill": {
+            "*": "deny"
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-code",
+      "label": "Claude Code",
+      "status": "active",
+      "binary": "claude",
+      "token_env": "STELLA_RUN_TOKEN",
+      "model_flags": {
+        "names": [
+          "claude",
+          "claude-code"
+        ],
+        "model": "--model",
+        "fallback": "--fallback-model",
+        "mode": "--permission-mode",
+        "mode_forbidden": [
+          "bypassPermissions"
+        ],
+        "skip": [
+          "--dangerously-skip-permissions",
+          "--allow-dangerously-skip-permissions",
+          "--yolo"
+        ],
+        "run": [
+          "-p",
+          "--print"
+        ],
+        "no_model": [
+          "--version",
+          "-v",
+          "-V",
+          "--help",
+          "-h",
+          "mcp",
+          "doctor",
+          "update",
+          "config",
+          "plugin"
+        ],
+        "model_prefix": "claude-",
+        "deny_patterns": [
+          "*--model *",
+          "*--model=*",
+          "*opusplan*",
+          "*--dangerously-skip-permissions*",
+          "*--allow-dangerously-skip-permissions*",
+          "setup-token*",
+          "-p*",
+          "*-p *",
+          "*--print*"
+        ]
+      },
+      "tools": {
+        "Read": {
+          "class": "read",
+          "path": "/file_path"
+        },
+        "Edit": {
+          "class": "write",
+          "path": "/file_path"
+        },
+        "Write": {
+          "class": "write",
+          "path": "/file_path"
+        },
+        "MultiEdit": {
+          "class": "write",
+          "path": "/file_path"
+        },
+        "NotebookEdit": {
+          "class": "write",
+          "path": "/notebook_path"
+        },
+        "Grep": {
+          "class": "read",
+          "path": "/path"
+        },
+        "Glob": {
+          "class": "read",
+          "path": "/path"
+        },
+        "Bash": {
+          "class": "shell",
+          "command": "/command"
+        },
+        "WebFetch": {
+          "class": "other"
+        },
+        "WebSearch": {
+          "class": "other"
+        },
+        "Task": {
+          "class": "other"
+        }
+      },
+      "config_files": [
+        ".claude/settings*.json"
+      ],
+      "policy": {
+        "target": {
+          "file": "docs/hermes-local/generated/claude-code.settings.json",
+          "owned_pointers": [
+            "/permissions/deny",
+            "/hooks/PreToolUse"
+          ]
+        },
+        "worktree_ref": "${CLAUDE_PROJECT_DIR}",
+        "shapes": {
+          "secret_read": [
+            {
+              "pointer": "/permissions/deny",
+              "form": "list",
+              "templates": {
+                "name": [
+                  "Read({name})",
+                  "Read(//**/{name})"
+                ],
+                "home": [
+                  "Read(~/{home})",
+                  "Read(~/{home}/**)"
+                ]
+              }
+            }
+          ],
+          "protected_read": [
+            {
+              "pointer": "/permissions/deny",
+              "form": "list",
+              "templates": {
+                "repo": [
+                  "Read(/{path})",
+                  "Read(/{path}/**)",
+                  "Edit(/{path})",
+                  "Edit(/{path}/**)"
+                ],
+                "home": [
+                  "Read(~/{home}/**)",
+                  "Edit(~/{home}/**)"
+                ],
+                "owner": [
+                  "Read(//**/{name})",
+                  "Edit(//**/{name})"
+                ]
+              }
+            }
+          ],
+          "commit_rule": [
+            {
+              "pointer": "/permissions/deny",
+              "form": "list",
+              "templates": {
+                "global": [
+                  "Bash(git {word} *)",
+                  "Bash(git {word}=*)"
+                ],
+                "sub": [
+                  "Bash(git {word})",
+                  "Bash(git {word} *)",
+                  "Bash(git * {word} *)"
+                ],
+                "option": [
+                  "Bash(git *{word}*)"
+                ],
+                "sub_args": [
+                  "Bash(git {sub} {word})",
+                  "Bash(git {sub} {word} *)",
+                  "Bash(git {sub} * {word})",
+                  "Bash(git {sub} * {word} *)"
+                ]
+              }
+            }
+          ],
+          "dispatcher_only": [
+            {
+              "pointer": "/permissions/deny",
+              "form": "list",
+              "templates": {
+                "command": [
+                  "Bash({command})",
+                  "Bash({command} *)"
+                ]
+              }
+            }
+          ],
+          "model_limits": [
+            {
+              "pointer": "/permissions/deny",
+              "form": "list",
+              "templates": {
+                "forbidden": [
+                  "Bash({binary} {pattern})",
+                  "Bash(npx {binary} {pattern})",
+                  "Bash(npx */{binary} {pattern})",
+                  "Bash(*/{binary} {pattern})"
+                ]
+              }
+            }
+          ]
+        },
+        "hook": {
+          "pointer": "/hooks/PreToolUse",
+          "form": "list",
+          "kinds": [
+            "write_boundary",
+            "secret_read",
+            "protected_read"
+          ],
+          "template": {
+            "matcher": "{matcher}",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "{command}"
+              }
+            ]
+          },
+          "deny": {
+            "hookSpecificOutput": {
+              "hookEventName": "PreToolUse",
+              "permissionDecision": "deny",
+              "permissionDecisionReason": "{reason}"
+            }
+          },
+          "deny_exit": 0
+        },
+        "unverified": [
+          "the hook command is run through a shell that expands ${CLAUDE_PROJECT_DIR} (the hooks guide shows it in a command; not run here)",
+          "a Read deny on ~/.claude or ~/.hermes leaves the CLI's own reads of its config alone (the permissions guide says deny rules apply to Claude's tools)",
+          "config_files: Claude Code reads a project .claude/settings.json and .claude/settings.local.json, which can add or disable hooks (settings docs, not run here); the policy hook refuses writing them in the worktree (RT3-07)"
+        ]
+      },
+      "version_cmd": [
+        "claude",
+        "--version"
+      ],
+      "tested_versions": [
+        "2.1.328",
+        "2.1.329"
+      ],
+      "conn_types": [
+        "api",
+        "cli-login"
+      ],
+      "protocols": [
+        "messages"
+      ],
+      "start": {
+        "argv": [
+          "claude",
+          "-p",
+          "--output-format",
+          "stream-json",
+          "--verbose",
+          "--allowedTools",
+          "Bash,mcp__stella-capabilities",
+          "--disallowedTools",
+          "Skill",
+          "--model",
+          "{model}",
+          "--settings",
+          "{settings_file}",
+          "--setting-sources",
+          "user",
+          "--mcp-config",
+          "{mcp_config}",
+          "--strict-mcp-config",
+          "--permission-mode",
+          "acceptEdits",
+          "--permission-prompts",
+          "none",
+          "{prompt}"
+        ],
+        "env": {
+          "base_url_env": "ANTHROPIC_BASE_URL",
+          "token_env": "ANTHROPIC_AUTH_TOKEN"
+        }
+      },
+      "cli_login": {
+        "credential_paths": [
+          "{home}/.claude/.credentials.json"
+        ],
+        "home_env": "CLAUDE_CONFIG_DIR"
+      },
+      "stream": {
+        "format": "jsonl",
+        "items": "/message/content",
+        "type": "/type",
+        "types": {
+          "assistant": "usage",
+          "tool_use": "tool_use",
+          "tool_result": "tool_result",
+          "result": "result"
+        },
+        "tool_name": "/name",
+        "tool_input": "/input",
+        "tool_id": "/id",
+        "result_id": "/tool_use_id",
+        "tool_result": "/content",
+        "error": "/is_error",
+        "usage": {
+          "input": [
+            "/message/usage/input_tokens",
+            "/message/usage/cache_creation_input_tokens",
+            "/message/usage/cache_read_input_tokens"
+          ],
+          "output": "/message/usage/output_tokens"
+        },
+        "usage_key": "/message/id",
+        "final_text": "/result"
+      },
+      "supports": {
+        "hook": true,
+        "deferred_tools": "unverified",
+        "compaction": "unverified",
+        "clear_tool_results": "unverified",
+        "subagent": true,
+        "script_tools": "unverified",
+        "working_notes": "unverified",
+        "skill_use_observable": "unverified",
+        "tool_use_observable": "unverified"
+      },
+      "mcp": {
+        "into": "file",
+        "template": {
+          "mcpServers": {
+            "stella-capabilities": {
+              "type": "http",
+              "url": "{url}",
+              "headers": {
+                "{auth_header}": "{auth_value}"
+              }
+            }
+          }
+        }
+      },
+      "unverified": [
+        "the flags (-p, --output-format stream-json, --verbose, --model, --settings, --mcp-config, --strict-mcp-config, --permission-mode, --permission-prompts) are from `claude --help` (2.1.328); a real run was not made here",
+        "the proxy address and the token variable of start.env follow the Claude Code docs, not run here",
+        "the stream-json pointers (message.content items of type tool_use / tool_result, the result line's result and usage) are not verified against a real run",
+        "compaction (--autocompact) and subagents (--agents) are from --help; the other supports flags are not checked",
+        "run policy (item X2): the log filter hook is a second entry in the policy hook's list that rewrites a shell call's command through updatedInput of a PreToolUse hook (hooks guide shape; not run here, and whether a hook that gives updatedInput with no permissionDecision keeps the permission rules is unverified); compaction is unverified because `claude --autocompact` takes a token window, not the policy's percentage, and no settings key for a percentage was verified; subagent is true (`claude --agents`) but no settings template applies explore_in_subagent yet, so it is only listed as supported; deferred_tools, clear_tool_results and working_notes have no verified setting",
+        "RT3-07 adapter half: --setting-sources user (from claude --help 2.1.328) leaves out the project and local settings a worktree could plant; the generated --settings file still applies; not run live",
+        "stream (RT3-04, V2-06): usage is read from every assistant message (input plus cache creation and cache read tokens, counted once per message id), tool results are matched to their tool_use by id; written from the stream-json message format, not captured from a real run",
+        "prefill_baseline_tokens 20000: the CLI's own system prompt and built-in tool definitions, measured about 20000 of 23394 first-call input tokens on 2.1.329 (live run 2026-11-20); an owner setting"
+      ],
+      "global_id": "5444b0a4-6d63-40d6-8631-e27d626a4abd",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
+      "prefill_baseline_tokens": 20000
+    },
+    {
+      "id": "codex",
+      "label": "Codex CLI",
+      "status": "stub",
+      "binary": "codex",
+      "version_cmd": [
+        "codex",
+        "--version"
+      ],
+      "global_id": "d0882b6d-fda4-4eb3-a378-38a228ff1db0",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "gemini",
+      "label": "Gemini CLI",
+      "status": "stub",
+      "binary": "gemini",
+      "version_cmd": [
+        "gemini",
+        "--version"
+      ],
+      "global_id": "a0bdece4-74a6-4fab-91c2-85aa1b00e44a",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    }
+  ]
+}

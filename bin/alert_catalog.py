@@ -266,11 +266,19 @@ def refusal_streak(j, log_path=None):
     return best
 
 
+def _no_dup_keys(pairs):
+    keys = [k for k, _ in pairs]
+    dup = sorted({k for k in keys if keys.count(k) > 1})
+    if dup:
+        raise ValueError(f"duplicate key(s) {', '.join(dup)} in one object (two entries fused?)")
+    return dict(pairs)
+
+
 def validate():
     """Problems with the catalog, as a list of strings (empty = valid)."""
     path = os.environ.get("ALERT_CATALOG") or f"{ROOT}/docs/hermes-local/alert-catalog.json"
     try:
-        alerts = json.load(open(path, encoding="utf-8"))["alerts"]
+        alerts = json.load(open(path, encoding="utf-8"), object_pairs_hook=_no_dup_keys)["alerts"]   # a merge that fuses two entries repeats keys
     except Exception as e:
         return [f"{path}: {type(e).__name__}: {e}"]
     errs, seen = [], set()

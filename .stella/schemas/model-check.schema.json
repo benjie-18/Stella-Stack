@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Model comparison parameters",
+  "description": "Every number that acts in a model or profile comparison (bin/compare.py, F2c item E) and in the weekly model check. Defaults chosen before any result was seen; the owner may change them here, no code names them. Scores are on a 0 to 1 scale.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "confidence": {"type": "number", "minimum": 0.5, "maximum": 0.999, "description": "Confidence level of the interval on the mean paired difference (0.95 = a 95% interval). Strictly above 0.5 and below 1: bin/compare.py rejects the ends."},
+    "trials": {"type": "integer", "minimum": 2, "maximum": 100, "description": "Trials of each task for each arm."},
+    "pass_k": {"type": "integer", "minimum": 1, "maximum": 100, "description": "k of pass^k: the chance that k trials of a task all pass. Not above trials (bin/compare.py check)."},
+    "margin": {"type": "number", "minimum": 0, "maximum": 1, "description": "Non-inferiority margin: a cheaper arm is accepted when the lower bound of the interval stays above minus this."},
+    "min_tasks": {"type": "integer", "minimum": 2, "maximum": 100000, "description": "Fewest paired tasks a comparison needs; fewer is inconclusive (min_sample)."},
+    "routing_min_tasks": {"type": "integer", "minimum": 1, "maximum": 100000, "description": "Fewest benchmark tasks of one link and role before the benchmark mean replaces the advertised score in routing."},
+    "stale_catalog_days": {"type": "integer", "minimum": 1, "maximum": 3650, "description": "Age in days after which a provider model list counts as stale in the weekly check (read by item F)."},
+    "regression_set": {
+      "type": "object",
+      "description": "The rule for the regression set (tasks from failed cards that must keep passing).",
+      "properties": {
+        "min_pass_rate": {"type": "number", "minimum": 0, "maximum": 1, "description": "Share of a set task's trials the candidate must pass; 1 means every trial."}
+      },
+      "required": ["min_pass_rate"],
+      "additionalProperties": false
+    },
+    "event_chunk": {"type": "integer", "minimum": 1, "maximum": 10000, "description": "Record digests in one trusted benchmark.recorded event line."},
+    "read_cap_bytes": {"type": "integer", "minimum": 1024, "maximum": 1073741824, "description": "The most bytes bin/compare.py reads of one input file (an arm or a regression file)."},
+    "weekly": {
+      "type": "object",
+      "description": "The weekly model check (F2c item F, bin/model_check.py) and the one engine exception of the apply contract (bin/stella_data.py frozen). Optional for the comparison library; the check refuses to run without it.",
+      "properties": {
+        "setting": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$", "description": "The settings registry key of the owner setting that lets the check update built-in presets (boolean; unreadable counts as off)."},
+        "engine_tool": {"type": "string", "pattern": "^[A-Za-z0-9._/-]+$", "description": "The one script (path from the stack root) the apply tool lets use the engine exception."},
+        "pick_fields": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["pins", "fallbacks", "escalation_chain"]}, "description": "The link lists of a preset role whose links the check may change."},
+        "pick_keys": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["connection", "model"]}, "description": "The keys of a link a pick may change; nothing else of the preset changes but one appended changelog entry."},
+        "accept": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["better", "non_inferior"]}, "description": "The bin/compare.py decisions that accept a candidate with benchmark data, preferred first (non_inferior only ever comes for a cheaper candidate)."},
+        "cheaper_tokens": {"type": "object", "description": "The reference call whose price (bin/cost.py, pricing rows applied before the run) says which link is cheaper.", "properties": {"input": {"type": "integer", "minimum": 0}, "output": {"type": "integer", "minimum": 0}, "cache_write": {"type": "integer", "minimum": 0}, "cache_read": {"type": "integer", "minimum": 0}, "reasoning": {"type": "integer", "minimum": 0}}, "required": ["input", "output", "cache_write", "cache_read", "reasoning"], "additionalProperties": false},
+        "pick_id_prefix": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,15}$", "description": "The prefix of a pick id (the rest is random hex)."},
+        "pricing_source": {"type": "string", "minLength": 1, "maxLength": 200, "description": "The source text of a pricing row the check appends; {connection} and {date} are filled in."},
+        "changelog": {"type": "string", "minLength": 1, "maxLength": 400, "description": "The changelog entry of a pick; {pick}, {role}, {field}, {index}, {old}, {new} and {reason} are filled in."},
+        "reasons": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 300}, "description": "The plain text of each reason id the check reports (a pick, a refusal, a skip); an id with no text is shown as itself."}
+      },
+      "required": ["setting", "engine_tool", "pick_fields", "pick_keys", "accept", "cheaper_tokens", "pick_id_prefix", "pricing_source", "changelog", "reasons"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["schema_version", "confidence", "trials", "pass_k", "margin", "min_tasks", "routing_min_tasks", "stale_catalog_days", "regression_set", "event_chunk", "read_cap_bytes"],
+  "additionalProperties": false
+}

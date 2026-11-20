@@ -80,6 +80,28 @@ SNAP = {}   # the start of a writing command: key, file, what it writes, and sta
 STOPPING = []   # the first interrupt received: from then on the run is stopping and further ones change nothing
 WORKER = {}   # why: worker_env.reason() of this run, asked once (worker())
 OWNER = {}   # proof: the --proof file of the command (None: the owner key of this host); auth: the provider ids owner() accepted
+ENGINE = {}   # set in process by the weekly model check only (bin/model_check.py): {pick, reverses}; the CLI has no way to set it
+
+def engine():
+    """The engine context of this run (None: an ordinary apply). Refused (STL-MDL-764) unless the running script is the engine tool the
+    model check data names, the run has no --proof (a remote device never drives the engine) and it is no worker's (F-CVER-01).
+    shortcut: a host process that imports this file and names the engine tool as its argv[0] passes the caller test, so the caller test
+    is no control: the control is the proof, run under the apply lock on every engine change (stella_data.frozen: engine_problems runs
+    the planner's own candidate rules, pricing_problems the refresh shape, the owner setting read for both), upgrade when E1 runs the
+    engine as its own user."""
+    if not ENGINE:
+        return None
+    try:
+        tool = os.path.realpath(os.path.join(sd.ROOT, sd.weekly()["engine_tool"]))
+    except sd.DataError as e:
+        raise bad(f"the engine exception cannot be proved: {e}", sd.ENGINE_REFUSED) from None
+    if os.path.realpath(sys.argv[0] or "") != tool:
+        raise bad("the engine exception is for the weekly model check only; this caller is not it", sd.ENGINE_REFUSED)
+    if OWNER.get("proof") is not None:
+        raise bad("the engine exception takes no --proof: it runs on the host with the host's owner key only", sd.ENGINE_REFUSED)
+    if worker():
+        raise bad("the engine exception never runs in a worker environment", "STL-CFG-312")
+    return ENGINE
 
 class Interrupted(BaseException):
     pass
@@ -921,7 +943,7 @@ def kept(row, key, rel, cur, old_doc, new_doc, good, rec):
                 base = parse_or_none(row, blob)[0]
             # shortcut: with no applied copy and no committed file the file itself is the only document known, upgrade when a release signs its built-in presets (E1)
             old_doc = base if base is not None else old_doc
-    for code, why in sd.frozen(row["schema"], old_doc, new_doc):
+    for code, why in sd.frozen(row["schema"], old_doc, new_doc, engine()):
         raise bad(why, code)
 
 def added(rid, base, after):
@@ -984,7 +1006,10 @@ def event(row, key, kind, old, new, detail, unparsed=(), iid=None):
         u["who"] = {**u["who"], **who()}   # the caller's own user (its name, else its number): data, like the rest of the line
         return (json.dumps(u, ensure_ascii=True, separators=(",", ":")) + "\n").encode()   # as line_of() writes it
     o, n = changes(row["format"], old, new)
-    line = el.build(kind, key, o, n, detail=detail, who=who())
+    eng = engine()
+    if eng:   # an engine pick: who is the engine (the index's event writer id) and the detail names the pick
+        detail += f" engine pick {eng['pick']}" + (f" reverses {eng['reverses']}" if eng.get("reverses") else "")
+    line = el.build(kind, key, o, n, detail=detail, who={"user": sd.load(sd.INDEX)["event_writer_id"]} if eng else who())
     for k, d in (("old", old), ("new", new)):
         if d is None:   # no file on that side: null, not an empty change; a file that is there and does not parse says so
             line[k] = UNPARSED if k in unparsed else None

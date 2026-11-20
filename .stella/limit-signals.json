@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "default_wait_seconds": 300,
+  "max_wait_seconds": 172800,
+  "plan_share_max_age_seconds": 86400,
+  "plan_share_limit": 1,
+  "headers": {
+    "retry_after": ["retry-after"],
+    "reset": ["anthropic-ratelimit-requests-reset", "anthropic-ratelimit-tokens-reset", "x-ratelimit-reset-requests", "x-ratelimit-reset-tokens", "x-ratelimit-reset"]
+  },
+  "cli_patterns": {
+    "claude-code": ["You've hit your", "You've reached your", "You're out of usage credits", "You're out of extra usage", "Your org is out of usage", "usage limit reached", "rate_limit_error", "Rate limit exceeded"]
+  },
+  "cli_usage": {
+    "claude-code": []
+  },
+  "min_wait_seconds": 1,
+  "limit_error_plan_share": 1,
+  "day_reset": {"utc_offset_minutes": 0},
+  "limit_triggers": {"rate_limit": ["retry_after", "reset_header", "default"], "daily_cap": ["retry_after", "reset_header", "day_reset", "default"]},
+  "outcome_classes": {"ok": {"counts_as_call": true, "is_error": false}, "error": {"counts_as_call": true, "is_error": true}, "limit": {"counts_as_call": true, "is_error": true}, "timeout": {"counts_as_call": true, "is_error": true}, "refused": {"counts_as_call": false, "is_error": false}},
+  "billing": {"api": "metered", "cli-login": "plan"},
+  "cache_hit_rate": {"numerator": ["cache_read"], "denominator": ["input", "cache_read", "cache_write"]},
+  "duration_units": {"ms": 0.001, "s": 1, "m": 60, "h": 3600, "d": 86400},
+  "epoch_min_seconds": 1000000000,
+  "field_limits": {"holder": 100, "reason": 300}
+}

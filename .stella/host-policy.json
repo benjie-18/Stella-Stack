@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "never_targets": {
+    "apps": [
+      "stella-vault"
+    ],
+    "domains": []
+  },
+  "presence_max_age_s": 60
+}

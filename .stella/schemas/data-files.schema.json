@@ -26,6 +26,10 @@
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"
     },
+    "capability_sources": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"
+    },
     "owner_key": {
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
@@ -51,10 +55,25 @@
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The capability probe's records (F2b B), one file (schema probes): what bin/probe.py found out about each model version by trying it; written on the host only; a protected state path, not a data file (no role writes it, git never holds it). bin/probe.py check judges it."
     },
+    "usage_ledger": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The usage ledger (F2c A1), JSON lines, append-only (schema usage): one line per model call, written by bin/ledger.py on the host only; a protected state path, not a data file (git never holds it). bin/ledger.py check judges it."
+    },
+    "ledger_state": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The ledger's live state (F2c A1, schema ledger-state): the limits observed on a connection or model, with their expiry; its slot lock files lie in the folder of the same name plus .slots. Written on the host only; a protected state path."
+    },
     "triage_calibration": {
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The triage router's fitted threshold (F2b F), one file (schema triage-calibration): written by bin/triage.py fit from the labelled verdicts, on the host only; a protected state path, not a data file (no role writes it, git never holds it)."
+    },
+    "benchmark_results": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The benchmark results (F2c E), one file (schema benchmarks): one record per trial of a task for a role on a link, each with a trusted benchmark.recorded event line; read by bin/compare.py, which ignores invalid, foreign-install and unproved records; a protected state path, not a data file (no role writes it, git never holds it)."
     },
     "card_facts": {
       "type": "string",
@@ -159,6 +178,56 @@
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9._:-]*$",
       "description": "The preset (a key of the role-assignments effort_modes) bin/team.py generates and checks when no --preset is given (F2b G)."
+    },
+    "spans": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The call spans (F2c B), one JSON line per call with OpenTelemetry GenAI attribute names, appended by bin/cost.py span --write; written on the host only; a protected state path, not a data file. Export to an outside tool is behind the features.json flag otlp-export."
+    },
+    "budget_state": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The budget state (F2c C, schema budget-state): thresholds already alerted, holds with their approval request, card estimates and actuals, anomaly episodes already alerted. Written on the host only, by bin/budget.py; a protected state path, not a data file."
+    },
+    "model_check_state": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The weekly model check's state (F2c F; schema model-check-state): the paused flag and when each connection's model list was last read. Written on the host by bin/model_check.py only; a protected state path, not a data file; never the source of a pick or a rollback (the trusted event line is)."
+    },
+    "run_tokens": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The run token state (F3 item T, bin/run_token.py): sha256 of each token with its run, role, card, link, connection type, expiry and revocation; never a token value. Written on the host only; a state path under the protected repo paths, not a data file."
+    },
+    "model_proxy_state": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The model proxy's bound address, port and pid (F3 item T, bin/model_proxy.py serve). Written on the host only; not a data file."
+    },
+    "adapter_runs": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The adapter run records (F3 item A, design section 3): one JSON per run, <dir>/<run>.json {run, role, attended|unattended, background, ...}. Written on the host only, by the adapter; a protected state path, not a data file. bin/host_access.py reads attended and background from it (DC-10)."
+    },
+    "host_presence": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The host presence record (F3 item H, DC-10, schema host-presence): route, device and biometric, indicator, kill switch, input-source indicators and request finality. Written on the host only; a protected state path, not a data file. bin/host_access.py decide reads it."
+    },
+    "capabilities_mcp_state": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The capability MCP server's bound address, port, path and pid (F3 item M, bin/capabilities_mcp.py serve); a worker's capabilities.py reads it to reach the server. Written on the host only; not a data file."
+    },
+    "conformance_scratch": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The folder under which a card-less adapter run's worktree must lie (F3 item A, DC-06: conformance and test runs; such a run takes no card lease and its evidence is never accepted for a card). Not a state path: the run's CLI writes there."
+    },
+    "conformance_records": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The conformance records (F3 item Q, DC-07, schema conformance-records): one record per adapter, version and role with its cases and the digests of the data it was made on; bin/adapter.py start's gate reads it. Written on the host only, by bin/conformance.py; a protected state path, not a data file."
     }
   },
   "required": [
@@ -174,12 +243,21 @@
     "card_facts",
     "probe_records",
     "triage_calibration",
+    "benchmark_results",
+    "usage_ledger",
+    "ledger_state",
     "agents_dir",
     "team_bodies",
     "team_preset",
     "untrusted_events",
     "event_writer_id",
-    "files"
+    "files",
+    "spans",
+    "budget_state",
+    "model_check_state",
+    "run_tokens",
+    "model_proxy_state",
+    "capabilities_mcp_state"
   ],
   "additionalProperties": false
 }

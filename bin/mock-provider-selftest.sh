@@ -9,7 +9,7 @@ T=$(mktemp -d "${TMPDIR:-/tmp}/mock-provider-selftest.XXXXXX"); T=$(cd "$T" && p
 trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$T"' EXIT
 R=$T/root; mkdir -p "$R"; cp -r "$H/bin" "$H/.stella" "$H/docs" "$R/"
 printf "OWNER_TIMEZONE='UTC'\n" >"$T/owner-fake.env"
-export STELLA_ROOT=$R ESCALATE_SUP_DIR=$T/sup OWNER_CONFIG=$T/owner-fake.env; unset MOCK_CLI_MODE MOCK_CLI_CALLS MOCK_CLI_SECONDS
+export STELLA_ROOT=$R ESCALATE_SUP_DIR=$T/sup OWNER_CONFIG=$T/owner-fake.env; unset MOCK_CLI_MODE MOCK_CLI_CALLS MOCK_CLI_SECONDS MOCK_CLI_USAGE
 fails=0
 ok() { if ( eval "$1" ) >/dev/null 2>&1; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
 # a fourth shape: a copy of the first with another id and prefix, no code change
@@ -114,6 +114,10 @@ for s in protos:
             tctl(s, {"tool_calls": n}); got = ptr(json.loads(call(s, "t1")[1]), r["tool_calls"]); lst = isinstance(r["tool_calls_sample"], list)
             ok(len(got if isinstance(got, list) else [got]) == (n if lst else 1) and "{arguments}" not in json.dumps(got) and "not json" not in json.dumps(got), f"[{s}] tool_calls {n}: well-formed call(s) in one answer")
         tctl(s, {}); ok(not ptr_or_none(json.loads(call(s, "t1")[1]), r["tool_calls"]), f"[{s}] tool_calls unset: no tool call")
+    ex = r.get("usage_extra") or {}   # F2c B: cache_write, cache_read, reasoning tokens show at the shape's own pointers; included counts raise input or output
+    tctl(s, {"cache_write": 7, "cache_read": 40, "reasoning": 5}); u = ptr(json.loads(call(s, "t1")[1]), r["usage"])
+    ok(all(ptr(u, e["pointer"]) == {"cache_write": 7, "cache_read": 40, "reasoning": 5}[k] for k, e in ex.items()), f"[{s}] cache and reasoning traits: each shows at its pointer ({len(ex)} of 3 the shape has)")
+    tctl(s, {}); u = ptr(json.loads(call(s, "t1")[1]), r["usage"]); ok(all(ptr_or_none(u, e["pointer"]) is None for e in ex.values()) and sorted(u.values(), key=str)[:2] == [1, 1], f"[{s}] cache and reasoning traits unset: no extra key, input and output 1")
     tctl(s, {"answers": list("abcd"), "seed": 5}); x = [ptr(json.loads(call(s, "t1")[1]), r["text"]) for _ in range(10)]
     tctl(s, {"answers": list("abcd"), "seed": 5}); y = [ptr(json.loads(call(s, "t1")[1]), r["text"]) for _ in range(10)]
     ok(x == y and len(set(x)) > 1, f"[{s}] seed: answers vary and the same seed repeats them")
@@ -143,4 +147,8 @@ cli MOCK_CLI_MODE=model_gone; rc=$?; ok '[ $rc != 0 ] && grep -q m1 "$T/e"' "cli
 echo x | env SECRET_X=v1 MOCK_CLI_MODE=timeout MOCK_CLI_SECONDS=4 MOCK_CLI_CALLS="$CF" timeout 1 python3 -I "$R/bin/mock_cli.py" >/dev/null 2>&1; rc=$?
 ok '[ $rc = 124 ]' "cli timeout: hangs until the caller's timeout"
 ok 'jq -se "length == 4 and all(.[]; (.env | index(\"SECRET_X\")) != null)" "$CF" && ! grep -q v1 "$CF"' "cli: one line per call, env names only"
+# F2c A2: a usage-output block (the plan share a cli-login CLI shows) on stderr, for the ledger's cli_usage patterns
+cli MOCK_CLI_MODE=ok MOCK_CLI_USAGE=37; rc=$?; ok '[ $rc = 0 ] && grep -qx "plan usage: 37% of your limit used" "$T/e" && jq -e ".result" "$T/o"' "cli usage block: MOCK_CLI_USAGE=37 prints the plan share and the result"
+cli MOCK_CLI_MODE=usage_limit MOCK_CLI_USAGE=100; rc=$?; ok '[ $rc != 0 ] && grep -qx "plan usage: 100% of your limit used" "$T/e" && grep -qi "limit reached" "$T/e"' "cli usage block: with usage_limit the block comes before the limit message"
+cli MOCK_CLI_MODE=ok; ok '! grep -qi "plan usage" "$T/e"' "cli usage block: none unless MOCK_CLI_USAGE is set"
 echo "# mock-provider-selftest: $fails failed"; [ $fails = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

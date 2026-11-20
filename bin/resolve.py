@@ -18,6 +18,11 @@ source: pin:card|pin:project|pin:global|preset|fallback|last_resort, status: usa
 reason, grant: null or {kind: privacy, data_class} or {kind: crossing, to_class}, mid_task, cooldown_until, effort: its
 parameters.effort, else routing effort.by_role[role].tiers[tier], else .default, else null, family: its probe record's, else null,
 probed: whether it has a probe record}.
+Ranking (F2c item G): a best-of group ranks by score: the benchmark mean of the role's link (compare.routing_stats) once its sample reaches
+routing_min_tasks, else the catalog's advertised models[].score (the prior), else none (last); decision.reason lists each link's score, source
+and n. Benchmark data or parameters that cannot be used leave the prior with one STL-MDL-780 alert line per resolve (the CLI writes it,
+resolve(ctx) returns it as out["ranking_alerts"], which the CLI removes); one STL-MDL-781 info line when a too-small sample kept a pick the
+smaller sample would have changed.
 Probe data (F2b item C, owner ruling 2026-11-18): what a link can do is read from its probe record only (stella_data.probed():
 bin/probe.py's records, the newest not dated in the future; the catalog's advertised capabilities are not read). A link with no
 record may serve (a CLI-login link cannot be probed at all): rule 4 refuses only a link whose record fails a requirement; the CLI
@@ -76,8 +81,8 @@ UNMET, POLICY, PRIVACY, CROSSING, COOLDOWN = "STL-MDL-715", "STL-MDL-716", "STL-
 EXHAUSTED, RUNG_SKIPPED, WORKER, LOG_FAILED = "STL-MDL-731", "STL-MDL-732", "STL-CFG-312", "STL-CFG-318"   # the rung walk (F2b item D)
 WAIVER = "STL-MDL-737"   # a review role answered with no link of another family than the builder (F2b item C)
 READS = ("role-assignments", "routing", "connections", "data-policy", "grants", "features")   # the schemas a resolve reads
-STUBS = ("routing-observed-quota",)   # features ids every answer rests on
-STUB_SCORES = "routing-advertised-scores"   # and this one when a group was ranked
+STUBS = ()   # features ids every answer rests on (the quota stub is gone: the usage ledger answers, F2c item A2)
+BENCH_UNUSABLE, PRIOR_ONLY = "STL-MDL-780", "STL-MDL-781"   # the ranking (F2c item G): benchmark data unusable; a sample below the minimum kept the prior
 
 
 class Refusal(sd.DataError):
@@ -111,11 +116,12 @@ def brokered(prov):
 
 def best(entries, scores, ranks):
     """The one best-suited ranking of a class-order group: (the judged links in order, the reason). Not excluded first, then
-    healthy (not in cooldown), then the higher advertised score (none: last), then the more private class, then catalog order.
+    healthy (not in cooldown), then the higher score (benchmark mean past the minimum sample, else the advertised prior; none:
+    last, see scored()), then the more private class, then catalog order. scores: link key -> {score, source, n}.
     A link waiting for a grant is not ranked down: it is never skipped silently. The links of one connection and class stay
     adjacent, placed by their best link."""
     def key(i):
-        e, s = entries[i], scores.get(link_key(entries[i]))
+        e, s = entries[i], scores[link_key(entries[i])]["score"]
         return (e["status"] == "excluded", e["status"] == "cooldown", s is None, -(s or 0), ranks[e["link_class"]], i)
     groups = {}
     for i, e in enumerate(entries):
@@ -124,9 +130,27 @@ def best(entries, scores, ranks):
     if not order:
         return [], "the group has no link in the catalog"
     e = entries[order[0]]
+    seen = ", ".join(f"{link_key(entries[i])} {json.dumps(scores[link_key(entries[i])]['score'])} ({scores[link_key(entries[i])]['source']}, n={scores[link_key(entries[i])]['n']})" for i in order)
     return [entries[i] for i in order], (
-        f"{link_key(e)} ranks first of {len(order)} (ranked by: not excluded, healthy, advertised score, privacy rank, catalog order): "
-        f"status {e['status']}, advertised score {json.dumps(scores.get(link_key(e)))}, privacy rank {ranks[e['link_class']]}")
+        f"{link_key(e)} ranks first of {len(order)} (ranked by: not excluded, healthy, score, privacy rank, catalog order): "
+        f"status {e['status']}, privacy rank {ranks[e['link_class']]}; scores: {seen}")
+
+# shortcut: ranks from benchmark results and the advertised prior only; no store of closed-card first-pass rates exists yet, add its records to routing_stats then
+def scored(role, models):
+    """(link key -> {score, source (benchmark|prior|none), n}, the same with the smaller samples' mean, the problem or None) for the
+    role's links. compare.routing_stats does the statistics (the minimum sample is its parameter routing_min_tasks); a benchmark file or
+    parameters that cannot be used leave the advertised prior (the problem names why), never a refusal."""
+    import compare
+    prior = [{"role": role, "connection": c, "model": m, "score": x["score"]} for (c, m), x in models.items() if x.get("score") is not None]
+    try:
+        par, (recs, why) = compare.model_params(), compare.read_benchmarks()
+    except compare.Stop as x:
+        par, recs, why = {"routing_min_tasks": 1}, [], f"{x.code} {x.problem}"
+    recs = [] if why else [r for r in recs if r["role"] == role]
+    def table(p):
+        got = {f"{r['connection']}/{r['model']}": r for r in compare.routing_stats(recs, prior, p) if r["role"] == role}
+        return {link_key({"connection": c, "model": m}): {k: got.get(f"{c}/{m}", {"score": None, "source": "none", "n": 0})[k] for k in ("score", "source", "n")} for c, m in models}
+    return table(par), table({**par, "routing_min_tasks": 1}), why
 
 
 def known(kind, v, ids):
@@ -290,7 +314,7 @@ def resolve(ctx, d=None):
     feats = by.get("features", {})
     out = {"role": role, "project": project, "card": card, "preset": {"id": preset, "source": source}, "policy": "project" if d.listed else "default",
            "local_only": local_only, "tier": tier, "driver": driver, "chain": [], "decision": {"rule": None, "reason": None},
-           "failure_history": history if isinstance(history, list) else [], "stubs": [s for s in STUBS if sd.phases(feats.get(s, {}))],
+           "failure_history": history if isinstance(history, list) else [], "stubs": [s for s in STUBS if sd.phases(feats.get(s, {}))], "ranking_alerts": [],
            "apps": apps, "code": None, "reason": None}
     if not view["active"]:   # ruling 10: an inactive role does not resolve
         out["code"], out["reason"] = NO_LINK, f"role {sd.idn(role, True)} is not active under preset {sd.idn(preset, True)}"
@@ -354,6 +378,25 @@ def resolve(ctx, d=None):
                                                                          else "no link of the class order meets the role's requirements"))
     inorder = flat(order)
 
+    def quota(connection, model):
+        """(reason, until) when the usage ledger says the link cannot be used now: its daily cap is used, a limit is observed, its plan share
+        is at the limit of the data (limit-signals), or no slot is free; None otherwise. Read-only (the ledger creates nothing here)."""
+        import ledger
+        try:
+            st, lim = ledger.status(connection, model), ledger.signals()["plan_share_limit"]
+        except ledger.Stop as x:   # fail closed for this link only: a lock or usage file that cannot be used leaves the link, not every answer
+            return f"the usage ledger cannot be used for the link ({x.code} {x.problem})", None
+        except Exception as x:   # any other error of the ledger read (its data, a file) is the same: this link only, never an exception
+            return f"the usage ledger cannot be used for the link ({type(x).__name__})", None
+        if st["daily"]["cap"] is not None and st["daily"]["used"] >= st["daily"]["cap"]:
+            return f"the link's daily limit is used ({st['daily']['used']} of {st['daily']['cap']} calls); it resets at {st['daily']['resets_at']}", st["daily"]["resets_at"]
+        if st["observed"]:
+            return f"a limit is observed on the link until {st['observed']['until']} ({st['observed']['source']})", st["observed"]["until"]
+        if st["plan_share"] is not None and st["plan_share"] >= lim:
+            return "the plan's share is at its limit", None
+        if st["concurrency"]["free"] is not None and st["concurrency"]["free"] <= 0:
+            return "no free slot", None
+
     def judge(prov, model, rung=False):
         """(status, code, reason, grant, cooldown_until) of one link: the first rule that fails names it. A rung's class may also
         be the preset's needs class or its last resort (rule 5 only); the last resort outside the order still needs a crossing grant."""
@@ -380,8 +423,10 @@ def resolve(ctx, d=None):
             return ("needs_grant", PRIVACY, f"the connection {probs['grant']['text']}", {"kind": "privacy", "data_class": probs["grant"]["data_class"]}, None)
         cool = [u for u in (cooling(f"{prov['id']}/{model}"), cooling(prov["id"])) if u is not None]
         until = next((u for u in cool if u), None)
-        return ("cooldown", COOLDOWN, "the link failed recently and cools down until " + (until or "a time its state entry gives as no date (it counts as ahead)"),
-                None, until) if cool else ("usable", None, None, None, None)
+        if cool:
+            return ("cooldown", COOLDOWN, "the link failed recently and cools down until " + (until or "a time its state entry gives as no date (it counts as ahead)"), None, until)
+        busy = quota(prov["id"], model)
+        return ("cooldown", COOLDOWN, busy[0], None, busy[1]) if busy else ("usable", None, None, None, None)
 
     # ---- the chain
     seen = set()
@@ -403,11 +448,19 @@ def resolve(ctx, d=None):
     pinned = lambda ls: [(sd.entry(conn, l["connection"]), l["model"], l["parameters"]) for l in ls]
     pins = [(pinned(p["chain"]), f"pin:{p['scope']}") for p in view["pins"]] + [(pinned(view["preset_pins"]), "preset")]
     chain = [e for ls, src in pins for e in links(ls, src)]
-    ranked, items = False, []   # items: the chain's slices that are one class-order item (one class or one best-of group), for cross_family
+    ranked, items, sc = False, [], None   # items: the chain's slices that are one class-order item (one class or one best-of group), for cross_family
     for it in order:
         got = links([(p, m, {}) for p, m in catalog(it if isinstance(it, list) else [it])], "preset")
         if isinstance(it, list):
-            got, why = best(got, {link_key({"connection": c, "model": m}): x.get("score") for (c, m), x in models.items()}, {k: x["privacy_rank"] for k, x in classes.items()})
+            if sc is None:   # once per resolve: the same data for every group
+                sc = scored(role, models)
+                if sc[2]:
+                    out["ranking_alerts"].append((BENCH_UNUSABLE, f"role {role}: {sc[2]}; the advertised scores rank the links"))
+            pr = {k: x["privacy_rank"] for k, x in classes.items()}
+            small = best(got, sc[1], pr)[0]
+            got, why = best(got, sc[0], pr)
+            if small and got and link_key(small[0]) != link_key(got[0]):
+                out["ranking_alerts"].append((PRIOR_ONLY, f"role {role}: {link_key(got[0])} ranks first on the prior because a sample is below the minimum; the smaller sample would put {link_key(small[0])} first"))
             notes.append(f"best suited of {json.dumps(it)}: {why}")
             ranked = True
         items.append((len(chain), len(chain) + len(got)))
@@ -425,8 +478,6 @@ def resolve(ctx, d=None):
     for e in chain:
         mid(e)
     out["chain"], out["decision"] = chain, {"rule": "best_suited" if ranked else "class_order", "reason": "; ".join(notes)}
-    if ranked and sd.phases(feats.get(STUB_SCORES, {})):
-        out["stubs"].append(STUB_SCORES)
     cf = rt.get("cross_family")
     if cf and role in cf["reviewer_roles"] and not rung:
         out["cross_family"] = crossed(ctx, d, out, mode, cf, items, {k: x["privacy_rank"] for k, x in classes.items()})
@@ -544,6 +595,8 @@ def main(argv):
         if w:
             raise Refusal(WORKER, f"resolve --rung is asked from a worker environment ({w}); only a host-side caller walks the escalation chain")
     out = resolve(a)
+    for code, problem in out.pop("ranking_alerts", []):
+        sd.say(code, problem, alert=True)
     log = out.get("rung") and walked(out)
     lk = (out["rung"].get("link") if out.get("rung") else None) or next((e for e in out["chain"] if e["status"] == "usable"), None)   # the link this answer serves
     if lk and out["chain"] and lk.get("probed") is False and sd.needs_probe(sd.load(sd.load(sd.INDEX)["role_table"])["roles"][out["role"]].get("requirements", {}), None, a["tokens"]):

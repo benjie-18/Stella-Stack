@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Run policy",
+  "description": "Per-role context, budget and output policy (F3 item X): core tools, prefill and output budgets, compaction, clearing, working notes, output style, and the deterministic log filters.",
+  "x-one-document": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "token_estimate",
+    "markers",
+    "output_styles",
+    "filters",
+    "default",
+    "roles"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "about": {
+      "type": "string"
+    },
+    "token_estimate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chars_per_token"
+      ],
+      "properties": {
+        "chars_per_token": {
+          "type": "number",
+          "minimum": 0.1
+        }
+      }
+    },
+    "markers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trimmed",
+        "repeated"
+      ],
+      "properties": {
+        "trimmed": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Line put where lines were trimmed; {n} is the count."
+        },
+        "repeated": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Line put after a repeated line; {n} is the count."
+        }
+      }
+    },
+    "output_styles": {
+      "type": "object",
+            "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "filters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "pattern",
+          "context"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "enum": [
+              "drop",
+              "collapse",
+              "trim_to_failing"
+            ]
+          },
+          "pattern": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A regular expression (Python re) matched against one line."
+          },
+          "context": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Lines kept around a match (trim_to_failing)."
+          }
+        }
+      }
+    },
+    "default": {
+      "$ref": "#/$defs/settings"
+    },
+    "roles": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/settings"
+      },
+      "description": "One entry per role of docs/hermes-local/roles.json; only the fields that differ from default."
+    }
+  },
+  "$defs": {
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "core_tools": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "description": "Capability ids loaded at start; every other tool is found through capability search."
+        },
+        "prefill_budget_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Most tokens of system prompt, rules and tool definitions at the first call; over it fails conformance (STL-LIM-451)."
+        },
+        "output_budget_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Most output tokens in a run; over it is flagged (STL-LIM-452), the run is not stopped."
+        },
+        "compaction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "at_pct",
+            "keep"
+          ],
+          "properties": {
+            "at_pct": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "keep": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "clear_tool_results": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "min_free_tokens"
+          ],
+          "properties": {
+            "min_free_tokens": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "working_notes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "sections"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Path template per card; {card} is the card id."
+            },
+            "sections": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "explore_in_subagent": {
+          "type": "boolean"
+        },
+        "graph_first": {
+          "type": "boolean",
+          "description": "Query the shared graph first; a stub until W1 (features.json graph-first)."
+        },
+        "output_style": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A key of output_styles."
+        },
+        "filters": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Ids of the top-level filters this role's tool output passes through."
+        }
+      }
+    }
+  }
+}

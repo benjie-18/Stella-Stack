@@ -69,12 +69,17 @@ CF=$FX/$(jq -r .card_facts "$FX/.stella/data-files.json"); mkdir -p "$CF" "$SH/$
 for c in $(grep -o 't_[0-9a-f]\{8\}' "$0" | sort -u) t_dddd000{1..9} t_eeee000{1..9}; do echo '{"project":"qa-proj","carries_secrets":false,"vault_content":false,"apps":[]}' >"$CF/$c.json"; cp "$CF/$c.json" "$SH/${CF#"$FX"/}/"; done
 export STELLA_ROOT=$FX
 python3 -I /workspace/bin/stella_data.py check >"$T/fxcheck" 2>&1 && [ -n "$FAKE_ASSIGNEE" ] && [ -n "$RB" ] || { echo "FAIL the fixture root does not pass the data check, no profile has role $CR, or the role table has no two free roles: $(head -3 "$T/fxcheck")"; echo "selftest FAIL (fixture)"; exit 1; }
-E=${ESCALATE:-/workspace/bin/escalate.sh} fails=0   # ESCALATE=<copy>: a staged copy while it is being replaced
+# F2c A2: the script's limits are the ledger's, and the ledger reads the limits store of the stack root (STELLA_ROOT) while this file edits the one
+# of the supervisor folder (ESCALATE_SUP_DIR): each run of the script or the drain first makes the root's store the folder's, so a setlimit holds
+for w in escalate:${ESCALATE:-/workspace/bin/escalate.sh} drain:/workspace/bin/escalate-drain.sh; do
+  printf '#!/usr/bin/env bash\nmkdir -p "$STELLA_ROOT/.supervisor" && cp "$ESCALATE_SUP_DIR/limits.env" "$STELLA_ROOT/.supervisor/limits.env" 2>/dev/null\nexec %s "$@"\n' "${w#*:}" >"$T/bin/${w%%:*}-run"; chmod +x "$T/bin/${w%%:*}-run"
+done
+E=$T/bin/escalate-run fails=0   # ESCALATE=<copy>: a staged copy while it is being replaced
 check() { local want=$1 desc=$2; shift 2; "$@" >/dev/null 2>"$T/err"; local rc=$?
   if [ "$rc" = "$want" ]; then echo "ok   $desc (exit $rc)"; else echo "FAIL $desc: want $want got $rc: $(cat "$T/err")"; fails=$((fails+1)); fi; }
 last() { tail -1 "$T/sup/escalations.log" | jq -r "$1"; }
 ok() { if eval "$1"; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); fi; }
-Q="$T/sup/state/queue.jsonl" D=/workspace/bin/escalate-drain.sh
+Q="$T/sup/state/queue.jsonl" D=$T/bin/drain-run
 q() { jq -r --arg c "$1" 'select(.card == $c) | .state' "$Q" 2>/dev/null | tr '\n' ,; }
 qid() { jq -r --arg c "$1" 'select(.card == $c) | .id' "$Q" | head -1; }
 nalerts() { grep -c -- "$1" "$T/sup/sends" 2>/dev/null || true; }
@@ -101,6 +106,8 @@ check 75 "forced pool, low risk" env ESCALATE_FORCE_POOL_EXHAUSTED=1 sh -c "echo
 [ "$(last .event)/$(last .fallback)/$(last .model_used)" = "QUEUED/true/none" ] || { echo "FAIL low-risk pool log: $(tail -1 "$T/sup/escalations.log")"; fails=$((fails+1)); }
 check 75 "real pool string, high risk" env FAKE_OUT="Claude AI usage limit reached|resets 3am" FAKE_RC=1 FAKE_BODY="risk: high" sh -c "echo hi | $E t_12345678 review why"
 [ "$(last .event)" = QUEUED ] && [ -s "$T/sup/state/queue.jsonl" ] || { echo "FAIL high-risk not queued"; fails=$((fails+1)); }
+ok 'jq -e ".observed | length == 1 and .[0].source == \"cli_limit_error\" and .[0].model == null" "$FX/.supervisor/state/ledger-state.json"' "F2c A2: the CLI's limit text is one observed limit of the connection (the ledger), kept by itself"
+rm -f "$FX/.supervisor/state/ledger-state.json"   # the cases below start with no limit observed (it would last the default wait)
 check 1 "non-JSON exit 0"      env FAKE_OUT='garbage' sh -c "echo hi | $E t_12345678 review why"
 check 1 "is_error result"       env FAKE_OUT='{"is_error":true,"modelUsage":{}}' sh -c "echo hi | $E t_12345678 review why"
 grep -q "fallback: false. No next rung ran" "$T/sup/comments" || { echo "FAIL no next rung ran not noted on card"; fails=$((fails+1)); }   # D83 via the resolver: the walk found none
@@ -156,7 +163,7 @@ ok '[ "$brc" != 0 ] && [ "$(jq -r --arg f "$PS/$FM" ".counts[\$f] // 0" <<<"$cal
 kill "$MP" 2>/dev/null
 # Approval: a rung of the preset's last-resort class (outside its class order) needs the owner's crossing grant: without one it is
 # skipped (needs_grant) and no rung is left (STL-MDL-731, exit 4); with one in force the same call runs it.
-GR=$T/fx-gr; cp -r "$FX" "$GR"; CC=$(jq -r --arg c "$CLIC" '.entries[] | select(.id == $c) | .link_class' "$FX/.stella/connections.json")
+GR=$T/fx-gr; cp -r "$FX" "$GR"; rm -rf "$GR/.supervisor/state/usage.jsonl"* "$GR/.supervisor/state/ledger-state.json"*; CC=$(jq -r --arg c "$CLIC" '.entries[] | select(.id == $c) | .link_class' "$FX/.stella/connections.json")
 jq --arg c "$CC" '.effort_modes["qa-all"] |= (.class_order -= [$c] | .last_resort = $c)' "$FX/.stella/role-assignments.json" >"$GR/.stella/role-assignments.json"
 n=$(runsg); check 4 "approval: the judge rung's class is the last resort and no crossing grant is in force: no rung left" env STELLA_ROOT=$GR ESCALATE_SUP_DIR=$SG sh -c "echo hi | $E t_aaaa0906 judge why"
 ok 'grep -q "STL-MDL-731" "$T/err" && grep -q "STL-MDL-718" "$T/err" && [ "$(runsg)" = "$n" ]' "approval: ... STL-MDL-731 with the skipped rung's STL-MDL-718, no model call"
@@ -261,7 +268,7 @@ H="$T/hold"
 FAKE_SEND_HOLD="$H" sh -c "echo hi | $E t_bbbb0001 judge slow-alert" >/dev/null 2>&1 & a=$!
 for _ in $(seq 100); do [ -e "$H.in" ] && break; sleep 0.1; done
 ok '[ -e "$H.in" ]' "control: the over-limit call reached its alert"
-ok 'flock -n "$T/sup/state/haiku.lock" true' "the Haiku lock is free while the alert is being sent"
+ok 'flock -n "$FX/.supervisor/state/ledger-state.json.slots/$CLIC@.1.lock" true' "the connection's slot (the ledger's) is free while the alert is being sent"
 timeout 10 sh -c "echo hi | $E t_bbbb0002 judge second" >/dev/null 2>&1; rc=$?
 ok '[ "$rc" = 3 ]' "a second over-limit Haiku call is refused at once, not held behind the slow alert (exit $rc)"
 touch "$H.go"; wait "$a"; rc=$?
@@ -374,14 +381,16 @@ ok '[ "$(cat "$V")" = keep ] && [ "$(nlog NOT_QUEUED t_aaaa0501)" = 1 ] && [ "$(
 rm -f "$Q" "$T/sup/state/queue.lock"; ln -s "$V" "$T/sup/state/queue.lock"; stamps
 check 3 "P1: the queue lock is a link" sh -c "echo hi | $E t_aaaa0502 judge why"
 ok '[ "$(cat "$V")" = keep ] && [ ! -e "$Q" ] && [ "$(nlog NOT_QUEUED t_aaaa0502)" = 1 ] && [ "$(nalerts "\\[STL-LIM-405\\]\\*\\*\$")" = 1 ]' "P1: ... not truncated, nothing queued, NOT_QUEUED, one STL-LIM-405 line"
-rm -f "$T/sup/state/queue.lock"; cp "$T/limits.keep" "$T/sup/limits.env"; setlimit OPUS_MAX_CONCURRENT 1; rm -f "$T/sup/state/opus.1.lock"; ln -s "$V" "$T/sup/state/opus.1.lock"
-check 3 "P1: the only slot lock is a link: no slot" sh -c "echo hi | $E t_aaaa0503 plan why"
+# F2c A2: the slots and the daily count are the ledger's files now (slot files in <ledger_state>.slots/, the usage file), the same rule holds for them
+SL=$FX/.supervisor/state/ledger-state.json.slots UL=$FX/.supervisor/state/usage.jsonl; mkdir -p "$SL"
+rm -f "$T/sup/state/queue.lock"; cp "$T/limits.keep" "$T/sup/limits.env"; setlimit OPUS_MAX_CONCURRENT 1; rm -f "$SL/$CLIC@opus.1.lock"; ln -s "$V" "$SL/$CLIC@opus.1.lock"
+check 3 "P1: the only slot lock (the ledger's) is a link: no slot" sh -c "echo hi | $E t_aaaa0503 plan why"
 ok '[ "$(cat "$V")" = keep ]' "P1: ... the slot lock's target is not truncated"
-rm -f "$T/sup/state/opus.1.lock" "$T/sup/state/haiku.lock"; ln -s "$V" "$T/sup/state/haiku.lock"
-check 3 "P1: the Haiku lock is a link" sh -c "echo hi | $E t_aaaa0504 judge why"
-rm -f "$T/sup/state/haiku.lock"; C1="$T/sup/state/haiku-$(date -u +%F).count"; rm -f "$C1"; ln -s "$V" "$C1"
-check 3 "P1: the Haiku counter is a link" sh -c "echo hi | $E t_aaaa0505 judge why"
-ok '[ "$(cat "$V")" = keep ]' "P1: ... neither the Haiku lock's nor the counter's target is written"
+rm -f "$SL/$CLIC@opus.1.lock"; mv "$UL" "$UL.keep" 2>/dev/null; ln -s "$V" "$UL"
+check 2 "P1: the usage file (the daily count) is a link: refused with the data tool's code (exit 2, STL-CFG-310; the old counter link was exit 3)" sh -c "echo hi | $E t_aaaa0505 judge why"
+ok '[ "$(cat "$V")" = keep ]' "P1: ... the usage file's target is not written"
+rm -f "$UL"; mv "$UL.keep" "$UL" 2>/dev/null
+C1=
 rm -f "$C1" "$Q"; cp "$T/limits.keep" "$T/sup/limits.env"
 
 # W5 r6 (VER5-02): the prompt_file of a queue line is used only when it is a regular, unlinked prompt-*.txt directly in the state folder
@@ -444,4 +453,50 @@ plant7 q_t3 .; FAKE_OUT=' ' FAKE_RC=127 $D --replay q_t3 >/dev/null 2>&1; w="the
 ok '[ "$(st7 q_t3)" = queued ] && [ "$(tail -1 "$S7/escalations.log" | jq -r --arg w "$w" ".detail | contains(\$w)")" = true ] && tail -1 "$S7/comments" | grep -qF "$w"' "T3: a replay whose model command did not start: the log line and the card note say it is left in the queue"
 export ESCALATE_SUP_DIR="$T/sup"
 
+
+# ---- F2c A2: T-LIM-WAVE and T-LIM-CLI, real processes through escalate.sh and the mock CLI, a scratch root and supervisor folder of their own ----
+LG() { STELLA_ROOT=$WR python3 -I /workspace/bin/ledger.py "$@"; }
+wroot() {  # <name> <connection limit>: a scratch root = the fixture (no usage, no observed limit, no cooldown, clean card facts) with the CLI connection's concurrency_limit, and a supervisor folder with the shipped limits
+  local cf; WR=$T/$1; rm -rf "$WR"; mkdir -p "$WR" "$T/sup-$1"; cp -r "$FX/." "$WR/"; cp "$T/limits.keep" "$T/sup-$1/limits.env"; sed -i "s/^HAIKU_MAX_PER_DAY=.*/HAIKU_MAX_PER_DAY=40/; s/^QUEUE_MAX=.*/QUEUE_MAX=50/" "$T/sup-$1/limits.env"
+  rm -rf "$WR/.supervisor/state/usage.jsonl"* "$WR/.supervisor/state/ledger-state.json"* "$WR/$(jq -r .routing_state "$WR/.stella/data-files.json")"
+  cf=$WR/$(jq -r .card_facts "$WR/.stella/data-files.json"); mkdir -p "$cf"
+  for c in t_dddd000{1..7}; do echo '{"project":"qa-proj","carries_secrets":false,"vault_content":false,"apps":[]}' >"$cf/$c.json"; done
+  jq --arg c "$CLIC" --argjson n "$2" '(.entries[] | select(.id == $c) | .concurrency_limit) = $n' "$WR/.stella/connections.json" >"$WR/.stella/c.n" && mv "$WR/.stella/c.n" "$WR/.stella/connections.json"
+}
+N=2; wroot wave $N; SWV=$T/sup-wave; mkdir -p "$T/wbin"
+cat >"$T/wbin/claude" <<'S'
+#!/usr/bin/env bash
+d="$ESCALATE_SUP_DIR/live"; mkdir -p "$d"; : >"$d/$$"; ls "$d" | wc -l >>"$ESCALATE_SUP_DIR/peaks"   # how many CLI processes run at this instant
+cat >/dev/null; sleep "${FAKE_SLEEP:-0}"; rm -f "$d/$$"
+printf '{"type":"result","is_error":false,"modelUsage":{"claude-haiku-5-5":{}},"usage":{"input_tokens":11,"output_tokens":7}}\n'
+S
+chmod +x "$T/wbin/claude"
+for i in $(seq $((N + 2))); do
+  env STELLA_ROOT=$WR ESCALATE_SUP_DIR=$SWV PATH="$T/wbin:$PATH" FAKE_SLEEP=8 sh -c "echo hi | $E t_dddd000$i judge wave; echo \$? >$SWV/rc.$i" >/dev/null 2>&1 &
+done; wait
+ok '[ "$(cat "$SWV"/rc.* | sort | uniq -c | tr -s " \n" " ")" = " 2 0 2 3 " ]' "T-LIM-WAVE: $((N + 2)) real workers against a cli-login connection of concurrency_limit $N: $N exit 0, the rest exit 3 (limit, queued)"
+ok '[ "$(wc -l <"$SWV/peaks")" = "$N" ] && [ "$(sort -n "$SWV/peaks" | tail -1)" -le "$N" ]' "T-LIM-WAVE: the CLI ran $N times, never more than $N at once (none overran)"
+ok '[ "$(jq -s "[.[] | select(.state == \"queued\")] | length" "$SWV/state/queue.jsonl")" = 2 ] && [ "$(jq -s "[.[] | select(.event == \"LIMIT\")] | length" "$SWV/escalations.log")" = 2 ]' "T-LIM-WAVE: the two refused are queued with a LIMIT line each"
+ok '[ "$(jq -s "[.[] | select(.connection == \"$CLIC\" and .outcome == \"ok\" and .tokens.input == 11 and .tokens.output == 7 and .role == \"$RA\" and .project == \"qa-proj\")] | length" "$WR/.supervisor/state/usage.jsonl")" = "$N" ] && [ "$(LG status --connection "$CLIC" --json | jq .concurrency.in_use)" = 0 ]' "T-CALLERS-LEDGER: each CLI call is one usage record (role, project, card, outcome, the tokens its result shows) and every slot is free after"
+# T-LIM-CLI: the plan share a CLI's usage output shows, and its limit text, through the mock CLI
+wroot cli 3; SCL=$T/sup-cli; mkdir -p "$T/cbin"
+printf '#!/usr/bin/env bash\nexec python3 -I /workspace/bin/mock_cli.py "$@"\n' >"$T/cbin/claude"; chmod +x "$T/cbin/claude"
+fxs() { jq "$@" "$WR/.stella/limit-signals.json" >"$WR/.stella/ls.n" && mv "$WR/.stella/ls.n" "$WR/.stella/limit-signals.json"; }
+fxs '.cli_usage["claude-code"] = ["plan usage: (?P<pct>[0-9.]+)% of your limit used"]'
+cc() { env STELLA_ROOT=$WR ESCALATE_SUP_DIR=$SCL PATH="$T/cbin:$PATH" MOCK_CLI_CALLS="$T/cli-calls" "$@"; }
+echo hi | cc MOCK_CLI_MODE=ok MOCK_CLI_USAGE=37 $E t_dddd0005 judge share >/dev/null 2>&1
+ok '[ "$(LG status --connection "$CLIC" --json | jq .plan_share)" = 0.37 ] && jq -s -e "length == 1 and .[0].plan_share == 0.37 and .[0].cost == null" "$WR/.supervisor/state/usage.jsonl"' "T-LIM-CLI: the plan share the CLI shows (37%) is on the usage record (no cost: a login is no priced call) and in the ledger's status"
+echo hi | cc MOCK_CLI_MODE=usage_limit MOCK_CLI_USAGE=100 $E t_dddd0006 judge limit >/dev/null 2>&1; rc=$?
+n=$(grep -c . "$T/cli-calls"); echo hi | cc MOCK_CLI_MODE=ok $E t_dddd0007 judge after >/dev/null 2>"$T/err"; rc2=$?
+ok '[ "$rc" = 75 ] || [ "$rc" = 3 ]' "T-LIM-CLI: the CLI's limit message ends the call as a pool limit (queued)"
+ok '[ "$(LG status --connection "$CLIC" --json | jq -r "[.observed.source, .plan_share] | @tsv")" = "$(printf "cli_limit_error\t1")" ] && [ "$rc2" = 3 ] && [ "$(grep -c . "$T/cli-calls")" = "$n" ] && grep -q "STL-MDL-724" "$T/err"' "T-LIM-CLI: the limit text is an observed limit (plan share 1): the next call is refused as a cooldown (exit 3) and the CLI is not run again"
+
+# A-RT-01: a model's answer text never sets a limit; the patterns are the data's (limit-signals cli_patterns), not the script's own copy
+wroot lim2 3; SCL=$T/sup-lim2; : >"$T/cli-calls"
+echo hi | cc MOCK_CLI_MODE=ok_limit_text $E t_dddd0005 judge quote >/dev/null 2>"$T/err"; rc=$?
+ok '[ "$rc" = 0 ] && [ "$(LG status --connection "$CLIC" --json | jq .observed)" = null ] && [ "$(LG status --connection "$CLIC" --json | jq .plan_share)" = null ] && jq -s -e "length == 1 and .[0].outcome != \"limit\"" "$WR/.supervisor/state/usage.jsonl" && ! grep -q POOL_EXHAUSTED "$SCL/escalations.log"' "A-RT-01 a successful answer whose text quotes a limit message is no limit: exit 0, no observed limit, no plan share, no walk"
+wroot lim3 3; SCL=$T/sup-lim3
+fxs '.cli_patterns["claude-code"] = ["a phrase the mock never prints"]'
+echo hi | cc MOCK_CLI_MODE=usage_limit $E t_dddd0005 judge data >/dev/null 2>"$T/err"; rc=$?
+ok '[ "$rc" != 3 ] && [ "$rc" != 75 ] && [ "$(LG status --connection "$CLIC" --json | jq .observed)" = null ] && ! grep -q POOL_EXHAUSTED "$SCL/escalations.log"' "A-RT-01 the limit patterns are the data's: with the data's list changed the CLI's old limit text is no limit to escalate.sh either"
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }

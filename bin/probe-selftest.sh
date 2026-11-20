@@ -149,7 +149,7 @@ NEW=qa-new$RANDOM; addmodel "$NEW"
 world "$(printf '%s\n' $MODELS "$NEW" | jq -Rsc 'split("\n")[:-1]')" "" "$(jq -c --argjson t "$(trt "$NEW" '{"version":"v7","family":"qa-fam7"}')" '. + [$t]' <<<"$TRAITS")"
 pr f1 run --connection qa-p --model "$NEW" --json
 ok '[ "$(rc f1)" = 0 ] && R1 "$NEW" ".version == \"v7\" and .family == \"qa-fam7\""' "S8 fake entry: a model added as data only is probed and recorded"
-pr u1 run --connection qa-nope --model qa-ctx --json; pr u2 run --connection qa-p --model qa-zz --json; n1=$(grep -c . "$AL")
+pr u1 run --connection qa-nope --model qa-ctx --json; pr u2 run --connection qa-p --model qa-zz --json; n1=$(grep -c "STL-MDL-734" "$AL")   # F2c A2: a probe request is a usage record now, and a model with no pricing row is one more (STL-LIM-420) alert line: only the unknown-link lines are counted
 ok '[ "$(rc u1)" != 0 ] && [ "$(rc u2)" != 0 ] && grep -q "^STL-MDL-734" "$T/o/u1.err" && grep -q "^STL-MDL-734" "$T/o/u2.err" && [ "$n1" = 2 ]' "S9 an unknown connection or model fails closed: STL-MDL-734, one alert line each"
 STUB_WORKER_MARK=1 pr w1 run --connection qa-p --model qa-full --json
 ok '[ "$(rc w1)" != 0 ] && grep -q "STL-CFG-312" "$T/o/w1.err" && [ "$(rec qa-full | jq length)" = 0 ]' "S10 a worker environment is refused (STL-CFG-312): no record"

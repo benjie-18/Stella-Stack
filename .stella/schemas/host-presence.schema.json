@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Host presence",
+  "description": "The host's facts about the owner's current host request (F3 B11, DC-10): its route, the paired device and its biometric, the on-screen indicator, the kill switch, each input source's own indicator, and whether the request is final. Written on the host only (index key host_presence, under the protected .supervisor tree); bin/host_access.py decide reads it and never trusts a request for these facts. It is dated (at) and bound to one run and one owner request (run, request), so an old or another request's record never counts. A missing record refuses.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "description": "UTC time the host wrote this record; decide() refuses it once older than host-policy.json presence_max_age_s, or dated in the future."
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "description": "The run this record is for; decide() refuses a request of another run."
+    },
+    "request": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "description": "The id the host wrote when the owner started the request; decide() refuses a request that names another."
+    },
+    "route": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "device": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+        },
+        "biometric": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "biometric"
+      ],
+      "additionalProperties": false
+    },
+    "presence": {
+      "type": "object",
+      "properties": {
+        "indicator": {
+          "type": "boolean"
+        },
+        "kill_switch": {
+          "type": "boolean"
+        },
+        "input_indicators": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+          },
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "description": "Capability id of an input source -> its own indicator is on."
+        }
+      },
+      "required": [
+        "indicator",
+        "kill_switch"
+      ],
+      "additionalProperties": false
+    },
+    "final": {
+      "type": "object",
+      "description": "submitted: a typed or device command was submitted; closed: a spoken turn ended; open: not yet.",
+      "properties": {
+        "state": {
+          "enum": [
+            "submitted",
+            "closed",
+            "open"
+          ]
+        },
+        "turn": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "detector": {
+              "enum": [
+                "semantic",
+                "release",
+                "silence"
+              ],
+              "description": "What ended the turn: the semantic turn detector, a push-to-talk release, or a silence timeout alone (never final)."
+            },
+            "reopened_within_grace": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "detector",
+            "reopened_within_grace"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "global_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "install_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    }
+  },
+  "required": [
+    "schema_version",
+    "at",
+    "run",
+    "request",
+    "route",
+    "presence",
+    "global_id",
+    "install_id"
+  ],
+  "additionalProperties": false
+}

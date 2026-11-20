@@ -49,7 +49,7 @@ SCHEMA_VERSION = 1
 # hold them, and roles-selftest checks they are equal. A key a reader starts to use is added in both in the same change.
 ROLE_KEYS = set(PERMS) | {"workspace", "allowed_overrides", "requirements", "background_review", "optional", "complete_metadata",
                           "complete_needs_review", "workers", "skills_disabled", "platform_toolsets", "config", "git_identity", "hooks",
-                          "runs_unboxed", "catch_all_tools", "global_id", "install_id"}
+                          "runs_unboxed", "catch_all_tools", "host_operator", "global_id", "install_id"}
 HOOK_KEYS = {"matcher", "file", "command", "timeout", "workers", "writes", "catch_all"}   # writes: "refused" = the hook refuses every write; "judged" = a text guard that lets some through
 CATCH_ALL = "^(?!(?:{tools})$).+$"   # T5: the matcher of a catch_all hook; {tools} is filled at render time with the profile's other matchers and the tools of its role's toolsets
 WRITES = ("refused", "judged")
@@ -189,6 +189,8 @@ def validate(d, root=ROOT):
             errs.append(f"role {n}: allowed_overrides must be a list of {', '.join(OVERRIDES)}, each once")
         if "background_review" in r and not isinstance(r["background_review"], bool):
             errs.append(f"role {n}: background_review must be true or false")
+        if "host_operator" in r and not isinstance(r["host_operator"], bool):
+            errs.append(f"role {n}: host_operator must be true or false")
         if "optional" in r and not isinstance(r["optional"], bool):
             errs.append(f"role {n}: optional must be true or false")
         cm = r.get("complete_metadata")   # S3A-03: the metadata pairs a reviewing role's kanban_complete must carry
@@ -530,7 +532,10 @@ def owner_settings(d):
 
 
 STATE_KEYS = ("backup_dir", "applied_state", "event_log", "owner_key", "approval_store", "event_writer_state",
-              "routing_state", "card_facts", "probe_records", "triage_calibration")   # the index keys that name state paths (B1, F1c D0; F2 DC-06: failover state and card facts)
+              "routing_state", "card_facts", "probe_records", "triage_calibration",
+              "benchmark_results", "usage_ledger", "ledger_state", "spans", "budget_state", "model_check_state",
+              "run_tokens", "model_proxy_state", "adapter_runs", "host_presence", "capabilities_mcp_state",
+              "conformance_records")   # the index keys that name state paths (B1, F1c D0; F2 DC-06: failover state and card facts)
 
 
 def index(d, root=None):
@@ -840,6 +845,70 @@ def protected(d):
     """(repo paths, home config paths): the one protected list (D40 write guard, D46 card guard)."""
     return ([f"{ROOT}/{p}" for p in d["protected"]["repo"]],
             [f"{h}/{c}" for h in homes() for c in d["protected"]["home"]])
+
+
+DATA_ROOT = os.path.realpath(os.environ.get("STELLA_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # F3: the tree of the policy data: this file's own, or a scratch root (as the data tool reads it)
+POLICY_KINDS = ("write_boundary", "protected_read", "secret_read", "commit_rule", "dispatcher_only", "model_limits")
+GIT_FORMS = ("global", "sub", "option", "sub_args")   # commit_rule deny_git: where git reads the word (before the subcommand, the subcommand, any option, a subcommand's arguments)
+
+
+def _stella_json(rel):
+    with open(os.path.join(DATA_ROOT, rel), encoding="utf-8") as f:
+        return json.load(f, object_pairs_hook=_pairs, parse_constant=_const)
+
+
+def _data(rid):
+    """F3: (the document, its path) of the data index row rid in the data tree; a missing row raises StopIteration, an unreadable index RolesError."""
+    rel = next(x["path"] for x in index(load(), DATA_ROOT)["files"] if x.get("id") == rid)
+    return _stella_json(rel), rel
+
+
+def _strs(v, empty=False):
+    return isinstance(v, list) and (empty or v) and all(isinstance(x, str) and x for x in v)
+
+
+def policy():
+    """F3 (DC-11, DC-13): the stack policy (the index row policy), shape-checked: one rule of each kind, the secret and commit rules whole.
+    The one loader: the read guards, the OS box, the git guard and the policy tool all read it here. Raises RolesError: every caller fails closed."""
+    rel = "the policy data (index row policy)"
+    try:
+        p, rel = _data("policy")
+        kinds = [r["kind"] for r in p["rules"]]
+        if p["schema_version"] != 1 or sorted(kinds) != sorted(POLICY_KINDS):
+            raise ValueError("the rules are not exactly one of each kind " + ", ".join(POLICY_KINDS))
+        s = policy_rule("secret_read", p)
+        if not (_strs(s["deny"]) and _strs(s["allow"], True) and _strs(s["dirs"]) and _strs(s["text"]) and _strs(s["glob_probes"], True)
+                and _strs(s.get("file_deny", []), True) and _strs(s.get("file_allow", []), True) and all(d.startswith(("~/", "/")) for d in s["dirs"])):
+            raise ValueError("secret_read needs deny, dirs (~/ or absolute) and text lists, and allow and glob_probes lists")
+        re.compile("|".join(s["text"]))
+        g = policy_rule("commit_rule", p)["deny_git"]
+        if not (isinstance(g, list) and g and all(isinstance(x, dict) and set(x) - {"why"} and len(set(x) - {"why"}) == 1 and (set(x) - {"why"}) <= set(GIT_FORMS)
+                                                 and isinstance(x.get("why"), str) and x["why"] for x in g)):
+            raise ValueError("commit_rule deny_git needs entries of one form each (" + ", ".join(GIT_FORMS) + ") and a why")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, StopIteration, re.error) as e:
+        raise RolesError(f"{rel}: cannot be read ({type(e).__name__}: {e})")
+    return p
+
+
+def policy_rule(kind, p=None):
+    """The rule of one kind of the policy (p, or the one policy() reads). Raises RolesError (or StopIteration on a p not checked by policy())."""
+    return next(r for r in (p or policy())["rules"] if r["kind"] == kind)
+
+
+def adapters():
+    """F3: the worker adapter entries of the adapter data (the index row adapters) by id (the CLI-specific names: binary, flags, tool map,
+    config shapes). Raises RolesError: callers fail closed."""
+    rel = "the adapter data (index row adapters)"
+    try:
+        a, rel = _data("adapters")
+        if a["schema_version"] != 1 or not isinstance(a["entries"], list):
+            raise ValueError("shape")
+        out = {e["id"]: e for e in a["entries"]}
+        if len(out) != len(a["entries"]):
+            raise ValueError("an adapter id is repeated")
+    except (OSError, ValueError, KeyError, TypeError, StopIteration) as e:
+        raise RolesError(f"{rel}: cannot be read ({type(e).__name__}: {e})")
+    return out
 
 
 def discovered(H):

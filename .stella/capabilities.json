@@ -563,16 +563,34 @@
       "id": "resolve",
       "kind": "command",
       "summary": "The ordered chain of model links a role may use right now, and why (presets, data policy, grants, card facts, health)",
-      "keywords": ["resolve", "model", "routing", "preset", "chain", "link", "fallback", "grant", "probe", "tokens", "cross-family"],
+      "keywords": [
+        "resolve",
+        "model",
+        "routing",
+        "preset",
+        "chain",
+        "link",
+        "fallback",
+        "grant",
+        "probe",
+        "tokens",
+        "cross-family"
+      ],
       "inputs": "a role, a project, optionally a card, task tier, driver and task id, and a rung N of the role's escalation chain (--rung; host-side callers only, refused in a worker environment)",
       "outputs": "JSON; exit 1 with a catalog code when no link is usable, a card app is refused or an id is unknown; every chain entry carries its effort; with --rung N >= 1: rung {requested, served, last, link, skipped[]}, STL-MDL-731 when no rung is left (escalate to the owner), and the CLI writes one trusted event line per skipped rung (STL-MDL-732) and one when the walk is exhausted",
-      "allowed_roles": ["dispatcher", "builder", "reviewer"],
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
       "risk_class": "read",
       "hosts": [],
       "secrets": [],
       "status": "approved",
       "source": "bin/resolve.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "094cf6cb-d48d-4b8e-8777-372777d9f60e",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -580,7 +598,15 @@
       "id": "route",
       "kind": "command",
       "summary": "Model call and failover along the resolver's chain: call (the engine loop), attempt (one link for a worker CLI's launcher) and result (how the attempt ended); cooldown, loop guard, mid-task checks, less-private notice, one trusted event line per pick and switch",
-      "keywords": ["route", "failover", "model call", "cooldown", "switch", "attempt", "chain"],
+      "keywords": [
+        "route",
+        "failover",
+        "model call",
+        "cooldown",
+        "switch",
+        "attempt",
+        "chain"
+      ],
       "inputs": "call|attempt --role R --project P [--card C] [--tier T] [--driver D] --task ID --json (call: prompt on stdin; [--rung N]: the chain is the resolver's rung N walk, bin/escalate.sh's call); result --task ID --link <connection>/<model> --outcome ok|<trigger id>",
       "outputs": "JSON {task, link, link_class, text, tool_calls, usage, model, switches, failure_history, refused, stubs}; exit 1 with a catalog code; exit 3 when a link needs a grant",
       "allowed_roles": [],
@@ -589,7 +615,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/route.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "648b0b49-8484-44b8-ac1f-2215cbb217f7",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -597,7 +625,14 @@
       "id": "probe",
       "kind": "command",
       "summary": "Capability probe of a model link (host only): tries the link through its wire shape and records tool calling, parallel tool calls, JSON, the strongest output shape it proves, family and effective context per model version in the probe records (protected state, index key probe_records); one probe.recorded event line per record; due lists the links whose model version has no record; check judges the file.",
-      "keywords": ["probe", "capability", "effective context", "output shape", "tool calling", "model version"],
+      "keywords": [
+        "probe",
+        "capability",
+        "effective context",
+        "output shape",
+        "tool calling",
+        "model version"
+      ],
       "inputs": "run --connection C --model M [--again] --json | due --json | show [--connection C] [--model M] --json | check --json",
       "outputs": "JSON (run: the record; due: {due, unreachable}; show: {records, problem}; check: {ok, records, problem}); exit 1 with a catalog code (STL-MDL-734 unknown link, 735 version already probed, 736 no usable answer, STL-CFG-312 in a worker environment)",
       "allowed_roles": [],
@@ -606,7 +641,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/probe.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "46fc96f9-0a61-4272-b945-15ff810c9410",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -614,7 +651,17 @@
       "id": "triage",
       "kind": "command",
       "summary": "Triage router (host only): a small local model, called through route.py for the router role, classifies one input (stdin) into a route of the routing data's triage tiers (or the image route when the input carries an image); confidence is the route label's token probability where the link gives it, else the agreement of triage.samples calls; unsure or below the threshold moves one tier up, never down; inside a project a message is work unless it is a confident pure question; one triage.verdict event line per verdict (its id); label records an owner override or reroute (triage.label); fit sets the threshold from the labelled verdicts (triage calibration state, triage.calibrated); an optional classifier behind the features.json flag triage-classifier (off by default).",
-      "keywords": ["triage", "router", "route", "classify", "confidence", "unsure", "label", "calibration", "threshold"],
+      "keywords": [
+        "triage",
+        "router",
+        "route",
+        "classify",
+        "confidence",
+        "unsure",
+        "label",
+        "calibration",
+        "threshold"
+      ],
       "inputs": "route [--project P] [--image] --json (message on stdin) | label --id ID --route R --source override|reroute --json | fit --json",
       "outputs": "JSON (route: {id, route, confidence, unsure, tier_moved, link, reasoning?}; label: {id, route, source, label_id}; fit: {threshold, labels}); exit 1 with a catalog code (STL-MDL-740 no verdict could be made, 741 label refused, 742 calibration refused, STL-CFG-312 in a worker environment)",
       "allowed_roles": [],
@@ -623,7 +670,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/triage.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "06c3c8c4-e0bf-485f-9745-d1cb7acf11e5",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -631,7 +680,16 @@
       "id": "team",
       "kind": "command",
       "summary": "Build team preset (host only): generate writes the Claude Code agent files (the folder of the data index key agents_dir) of every agent of the team preset (index key team_preset; role-assignments effort_modes agents: description, tools, link, fallbacks, escalation_chain) with the body texts of the folder team_bodies and a generated marker, one team.generated event line; check compares the preset, the files and the models the latest session log shows (a hand edit, a stale file, an agent on a model its preset does not list fail; an agent with no transcript is not seen; a file without the marker is unmanaged), one alert line on failure.",
-      "keywords": ["team", "build-team", "agents", "preset", "generate", "check", "session", "model"],
+      "keywords": [
+        "team",
+        "build-team",
+        "agents",
+        "preset",
+        "generate",
+        "check",
+        "session",
+        "model"
+      ],
       "inputs": "generate [--preset ID] [--out DIR] --json | check [--preset ID] [--sessions DIR] --json",
       "outputs": "JSON (generate: {preset, written}; check: {preset, ok, latest_session, agents[{agent, ok, session, problems}], stale, unmanaged}); exit 1 with a catalog code (STL-MDL-743 cannot generate or check, 744 a file differs or is stale, 745 an agent ran on a model its preset does not list)",
       "allowed_roles": [],
@@ -640,7 +698,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/team.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "3f4b000d-2b18-43a9-8b5e-1a7fedbf627b",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -648,7 +708,15 @@
       "id": "consent",
       "kind": "command",
       "summary": "Routing consent: the accept popup for a link that needs a grant, project-scoped grants applied through the apply tool, unattended queue; pending, complete, revoke",
-      "keywords": ["consent", "grant", "popup", "privacy", "crossing", "unattended", "revoke"],
+      "keywords": [
+        "consent",
+        "grant",
+        "popup",
+        "privacy",
+        "crossing",
+        "unattended",
+        "revoke"
+      ],
       "inputs": "pending --json | complete <request id> | revoke <grant id> --out <file>",
       "outputs": "JSON; exit 1 with a catalog code",
       "allowed_roles": [],
@@ -657,7 +725,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/consent.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "871e600f-685d-490a-a561-952c4f07be89",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -665,7 +735,13 @@
       "id": "credentials",
       "kind": "command",
       "summary": "The one interface for keys until the secrets broker: reports the state of the key backend the routing data names; a value is returned in-process to the model call only and never printed",
-      "keywords": ["credentials", "keys", "secrets", "backend", "broker"],
+      "keywords": [
+        "credentials",
+        "keys",
+        "secrets",
+        "backend",
+        "broker"
+      ],
       "inputs": "check [--json] [<secret name>...]",
       "outputs": "{backend, kind, ok, missing}; exit 0 when the backend holds every name, else 1 with a catalog code; never a value",
       "allowed_roles": [],
@@ -674,7 +750,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/credentials.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "9659b626-51ce-4dd0-84e8-1b7bd3fe20e5",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -682,7 +760,15 @@
       "id": "settings-explain",
       "kind": "command",
       "summary": "The effective settings of a project: each value, the active preset, Local only, each role's class order, pins and fallbacks, the grants in force, and whether each is inherited or overridden",
-      "keywords": ["settings", "explain", "effective", "preset", "inherited", "overridden", "grants"],
+      "keywords": [
+        "settings",
+        "explain",
+        "effective",
+        "preset",
+        "inherited",
+        "overridden",
+        "grants"
+      ],
       "inputs": "explain --project <id> [--json]",
       "outputs": "JSON or a plain table; exit 1 with a catalog code when the data is invalid",
       "allowed_roles": [],
@@ -691,7 +777,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/settings.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "e7002252-71bc-4836-a982-7190feee9682",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -699,7 +787,14 @@
       "id": "mock-provider",
       "kind": "tool",
       "summary": "Test rig: a local mock model server serving every wire shape of the protocols data, with faults on demand and an exact call counter",
-      "keywords": ["mock", "test rig", "provider", "fault", "protocol", "failover"],
+      "keywords": [
+        "mock",
+        "test rig",
+        "provider",
+        "fault",
+        "protocol",
+        "failover"
+      ],
       "inputs": "optional STELLA_ROOT; faults set by a POST to the control URL",
       "outputs": "first stdout line {port, control}; GET /_calls returns counts and the requests seen",
       "allowed_roles": [],
@@ -708,7 +803,9 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/mock_provider.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "67cf2d4b-deee-4ed2-822f-22ef97ae696a",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
@@ -716,8 +813,13 @@
       "id": "mock-cli",
       "kind": "tool",
       "summary": "Test rig: a fake coding CLI standing in for a cli-login connection; reports a usage limit, a timeout or a missing model on request",
-      "keywords": ["mock", "cli", "usage limit", "test rig"],
-      "inputs": "a prompt on stdin; MOCK_CLI_MODE, MOCK_CLI_SECONDS, MOCK_CLI_CALLS",
+      "keywords": [
+        "mock",
+        "cli",
+        "usage limit",
+        "test rig"
+      ],
+      "inputs": "a prompt on stdin; MOCK_CLI_MODE, MOCK_CLI_SECONDS, MOCK_CLI_CALLS, MOCK_CLI_USAGE (a plan-share usage block on stderr)",
       "outputs": "a result JSON, or a non-zero exit with a message; a calls file with argv and env names",
       "allowed_roles": [],
       "risk_class": "read",
@@ -725,8 +827,1788 @@
       "secrets": [],
       "status": "approved",
       "source": "bin/mock_cli.py",
-      "triage": {"result": "shipped"},
+      "triage": {
+        "result": "shipped"
+      },
       "global_id": "61fe38f7-5138-45b2-9fc9-4545ca128199",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "compare",
+      "kind": "command",
+      "summary": "Sound comparison of two arms on the same tasks (paired trials, mean difference with a 95% t-interval, pass^k, non-inferiority margin, minimum sample, regression set) and routing stats from benchmark results (benchmark mean over the advertised score only above the minimum sample); record adds benchmark records with their trusted event lines (host only). Parameters are data in .stella/model-check.json.",
+      "keywords": [
+        "compare",
+        "benchmark",
+        "confidence interval",
+        "pass^k",
+        "non-inferior",
+        "regression set",
+        "routing stats",
+        "model check"
+      ],
+      "inputs": "compare --a FILE --b FILE [--cheaper] [--regression FILE] --json | stats [--prior FILE] --json | record --file FILE --json | check --json",
+      "outputs": "JSON (compare: {decision better|worse|non_inferior|inconclusive, reason, n_tasks, mean_diff, ci, pass_k}; stats: a list of {role, connection, model, score, source, n, reason}; record: {recorded}; check: {ok, benchmark_records}); exit 1 with a catalog code (STL-MDL-750 bad input, 751 regression set failed, 752 parameters unusable, 753 benchmark results unusable, STL-CFG-312 record in a worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/compare.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "091fbea8-a29e-472b-8535-7ba799f14db9",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "ledger",
+      "kind": "command",
+      "summary": "Usage ledger and limits (host only): appends one record per model call (connection, model, role, project, card, tokens, outcome; secrets scrubbed), counts the daily cap from the records of the UTC day, holds flock slots across every process (hold runs a command inside the slots and frees them when it ends or is killed), keeps limits observed from a 429, rate-limit headers or a CLI's limit error with their expiry (one trusted event line each), and reports status and usage per card, project, role, model or connection. Limits come from the catalog (a value or a limits.env key), the signals from .stella/limit-signals.json.",
+      "keywords": [
+        "ledger",
+        "usage",
+        "limits",
+        "slot",
+        "concurrency",
+        "daily cap",
+        "observed limit",
+        "429",
+        "plan share",
+        "report",
+        "cost"
+      ],
+      "inputs": "record --json (call on stdin) | status --connection C [--model M] --json | hold --connection C --model M [--holder H] -- CMD... | observe --connection C [--model M] [--status N --header 'Name: v'] --json (answer body or CLI output on stdin) | report --by card|project|role|model|connection --json | check --json",
+      "outputs": "JSON (record: the record; status: {concurrency, daily, observed, plan_share, problems}; observe: the observed limit or null; report: {by, groups, torn}; check: {ok, records, torn, observed, problem}); hold becomes CMD, or exits 75 no free slot, 76 daily cap used, 77 observed limit active (STL-LIM-412); exit 1 with a catalog code (STL-LIM-410 unknown link, 411 record refused, 413 file or lock unusable, 414 check failed, 415 limit unreadable, STL-CFG-312 in a worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/ledger.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "707c88d5-230d-44d5-a0e7-e8808c285d03",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "cost",
+      "kind": "command",
+      "summary": "Cost accounting: prices a usage record from the dated pricing table (.stella/pricing.json; five token types priced apart, batch discount, a cli-login record has no cost and keeps its plan share, a model with no row is unpriced with one STL-LIM-420 alert), makes the OpenTelemetry GenAI span of a record (appended to the spans file, index key spans), rolls records up by card, project, role, model or connection with the cache-hit rate, judges the table (check), and exports spans as OTLP/HTTP JSON to the enabled otlp-export app of the connections catalog only while the features.json flag otlp-export is on (off by default; nothing is sent otherwise).",
+      "keywords": [
+        "cost",
+        "price",
+        "pricing",
+        "tokens",
+        "cache",
+        "reasoning",
+        "batch",
+        "span",
+        "opentelemetry",
+        "otlp",
+        "rollup",
+        "budget"
+      ],
+      "inputs": "price [--record FILE|-] --json | span [--record FILE|-] [--write] --json | rollup --by card|project|role|model|connection [--records FILE] --json | check --json | export [--record FILE|-|--spans] --json",
+      "outputs": "JSON (price: {cost, plan_share}; span: the span; rollup: {by, groups, skipped}; check: {ok, entries}; export: {exported, flag, reason?}); exit 1 with a catalog code (STL-LIM-421 table unusable, STL-LIM-422 export failed, STL-LIM-423 input unusable); STL-LIM-420 is an alert line, not a failure",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/cost.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "6506fd37-b5a0-40b9-957e-52d0e9ee3580",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "levers",
+      "kind": "command",
+      "summary": "Cost levers: the batch lane (only a listed job kind that is not urgent, on a connection that offers batch; an urgent job never), the cache policy per connection with the lifetime chosen from the measured gap between calls, the prefix lint of consecutive prompts (a changed stable part or volatile text fails), the cache-hit rate per role from the ledger; the library also lays prompts out stable-first with tools only added, and fans parallel reviewers out after the first call's first token (a test double of the scheduler M1). Every rule is in .stella/levers.json.",
+      "keywords": [
+        "levers",
+        "batch",
+        "cache",
+        "prompt",
+        "prefix",
+        "lint",
+        "hit rate",
+        "fanout",
+        "lifetime",
+        "cost"
+      ],
+      "inputs": "lane --job FILE|- --json | policy --connection C [--records FILE] --json | lint-prefix PATH... --json | hitrate --by card|project|role|model|connection [--records FILE] --json | check --json",
+      "outputs": "JSON (lane: {lane, batch, reason}; policy: {kind, breakpoints, lifetime, gap_seconds, covered, source}; lint-prefix: {ok, compared}; hitrate: {by, groups, skipped}; check: {ok, entries}); exit 1 with a catalog code (STL-LIM-440 data unusable, 441 tool removed, 442 prefix lint failed, 443 fan-out stopped, 444 input unusable)",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/levers.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "c28b59ee-a8ba-4f80-a4a7-65084fca834f",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "budget",
+      "kind": "command",
+      "summary": "Budgets and cost anomalies: per project, card and role budgets from .stella/budgets.json (a * default per scope, a window, soft thresholds in percent, a hard cap in money and/or a plan-share cap) checked against the usage ledger; soft thresholds alert once each (STL-LIM-430); a hard cap makes one hold, one alert (431) and one approval request through bin/approvals.py, and every call of that key is refused (432) until an answer read from the trusted event log (approved: raise the cap or defer to a link the data policy allows; denied, expired or unanswered: paused); an estimate before a card starts and the actual with the difference at close; anomaly detectors (spend rate, retry loop, growing session, outlier card) with one alert (433) and one event line per episode; a before_call hook that bin/route.py call asks before any request (a hold refuses the call; an approved defer allows only its link and the budget stays measured).",
+      "keywords": [
+        "budget",
+        "cap",
+        "hold",
+        "threshold",
+        "estimate",
+        "anomaly",
+        "spend",
+        "approval",
+        "pause",
+        "defer",
+        "cost"
+      ],
+      "inputs": "check [--project P] [--card C] [--role R] --json | hold list --json | estimate --kind K [--card C] --json | close --card C --json | anomalies --json | check-data --json",
+      "outputs": "JSON (check: {result allow|warn|held, threshold, defer_to, code, holds[]}; hold list: {holds}; estimate: {estimate, basis, samples}; close: {estimate, actual, difference}; anomalies: {new, known}; check-data: {ok, problems}); exit 1 with a catalog code (STL-LIM-432 held, 434 data or state unusable, 435 input unusable); 430, 431 and 433 are alert lines",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/budget.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "15b80dd3-709c-463f-8ae7-261511fa4af2",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "model-check",
+      "kind": "command",
+      "summary": "The weekly model check (owner/engine command, host only): picks model links for preset roles from probe records, benchmark results with trusted lines and prices applied before the run, never from news, web text or model output; refuses any pick that widens exposure (link class, data policy, host, connection), lacks a probe record or ranks lower; applies each pick through the apply tool's engine exception (built-in presets while the owner setting MODEL_CHECK_BUILTIN is on, custom presets with a model_check grant), one event line and alert per pick, rollback from the trusted line, pricing refresh, pause and resume. Rules are data in .stella/model-check.json weekly.",
+      "keywords": [
+        "model check",
+        "weekly",
+        "built-in preset",
+        "model pick",
+        "rollback",
+        "pricing refresh",
+        "engine",
+        "benchmark",
+        "probe"
+      ],
+      "inputs": "run [--dry-run] --json | status --json | rollback <pick id> --json | resume --json | check --json",
+      "outputs": "JSON (run: {picks, refused, skipped, ignored, failing, pricing}; status: {state, picks}; rollback: {rollback, pick}; resume: {resumed}; check: {ok, problems}); exit 1 with a catalog code (STL-MDL-761 pick not applied, 762 paused now, 763 paused, 764 the apply tool refused the engine pick, 765 rollback refused, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/model_check.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "8af2c40b-6c3a-4df3-ae1e-a1342a996db5",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "prompt",
+      "kind": "command",
+      "summary": "Prompt profiles: renders a role prompt in the form the model's family follows best (tag or heading sections, evidence first, capability line, working notes, question last, the family's parallel-tool-call line). Profile chosen by --profile, the role override, the catalog model's family, else the default; every form is in .stella/prompt-profiles.json.",
+      "keywords": [
+        "prompt",
+        "profile",
+        "family",
+        "render",
+        "evidence",
+        "parallel tools",
+        "capability line"
+      ],
+      "inputs": "render --role R --link CONN/MODEL --brief FILE [--profile P] [--evidence FILE] [--attached FILE] [--notes FILE] [--instructions FILE] [--question FILE|TEXT] --json | check --json",
+      "outputs": "JSON (render: {profile, family, role, link, sections, reasoning, example_placement, parallel_tools, text}; check: {ok, entries}); exit 1 with a catalog code (STL-CFG-330 data unusable, 331 profile or link not found, 332 input unusable, 333 capability line missing)",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/prompt.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "d964b2fd-e04b-4b7a-95ca-f7f34005d836",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "run-token",
+      "kind": "command",
+      "summary": "Per-run tokens (host only): mint one for every run (api and cli-login; the record holds the connection type, DC-04) and print it once; revoke every token of a run. Only the sha256 of a token is stored (index key run_tokens); the prefix is data so leak scanners find one; one trusted event line per mint and revoke with a hash prefix, never the value",
+      "keywords": [
+        "run token",
+        "mint",
+        "revoke",
+        "model proxy",
+        "api link",
+        "per-run"
+      ],
+      "inputs": "mint --run R --role ROLE --card C --link <connection>/<model> [--project P] [--ttl S] | revoke --run R",
+      "outputs": "mint: the token alone on stdout; revoke: JSON {run, revoked}; exit 1 with a catalog code (STL-MDL-797 token state or gateway data, 799 link or ttl refused, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/run_token.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "802eddad-1b76-409e-8c53-96660f0fa487",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "model-proxy",
+      "kind": "command",
+      "summary": "The loopback model proxy for api links (host only): takes a run token from the protocols' auth headers, refuses an unknown, expired, revoked or non-api token, pins the run's model, runs the budget gate and a ledger slot, swaps in the real key (credentials.get) with the protocol's header template, forwards only the protocol's paths to the connection's catalog host (no redirect, no environment proxy), streams the answer back with the key masked, records usage and cost, one event line per request",
+      "keywords": [
+        "model proxy",
+        "loopback",
+        "run token",
+        "api key",
+        "usage ledger",
+        "budget"
+      ],
+      "inputs": "serve [--port P]   (bind address, default port, body limit and passed headers from .stella/run-gateway.json)",
+      "outputs": "{bind, port, pid} on stdout and at the index key model_proxy_state; per request the upstream answer, or an HTTP status >= 400 with {error {code, message}} (STL-MDL-790..799, the budget's STL-LIM-43x); exit 1 with a catalog code when it cannot serve (STL-MDL-799, STL-CFG-312)",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/model_proxy.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "8e2dfc3f-a601-4158-bb84-b8c2fc708ade",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "capabilities",
+      "kind": "command",
+      "summary": "Find, describe, request and load capabilities by role: search ranks registry entries by id, keywords and summary (weights from .stella/capability-sources.json), a hidden id answers like an unknown one, request opens one approval through the approval service, load returns the definition and writes one trusted capability-load line (host side only); a skill or MCP server with no registry entry is hidden and raises an alert",
+      "keywords": [
+        "capability",
+        "search",
+        "describe",
+        "request",
+        "load",
+        "skill",
+        "mcp",
+        "registry",
+        "discover",
+        "lean tools",
+        "prompt-line",
+        "check-card"
+      ],
+      "inputs": "search words, a capability id, --role, --reason, --card, --run",
+      "outputs": "JSON or text; exit 1 with STL-GRD-660..667 when a capability is not known or not visible to the role",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/capabilities.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "e59ac56f-e59c-4066-9305-a281d04a8254",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "host-access",
+      "kind": "command",
+      "summary": "Decide a host-session or input-source request (host side, pure): the vault, the role's host_operator flag, an attended run, the owner present (indicator, kill switch, route, paired device with biometric), the owner's host access settings (master, routes, apps, domains, input sources, action states and reversible flags, overrides), request finality for irreversible actions and an approved confirmation for ask-first ones",
+      "keywords": [
+        "host",
+        "host session",
+        "input source",
+        "presence",
+        "kill switch",
+        "vault",
+        "ask first",
+        "biometric",
+        "turn",
+        "final"
+      ],
+      "inputs": "a request file {capability, role, run, target {app, domain}, action {type}, confirmation}",
+      "outputs": "allowed (exit 0, JSON with --json) or refused: exit 1 with STL-GRD-620..637, STL-CFG-312 in a worker environment",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/host_access.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "e5261c3a-11cd-48e1-9e13-992e406fa07e",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "capabilities-mcp",
+      "kind": "command",
+      "summary": "The capability MCP server on loopback (host only): MCP over streamable HTTP (JSON-RPC 2.0 POSTs) with the tools search, describe, request and load; the run token is the only credential and role, card and run come from its record (never from the arguments); Host and Origin must name a loopback host; it calls bin/capabilities.py in-process, so load and request write their trusted lines there; a worker's capabilities.py is its thin client",
+      "keywords": [
+        "capability",
+        "mcp",
+        "server",
+        "loopback",
+        "run token",
+        "search",
+        "load",
+        "skill",
+        "discover"
+      ],
+      "inputs": "serve [--port P]   (bind address, port, path, hosts, auth header, body limit, timeout and protocol versions from .stella/run-gateway.json mcp)",
+      "outputs": "{bind, port, path, pid} on stdout and at the index key capabilities_mcp_state; per request a JSON-RPC answer, or an HTTP status >= 400 with a JSON-RPC error whose data.code is the catalog code (STL-GRD-675..679); a refused tool call is a result with isError true (STL-GRD-660..667); exit 1 with STL-GRD-680 or STL-CFG-312 when it cannot serve",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/capabilities_mcp.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "323e4275-99e9-4dff-a72b-fa76e64bbab1",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "stuck",
+      "kind": "command",
+      "summary": "Stuck detection (host only): scan a run's trusted tool stream for no-progress patterns (same action and result repeated, same error repeated, two actions alternating, an edit followed by its revert, tokens spent with no diff change) with per-role thresholds from .stella/stuck.json; watch a run and on a match stop it (adapter stop), write one trusted run-block event line with the matching events, and block the card through the data-configured block command",
+      "keywords": [
+        "stuck",
+        "loop",
+        "no progress",
+        "repeat",
+        "revert",
+        "watch",
+        "block"
+      ],
+      "inputs": "scan FILE [--role R] [--json] | watch --run R --card C [--role R] [--events FILE]",
+      "outputs": "scan: {stuck, role, matches[{pattern, detail, evidence}]}; watch: {run, blocked, pattern, reason}; exit 1 with a catalog code (STL-ESC-250..253, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/stuck.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "ce4efc61-e4a1-44a1-83fa-825e982deeff",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "policy",
+      "kind": "command",
+      "summary": "Policy layer: the stack rules (write boundary, protected paths, secret reads, commit rule, dispatcher-only actions, model limits) written once in .stella/policy.json and rendered into each worker CLI's own permission config through the shapes of .stella/adapters.json; checks the data (every rule kind carried by each adapter, token variables are worker signals, writable paths only the worktree), regenerates the committed generated configs, catches a hand edit of a generated block (drift), and judges one tool call for a CLI that runs a hook.",
+      "keywords": [
+        "policy",
+        "permissions",
+        "permission config",
+        "write boundary",
+        "protected paths",
+        "secrets",
+        "deny",
+        "drift",
+        "generate",
+        "adapter",
+        "hook",
+        "sandbox"
+      ],
+      "inputs": "check [--json] | generate --adapter A [--worktree W] [--out F] [--json] | generate --all [--write] [--json] | drift [--json] | hook --adapter A [--worktree W] (a tool call payload on stdin)",
+      "outputs": "JSON (check: {ok, problems[{code, problem}]}; generate: the rendered config, or {adapter, file, pointers}; generate --all: {changed, written}; drift: {ok, drift[{adapter, file, pointers, problem, code}]}); hook: nothing (no objection) or the adapter's deny template; exit 1 with a catalog code (STL-GRD-610 data unusable, 611 a rule kind an adapter does not carry, 612 token variable not a worker signal, 613 drift, 614 writable beyond the worktree, 615-617 hook refusals, 618 unknown adapter)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/policy.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "44065d24-4cfb-425c-b87f-e109c28c5bd1",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "run-policy",
+      "kind": "command",
+      "summary": "Per-role run policy (token-lean tools, budgets, context policy): check the data, show a role's policy, translate it to an adapter's settings (unsupported features listed), compare prefill and output with the role's budget",
+      "keywords": [
+        "run policy",
+        "budget",
+        "prefill",
+        "output",
+        "compaction",
+        "translate",
+        "adapter",
+        "core tools"
+      ],
+      "inputs": "check|show|translate|prefill|output-check --role R [--adapter A] [--tokens N|--file F|--events F] --json",
+      "outputs": "JSON; exit 1 with STL-LIM-450..453 when the policy is unusable or a budget is exceeded",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/run_policy.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "c66e08a2-d94b-49ca-a77a-08ea52a69b11",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "log-filter",
+      "kind": "command",
+      "summary": "Deterministic log filter: trims tool output to the failing lines with context, collapses repeated lines, drops progress noise; never drops a failing line",
+      "keywords": [
+        "log",
+        "filter",
+        "trim",
+        "failing",
+        "stack frames",
+        "progress"
+      ],
+      "inputs": "[--role R], the log on stdin",
+      "outputs": "the filtered log on stdout; exit 1 with STL-LIM-450 when the policy is unusable",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/log_filter.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "daa915f1-f9ad-42b7-89c5-5d7a0cdb0a65",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "adapter-discord",
+      "kind": "command",
+      "summary": "Approval-service channel adapter: delivers a request to its Discord thread and collects the owner answer",
+      "keywords": [
+        "approval",
+        "discord",
+        "channel",
+        "adapter"
+      ],
+      "inputs": "a request JSON on stdin (deliver) or a collect call",
+      "outputs": "a message ref; answer lines",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/adapters/discord.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "338e1918-ac72-4796-810b-e04f06928211",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "adapter-host-cli",
+      "kind": "command",
+      "summary": "Approval-service channel adapter for the host terminal: shows the request and how to answer it",
+      "keywords": [
+        "approval",
+        "host",
+        "terminal",
+        "channel",
+        "adapter"
+      ],
+      "inputs": "a request JSON on stdin",
+      "outputs": "a message ref on stdout; the request on stderr",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/adapters/host-cli.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "115185a6-10fc-4341-b48a-2a978e7ffa84",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "adapter-kanban-resume",
+      "kind": "command",
+      "summary": "Approval-service resume: unblocks the card that waited on an approval, with the decision as the reason",
+      "keywords": [
+        "approval",
+        "resume",
+        "kanban",
+        "unblock",
+        "card"
+      ],
+      "inputs": "card id and decision word",
+      "outputs": "the card unblocked",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/adapters/kanban-resume.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "8a46180b-ffe3-4329-b10d-8baca676b1ec",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "alert-catalog-docs",
+      "kind": "command",
+      "summary": "Write or check the generated alert code page docs/alert-codes.md from the alert catalog",
+      "keywords": [
+        "alert",
+        "catalog",
+        "docs",
+        "codes",
+        "page"
+      ],
+      "inputs": "--docs or --check",
+      "outputs": "docs/alert-codes.md written, or exit 1 when stale",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/alert-catalog.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "3e6fba0c-cd27-4146-bc27-0f46a0f4d0fb",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "alert-explain",
+      "kind": "command",
+      "summary": "Print one alert code's catalog entry for the terminal",
+      "keywords": [
+        "alert",
+        "explain",
+        "code",
+        "catalog"
+      ],
+      "inputs": "an alert code such as STL-ESC-210",
+      "outputs": "the entry as text",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/alert-explain.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "c59fd4e3-0788-4380-8d93-74b1f7888fdf",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "alert",
+      "kind": "command",
+      "summary": "Sourced helpers that render an owner-facing alert line from the catalog and send it to the alerts channel",
+      "keywords": [
+        "alert",
+        "message",
+        "owner",
+        "notify",
+        "catalog"
+      ],
+      "inputs": "a code and key=value pairs",
+      "outputs": "a plain-language line; a line in the alerts log; a channel message",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/alert.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "b94abb3e-a6e5-420e-a2fc-8333d8e9e8dd",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "apply-hermes-local",
+      "kind": "command",
+      "summary": "Re-apply the repo-managed Hermes local config (soul rules, hooks, toolsets) to the Hermes volume",
+      "keywords": [
+        "hermes",
+        "apply",
+        "soul",
+        "config",
+        "volume",
+        "restore"
+      ],
+      "inputs": "none (reads docs/hermes-local)",
+      "outputs": "the Hermes profiles updated",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/apply-hermes-local.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "cc65d406-32c4-4acc-87f8-db1e295f8076",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "approval-sim",
+      "kind": "command",
+      "summary": "Simulation of Hermes's real approval gate with a stub channel",
+      "keywords": [
+        "approval",
+        "simulation",
+        "hermes",
+        "gate"
+      ],
+      "inputs": "none",
+      "outputs": "a pass or fail report",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/approval-sim.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "53d317ba-d223-45a8-8e41-862b5476e94b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "bench",
+      "kind": "command",
+      "summary": "Benchmark suite: list, check, run and measure the tasks in bench/tasks",
+      "keywords": [
+        "benchmark",
+        "bench",
+        "tasks",
+        "metrics",
+        "measure"
+      ],
+      "inputs": "a subcommand (list, check, reset, verify, metrics, run)",
+      "outputs": "task ids, verdicts and metrics JSON",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/bench.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "21554b7a-dd54-45b5-9386-97aa8b4feaa1",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "box-live-probe",
+      "kind": "command",
+      "summary": "Live probe of the OS box: prints PROBE lines for attacks run boxed and unboxed",
+      "keywords": [
+        "box",
+        "probe",
+        "sandbox",
+        "live",
+        "canary"
+      ],
+      "inputs": "a canary path",
+      "outputs": "PROBE lines",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/box-live-probe.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "2291d02f-6110-4869-bd09-312d9b850ef6",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "box",
+      "kind": "command",
+      "summary": "OS box: builds the bubblewrap mounts and argv for one terminal call of a boxed profile",
+      "keywords": [
+        "box",
+        "sandbox",
+        "bubblewrap",
+        "mounts",
+        "isolation"
+      ],
+      "inputs": "a card proof and the sandbox block of the role table",
+      "outputs": "a bwrap argv",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/box.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "57890c95-0b66-4d14-bb5c-58d1c1eeaab2",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "broker-put",
+      "kind": "command",
+      "summary": "Store one secret in the stand-in broker folder, read from the terminal without echo",
+      "keywords": [
+        "broker",
+        "secret",
+        "store",
+        "credential",
+        "token"
+      ],
+      "inputs": "a secret name; the value from the terminal",
+      "outputs": "the secret file at mode 0600; nothing printed",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/broker-put.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "0720c37f-164f-410a-8969-8192d2b42be2",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "check-guard",
+      "kind": "command",
+      "summary": "Pre-tool hook: a worker hands a card on only after it ran the card's own check",
+      "keywords": [
+        "guard",
+        "hook",
+        "check",
+        "review",
+        "complete"
+      ],
+      "inputs": "a hook call on stdin",
+      "outputs": "allow, or exit 2 with a reason",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/check-guard.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "94694e1a-9bff-435f-b258-7ab1ffcfc240",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "claude-review",
+      "kind": "command",
+      "summary": "Review call inside the reviewing profile's box: sends the fixed review prompt to Claude with read-only flags",
+      "keywords": [
+        "review",
+        "claude",
+        "prompt",
+        "read-only"
+      ],
+      "inputs": "the prompt file and export folder named by the environment",
+      "outputs": "the review answer",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/claude-review.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "e5f49501-2ab6-4136-a316-a2298e5624a3",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "commit-guard",
+      "kind": "command",
+      "summary": "Pre-commit hook: a worker commits only in its own card worktree and branch",
+      "keywords": [
+        "commit",
+        "guard",
+        "hook",
+        "worktree",
+        "branch"
+      ],
+      "inputs": "a commit in progress",
+      "outputs": "exit 0, or a refusal with a reason",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/commit-guard.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "5d1e3a00-7690-464a-82fd-bf30d54615c5",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "complete-gate",
+      "kind": "command",
+      "summary": "Pre-tool hook on kanban_complete: required completion metadata for the reviewing role",
+      "keywords": [
+        "complete",
+        "gate",
+        "hook",
+        "review",
+        "metadata"
+      ],
+      "inputs": "a hook call on stdin",
+      "outputs": "allow, or exit 2 with a reason",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/complete-gate.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "c6f0a577-d9ca-492e-92ff-9ecaaac16b6b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "container-start",
+      "kind": "command",
+      "summary": "Container start step: restores user-space config and the crontab from the repo and the Hermes volume",
+      "keywords": [
+        "container",
+        "start",
+        "restore",
+        "cron",
+        "boot"
+      ],
+      "inputs": "none",
+      "outputs": "the user-space config restored; exit 1 names failed steps",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/container-start.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "1203998a-96d6-4478-a47d-c2c319517b99",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalate-drain",
+      "kind": "command",
+      "summary": "Manual drain of the escalation queue: list or replay queued escalations",
+      "keywords": [
+        "escalation",
+        "queue",
+        "drain",
+        "replay"
+      ],
+      "inputs": "--list, --replay ID or --all",
+      "outputs": "queue entries; replayed calls",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalate-drain.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "f733c6e6-7573-406d-8583-26d81b6a816e",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalate",
+      "kind": "command",
+      "summary": "The only sanctioned way to run an escalation model: card-scoped, logged, rate-limited (supervisor only)",
+      "keywords": [
+        "escalate",
+        "escalation",
+        "model",
+        "supervisor",
+        "rung"
+      ],
+      "inputs": "card id, purpose, reason, prompt on stdin",
+      "outputs": "the model answer; one trusted line",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalate.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "c5864459-cb21-4cc3-80eb-0e3df5e362ea",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalation-complete",
+      "kind": "command",
+      "summary": "Report the completion of an escalated card exactly once",
+      "keywords": [
+        "escalation",
+        "complete",
+        "thread",
+        "report"
+      ],
+      "inputs": "a card id",
+      "outputs": "one completion line and thread message",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalation-complete.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "7f3995eb-d0aa-4df1-a82e-8a1534b9f559",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalation-discord",
+      "kind": "command",
+      "summary": "Sourced helpers shared by the escalation scripts: environment, logging and the Discord action call",
+      "keywords": [
+        "escalation",
+        "discord",
+        "helper",
+        "sourced"
+      ],
+      "inputs": "sourced by other scripts",
+      "outputs": "functions",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalation-discord.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "69e25874-68a2-44d0-b0c8-9f8ba4c1427f",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalation-on-block",
+      "kind": "command",
+      "summary": "Hermes hook on a blocked card: opens its escalation thread",
+      "keywords": [
+        "escalation",
+        "hook",
+        "blocked",
+        "thread"
+      ],
+      "inputs": "a hook payload",
+      "outputs": "a thread for the card",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalation-on-block.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "8485227f-f60b-4b05-9f94-50466c9816c2",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalation-on-claim",
+      "kind": "command",
+      "summary": "Hermes hook on a claimed card: marks the escalation reply as being worked on",
+      "keywords": [
+        "escalation",
+        "hook",
+        "claim",
+        "reaction"
+      ],
+      "inputs": "a hook payload",
+      "outputs": "a status reaction",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalation-on-claim.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "9139fdd9-d837-4790-8ba9-808228fb8b12",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalation-on-complete",
+      "kind": "command",
+      "summary": "Hermes hook on a completed card: reports an escalated card's completion",
+      "keywords": [
+        "escalation",
+        "hook",
+        "complete"
+      ],
+      "inputs": "a hook payload",
+      "outputs": "a completion report",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalation-on-complete.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "2ffdcbe2-0021-4aba-9142-9643a7800b9e",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalation-reply-hook",
+      "kind": "command",
+      "summary": "Hermes hook: records a reply in a card's escalation thread against the card and unblocks it",
+      "keywords": [
+        "escalation",
+        "reply",
+        "hook",
+        "unblock"
+      ],
+      "inputs": "a hook payload",
+      "outputs": "a card comment and an unblocked card",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalation-reply-hook.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "7f167754-4752-4f0b-b8f6-88dd693207d0",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalation-reply-poll",
+      "kind": "command",
+      "summary": "Cron poller: records a reply in each blocked card's escalation thread",
+      "keywords": [
+        "escalation",
+        "reply",
+        "poll",
+        "cron",
+        "thread"
+      ],
+      "inputs": "none",
+      "outputs": "card comments and unblocked cards",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalation-reply-poll.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "7c697979-c721-48f1-97ba-11ee64f5133c",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalation-thread",
+      "kind": "command",
+      "summary": "Open or reuse the one escalation thread for a blocked card",
+      "keywords": [
+        "escalation",
+        "thread",
+        "discord",
+        "blocked"
+      ],
+      "inputs": "card id, title and the decision needed",
+      "outputs": "a thread and one supervisor notification",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalation-thread.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "209f1875-cc8f-4bcc-a76d-ec3dfe2c879c",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "escalations-status",
+      "kind": "command",
+      "summary": "Read-only overview of every escalated card: status, latest event, title and thread URL",
+      "keywords": [
+        "escalation",
+        "status",
+        "overview",
+        "cards",
+        "thread"
+      ],
+      "inputs": "optional --all",
+      "outputs": "a table of escalated cards",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/escalations-status.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "d21ba7ae-1cc4-4ec6-816a-24014bc75572",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "false-close-guard",
+      "kind": "command",
+      "summary": "Pre-tool hook on kanban_complete: a card completes only after its worker run exited 0 with output",
+      "keywords": [
+        "false",
+        "close",
+        "guard",
+        "hook",
+        "complete",
+        "evidence"
+      ],
+      "inputs": "a hook call on stdin",
+      "outputs": "allow, or exit 2 with a reason",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/false-close-guard.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "f5a9b327-308d-4e5f-b602-6a9f31c9ab59",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "firewall-check",
+      "kind": "command",
+      "summary": "Read-only egress check of the container firewall: one PASS or FAIL line per probe",
+      "keywords": [
+        "firewall",
+        "egress",
+        "check",
+        "probe"
+      ],
+      "inputs": "none (run as root on the host)",
+      "outputs": "PASS and FAIL lines",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/firewall-check.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "1d131b0a-acb0-4263-aa18-a460667f32a3",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "hermes-gateway-loop",
+      "kind": "command",
+      "summary": "Restart loop for the Hermes gateway inside its tmux session",
+      "keywords": [
+        "hermes",
+        "gateway",
+        "restart",
+        "loop"
+      ],
+      "inputs": "none",
+      "outputs": "a running gateway",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/hermes-gateway-loop.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "274a7f10-6407-4831-ad95-237afe32e130",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "kanban-board",
+      "kind": "command",
+      "summary": "Sourced: the one place that names the kanban board and wraps the kanban call",
+      "keywords": [
+        "kanban",
+        "board",
+        "sourced"
+      ],
+      "inputs": "sourced by other scripts",
+      "outputs": "a kanban function",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/kanban-board.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "db16a6df-3173-433b-b5e0-07d3815330b3",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "kanban-guard",
+      "kind": "command",
+      "summary": "Hermes hook on kanban tools: refuses a call that names another board",
+      "keywords": [
+        "kanban",
+        "guard",
+        "hook",
+        "board"
+      ],
+      "inputs": "a hook call on stdin",
+      "outputs": "allow, or exit 2 with a block message",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/kanban-guard.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "2eebb9fc-1189-49a1-bc3f-ec3c0f5c3f2a",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "merge-card",
+      "kind": "command",
+      "summary": "Merge a reviewed card branch into main (the owner's step, never a worker's)",
+      "keywords": [
+        "merge",
+        "card",
+        "branch",
+        "main",
+        "review"
+      ],
+      "inputs": "card id and flags",
+      "outputs": "the branch merged",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/merge-card.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "e909e2db-5545-4e5f-831d-8ab4dac4528b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "model-watch",
+      "kind": "command",
+      "summary": "Model-call watch: flags a running card whose model calls keep failing",
+      "keywords": [
+        "model",
+        "watch",
+        "failing",
+        "card",
+        "watchdog"
+      ],
+      "inputs": "none (reads the board and agent logs)",
+      "outputs": "an alert line",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/model_watch.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "1446fd73-beab-4f09-89ee-26376c2bb233",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "omniroute-ctl",
+      "kind": "command",
+      "summary": "Control of the local OmniRoute gateway: start, stop, status",
+      "keywords": [
+        "omniroute",
+        "gateway",
+        "control",
+        "start",
+        "stop"
+      ],
+      "inputs": "start, stop or status",
+      "outputs": "the gateway state",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/omniroute-ctl.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "2dac1b9e-29e5-4678-bb1c-72ff4eb8cef2",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "omniroute-run",
+      "kind": "command",
+      "summary": "Fallback runner: tries a role's model chain through the gateway, prompt on stdin",
+      "keywords": [
+        "omniroute",
+        "fallback",
+        "run",
+        "model",
+        "chain"
+      ],
+      "inputs": "a prompt on stdin, optional --role",
+      "outputs": "the model answer",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/omniroute-run.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "9566feef-3518-4341-b917-9b0edad6cea7",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "owner-config-sh",
+      "kind": "command",
+      "summary": "Shell reader of the owner config (the one parser is owner_config.py)",
+      "keywords": [
+        "owner",
+        "config",
+        "shell",
+        "reader"
+      ],
+      "inputs": "a key name",
+      "outputs": "a value on stdout",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/owner-config.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "d6546a99-6c57-40bd-bbcf-e1d37b3a1b67",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "owner-config",
+      "kind": "command",
+      "summary": "The one parser of the owner config file",
+      "keywords": [
+        "owner",
+        "config",
+        "parser"
+      ],
+      "inputs": "a key name",
+      "outputs": "a value on stdout",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/owner_config.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "a1084634-f0b7-43fa-876f-9c039faa322d",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "register-escalation-hook",
+      "kind": "command",
+      "summary": "Re-register the escalation shell hooks in every Hermes profile",
+      "keywords": [
+        "register",
+        "escalation",
+        "hook",
+        "profile"
+      ],
+      "inputs": "none",
+      "outputs": "hooks registered in the profiles",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/register-escalation-hook.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "0af5a36a-53df-4509-b007-c240888e6f64",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "register-toolsets",
+      "kind": "command",
+      "summary": "Re-apply each profile's toolsets, disabled skills and config from the role table",
+      "keywords": [
+        "register",
+        "toolsets",
+        "skills",
+        "profile",
+        "roles"
+      ],
+      "inputs": "none (reads the role table)",
+      "outputs": "the Hermes volume updated",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/register-toolsets.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "833884d0-5a10-45cf-baaf-8bcdafe11525",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "role-guard",
+      "kind": "command",
+      "summary": "Fail-closed pre-tool hook: refuses a tool the caller's role may not use",
+      "keywords": [
+        "role",
+        "guard",
+        "hook",
+        "permission"
+      ],
+      "inputs": "a hook call on stdin",
+      "outputs": "allow, or exit 2 with a reason",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/role-guard.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "1cb389a7-8908-4e6a-9492-f3de5a382990",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "selftests",
+      "kind": "command",
+      "summary": "Run the hermetic self-tests, all or by name, in parallel",
+      "keywords": [
+        "selftest",
+        "tests",
+        "run",
+        "suite",
+        "hermetic"
+      ],
+      "inputs": "test names, or --quick",
+      "outputs": "PASS or FAIL lines and a total",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/selftests.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "626a7c57-048e-422c-853f-d85e8cfa38f2",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "watchdog",
+      "kind": "command",
+      "summary": "Build watchdog: runs the project checks, writes the status file and alerts on a failure",
+      "keywords": [
+        "watchdog",
+        "build",
+        "status",
+        "alert",
+        "checks"
+      ],
+      "inputs": "none (cron)",
+      "outputs": "the status file; alert lines",
+      "allowed_roles": [],
+      "risk_class": "send",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/watchdog.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "1f954daf-658a-4e23-9a3f-9a7ed13e085a",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "watchdog-settings",
+      "kind": "command",
+      "summary": "Watchdog settings reader: validates the file and answers the gateway verdict",
+      "keywords": [
+        "watchdog",
+        "settings",
+        "gateway",
+        "validate"
+      ],
+      "inputs": "--check or gateway",
+      "outputs": "settings OK, or a JSON verdict",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/watchdog_settings.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "aa0bde88-6c00-4e86-bbc7-27b2b8ad14b0",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "worker-env",
+      "kind": "command",
+      "summary": "The one answer to whether a process runs in a worker environment",
+      "keywords": [
+        "worker",
+        "environment",
+        "guard",
+        "markers"
+      ],
+      "inputs": "none (imported)",
+      "outputs": "a reason or none",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/worker_env.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "15e58572-957f-4e04-96a0-55d81b6ebe36",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "stack-rules",
+      "kind": "skill",
+      "summary": "Standing rules, safety invariants, token discipline and evidence format for any work on the stack",
+      "keywords": [
+        "rules",
+        "invariants",
+        "evidence",
+        "stack",
+        "audit",
+        "build"
+      ],
+      "inputs": "none (loaded as a skill)",
+      "outputs": "the rules text",
+      "allowed_roles": [
+        "dispatcher",
+        "builder",
+        "reviewer"
+      ],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": ".claude/skills/stack-rules/SKILL.md",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "7c43e858-11bc-44b3-a5a1-1c90678b43e0",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "playwright",
+      "kind": "mcp_server",
+      "summary": "Headless browser automation MCP server (page snapshots, clicks, forms)",
+      "keywords": [
+        "browser",
+        "playwright",
+        "web",
+        "page",
+        "automation",
+        "mcp"
+      ],
+      "inputs": "tool calls over stdio",
+      "outputs": "page snapshots and action results",
+      "allowed_roles": [],
+      "risk_class": "post",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": ".mcp.json",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "76721c54-12ef-4d4d-b1c1-f9166bc5cee7",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "chrome-devtools",
+      "kind": "mcp_server",
+      "summary": "Headless Chrome DevTools MCP server (inspect, network, performance)",
+      "keywords": [
+        "browser",
+        "chrome",
+        "devtools",
+        "inspect",
+        "network",
+        "mcp"
+      ],
+      "inputs": "tool calls over stdio",
+      "outputs": "page inspection results",
+      "allowed_roles": [],
+      "risk_class": "post",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": ".mcp.json",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "df208367-4a8f-4839-b057-f79ff17b1a92",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "adapter",
+      "kind": "command",
+      "summary": "Worker adapters (engine side): list the coding CLIs, report a CLI's version against its tested versions, start a run of a role in a worktree (conformance gate, link check, run token, generated policy and MCP config, rendered prompt, ledger slots, OS box for boxed profiles), stop it, show its log and its completion evidence",
+      "keywords": [
+        "adapter",
+        "worker",
+        "coding cli",
+        "run",
+        "start",
+        "stop",
+        "evidence",
+        "conformance",
+        "events.jsonl"
+      ],
+      "inputs": "list --json | version --adapter A --json | start --adapter A --role R --worktree W --brief-file F [--card C] [--card-file J] [--link CONN/MODEL] [--project P] [--run-id R] [--wait] --json | stop --run R [--reason T] | logs --run R [--follow] | evidence --run R --json",
+      "outputs": "JSON (list, version, the started run, evidence); the run record and events.jsonl under the index key adapter_runs; exit 1 with a catalog code (STL-GRD-640..654, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/adapter.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "18765b15-57f0-4e1e-9df6-6bed2eb5ee22",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "mock-agent",
+      "kind": "tool",
+      "summary": "Test rig: a fake coding CLI driven by an action list in its prompt (write, read, edit, shell, MCP call, model call, env, usage); obeys its generated policy config and hook the way its adapter entry says and prints jsonl",
+      "keywords": [
+        "mock",
+        "agent",
+        "fake cli",
+        "adapter",
+        "test rig"
+      ],
+      "inputs": "--prompt-file F --config C [--model M] [--mcp-config J] [--cwd W] | --version",
+      "outputs": "jsonl tool_use, tool_result, usage and result lines on stdout; exit 0, 1 when an action crashes",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/mock_agent.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "cb8536f6-36a3-4a15-b41a-9b726de3a48b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "conformance",
+      "kind": "command",
+      "summary": "Conformance suite for worker adapters (host only): run each case of .stella/conformance.json as a card-less adapter run in a scratch worktree, judge it from trusted evidence (stream, run log, completion evidence, usage ledger, event log, worktree), record the result with the data digests the adapter start gate checks",
+      "keywords": [
+        "conformance",
+        "adapter",
+        "worker",
+        "coding cli",
+        "canary",
+        "prefill",
+        "gate"
+      ],
+      "inputs": "run --adapter A --role R [--link CONN/MODEL] [--project P] [--json]",
+      "outputs": "JSON record {adapter, version, role, link, conn_type, passed, cases, digests, at, global_id, install_id}; the record at the index key conformance_records; one conformance.run event line; exit 1 with a catalog code (STL-GRD-690..695, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/conformance.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "1c748b6e-7e6b-4d4a-bb82-8aedb1d3a6cb",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

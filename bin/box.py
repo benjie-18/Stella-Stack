@@ -8,12 +8,11 @@ The card's branch ref is not bound from the shared refs/heads/<project> folder (
 over one spelling of a sibling's ref hides only that spelling): the box sees a private copy of its own ref, and run() applies
 it to the real repo after the call, for this ref only, as a compare-and-swap.
 """
-import ast, contextlib, fnmatch, json, os, pwd, re, shutil, signal, stat, subprocess, sys, tarfile, time, uuid
+import contextlib, fnmatch, json, os, pwd, re, shutil, signal, stat, subprocess, sys, tarfile, time, uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import roles
 
-HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs/hermes-local/hooks/builder/secret-guard.py")
 NO_NEST = "--disable-userns"   # no namespace inside a box; only the merge test of a stack card runs without it (merge_exec nest)
 BASE = ["bwrap", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup-try",
         NO_NEST, "--die-with-parent", "--new-session", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"]
@@ -24,17 +23,13 @@ class BoxError(Exception):
 
 
 def secret_classes():
-    """(SECRETS, SECRET_OK) read, not run, from secret-guard.py: the one list (no copy to drift)."""
-    got = {}
+    """(SECRETS, SECRET_OK): the deny and allow globs of the policy's secret_read rule (.stella/policy.json, F3 DC-11), read through the
+    one loader in roles.py (the read guards read the same rule). Unreadable: BoxError, so the terminal is refused (fail closed)."""
     try:
-        for n in ast.parse(open(HOOK, encoding="utf-8").read()).body:
-            if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name) and n.targets[0].id in ("SECRETS", "SECRET_OK"):
-                got[n.targets[0].id] = [str(x) for x in ast.literal_eval(n.value)]
-    except (OSError, SyntaxError, ValueError) as e:
-        raise BoxError(f"secret classes cannot be read from secret-guard.py: {e}")
-    if set(got) != {"SECRETS", "SECRET_OK"}:
-        raise BoxError("secret-guard.py has no SECRETS / SECRET_OK constants")
-    return got["SECRETS"], got["SECRET_OK"]
+        s = roles.policy_rule("secret_read")
+    except roles.RolesError as e:
+        raise BoxError(f"secret classes cannot be read from the policy: {e}")
+    return list(s["deny"]), list(s["allow"])
 
 
 def _worktree(ws):
@@ -480,6 +475,25 @@ def plan(d, profile, proof, *, hermes_root, home, roots, stack_root=None, spec=N
                 if not os.path.isfile(empty):
                     open(empty, "w").close()
                 out.append(("ro", empty, x))
+    live = os.path.realpath(roles.ROOT)
+    if live != stack and os.path.isdir(live):   # F3 live-run finding B2: a scratch stack root still hides the installed stack's owner, state and canary paths (the base bind shows them otherwise)
+        dirs, files = [], []   # no file and no listing, as for the stack's own: a protected folder, or a protected file's folder, becomes an empty tmpfs
+        for rel in [*d["owner_settings"], *state, sb["canary"]]:
+            x = os.path.join(live, rel)
+            if os.path.isdir(x):
+                dirs.append(x)
+            elif os.path.dirname(x) != live:
+                dirs.append(os.path.dirname(x))
+            elif os.path.lexists(x):
+                files.append(x)   # a file at the tree's top: its folder holds the scratch copy, so only the file is blanked
+        for x in sorted(set(dirs)):
+            if os.path.isdir(x) and not any(x != o and x.startswith(o + "/") for o in dirs):
+                out += [("tmpfs", x), ("remount_ro", x)]
+        for x in files:
+            empty = pdir + "/.empty"   # as for the login file above: not /dev/null
+            if not os.path.isfile(empty):
+                open(empty, "w").close()
+            out.append(("ro", empty, x))
     verify(out, hidecf, protcf, list(must))
     return out, env
 
