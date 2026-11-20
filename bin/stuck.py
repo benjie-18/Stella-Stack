@@ -66,8 +66,9 @@ def read_events(text):
     return out
 
 
-def scan(events, th, window):
-    """The first match of each pattern kind in th: [{pattern, detail, evidence [events]}]; window: how many earlier diff digests a revert may return to."""
+def scan(events, th, window, baseline=0):
+    """The first match of each pattern kind in th: [{pattern, detail, evidence [events]}]; window: how many earlier diff digests a revert may return to;
+    baseline: the adapter's fixed prompt tokens, re-read every turn, left out of each usage event for tokens_no_diff (live finding M)."""
     res = [e for e in events if e.get("type") == "tool_result"]
     found = []
 
@@ -105,7 +106,7 @@ def scan(events, th, window):
         chain, reverts, just, tokens, span, prev = [], 0, False, 0, [], None   # chain: the distinct consecutive diff digests
         for e in events:
             if e.get("type") == "usage":
-                tokens += sum(v for v in (e.get("tokens") or {}).values() if isinstance(v, int))
+                tokens += max(0, sum(v for v in (e.get("tokens") or {}).values() if isinstance(v, int)) - baseline)
                 span.append(e)
             d = e.get("diff") if e.get("type") == "tool_result" else None
             if not d:
@@ -149,6 +150,15 @@ def call(argv, code, what):
         raise Stop(code, f"{what} failed (exit {r.returncode}): {(r.stderr or r.stdout).strip()[-160:]}")
 
 
+def baseline_of(aid):
+    """The adapter's prefill_baseline_tokens (its own fixed prompt, re-read every turn); 0 when absent or unreadable."""
+    try:
+        import roles
+        return max(0, int(roles.adapters().get(aid, {}).get("prefill_baseline_tokens") or 0))
+    except Exception:
+        return 0
+
+
 def cmd_scan(a):
     doc = data()
     try:
@@ -156,7 +166,7 @@ def cmd_scan(a):
             events = read_events(f.read())
     except OSError as e:
         raise Stop(NOSTREAM, f"{a.file} cannot be read ({el.why(e)[:100]})") from None
-    m = scan(events, thresholds(doc, a.role), doc["revert_window"])
+    m = scan(events, thresholds(doc, a.role), doc["revert_window"], a.baseline)
     if a.json:
         print(json.dumps({"stuck": bool(m), "role": a.role, "matches": m}))
     else:
@@ -172,7 +182,8 @@ def cmd_watch(a):
     while True:
         try:
             with open(rec, encoding="utf-8") as f:   # read before the stream: the adapter writes the last event before it records the end
-                ended = json.load(f).get("ended") is not None
+                r = json.load(f)
+            ended = r.get("ended") is not None
         except (OSError, ValueError, AttributeError):
             raise Stop(NOSTREAM, f"the record of run {a.run} ({rec}) cannot be read") from None
         try:
@@ -182,7 +193,7 @@ def cmd_watch(a):
             events = []
         except OSError as e:
             raise Stop(NOSTREAM, f"{path} cannot be read ({el.why(e)[:100]})") from None
-        m = scan(events, th, doc["revert_window"])
+        m = scan(events, th, doc["revert_window"], baseline_of(r.get("adapter")))
         if m:
             break
         if ended:
@@ -214,6 +225,7 @@ def main(argv):
     p = sub_.add_parser("scan")
     p.add_argument("file")
     p.add_argument("--role")
+    p.add_argument("--baseline", type=int, default=0, help="the adapter's fixed prompt tokens per usage event, left out of tokens_no_diff")
     p.add_argument("--json", action="store_true")
     p = sub_.add_parser("watch")
     p.add_argument("--run", required=True)
