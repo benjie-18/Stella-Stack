@@ -477,15 +477,23 @@ def plan(d, profile, proof, *, hermes_root, home, roots, stack_root=None, spec=N
                 out.append(("ro", empty, x))
     live = os.path.realpath(roles.ROOT)
     if live != stack and os.path.isdir(live):   # F3 live-run finding B2: a scratch stack root still hides the installed stack's owner, state and canary paths (the base bind shows them otherwise)
+        dirs, files = [], []   # no file and no listing, as for the stack's own: a protected folder, or a protected file's folder, becomes an empty tmpfs
         for rel in [*d["owner_settings"], *state, sb["canary"]]:
             x = os.path.join(live, rel)
             if os.path.isdir(x):
-                out += [("tmpfs", x), ("remount_ro", x)]
+                dirs.append(x)
+            elif os.path.dirname(x) != live:
+                dirs.append(os.path.dirname(x))
             elif os.path.lexists(x):
-                empty = pdir + "/.empty"   # as for the login file above: not /dev/null
-                if not os.path.isfile(empty):
-                    open(empty, "w").close()
-                out.append(("ro", empty, x))
+                files.append(x)   # a file at the tree's top: its folder holds the scratch copy, so only the file is blanked
+        for x in sorted(set(dirs)):
+            if os.path.isdir(x) and not any(x != o and x.startswith(o + "/") for o in dirs):
+                out += [("tmpfs", x), ("remount_ro", x)]
+        for x in files:
+            empty = pdir + "/.empty"   # as for the login file above: not /dev/null
+            if not os.path.isfile(empty):
+                open(empty, "w").close()
+            out.append(("ro", empty, x))
     verify(out, hidecf, protcf, list(must))
     return out, env
 
