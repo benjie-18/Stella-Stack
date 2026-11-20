@@ -7,6 +7,7 @@
 #   plan   AC4-eco-security, AC6-data-only, T-LOCAL1, T-TIER-FLOOR       data   AC4-preset-refused, T-COUNT0 (DG-3)
 #   worker T-WORKER   copy DG-7   merge DG-8 (bin/merge-card.sh's QA check on a scratch repo, run here: merge-card-selftest is shared)
 #   rt1    fix round 1: RT1-06 (rename, case), RT1-07 (card id case), RT1-08 (open once), QL-M2, RT1-12 (reopen at cap), DG-1 evidence, close --json
+#   rtf    fix cycle 2: RTF-01 (a verdict per slot), RTF-02 (.gitattributes), RTF-04 (blocking judged at close), RTF-05 (one lock per card)
 # A mock builder: each round is a new commit of a scratch git repo; findings, evidence and verdicts go through bin/qa_findings.py
 # (item B) as design.md specifies. Exit codes, catalog codes, JSON fields and trusted event lines are asserted, never wording.
 # ASSUMPTIONS (what design.md leaves open; nothing else is assumed):
@@ -20,7 +21,7 @@
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 ME=qa-loop-selftest
-SECTIONS="climb stop3 depth bind trust plan data worker copy merge rt1"
+SECTIONS="climb stop3 depth bind trust plan data worker copy merge rt1 rtf"
 if [ $# = 0 ]; then
   f=0; for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || f=$((f+1)); done
   [ $f = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($f sections)"; [ $f = 0 ]; exit
@@ -392,6 +393,68 @@ rt1)   # fix round 1 of Q1: RT1-06, RT1-07, RT1-08, QL-M2 (the fold keeps the hi
     "DG-1 a pass verdict whose evidence ($(basename "$VE")) changed after the verdict: close does not pass (coded), done refuses"
   run c6 QL close --card $C --json
   ok '[ "$(rc c6)" != 0 ] && [ "$(rc c6)" != 2 ] && jq -e --arg c $C ".card == \$c and (.code | test(\"^STL-QA-[0-9]{3}$\"))" "$T/o/c6.out"' "close --json: a refusal answers {card, code, problem} on stdout"
+  ;;
+rtf)   # fix cycle 2 of Q1: RTF-01 (a verdict per slot), RTF-02 (engine diffs ignore the copy's .gitattributes), RTF-04 (blocking judged at close), RTF-05 (one lock per card)
+  fired() { lines qa.triggered "$1" | jq -e --arg t "$SEC" '[.[] | select(.id == $t)] | length == 1' >/dev/null; }
+  vds() { QF verdict --card "$1" --round 1 --role "$2" --result "$3" --evidence "$(ev "$1" 1 "$4")" "${@:5}" >>"$T/o/last" 2>&1; }   # <card> <role> <result> <name> [--slot N]
+  others() { local r; for r in $(active "$1"); do [ "$r" = "$REV" ] || vds "$1" "$r" pass "v-$r"; done; }
+  cp "$QJ" "$T/qj.orig"; ed .stella/qa-loop.json --arg r "$REV" --arg t "$MEDIUM" '.roles[$r].count[$t] = 3'   # owner data: 3 slots of $REV
+  C=t_0a000030; RA_=$T/b30; B=$(mkrepo "$RA_"); open_ $C "$MEDIUM" "$B"; H=$(step "$RA_" a.txt r1); frz $C "$RA_" "$H"
+  vds $C "$REV" fail v-s1; vds $C "$REV" pass v-s1b; others $C; QL close --card $C >>"$T/o/last" 2>&1
+  ok 'data_ok && [ "$(role $C "$REV" | jq .count)" = 3 ] && [ "$(cnt qa.passed $C)" = 0 ] && [ "$(cnt qa.round-failed $C)" = 1 ] && ! isdone $C "$H"' \
+    "RTF-01 $REV has 3 slots; its fail verdict then a later pass (no slot named: slot 1): the fail stands, the round fails, no qa.passed"
+  C=t_0a000031; RB_=$T/b31; B=$(mkrepo "$RB_"); open_ $C "$MEDIUM" "$B"; H=$(step "$RB_" a.txt r1); frz $C "$RB_" "$H"
+  vds $C "$REV" pass v-s1; others $C; run c31 QL close --card $C
+  run s4 QF verdict --card $C --round 1 --role "$REV" --result pass --evidence "$(ev $C 1 v-s4)" --slot 4
+  ok '[ "$(rc c31)" != 0 ] && [ "$(rc c31)" != 2 ] && coded c31 && [ "$(cnt qa.passed $C)" = 0 ] && ! isdone $C "$H" && [ "$(rc s4)" != 0 ] && [ "$(rc s4)" != 2 ] && coded s4' \
+    "RTF-01 one pass of $REV for its 3 slots: close refuses (coded), the round stays open; a verdict for slot 4 of 3 is refused (coded)"
+  vds $C "$REV" pass v-s2 --slot 2; vds $C "$REV" pass v-s3 --slot 3; QL close --card $C >>"$T/o/last" 2>&1
+  ok 'isdone $C "$H" && [ "$(cnt qa.passed $C)" = 1 ]' "RTF-01 (control) passes from $REV slots 2 and 3 too: the round passes on H"
+  cp "$T/qj.orig" "$QJ"
+  # RTF-02: one line '*.py -diff' in the card's .gitattributes must not hide added lines from the trigger words or from the mutants
+  util() { mkdir -p "$1/src"; printf 'import subprocess\n\ndef run(cmd):\n    return subprocess.run(cmd, shell=True)\n' >"$1/src/util.py"; }
+  C=t_0a000032; RC_=$T/b32; B=$(mkrepo "$RC_"); open_ $C "$LIGHT" "$B"; util "$RC_"; H=$(step "$RC_" a.txt r1); frz $C "$RC_" "$H"   # control: no attribute
+  K=t_0a000033; RK_=$T/b33; B=$(mkrepo "$RK_"); open_ $K "$LIGHT" "$B"; util "$RK_"; printf '*.py -diff\n' >"$RK_/.gitattributes"; H=$(step "$RK_" a.txt r1); frz $K "$RK_" "$H"
+  CLN=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import qa_tests; print(sorted(qa_tests.changed_lines(sys.argv[2], "src/util.py") or []))' "$R/bin" $K 2>>"$T/o/last")
+  ok 'fired $C && fired $K && [ "$CLN" = "[1, 2, 3, 4]" ]' \
+    "RTF-02 with '*.py -diff' in the card's .gitattributes, 'subprocess' on an added line still fires $SEC (as on the control card), and qa_tests.changed_lines gives every added line of src/util.py ($CLN)"
+  # RTF-04: blocking is judged from the current depth and the highest severity, not fixed at submit
+  C=t_0a000034; RD_=$T/b34; B=$(mkrepo "$RD_"); open_ $C "$LIGHT" "$B"; H=$(step "$RD_" a.txt r1); frz $C "$RD_" "$H"
+  f=$(finding $C 1 "$MEDSEV" check.sh qa-rtf04a); p0=$(st $C | jq .pending)
+  run r34 QL raise --card $C --tier "$MEDIUM" --reason "owner: medium after all"; verdicts $C 1; run c34 QL close --card $C
+  ok '[ "$p0" = 0 ] && [ "$(rc r34)" = 0 ] && stq $C ".pending == 1" && [ "$(rc c34)" != 0 ] && [ "$(rc c34)" != 2 ] && coded c34 && [ "$(cnt qa.passed $C)" = 0 ]' \
+    "RTF-04 a $MEDSEV finding reported on the $LIGHT card is pending its repro after a raise to $MEDIUM in the same round: close refuses (coded)"
+  repro $C "$f"; QL close --card $C >>"$T/o/last" 2>&1
+  ok '[ "$(cnt qa.finding-confirmed $C)" = 1 ] && [ "$(cnt qa.round-failed $C)" = 1 ] && [ "$(cnt qa.passed $C)" = 0 ] && ! isdone $C "$H"' \
+    "RTF-04 its repro (check.sh exits 1) then runs and confirms it: the round fails"
+  C=t_0a000035; RE_=$T/b35; B=$(mkrepo "$RE_"); open_ $C "$LIGHT" "$B"; H=$(step "$RE_" a.txt r1); frz $C "$RE_" "$H"
+  f=$(finding $C 1 "$MEDSEV" check.sh qa-rtf04b); e=$(ev $C 1 rev-copy)
+  jq --arg s "$BLOCK" --arg e "$e" '.[0].severity = $s | .[0].repro = null | .[0].evidence = [$e]' "$f" >"$T/f35.json"
+  QF submit --card $C --round 1 --role "$REV" --file "$T/f35.json" >>"$T/o/last" 2>&1; p1=$(st $C | jq .pending)
+  repro $C "$f"; verdicts $C 1; QL close --card $C >>"$T/o/last" 2>&1
+  ok '[ "$p1" = 1 ] && [ "$(cnt qa.finding-confirmed $C)" = 1 ] && [ "$(cnt qa.passed $C)" = 0 ] && ! isdone $C "$H"' \
+    "RTF-04 the tester's $MEDSEV copy (with a repro) and $REV's $BLOCK copy (none) of one finding: pending, the tester's repro confirms it, no pass"
+  # RTF-05: every qa command that writes a card's state takes the card's one lock (whatever the id's spelling): close and submit wait for it
+  cat >"$T/lock.py" <<'PY'
+import json, subprocess, sys, time
+top, card, spelled, argv = sys.argv[1], sys.argv[2], sys.argv[3], json.loads(sys.argv[4]); sys.path.insert(0, top + "/bin")
+import qa_loop as ql
+d = ql.data()
+mine = lambda: len([l for l in ql.el.proof_lines() if ql.same(l.get("what"), card)])
+n0 = mine()
+with ql.card_lock(spelled, d):
+    p = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(3)
+    waited = p.poll() is None and mine() == n0
+sys.exit(0 if waited and p.wait(120) == 0 else 1)
+PY
+  C=t_0a000036; RF_=$T/b36; B=$(mkrepo "$RF_"); open_ $C "$MEDIUM" "$B"; H=$(step "$RF_" a.txt r1); frz $C "$RF_" "$H"; verdicts $C 1
+  run l36 python3 -I "$T/lock.py" "$R" $C T_0A000036 "$(jq -nc --arg r "$R" --arg c $C '["python3", "-I", ($r + "/bin/qa_loop.py"), "close", "--card", $c]')"
+  K=t_0a000037; RG_=$T/b37; B=$(mkrepo "$RG_"); open_ $K "$MEDIUM" "$B"; H7=$(step "$RG_" a.txt r1); frz $K "$RG_" "$H7"
+  e=$(ev $K 1 f-lock); jq -n --arg e "$e" --arg s "$MEDSEV" '[{check: "lock", file: "a.txt", lines: [1, 1], test: "check.sh", severity: $s, repro: null, evidence: [$e], static: true}]' >"$T/f37.json"
+  run l37 python3 -I "$T/lock.py" "$R" $K $K "$(jq -nc --arg r "$R" --arg c $K --arg f "$T/f37.json" --arg t "$TESTER" '["python3", "-I", ($r + "/bin/qa_findings.py"), "submit", "--card", $c, "--round", "1", "--role", $t, "--file", $f]')"
+  ok '[ "$(rc l36)" = 0 ] && isdone $C "$H" && [ "$(rc l37)" = 0 ] && [ "$(cnt qa.finding $K)" = 1 ]' \
+    "RTF-05 close and submit wait while the card's lock is held (taken under another spelling of the id): nothing written, then each runs once it is free"
   ;;
 esac
 finish
