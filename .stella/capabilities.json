@@ -2697,6 +2697,34 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
+      "id": "qa-roles",
+      "kind": "command",
+      "summary": "Runs the QA roles of a card's round (host only): run starts every slot of qa_loop.py plan as a process of its own, all at once (one after another under when_local_only), each the stub double bin/qa_stub_role.py (due D1) that registers evidence and submits findings and its verdict through qa_findings.py; refused while the stub-roles features entry is off; diagnose, only while the diagnosis flag is on, writes one brief file under the round's evidence folder and one trusted line, and is not a round",
+      "keywords": [
+        "qa",
+        "roles",
+        "stub",
+        "slot",
+        "parallel",
+        "diagnosis",
+        "round 2",
+        "brief"
+      ],
+      "inputs": "run --card C --round N | diagnose --card C (either with --json)",
+      "outputs": "JSON: run {card, round, parallel, slots}; diagnose {card, round, path, sha256}; exit 1 with a catalog code (STL-QA-230..233, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/qa_roles.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "f80a1ae0-75d4-407b-8857-edbf60158c62",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
       "id": "qa-schedule",
       "kind": "command",
       "summary": "The scheduled full-suite run of the QA loop (host only, from cron): when full_suite.interval_s has passed since the repo's last trusted qa.full-run line, runs the test map's runner on the repo's head in a disposable copy under qa_copies, boxed (no network, only the copy writable, killed at tests.timeout_s); on a failure bisects the failing tests over the done hashes since the last green run and writes qa.reopened for the culprit card only; one trusted qa.full-run line per run",

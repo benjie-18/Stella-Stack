@@ -3473,6 +3473,54 @@
       "check": "`python3 -I bin/stella_data.py check`; the command's output; .supervisor/logs/alerts.log.",
       "related": "Q1 item B (design.md, rulings DG-1, DG-2, DG-7); bin/qa_findings.py",
       "resolvable": false
+    },
+    {
+      "code": "STL-QA-230",
+      "area": "QA",
+      "severity": "warning",
+      "title": "QA stub roles are off",
+      "message": "The QA roles of a round were not started: {problem}. Nothing was run and nothing was recorded.",
+      "action": "turn the features entry named in the message on (it is a stub due at D1) or wait for the real QA roles. See STL-QA-230 in docs/alert-codes.md.",
+      "cause": "The features entry named by stub_roles.feature in the QA loop data is not on, and the real roles are not built yet.",
+      "check": "`jq '.stub_roles' .stella/qa-loop.json`; the entry in .stella/features.json.",
+      "related": "Q1 item D (design.md, D); bin/qa_roles.py, bin/qa_stub_role.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-231",
+      "area": "QA",
+      "severity": "warning",
+      "title": "QA slot failed",
+      "message": "A QA slot failed: {problem}. The other slots of the round still ran; what they recorded stays.",
+      "action": "read the slot's message, fix what it names and run the round's roles again. See STL-QA-231 in docs/alert-codes.md.",
+      "cause": "A QA slot (the stub double) could not register its evidence, submit its findings or record its verdict, or its fixture is damaged.",
+      "check": "The message; `python3 -I bin/qa_loop.py status --card C --json`.",
+      "related": "Q1 item D (design.md, D); bin/qa_roles.py, bin/qa_stub_role.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-232",
+      "area": "QA",
+      "severity": "warning",
+      "title": "QA diagnosis is off",
+      "message": "The round-2 diagnosis was not run: {problem}. Nothing was written.",
+      "action": "turn the features entry named in the message on if you want one diagnosis call before the round-2 fix. See STL-QA-232 in docs/alert-codes.md.",
+      "cause": "The features flag named by diagnosis.flag in the QA loop data is off (its default).",
+      "check": "`jq '.diagnosis' .stella/qa-loop.json`; the entry in .stella/features.json.",
+      "related": "Q1 item D (design.md, D); bin/qa_roles.py, bin/qa_stub_role.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-233",
+      "area": "QA",
+      "severity": "warning",
+      "title": "the QA roles tool failed",
+      "message": "The QA roles tool stopped on a problem: {problem}. Nothing more was written after it.",
+      "action": "open and freeze the card's round first, fix the data the message names and run the data check; if it is unexpected, run the command again and, if it fails the same way, ask your coding agent to look at bin/qa_roles.py. See STL-QA-233 in docs/alert-codes.md.",
+      "cause": "The card has no open frozen round, the QA loop or features data cannot be served, or a bug.",
+      "check": "`python3 -I bin/stella_data.py check`; `python3 -I bin/qa_loop.py status --card C --json`.",
+      "related": "Q1 item D (design.md, D); bin/qa_roles.py, bin/qa_stub_role.py",
+      "resolvable": false
     }
   ]
 }
