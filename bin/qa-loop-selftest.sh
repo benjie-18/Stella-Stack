@@ -9,6 +9,7 @@
 #   rt1    fix round 1: RT1-06 (rename, case), RT1-07 (card id case), RT1-08 (open once), QL-M2, RT1-12 (reopen at cap), DG-1 evidence, close --json
 #   rtf    fix cycle 2: RTF-01 (a verdict per slot), RTF-02 (.gitattributes), RTF-04 (blocking judged at close), RTF-05 (one lock per card)
 #   limits owner fixes: RTF-08 (copy size limit per project), RTF-09 (rungs.json key), Q1-CVER-04 (an added "++ " line is scanned)
+#   layers settings per project and per card (overrides), judged by the same rules as the global file
 # A mock builder: each round is a new commit of a scratch git repo; findings, evidence and verdicts go through bin/qa_findings.py
 # (item B) as design.md specifies. Exit codes, catalog codes, JSON fields and trusted event lines are asserted, never wording.
 # ASSUMPTIONS (what design.md leaves open; nothing else is assumed):
@@ -22,7 +23,7 @@
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 ME=qa-loop-selftest
-SECTIONS="climb stop3 depth bind trust plan data worker copy merge rt1 rtf limits"
+SECTIONS="climb stop3 depth bind trust plan data worker copy merge rt1 rtf limits layers"
 if [ $# = 0 ]; then
   f=0; for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || f=$((f+1)); done
   [ $f = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($f sections)"; [ $f = 0 ]; exit
@@ -466,12 +467,12 @@ PY
   ;;
 limits)   # owner fixes after Q1 (2026-11-20): RTF-08 (a size limit per project, in data, before checkout), RTF-09 (rungs.json keyed by the board's id), Q1-CVER-04 ("++ " lines)
   fired() { lines qa.triggered "$1" | jq -e --arg t "$SEC" '[.[] | select(.id == $t)] | length == 1' >/dev/null; }
-  cp "$QJ" "$T/qj.orig"; ed .stella/qa-loop.json '.tests.max_copy_bytes = {default: 4096, projects: {}}'
+  cp "$QJ" "$T/qj.orig"; ed .stella/qa-loop.json '.tests.max_copy_bytes = 4096'
   C=t_0a000040; RA_=$T/b40; B=$(mkrepo "$RA_"); open_ $C "$MEDIUM" "$B"; head -c 8192 /dev/zero | tr '\0' x >"$RA_/big.txt"; H=$(step "$RA_" a.txt r1)
   run f40 QL freeze --card $C --repo "$RA_" --hash "$H"
   ok 'data_ok && [ "$(rc f40)" != 0 ] && [ "$(rc f40)" != 2 ] && coded f40 && grep -q max_copy_bytes "$T/o/f40.out" "$T/o/f40.err" && [ "$(cnt qa.frozen $C)" = 0 ] && [ -z "$(ls -A "$R/$QCP/$C" 2>/dev/null)" ]' \
     "RTF-08 a frozen tree over the default limit (8 KiB of 4 KiB): freeze is refused (coded, names max_copy_bytes) before any checkout: no qa.frozen line, no copy left"
-  ed .stella/qa-loop.json --arg p "$P" '.tests.max_copy_bytes.projects[$p] = 65536'
+  ed .stella/qa-loop.json --arg p "$P" '.overrides.projects[$p].tests.max_copy_bytes = 65536'
   frz $C "$RA_" "$H"
   ok 'data_ok && [ "$(cnt qa.frozen $C)" = 1 ]' "RTF-08 the card's project has its own limit in the data (64 KiB): the same freeze goes through"
   cp "$T/qj.orig" "$QJ"
@@ -487,11 +488,31 @@ limits)   # owner fixes after Q1 (2026-11-20): RTF-08 (a size limit per project,
   K=t_0a000045; RE_=$T/b45; B=$(mkrepo "$RE_"); open_ $K "$LIGHT" "$B"; printf 'x=1\fpassword=2\n' >"$RE_/notes.txt"; H=$(step "$RE_" a.txt r1); frz $K "$RE_" "$H"
   ok 'fired $C && fired $K' "Q1-OF-CVER-01 'password' after a carriage return (and after a form feed) in an added line still fires $SEC"
   # Q1-OF-CVER-03: the limit counts the history the copy clones too, checked in the builder's repo before anything is cloned
-  cp "$QJ" "$T/qj.orig"; ed .stella/qa-loop.json '.tests.max_copy_bytes = {default: 8192, projects: {}}'
+  cp "$QJ" "$T/qj.orig"; ed .stella/qa-loop.json '.tests.max_copy_bytes = 8192'
   C=t_0a000046; RF_=$T/b46; B=$(mkrepo "$RF_"); open_ $C "$MEDIUM" "$B"; head -c 65536 /dev/urandom >"$RF_/blob.bin"; step "$RF_" a.txt big >/dev/null; rm "$RF_/blob.bin"; H=$(step "$RF_" a.txt r1)
   run f46 QL freeze --card $C --repo "$RF_" --hash "$H"
   ok '[ "$(rc f46)" != 0 ] && [ "$(rc f46)" != 2 ] && coded f46 && grep -q max_copy_bytes "$T/o/f46.out" "$T/o/f46.err" && [ "$(cnt qa.frozen $C)" = 0 ] && [ -z "$(ls -A "$R/$QCP/$C" 2>/dev/null)" ]' \
     "Q1-OF-CVER-03 a small tip whose history holds 64 KiB of random data, under an 8 KiB limit: freeze is refused before anything is cloned (no copy left)"
+  cp "$T/qj.orig" "$QJ"
+  ;;
+layers)   # owner ask 2026-11-20: every QA loop setting tunable globally, per project and per card (overrides.projects / overrides.cards, owner data)
+  cp "$QJ" "$T/qj.orig"; P2=qa-proj-two
+  C=t_0a000050; RA_=$T/b50; B=$(mkrepo "$RA_"); open_ $C "$MEDIUM" "$B"                                                                   # project $P
+  K=t_0a000051; RB_=$T/b51; B=$(mkrepo "$RB_"); QL open --card $K --project $P2 --tier "$MEDIUM" --base "$B" --builder-role "$BR" >>"$T/o/last" 2>&1   # another project
+  E=t_0a000052; RC_=$T/b52; B=$(mkrepo "$RC_"); open_ $E "$MEDIUM" "$B"                                                                   # project $P, own card override
+  G0=$(role $K "$REV" | jq .count)
+  ed .stella/qa-loop.json --arg p "$P" --arg r "$REV" --arg t "$MEDIUM" --arg e $E '.overrides = {projects: {($p): {roles: {($r): {count: {($t): 3}}}}}, cards: {($e): {roles: {($r): {count: {($t): 2}}}, rounds: {normal: 5}}}}'
+  ok 'data_ok && [ "$(role $C "$REV" | jq .count)" = 3 ] && [ "$(role $K "$REV" | jq .count)" = "$G0" ] && [ "$(role $E "$REV" | jq .count)" = 2 ]' \
+    "layers a project override gives $REV 3 slots on $MEDIUM for project $P's card; another project keeps the global count ($G0); a card override (2) beats its project's"
+  ok 'stq $E ".cap == 5" && stq $C ".cap == $NORMAL" && [ "$(role $C "$TESTER" | jq -c .)" = "$(role $K "$TESTER" | jq -c .)" ]' \
+    "layers the card's own rounds.normal (5) is its round cap before a climb, others keep $NORMAL; settings no layer names stay global ($TESTER's plan entry)"
+  ed .stella/qa-loop.json --arg e $E --arg r "$TESTER" --arg t "$MEDIUM" '.overrides.cards[$e].roles[$r].count[$t] = 0'
+  run l52 QL status --card $E --json
+  ok '! data_ok && [ "$(rc l52)" != 0 ] && [ "$(rc l52)" != 2 ] && coded l52' "layers a card override that gives the required $TESTER no slot breaks the same rule the global file keeps: the data check refuses it and the card's status is refused (coded)"
+  cp "$T/qj.orig" "$QJ"; ed .stella/qa-loop.json --arg r "$REV" --arg t "$MEDIUM" '.overrides = {projects: {}, cards: {T_0A000052: {roles: {($r): {count: {($t): 2}}}}}}'
+  ok '! data_ok' "layers a card override keyed by a card id that is not the board's lowercase form is refused by the data check"
+  cp "$T/qj.orig" "$QJ"; ed .stella/qa-loop.json '.overrides = {projects: {}, cards: {t_0a000053: {overrides: {cards: {}}}}}'
+  ok '! data_ok' "layers an override that holds overrides itself (or schema_version) is refused"
   cp "$T/qj.orig" "$QJ"
   ;;
 esac
