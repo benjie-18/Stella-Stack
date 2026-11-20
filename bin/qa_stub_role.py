@@ -51,7 +51,7 @@ def main(argv):
     ap.add_argument("--slot", type=int, required=True)
     o = ap.parse_args(argv)
     try:
-        d = qa_loop.data()
+        d = qa_loop.data(o.card)   # the card's own settings (overrides)
         if not qa_roles.feature_on(d.qa["stub_roles"]["feature"]):   # D-CHK-01: a slot started directly obeys the same switch as run
             return el.fail(STUB_OFF, f"the stub QA roles are off (features entry {d.qa['stub_roles']['feature']}); slot {o.slot} of {o.role} not run")
         if not qa_loop.CARD.fullmatch(o.card) or o.role not in d.qa["roles"]:

@@ -92,7 +92,7 @@ def main(argv):
     a["run"].add_argument("--round", type=int, required=True)
     o = ap.parse_args(argv)
     try:
-        d = qa_loop.data()
+        d = qa_loop.data(o.card)   # the card's own settings (overrides), as qa_loop plans and closes with them
         return {"run": cmd_run, "diagnose": cmd_diagnose}[o.cmd](o, d)
     except (Refuse, qa_findings.Refuse, el.EventError) as e:
         code, problem = e.code, e.problem
