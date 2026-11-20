@@ -60,7 +60,7 @@ it imports. shortcut: a file planted in this tool's own folder under a standard 
 upgrade with the boundary rule for that folder. shortcut: the rules that need the file list (prose, reach, selftests, suite list, modes) are
 left to `check` (about 2 s on the stack tree against 0.05 s for a select), which every narrow selection runs through
 this tool's own selftest."""
-import fnmatch, json, os, re, subprocess, sys, textwrap
+import calendar, fnmatch, json, os, re, stat, subprocess, sys, textwrap, time
 
 if __name__ == "__main__" and not sys.flags.isolated:   # run directly: PYTHONPATH and the current folder must not decide what is imported
     try:
@@ -326,6 +326,31 @@ def reach(m, files, tests):
 ODD = re.compile(r"^-|[\s\x00-\x1f\x7f-\x9f\ud800-\udfff]")
 
 
+def quarantined():
+    """The test names of the unexpired rows {test, card, expires} of the index key qa_quarantine (written by the QA loop's
+    flaky step). An unreadable index or file, or a row that expired or cannot be read, skips nothing."""
+    try:
+        with open(os.path.join(ROOT, ".stella", "data-files.json"), encoding="utf-8") as f:
+            rel = json.load(f)["qa_quarantine"]
+        if not isinstance(rel, str) or ".." in rel.split("/") or rel.startswith("/"):
+            return set()
+        fd = os.open(os.path.join(ROOT, rel), os.O_RDONLY | os.O_NONBLOCK)   # a FIFO is never waited for
+        with os.fdopen(fd, "rb") as f:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode) or st.st_size > 1 << 20:
+                return set()
+            doc = json.loads(f.read())
+        out = set()
+        for r in doc.get("rows", []) if isinstance(doc, dict) else []:
+            e = r.get("expires") if isinstance(r, dict) else None
+            e = calendar.timegm(time.strptime(e, "%Y-%m-%dT%H:%M:%SZ")) if isinstance(e, str) else e
+            if isinstance(r.get("test"), str) and isinstance(e, (int, float)) and not isinstance(e, bool) and e > time.time():
+                out.add(r["test"])
+        return out
+    except Exception:
+        return set()
+
+
 def select(files, m=None):
     m = m or load()
     targets, reason = set(m["always"]), []
@@ -473,6 +498,12 @@ def main(argv):
             what = "the selection could not be made"
             # no file name at all (an empty stdin, no argument) is a failed diff, not "nothing changed": the full suite
             sel = select(files, m) if files else {"full": True, "reason": ["no file name given"], "targets": sorted(m["always"])}
+            q = quarantined() - set(m["always"])   # a flaky test sits out until its row expires; an always gate never does
+            if not sel["full"] and q & set(sel["targets"]):
+                notes.append(f"quarantined as flaky, not selected: {', '.join(sorted(q & set(sel['targets'])))}")
+                sel["targets"] = sorted(set(sel["targets"]) - q)
+                if not sel["targets"]:
+                    sel["full"], sel["reason"] = True, ["the selection is empty once the quarantined tests are left out"]
             broken = wide(m)
             if broken:   # a map that fails check cannot narrow anything
                 notes += broken
