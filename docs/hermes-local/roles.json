@@ -134,7 +134,11 @@
     "bin/log_filter.py",
     "bin/policy.py",
     "bin/run_policy.py",
-    "bin/run_token.py"
+    "bin/run_token.py",
+    ".stella/gateway.json",
+    "bin/gateway.py",
+    "bin/cedar_eval.mjs",
+    "package-lock.json"
   ],
   "write_tools": [
     "write_file",

@@ -520,6 +520,18 @@ One manifest per file (see its README); `enabled` is the disable switch; install
 A card branch may change this file, so its text is bounded by the schema: `id`, `kind`, `version`, `stack_commit` and `date`
 128 characters, `source`, `integrity` and each `with` item 1024, at most 64 `with` items.
 
+### `.stella/gateway.json` and `.stella/gateway-policy.json` (policy gateway, X1 G1)
+`gateway.json` (stack data, a boundary path): `decision_event` (the type of the one trusted line per decision),
+`default_timeout_s`, `action_kinds[]` (`id`, `summary`, optional `target`: a JSON pointer into the action's inputs, `hooks[]`
+{`file`, `function`}: where `gateway.check` is called with that kind) and `evaluators[]` (`id`, `kind` subprocess, `argv`
+with `{stack}`, `request` template, `verdict` and `reason` pointers into the answer, `timeout_s`, `status` approved or off).
+`gateway-policy.json` (owner data: owner-only, ships `mode.global` off): `mode` {`global`, `projects` {project id: mode}}
+(off, audit, enforce), `evaluator` (an evaluator id), `policies[]` (`id`, `kinds[]`, `text` in the evaluator's language).
+*To change a mode or a policy:* `stella-apply.py apply gateway-policy --from <file>` (dry run first; owner proof, backup, one
+event line). `bin/gateway.py check | decide | lint`; a new action kind is registered with its hook, and `lint` fails a kind
+whose hook does not call `gateway.check` with it. The default evaluator is Cedar (`@cedar-policy/cedar-wasm`, pinned exactly in
+package.json and package-lock.json; `npm ci` installs it) through `bin/cedar_eval.mjs`.
+
 ### `.stella/settings.json` (settings registry)
 Every owner-editable setting: `key`, `label`, `type`, `validation`, `scope`, `sensitivity` (plain, identity_critical,
 secret), `default`, `store` (`data`: an index id, `key`), `apply` (script, needs_restart) and the catalog `code` shown on
