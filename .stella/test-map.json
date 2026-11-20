@@ -7131,6 +7131,19 @@
         "capabilities"
       ],
       "why": "extension manifests: validated by stella_data check (extension schema) and listed by capability search through their capability entries"
+    },
+    {
+      "globs": [
+        "package-lock.json"
+      ],
+      "targets": [
+        "alert",
+        "container-start",
+        "firewall-probe",
+        "init-firewall",
+        "profile-hooks"
+      ],
+      "why": "X1 G1: from reach: these selftests can reach the npm lockfile (tracked since G1 pins @cedar-policy/cedar-wasm), as they reach package.json"
     }
   ]
 }
