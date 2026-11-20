@@ -116,6 +116,11 @@ ok '[ -n "$NA" ] && [ "$(apl approval-decision)" = "$d0" ] && grep -q pending "$
 q1=$(apl approval-request)
 run x2 U act --run "$RUN" --seq "${S2:-0}" --action qa-not-listed --json
 ok '[ $RC != 0 ] && [ -f "$R/bin/agui_ui.py" ] && [ "$(apl approval-request)" = "$q1" ]' "AC3-approval-claim control: act with an action the component does not list is refused and opens nothing"
+# pass-2 tester (mutant U4): the component lists qa-go, but this stored widget listed no action, so act --action qa-go must open nothing
+ING i5 '{"component": "qa-panel", "props": {"title": "QA widget without actions"}, "actions": []}'
+S5=$(jq -r '.seq // empty' "$T/o/i5.out" 2>/dev/null); q2=$(apl approval-request); n2=$(nreq)
+run x3 U act --run "$RUN" --seq "${S5:-0}" --action qa-go --json
+ok '[ -n "$S5" ] && [ $RC != 0 ] && [ "$(apl approval-request)" = "$q2" ] && [ "$(nreq)" = "$n2" ]' "AC3-approval-claim control: act with an action the component lists but the stored widget never listed is refused and opens nothing"
 
 # ---- AC3-canary: a canary in a widget is redacted in the read stream, the endpoint body and the event log ----
 CAN="qatok-$(hex)"

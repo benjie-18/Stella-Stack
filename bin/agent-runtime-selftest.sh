@@ -238,6 +238,14 @@ done_ qa-run-u1; d=$?
 ok '[ $d = 0 ] && evq qa-run-u1 "select(.type == \"tool_result\" and .name == \"qa_not_offered_tool\" and .ok == false)" | grep -q .' "T-unoffered-tool the unoffered call gets a tool_result ok false in the run stream"
 ok '[ $d = 0 ] && [ ! -e "$W/qa-after-u1.txt" ] && rec qa-run-u1 >"$T/o/last" && jq -e ".exit != 0" "$T/o/last" && { jq -e ".exit >= 700 and .exit <= 719" "$T/o/last" || { jq -c . "$T/o/last"; newev "$e0" adapter.run-ended; newev "$e0" adapter.run-stopped; } | grep qa-run-u1 | grep -qE "$range"; }' \
   "T-unoffered-tool the run is stopped with a code STL-GRD-70x..71x (record exit or a trusted line of the run); the action after it never ran"
+# pass-2 tester (mutants A2, A3): a tool of the entry's tool map that the role's toolsets do not offer is still unoffered: the role table
+# under test loses the shell tool's toolset for this one run, the agent calls that tool by name; refused, run stopped, the command never ran
+TSS=$(jq -r --arg t "$TS" '[.agent_tools[]? | select(.name == $t)][0].toolset // empty' "$AF"); PS=$(pp shell '^(cmd|command)$')
+cp "$RJ" "$T/rj.keep"; jq --arg r "$ROLE" --arg s "$TSS" '.roles[$r].platform_toolsets |= ((. // {}) | map_values(map(select(. != $s))))' "$T/rj.keep" >"$RJ"
+W=$(wt u2); go u2 qa-agui qa-run-u2 "$W" "$(jq -nc --arg t "$TS" --arg p "${PS:-cmd}" '[{op: "undeclared_tool", name: $t, args: {($p): "echo QA-U2 > qa-u2.txt"}}]')"
+done_ qa-run-u2; d=$?; cp "$T/rj.keep" "$RJ"
+ok '[ -n "$TSS" ] && [ $d = 0 ] && sleep 1 && [ ! -e "$W/qa-u2.txt" ] && evq qa-run-u2 "select(.type == \"tool_result\" and .name == \"$TS\" and .ok == false)" | grep -q . && rec qa-run-u2 | jq -e ".exit >= 700 and .exit <= 719"' \
+  "T-unoffered-tool a tool in the entry's tool map whose toolset (${TSS:-none}) the role does not have ($TS) is refused and stops the run with a code: the command never ran"
 
 # ---- T-state-messages (+ A-ui-handoff): messages and state reach the run stream, the peek and one trusted line each, redacted ----
 W=$(wt s1); e0=$(nl "$EV"); a0=$(grep -c 'STL-GRD-72' "$AL" "$EV" 2>/dev/null | awk -F: '{s += $NF} END {print s + 0}')
