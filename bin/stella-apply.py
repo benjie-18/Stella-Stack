@@ -393,7 +393,7 @@ def critical(row, old_doc, new_doc, unparsed, pol):
     parse or is not known (unparsed: True or the reason) cannot be told apart: it counts (fail closed)."""
     rid = row["id"]
     want = [p[len(rid) + 1:] for p in pol["identity_critical"] if p == rid or p.startswith(rid + ":/")]
-    want += ["/" + e["store"]["key"] for e in el.registry()["entries"] if e["sensitivity"] == "identity_critical" and e["store"]["data"] == rid]
+    want += [e["store"].get("pointer") or "/" + e["store"]["key"] for e in el.registry()["entries"] if e["sensitivity"] == "identity_critical" and e["store"]["data"] == rid]
     if rid == next((r["id"] for r in sd.rows() if r["schema"] == "settings"), None):   # the registry row, found as el.registry() finds it
         # an entry marked identity_critical before OR after the change is a target: lowering a setting is no way around its phrase
         want += [f"/entries/{i}" for d in (old_doc, new_doc) if isinstance(d, dict) and isinstance(d.get("entries"), list)

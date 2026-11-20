@@ -39,6 +39,13 @@
               "maximum": {
                 "type": "integer"
               },
+              "from": {
+                "type": "object",
+                "properties": {"data": {"type": "string"}, "pointer": {"type": "string"}},
+                "required": ["data", "pointer"],
+                "additionalProperties": false,
+                "description": "The value must be the id of an item of the list at this pointer of this json data file."
+              },
               "values": {
                 "type": "array",
                 "items": {
@@ -81,6 +88,11 @@
               "key": {
                 "type": "string",
                 "pattern": "^[A-Z][A-Z0-9_]*$"
+              },
+              "pointer": {
+                "type": "string",
+                "pattern": "^(/[^/]+)+$",
+                "description": "Set for a store in a json data file: the JSON pointer of the value (the key stays the setting's name)."
               }
             },
             "required": [

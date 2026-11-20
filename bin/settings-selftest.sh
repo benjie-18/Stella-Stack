@@ -312,4 +312,16 @@ ok '[ $rc = 0 ] && grep -q "^WORKER_GIT_NAME=.Remote Name.$" "$OWN" && tail -1 "
 cp "$T/pol.keep" "$POL"; PHRASE=$PHR ptap rollback owner-settings >/dev/null 2>&1
 ok 'cmp -s "$OWN" "$T/own.w4b"' "W4b rollback of the remote change with the host key and the phrase: the old file is back"
 
+# X1 G1b: a row whose store is a json data file by pointer (the gateway policy rows): read, validated before any write, diff by dry-run
+GPF=$R/$(jq -r '.files[] | select(.id == "gateway-policy") | .path' "$R/.stella/data-files.json"); cp "$GPF" "$T/gp.keep"
+st get GATEWAY_MODE >"$T/o" 2>&1; ok '[ "$(cat "$T/o")" = off ]' "G1b get of a setting stored in a json file by pointer reads the value (off)"
+st set GATEWAY_MODE bogus >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-CFG-315 "$T/o" && cmp -s "$GPF" "$T/gp.keep"' "G1b a value outside the enum is refused (315) before any write"
+st set GATEWAY_EVALUATOR no-such-evaluator >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 1 ] && grep -q STL-CFG-315 "$T/o" && cmp -s "$GPF" "$T/gp.keep"' "G1b an evaluator id not in the gateway data is refused (315), the file unchanged"
+e0=$(nev); st set GATEWAY_MODE enforce --dry-run >"$T/o" 2>&1; rc=$?
+ok '[ $rc = 0 ] && grep -q enforce "$T/o" && cmp -s "$GPF" "$T/gp.keep" && [ "$(nev)" = "$e0" ]' "G1b dry-run shows the change of the json file, writes nothing, no event line"
+st set GATEWAY_MODE off >"$T/o" 2>&1; ok 'grep -q "no change" "$T/o"' "G1b setting the stored value again is no change"
+st check >"$T/o" 2>&1; ok '[ $? = 0 ]' "G1b the registry check passes with the json-store rows"
+
 [ "$fails" = 0 ] && echo "selftest PASS" || { echo "selftest FAIL ($fails)"; exit 1; }
