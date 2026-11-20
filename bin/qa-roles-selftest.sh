@@ -112,6 +112,12 @@ ok '[ $rr = 0 ] && slots "$CP" "$VR" | jq -e ".n == 3 and .parallel"' "AC6-three
 ok 'FIX "$CP" | jq -e --arg r "$VR" "[.[] | select((.roles // []) | index(\$r) != null)] | length == 1" && [ "$(lines qa.finding "$CP" | jq --arg r "$VR" "[.[] | select([.. | strings] | any(. == \$r))] | length")" -ge 3 ]' \
   "AC6-three-parallel the three $VR doubles each submit their finding (3 qa.finding lines); the merge gives one fix-list entry for it"
 
+# ---- settings per card (owner ask 2026-11-20, verifier Q1-OF-CVER-14): the stub roles run the card's own plan, not the file's ----
+CQ=t_0a0f4003; ed .stella/qa-loop.json --arg c $CQ --arg r "$VR" --arg m "$M" '.overrides.cards[$c].roles[$r].count[$m] = 2'
+run oq card "$CQ"; run rq python3 -I "$QR" run --card "$CQ" --round "$(rnd "$CQ")"; rq_=$RC
+run cq python3 -I "$QL" close --card "$CQ" --json
+ok '[ $rq_ = 0 ] && slots "$CQ" "$VR" | jq -e ".n == 2" && [ $RC = 0 ] && [ "$(cnt qa.passed "$CQ")" = 1 ]' "layers a card override gives $VR 2 slots (the file 3): the stub roles run 2 and close passes the round"
+
 # ---- T-DIAG-OFF: refused while the flag is off; on, one brief file, no round ----
 newfiles() { find "$R" -newer "$T/mark" -type f -size +0c ! -path "$R/.supervisor/logs/*" ! -path "$R/.supervisor/state/*" ! -path "$R/$(ix .qa_copies)/*" ! -path "*/__pycache__/*" 2>/dev/null; }
 ok 'jq -e --arg f "$FLAG" "any(.entries[]; (.id == \$f or .flag == \$f) and .status == \"off\")" "$FJ"' "precondition: the diagnosis flag $FLAG is off in the shipped data"
@@ -145,6 +151,7 @@ ed .stella/features.json --arg f "$STUBF" '(.entries[] | select(.id == $f) | .st
 # ---- RTF-01 seam (Q1 fix cycle 2): every stub slot's verdict lands on its own slot, so a round with $VR count 3 can close ----
 run cl python3 -I "$QL" close --card "$CP" --json
 ok '[ $RC = 0 ] && [ "$(cnt qa.passed "$CP")" = 1 ]' "RTF-01 seam: after the stub roles ran $VR x3 (each slot its own verdict), close passes the round (one qa.passed)"
+
 
 # ---- T-WORKER ----
 S0=$(logsum)
