@@ -329,6 +329,16 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 2
+                  },
+                  "match_all": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "X1-CRT-03: the hook matcher that takes every tool of the CLI, rendered with the gateway on; an entry without it is not hooked (refused at start in enforce)"
+                  },
+                  "mcp_prefix": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "X1-CRT-03: the name prefix of the CLI's MCP tools (decided as the gateway_kinds mcp kind)"
                   }
                 },
                 "required": [
@@ -767,6 +777,25 @@
         ],
         "additionalProperties": false
       }
+    },
+    "gateway_kinds": {
+      "type": "object",
+      "description": "X1-CRT-03: the policy gateway kind of a coding CLI's tool that is not in its tool map: mcp (its name starts with the hook's mcp_prefix) or unknown (refused in enforce whatever the policy says). A mapped tool's kind is the agent_tools row of its class.",
+      "properties": {
+        "mcp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unknown": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "mcp",
+        "unknown"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [

@@ -8288,6 +8288,18 @@
         "gateway-hooks"
       ],
       "why": "X1 fix round G: the gateway-hooks agent section runs the real Cedar evaluator (node_modules and the pin read from the source tree)"
+    },
+    {
+      "globs": [
+        ".stella/gateway-policy.json",
+        "package.json",
+        "bin/cedar_eval.mjs"
+      ],
+      "targets": [
+        "agent-runtime",
+        "conformance"
+      ],
+      "why": "X1 last fix cycle (crt-final X1-CRT-04/05): bin/agent-runtime-selftest.sh's new cases run the gateway with the owner file and the real Cedar runner (package.json); the conformance selftest runs that harness"
     }
   ]
 }

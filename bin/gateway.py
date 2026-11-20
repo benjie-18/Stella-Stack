@@ -7,10 +7,11 @@ Library: check(kind, inputs, ctx) -> Decision {verdict, mode, code, reason, poli
 ctx = {role, run, card, project, adapter}. The caller runs its action unless verdict == "refuse".
   Mode: the project's own mode, else the global one; with no project, the strictest mode present (global or any project; DC-09).
   off: allow at once (no evaluation, no line, nothing read beyond the mode). audit / enforce: an unknown kind (731), no policy
-  covering the kind (732), an evaluator not there or off (733), that cannot start (734), that fails (735), times out (736) or
+  covering the kind (732), an evaluator not there or off (733), that cannot start (734), that fails or answers with errors at its
+  entry's errors pointer (735), times out (736) or
   answers no allow/deny (737), or a deny (738) refuse in enforce and give would-refuse in audit; unreadable data refuses (730; an
   unreadable owner file counts as enforce). Then, before returning, one trusted line through event_log.append (type: the data's
-  decision_event): kind, inputs masked (the index's redact keys and the catalog's value patterns; a string longer than the data's
+  decision_event): kind, inputs masked (the index's redact keys, the catalog's value patterns and run tokens; a string longer than the data's
   logged_string_max as {sha256, length}: the evaluator still gets it whole), policy_version (sha256 of the
   canonical policies plus the evaluator entry used, DC-07), evaluator, mode, verdict, reason, code. When that line cannot be
   written (739, alerted): enforce refuses, audit allows. In a worker environment the log refuses, so only off passes there: a
@@ -104,7 +105,8 @@ def version(pol, ev):
 
 def shown(v, red):
     """v as a line may show it: keys the redactor names are ***, a string a value pattern hides is ***, an object with such a key is
-    *** whole."""
+    *** whole; then the one redactor of agent-chosen data (bin/redact_all.py: run tokens and catalog patterns, in values and keys)."""
+    import redact_all
     def m(x):
         if isinstance(x, str):
             return el.MASK if sd.hidden(x) else x
@@ -113,7 +115,7 @@ def shown(v, red):
         if isinstance(x, dict):
             return el.MASK if any(sd.hidden(str(k)) for k in x) else {k: m(y) for k, y in x.items()}
         return x
-    return m(el.mask(v, red))
+    return redact_all.redactor()(m(el.mask(v, red)))
 
 
 def capped(v, n):
@@ -171,6 +173,8 @@ def evaluate(gw, pol, kind, inputs, ctx, d):
         verdict = None
     if verdict not in ("allow", "deny"):
         raise Refusal(C["garbage"], f"evaluator {name} gave no allow or deny")
+    if ev.get("errors") and ptr(ans, ev["errors"]) not in (None, [], ""):   # an answer that carries errors judged not every policy (X1-CRT-02)
+        raise Refusal(C["crash"], f"evaluator {name} reported errors with its answer")
     why = ptr(ans, ev["reason"])
     d["reason"] = f"evaluator {name}: {verdict} {kind}" + (f" ({why[:200]})" if isinstance(why, str) and why else "")
     if verdict == "deny":
@@ -199,7 +203,7 @@ def check(kind, inputs, ctx):
         red = el.redactor()
         el.note_secrets(inputs, red)   # a value under a masked key is scrubbed from the reason too
         reason = el.scrub(d["reason"])
-        d["reason"] = el.MASK if sd.hidden(reason) else reason
+        d["reason"] = el.MASK if sd.hidden(reason) else shown(reason, red)
         if gw is None:
             raise Refusal(C["data"], "the gateway data names no decision event type it can be read from")
         k = kind if isinstance(kind, str) and kind in {x["id"] for x in gw["action_kinds"]} else None

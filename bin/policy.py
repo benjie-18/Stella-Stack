@@ -129,7 +129,8 @@ def render(aid, worktree=None, p=None, table=None, ads=None, stack=None, gateway
                         put(s["pointer"], s["form"], fill(t, {**base, **v}), s.get("value"))
     h = pol.get("hook")
     if h and "template" in h:   # an agent-runtime hook is kinds only: its calls are judged engine side, nothing is rendered
-        matcher = "|".join(n for n, t in ad["tools"].items() if t["class"] != "other")
+        # gateway on: every tool reaches the hook (X1-CRT-03), with the entry's match-all matcher; none in data: the class one (hooked() is false)
+        matcher = h["match_all"] if gateway and h.get("match_all") else "|".join(n for n, t in ad["tools"].items() if t["class"] != "other")
         out.setdefault(h["pointer"], []).append(fill(h["template"], {"matcher": matcher, "command": hook_command(ad, wt, stack, gateway)}))
     for ptr in (pol.get("target") or {}).get("owned_pointers", []):
         out.setdefault(ptr, {} if any(s["pointer"] == ptr and s["form"] == "map" for ss in pol.get("shapes", {}).values() for s in ss) else [])
@@ -534,6 +535,8 @@ def judge(ad, payload, worktree):
                 bad = next((x for x in ps if outside(x, w, here)), None)
                 if bad:
                     return "STL-GRD-615", f"the command writes to {w} ({bad}), outside the worktree and the run tmp"
+                if any(git_part(x, worktree) for x in ps):
+                    return "STL-GRD-615", f"the command writes to {w}, inside a .git folder of the worktree (git's own files, never an agent's)"
                 hit = next((n for x in ps if (n := config_hit(x, cfg))), None)
                 if hit:
                     return "STL-GRD-615", f"the command writes to {w}, a CLI's own config ({hit}), which would override the generated policy"
@@ -559,23 +562,64 @@ def judge(ad, payload, worktree):
             return "STL-GRD-615", "no worktree is known for this run, so no write is inside it"
         if outside(x, str(raw), cwd):
             return "STL-GRD-615", f"{raw} is outside the worktree {worktree} and the run tmp"
+        if git_part(x, worktree):
+            return "STL-GRD-615", f"{raw} is inside a .git folder of the worktree (git's own files, never an agent's)"
         if config_hit(x, cfg):
             return "STL-GRD-615", f"{raw} is a CLI's own config ({config_hit(x, cfg)}), which would override the generated policy"
     return None
 
 
+def git_part(x, worktree):
+    """Whether the canonical path x is the worktree's .git or lies under a .git folder in it (any case: a case-insensitive mount)."""
+    w = os.path.realpath(worktree) if worktree else None
+    return bool(w) and _within(x, w) and ".git" in os.path.relpath(x, w).casefold().split("/")
+
+
+# Linux path grammar, not stack data: names that mean the deciding process itself (its cwd, root, fds), not one file for every reader
+ALIAS = re.compile(r"/(?:proc/(?:self|thread-self|\d+)|dev/(?:fd|stdin|stdout|stderr))(?:/|$)")
+
+def canonical(p):
+    """realpath of the absolute path p (links that exist resolved, the rest normalised); ValueError when a step of it, spelled or reached
+    through a link, is a per-process alias (ALIAS): the engine would resolve it against itself, the executor against the worktree."""
+    out, todo, hops = "/", [y for y in p.split("/") if y][::-1], 0
+    while todo:
+        y = todo.pop()
+        if y == ".":
+            continue
+        if y == "..":
+            out = os.path.dirname(out)
+            continue
+        nxt = os.path.join(out, y)
+        if ALIAS.match(nxt):
+            raise ValueError(f"{nxt} names the deciding process, not a file")
+        if not os.path.islink(nxt):
+            out = nxt
+            continue
+        hops += 1
+        if hops > 40:
+            raise ValueError("too many links")
+        t = os.readlink(nxt)
+        out = "/" if t.startswith("/") else out
+        todo += [z for z in t.split("/") if z][::-1]
+    return out
+
+
 def placed(x):
-    """Policy gateway inputs x with the cwd canonical (realpath) and path made the canonical absolute path it names under that cwd
-    (realpath: links that exist resolved, the rest normalised), so a policy sees one spelling of one file; None when path is not a
-    string or is relative with no absolute cwd (it cannot be placed). A cwd that is not an absolute path is dropped."""
+    """Policy gateway inputs x with the cwd canonical and path made the canonical absolute path it names under that cwd (canonical():
+    links that exist resolved, the rest normalised), so a policy sees one spelling of one file; None when path is not a string, is
+    relative with no absolute cwd, or names a per-process alias (/proc/self, /dev/fd, ...: it cannot be placed, X1-CRT-04). A cwd that
+    is not an absolute path is dropped."""
     x, cwd = dict(x), x.get("cwd")
     x.pop("cwd", None)
-    if isinstance(cwd, str) and os.path.isabs(cwd):
-        x["cwd"] = os.path.realpath(cwd)
-    if "path" in x:
-        if not isinstance(x["path"], str) or not (os.path.isabs(x["path"]) or "cwd" in x):
-            return None
-        x["path"] = os.path.realpath(os.path.join(x.get("cwd", "/"), x["path"]))
+    try:
+        if isinstance(cwd, str) and os.path.isabs(cwd):
+            x["cwd"] = canonical(cwd)
+        if "path" in x:
+            if not isinstance(x["path"], str) or not (os.path.isabs(x["path"]) or "cwd" in x):
+                return None
+            x["path"] = canonical(os.path.join(x.get("cwd", "/"), x["path"]))
+    except (ValueError, OSError):
+        return None
     return x
 
 
@@ -590,25 +634,32 @@ def gateway_inputs(spec, name, inp, cwd):
         x["path"] = os.path.expanduser(str(get(inp, spec.get("path")) or "."))
     out = placed(x)
     if out is None:
-        raise ValueError("the path of the call cannot be placed (no absolute working folder)")
+        raise ValueError("the path of the call cannot be placed (no absolute working folder, or a per-process path such as /proc/self)")
     return out
 
 
 def pdp(ad, payload):
-    """(code, why) when the policy gateway refuses a tool call of class read, write or shell, or cannot be asked (fail closed), else None.
+    """(code, why) when the policy gateway refuses a tool call, or cannot be asked (fail closed), else None (X1-CRT-03: every tool).
     Worker side: the engine-side PDP route of the capabilities MCP server decides with the role and project of the run token. The
-    gateway kind of a class is the adapters data's agent_tools row of that class (gateway_kind)."""
-    spec = ad["tools"].get(payload.get("tool_name"))
-    if not spec or spec["class"] == "other":
-        return None
-    kind = next((r["gateway_kind"] for r in roles._data("adapters")[0].get("agent_tools", []) if r.get("class") == spec["class"]), None)
+    gateway kind: a mapped tool's is the adapters data's agent_tools row of its class (gateway_kind); a tool not in the map is the
+    data's gateway_kinds mcp (its name starts with the hook's mcp_prefix) or unknown; an unknown one is refused in enforce whatever the
+    policy says (the stack cannot tell what it does)."""
+    name, d_ = payload.get("tool_name"), roles._data("adapters")[0]
+    spec, gk, pre = ad["tools"].get(name), d_.get("gateway_kinds") or {}, ad["policy"]["hook"].get("mcp_prefix")
+    unknown = not spec and not (isinstance(name, str) and pre and name.startswith(pre))
+    if spec:
+        kind = next((r["gateway_kind"] for r in d_.get("agent_tools", []) if r.get("class") == spec["class"]), None)
+    else:
+        kind = gk.get("unknown" if unknown else "mcp")
     if kind is None:
-        return "STL-GRD-747", f"no gateway kind is named for tool class {spec['class']}, so the call cannot be decided"
-    import capabilities_mcp as mcp
+        return "STL-GRD-747", f"no gateway kind is named for tool class {spec['class'] if spec else 'not in the tool map'}, so the call cannot be decided"
+    import capabilities_mcp as mcp, redact_all
     try:
-        d = mcp.call(mcp.PDP, {"kind": kind, "inputs": gateway_inputs(spec, payload.get("tool_name"), payload.get("tool_input") or {}, payload.get("cwd") or os.getcwd())})
+        d = mcp.call(mcp.PDP, {"kind": kind, "inputs": gateway_inputs(spec or {}, name, payload.get("tool_input") or {}, payload.get("cwd") or os.getcwd())})
     except mcp.ClientError as e:
         return "STL-GRD-747", f"the policy gateway could not be asked ({e.code} {e.problem[:120]}), so the call is refused"
+    if unknown and isinstance(d, dict) and d.get("mode") == "enforce":
+        return "STL-GRD-747", f"tool {redact_all.name(name, 80)} is not in the adapter's tool map: the gateway enforces, so it is refused"
     if isinstance(d, dict) and d.get("verdict") in ("allow", "would-refuse"):   # audit: the call runs, its line says would-refuse
         return None
     code = d.get("code") if isinstance(d, dict) and isinstance(d.get("code"), str) else "STL-GRD-747"

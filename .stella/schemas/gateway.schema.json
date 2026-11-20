@@ -144,6 +144,11 @@
             "pattern": "^(/[^/]*)+$",
             "description": "JSON pointer to a reason text in the answer (absent: none given)."
           },
+          "errors": {
+            "type": "string",
+            "pattern": "^(/[^/]*)+$",
+            "description": "JSON pointer to the errors the evaluator reports with its answer (X1-CRT-02): anything there but null, an empty list or an empty text makes the answer an evaluator error (STL-GRD-735), whatever its decision."
+          },
           "timeout_s": {
             "type": "integer",
             "minimum": 1,

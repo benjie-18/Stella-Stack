@@ -196,6 +196,10 @@
       }
     }
   ],
+  "gateway_kinds": {
+    "mcp": "mcp_call",
+    "unknown": "tool_call"
+  },
   "entries": [
     {
       "id": "opencode",
@@ -885,6 +889,8 @@
               }
             ]
           },
+          "match_all": ".*",
+          "mcp_prefix": "mcp__",
           "deny": {
             "hookSpecificOutput": {
               "hookEventName": "PreToolUse",

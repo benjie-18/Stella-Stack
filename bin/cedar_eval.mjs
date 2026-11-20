@@ -2,8 +2,8 @@
 // The Cedar evaluator runner of the policy gateway (X1 item G1; the gateway.json evaluator entry runs it, bin/gateway.py feeds it).
 // stdin: one JSON object {principal, action, resource: {type, id}, context: {...}, policies: [{id, text}]} (one Cedar policy per
 // text); stdout: one JSON object {decision: "allow"|"deny", reasons: [the ids of the policies that decided], errors: [text]}.
-// A request Cedar cannot judge (a policy that does not parse, a context value Cedar has no type for) prints decision null and
-// exits 1: the gateway counts it as an evaluator failure. No entities: a policy judges the request and its context only.
+// A request Cedar cannot judge (a policy that does not parse, a context value Cedar has no type for, a policy whose condition errors
+// on this request: Cedar would skip it) prints decision null and exits 1: the gateway counts it as an evaluator failure. No entities: a policy judges the request and its context only.
 // The context is JSON mapped onto Cedar's types (it has no null and no float): a key or list item whose value is null is left out
 // (`context has k` is false for it), and a number that is not a safe integer (a float, or an integer beyond 2^53) is the string of its
 // JSON text (1.5 -> "1.5"; compare with == "1.5"). Strings, booleans, safe integers, lists and objects pass as they are.
@@ -41,7 +41,9 @@ process.stdin.on("end", () => {
       return;
     }
     const d = a.response.diagnostics;
-    answer({ decision: a.response.decision, reasons: d.reason, errors: d.errors.map((e) => `${e.policyId}: ${e.error.message}`) }, 0);
+    const errors = d.errors.map((e) => `${e.policyId}: ${e.error.message}`);
+    // Cedar skips a policy whose condition errors (a forbid among them): its decision is then no judgement of every policy (X1-CRT-02)
+    answer({ decision: errors.length ? null : a.response.decision, reasons: d.reason, errors }, errors.length ? 1 : 0);
   } catch (e) {
     answer({ decision: null, reasons: [], errors: [String(e && e.message || e)] }, 1);
   }

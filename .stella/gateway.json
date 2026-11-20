@@ -58,12 +58,16 @@
     },
     {
       "id": "tool_call",
-      "summary": "Call a tool Stella offered an agent runtime",
+      "summary": "Call a tool Stella offered an agent runtime, or a coding CLI's tool of class other or not in its tool map (through its policy hook and the PDP route)",
       "target": "/tool",
       "hooks": [
         {
           "file": "bin/agent_runtime.py",
           "function": "gates"
+        },
+        {
+          "file": "bin/capabilities_mcp.py",
+          "function": "pdp"
         }
       ],
       "global_id": "c6b9cb34-8a51-46be-a79c-c71f8caf914c",
@@ -71,12 +75,16 @@
     },
     {
       "id": "mcp_call",
-      "summary": "A capability tool call through the capabilities MCP server",
+      "summary": "A capability tool call through the capabilities MCP server, or a coding CLI's MCP tool (through its policy hook and the PDP route)",
       "target": "/tool",
       "hooks": [
         {
           "file": "bin/capabilities_mcp.py",
           "function": "tool_call"
+        },
+        {
+          "file": "bin/capabilities_mcp.py",
+          "function": "pdp"
         }
       ],
       "global_id": "b55ea9d9-12d3-4716-8786-0affee24bbcd",
@@ -149,6 +157,7 @@
       },
       "verdict": "/decision",
       "reason": "/reasons/0",
+      "errors": "/errors",
       "timeout_s": 10,
       "status": "approved",
       "global_id": "5784e2de-acc5-4f0a-8877-f2698f098a49",

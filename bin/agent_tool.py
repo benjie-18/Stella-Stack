@@ -8,7 +8,7 @@ query, id) to pointers into tool_input. Paths are checked again at open time: a 
 path of the open file must lie inside the worktree (cwd) or the run's temporary folder; the last part is never followed when it is a
 link (O_NOFOLLOW), so a link that leaves the worktree is refused, not followed. A read lists a folder or reads a regular file (at most
 read_cap_bytes); a write makes the folders it needs inside and, like an edit (one exact occurrence), refuses a file with a second name
-(a hard link); shell runs the command line with the platform shell in cwd, a shim of every guarded command name first on PATH that
+(a hard link) and a target that is the worktree's .git or lies under a .git folder in it (X1-CRT-01); shell runs the command line with the platform shell in cwd, a shim of every guarded command name first on PATH that
 judges the real argv and environment by the commit and dispatcher rules before the real program runs (STL-GRD-709); capability runs bin/capabilities.py <operation> (in a worker environment it asks the capability server, which
 knows the run from its token).
 Exit: 0 the call ran (ok says whether it succeeded); 1 refused or failed (ok false, a catalog code STL-GRD-708..711); 2 usage."""
@@ -63,8 +63,15 @@ def folder(cwd, raw, roots):
         raise Refused(PATH, f"{raw} names no file")
     if not inside(os.path.realpath(par), roots):
         raise Refused(PATH, f"{raw} is outside the worktree")
+    import policy   # git's own files are never an agent's (X1-CRT-01): spelled, and once the folder is open (a link to it)
+    if policy.git_part(full, cwd):
+        raise Refused(PATH, f"{raw} is inside a .git folder of the worktree")
     os.makedirs(par, exist_ok=True)
-    return checked(os.open(par, os.O_RDONLY | os.O_DIRECTORY), raw, roots), name
+    fd = checked(os.open(par, os.O_RDONLY | os.O_DIRECTORY), raw, roots)
+    if policy.git_part(os.path.join(real(fd), name), cwd):
+        os.close(fd)
+        raise Refused(PATH, f"{raw} is inside a .git folder of the worktree")
+    return fd, name
 
 
 def regular(fd, raw, one=False):
