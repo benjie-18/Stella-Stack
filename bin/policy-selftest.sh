@@ -214,6 +214,17 @@ hook)   # builder cases (F3 item P): policy.py hook judges one tool call by the 
   ok '[ "$(term "$MG" "qa-fake-cli -p hi")" = 0 ]' "model flags control: an unknown command name passes the model guard"
   ed .stella/adapters.json '(.entries[] | select(.model_flags) | .model_flags.names) += ["qa-fake-cli"]'
   ok '[ "$(term "$MG" "qa-fake-cli -p hi")" = 2 ]' "model flags: a command name added to an adapter's model_flags is judged by the model guard (no model: refused)"
+  # X1 last fix cycle (crt-final X1-CRT-01, X1-CRT-04; new cases)
+  mkdir -p "$T/wt/.git"; hk "$WT_" "$WP" "$T/wt/.git/config" >/dev/null; ok 'denied STL-GRD-615' "X1-CRT-01 hook a write to the worktree's .git/config: refused with STL-GRD-615"
+  hk "$WT_" "$WP" "sub/.GiT/hooks/x" >/dev/null; ok 'denied STL-GRD-615' "X1-CRT-01 hook a write under a nested .git folder (any case): refused"
+  hk "$WT_" "$WP" ".git" >/dev/null; ok 'denied STL-GRD-615' "X1-CRT-01 hook a write of the worktree's .git itself (a linked worktree's pointer file): refused"
+  hk "$ST_" "$SPP" "echo x >> .git/config" >/dev/null; ok 'denied STL-GRD-615' "X1-CRT-01 hook a shell command writing into .git: refused"
+  ok '[ "$(hk "$WT_" "$WP" "$T/wt/.gitignore")" = 0 ] && [ ! -s "$T/o/hk.out" ]' "X1-CRT-01 control: .gitignore (a file, not the .git folder) is written"
+  ln -sfn /proc/self/cwd "$T/wt/pl"
+  pl() { python3 -I -c 'import sys, json; sys.path.insert(0, sys.argv[1]); import policy; print(json.dumps(policy.placed(json.loads(sys.argv[2]))))' "$R/bin" "$1"; }
+  ok 'for p in /proc/self/cwd/x /proc/thread-self/root/etc /proc/1/cwd/x /proc/$$/fd/0 /dev/fd/3 /dev/stdin /dev/stderr /proc/self pl/x; do [ "$(pl "$(jq -nc --arg p "$p" --arg c "$T/wt" "{path: \$p, cwd: \$c}")")" = null ] || exit 1; done' \
+    "X1-CRT-04 policy.placed refuses per-process path aliases (/proc/self, /proc/thread-self, /proc/<n>, /dev/fd, /dev/std*, and a worktree link to one): no path"
+  ok '[ "$(pl "{\"path\": \"./a//b/../c\", \"cwd\": \"/qa-none\"}" | jq -r .path)" = /qa-none/a/c ] && [ "$(pl "{\"path\": \"/dev/null\"}" | jq -r .path)" = /dev/null ]' "X1-CRT-04 control: a plain path is placed canonical; /dev/null stays a path"
   ;;
 shellhook)   # Gate B fix cycle 1 (V1-01 High, RT1-01; V1-03 run tmp): the hook's shell class enforces the file tools' rules (protected,
   # secret, write boundary = worktree + run tmp; ~, $HOME, .., cd, relative paths resolved; unparseable fails closed); file tools honour secret dirs

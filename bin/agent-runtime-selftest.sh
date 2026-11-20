@@ -369,5 +369,49 @@ go z9 qa-raw qa-run-z9 "$W" '[]'; done_ qa-run-z9
 W=$(wt z10); scn "{\"handoff\": true, \"turns\": [[$S, $(TC k1 "$TS" '{"command":"sleep 3"}'), $F], [$S, $(TC k2 "$TW" '{"path":"hijack.txt","content":"FOREIGN"}'), $F], $END]}"
 go z10 qa-raw qa-run-z10 "$W" '[]'; done_ qa-run-z10
 ok '[ "$(xit qa-run-z9)" = 702 ] && [ "$(xit qa-run-z10)" = 702 ] && [ ! -e "$W/hijack.txt" ]' "DC-06 the ready line names the proxy's port: 702; the port handed to a process outside the agent's tree after a turn: 702, its tool call never runs"
+
+# ==== X1 last fix cycle (reviews crt-final, final-critical-verifier; new cases, the cases above unchanged) ====
+# ---- X1-CRT-01: the engine's git on a run's worktree never runs config, attribute drivers or a gitdir the agent wrote ----
+W=$(wt cg1); M=$T/outside/engine-ran-filter.txt
+CFG=$(printf '[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n[filter "crt"]\n\tclean = env >%s; cat\n' "$M")
+scn "{\"turns\": [[$S, $(TC g1 "$TW" "$(jq -nc --arg c "$CFG" '{path: ".git/config", content: $c}')"), $(TC g2 "$TW" '{"path":".gitattributes","content":"README filter=crt"}'), $(TC g3 "$TW" '{"path":"README","content":"changed by the agent"}'), $F], $END]}"
+go cg1 qa-raw qa-run-cg1 "$W" '[]'; done_ qa-run-cg1; d=$?
+ok '[ $d = 0 ] && [ ! -e "$M" ] && ! has crt "$W/.git/config" && res qa-run-cg1 .git/config | jq -e "select(.ok == false)" | has STL-GRD-615 && rec qa-run-cg1 | jq -e ".final.files | index(\"README\") != null"' \
+  "X1-CRT-01 plain repo: the write tool's .git/config (a clean filter) is refused (615); the engine's end-of-run git ran no filter; the snapshot still sees README"
+MAIN=$T/main-cg2; mkwt "$MAIN" >/dev/null 2>&1; W=$CRD/wt-cg2; git -C "$MAIN" worktree add -q --detach "$W" >/dev/null 2>&1; M2=$T/outside/engine-ran-filter-linked.txt
+SH1='sha=$(git rev-parse HEAD); main=$(git rev-parse --path-format=absolute --git-common-dir); mkdir -p .g/objects/info .g/refs/heads; echo "$main/objects" >.g/objects/info/alternates; echo "$sha" >.g/HEAD'
+CFG2=$(printf '[core]\n\trepositoryformatversion = 0\n\tbare = false\n[filter "crt"]\n\tclean = env >%s; cat\n' "$M2")
+SH2='python3 -c "import os; open(\".g\" + \"it\", \"w\").write(\"gitdir: \" + os.getcwd() + \"/.g\\n\")"; git read-tree HEAD; echo "README filter=crt" >.gitattributes; echo changed >README'   # a write the judge cannot see (it is no boundary)
+scn "{\"turns\": [[$S, $(TC l1 "$TS" "$(jq -nc --arg c "$SH1" '{command: $c}')"), $(TC l2 "$TW" "$(jq -nc --arg c "$CFG2" '{path: ".g/config", content: $c}')"), $(TC l3 "$TS" "$(jq -nc --arg c "$SH2" '{command: $c}')"), $F], $END]}"
+go cg2 qa-raw qa-run-cg2 "$W" '[]'; done_ qa-run-cg2; d=$?; GD=$(git -C "$MAIN" rev-parse --absolute-git-dir)
+ok '[ $d = 0 ] && [ ! -e "$M2" ] && rec qa-run-cg2 | jq -e --arg g "$GD/worktrees/wt-cg2" ".git_dir == \$g and (.final.files | index(\"README\") != null)"' \
+  "X1-CRT-01 linked worktree: the agent repoints .git at a gitdir it built (its config holds a filter); the engine's git keeps the gitdir pinned at start: no filter ran, the snapshot reads the real index"
+W=$CRD/wt-cg3; git -C "$MAIN" worktree add -q --detach "$W" >/dev/null 2>&1; (cd "$W" && bash -c "$SH1" && echo "gitdir: $W/.g" >"$W/.git") >/dev/null 2>&1
+go cg3 qa-raw qa-run-cg3 "$W" '[]'
+ok '[ $RC != 0 ] && out cg3 | has STL-GRD-653 && [ -z "$(rec qa-run-cg3)" ]' "X1-CRT-01 a worktree whose gitdir lies inside it (a .git file repointed earlier) is refused at start (653), no run record"
+W=$(wt cg4); cp "$W/.git/config" "$T/o/cg4.cfg"
+atool() { printf '%s' "$(jq -nc --arg n "$TW" --arg p "$1" --arg w "$W" '{tool_name: $n, tool_input: {path: $p, content: "x"}, cwd: $w}')" | python3 -I "$R/bin/agent_tool.py" write; }
+ok '! atool .git/config && cmp -s "$W/.git/config" "$T/o/cg4.cfg" && { atool .git/config || :; } | has STL-GRD-710 && ! atool sub/.GIT/hooks/pre-commit && ! atool ./x/../.git && [ ! -e "$W/sub" ] && atool gitx/ok.txt && [ -e "$W/gitx/ok.txt" ]' \
+  "X1-CRT-01 the write executor itself refuses .git and any path under a .git folder (any case), 710; a path that only starts with git is written"
+
+# ---- X1-CRT-04 / X1-CRT-05: gateway on (real cedar-wasm, node_modules read only from the source tree) ----
+[ -d "$ROOT/node_modules" ] && ln -s "$ROOT/node_modules" "$R/node_modules"; cp "$ROOT/package.json" "$R/" 2>/dev/null
+GPR=$(ix '[.files[] | select(.path | endswith("/gateway-policy.json")) | .path][0]')
+gpol() { jq -nc --arg id "$1" --argjson k "$2" --arg t "$3" --arg g "$(uuid)" --arg i "$IID" '{id: $id, kinds: $k, text: $t, global_id: $g, install_id: $i}'; }
+W=$(wt cpc); mkdir -p "$W/private"; SEC="PRIVATE-$RANDOM$RANDOM"; printf '%s\n' "$SEC" >"$W/private/s.txt"; ln -s /proc/self/cwd "$W/pl"
+ed "$GPR" --argjson a "$(gpol allow-all '["tool_call","file_read","file_write","shell"]' 'permit(principal, action, resource);')" \
+   --argjson b "$(gpol no-private '["file_read"]' "forbid(principal, action, resource) when { context has path && context.path like \"$W/private/*\" };")" \
+   '.mode.global = "enforce" | .policies = [$a, $b]'
+scn "{\"turns\": [[$S, $(TC p1 "$TR" '{"path":"private/s.txt"}'), $(TC p2 "$TR" '{"path":"/proc/self/cwd/private/s.txt"}'), $(TC p3 "$TR" '{"path":"pl/private/s.txt"}'), $(TC p4 "$TR" '{"path":"/dev/fd/../cwd/private/s.txt"}'), $(TC p5 "$TR" '{"path":"README"}'), $F], $END]}"
+mark; go cpc qa-raw qa-run-cpc "$W" '[]'; done_ qa-run-cpc; d=$?
+ok '[ $d = 0 ] && [ "$(evq qa-run-cpc "select(.type == \"tool_result\" and .ok == false)" | wc -l)" = 4 ] && res qa-run-cpc README | jq -e "select(.ok == true)" | has . && ! leak qa-run-cpc "$SEC" &&
+    [ "$(tail -n +$((e0 + 1)) "$EV" | jq -c "select(.type == \"gateway_decision\" and .new.kind == \"file_read\") | .new.inputs.path" | grep -vc "^\"$W/")" = 0 ]' \
+  "X1-CRT-04 enforce, forbid on <wt>/private: /proc/self/cwd/..., a worktree link to /proc/self/cwd and /dev/fd/.. spellings are refused like the plain one; no decision line names a path outside the worktree; README reads"
+ed "$GPR" --argjson a "$(gpol allow-all '["tool_call","file_read","file_write","shell"]' 'permit(principal, action, resource);')" '.mode.global = "audit" | .policies = [$a]'
+W=$(wt crt); scn "{\"turns\": [[$S, $(TC r1 "$TS" '{"command":"echo @TOKEN@ >/dev/null"}'), $F], $END]}"
+mark; go crt qa-raw qa-run-crt "$W" '[]'; done_ qa-run-crt; d=$?
+ok '[ $d = 0 ] && [ "$(tail -n +$((e0 + 1)) "$EV" | jq -c "select(.type == \"gateway_decision\")" | wc -l)" -ge 1 ] && ! leak qa-run-crt "$TOKRX"' \
+  "X1-CRT-05 audit: an agent's shell call holding its run token: the gateway decision lines (and every other line) hold no token"
+ed "$GPR" '.mode.global = "off"'
 pkill -f "$R/bin/mock_agui_raw.py" 2>/dev/null
 finish

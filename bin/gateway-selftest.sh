@@ -383,6 +383,51 @@ ok '[ $RC = 0 ] && [ "$(jv fx3 .verdict)" = allow ] && tail -n +$((e0 + 1)) "$EV
 ok '[ "$(QA lines "$EV" "$DEV" "{\"length\": 800}")" -ge 1 ]' "AC4-log-before the capped input's line also holds its length"
 cp "$T/gw.qa" "$GW"
 
+# ======== X1 last fix cycle (new cases; the cases above are unchanged) ========
+# X1-CRT-02 / X1-CVER-01: Cedar skips a policy whose condition errors on the input's types; an answer that carries errors is an evaluator
+# error (735): refused in enforce, would-refuse in audit. Controls: the same forbids fire on well-typed input (738).
+ERRPOL='[[["shell", "file_write"], "permit(principal, action, resource);"],
+ [["shell"], "forbid(principal, action, resource) when { context.input has timeout && context.input.timeout > 60 };"],
+ [["file_write"], "forbid(principal, action, resource) when { context.input has content && context.input.content like \"*QA-KEY-MARK*\" };"],
+ [["file_write"], "forbid(principal, action, resource) when { context.path like \"/etc/*\" };"]]'
+setpol enforce '{}' "$DEFEV" "$ERRPOL"
+SH() { jq -nc --argjson t "$1" '{tool: "shell", input: {command: "sleep 1", timeout: $t}, cwd: "/w", command: "sleep 1"}'; }
+WR() { jq -nc --argjson c "$1" '{tool: "write", input: {path: "k.pem", content: $c}, cwd: "/w", path: "/w/k.pem"}'; }
+dec ee0 --kind shell --inputs "$(SH 600)"
+dec ee0b --kind file_write --inputs "$(WR '"QA-KEY-MARK"')"
+ok '[ "$(jv ee0 .code)" = STL-GRD-738 ] && [ "$(jv ee0b .code)" = STL-GRD-738 ]' "X1-CRT-02 control: the forbids refuse well-typed input (a timeout over 60, a key in the content) with STL-GRD-738"
+i=0; for x in "$(SH 600.5)" "$(SH 9007199254740993)" "$(WR '["QA-KEY-MARK"]')" "$(WR '{"__entity": {"type": "Stella::Role", "id": "QA-KEY-MARK"}}')"; do
+  i=$((i+1)); k=$(jq -r 'if .command then "shell" else "file_write" end' <<<"$x"); dec "ee$i" --kind "$k" --inputs "$x"
+  ok "[ \$RC = 1 ] && [ \"\$(jv ee$i .verdict)\" = refuse ] && [ \"\$(jv ee$i .code)\" = STL-GRD-735 ]" "X1-CRT-02 enforce: an input typed so a forbid's condition errors (case $i: float, big int, list, entity escape) is an evaluator error, refused STL-GRD-735"
+done
+dec ee5 --kind file_write --inputs '{"tool": "write", "cwd": "/w", "path": {"__entity": {"type": "Stella::Target", "id": "/w/ok"}}}'
+ok '[ $RC = 1 ] && [ "$(jv ee5 .verdict)" = refuse ] && [ "$(jv ee5 .code)" = STL-GRD-735 ]' "X1-CRT-02 enforce: a path given as an entity (the path forbid errors) is refused STL-GRD-735"
+setpol audit '{}' "$DEFEV" "$ERRPOL"; e0=$(nev)
+dec ee6 --kind shell --inputs "$(SH 600.5)"
+ok '[ $RC = 0 ] && [ "$(jv ee6 .verdict)" = would-refuse ] && [ "$(jv ee6 .code)" = STL-GRD-735 ] && [ "$(tail -n +$((e0 + 1)) "$EV" | jq -c "select(.type == \"$DEV\" and .new.verdict == \"would-refuse\" and .new.code == \"STL-GRD-735\")" | wc -l)" -ge 1 ]' \
+  "X1-CRT-02 audit: the same erroring answer is would-refuse STL-GRD-735, and its decision line says so"
+setpol enforce '{}' "$DEFEV" '[[["file_write"], "permit(principal, action, resource);"], [["file_write"], "forbid(principal, action, resource) when { context.input.n > 10 };"]]'
+dec ev1 --kind file_write --inputs '{"path": "/x", "input": {"n": 11}}'
+dec ev2 --kind file_write --inputs '{"path": "/x", "input": {"n": 10.5}}'
+dec ev3 --kind file_write --inputs '{"path": "/x", "input": {}}'
+ok '[ "$(jv ev1 .code)" = STL-GRD-738 ] && [ "$(jv ev2 .verdict)" = refuse ] && [ "$(jv ev2 .code)" = STL-GRD-735 ] && [ "$(jv ev3 .verdict)" = refuse ] && [ "$(jv ev3 .code)" = STL-GRD-735 ]' \
+  "X1-CVER-01 the verifier's repro: n 11 refused by the forbid (738); n 10.5 and an input with no n are evaluator errors, refused (735)"
+run ee7 sh -c 'printf "%s" "$1" | node "$2/bin/cedar_eval.mjs"' _ '{"principal": {"type": "Stella::Role", "id": "r"}, "action": {"type": "Stella::Action", "id": "shell"}, "resource": {"type": "Stella::Target", "id": "x"}, "context": {"n": 10.5}, "policies": [{"id": "p", "text": "permit(principal, action, resource);"}, {"id": "f", "text": "forbid(principal, action, resource) when { context.n > 10 };"}]}' "$R"
+ok '[ $RC != 0 ] && [ "$(jv ee7 .decision)" = null ] && [ "$(jv ee7 ".errors | length")" -ge 1 ]' "X1-CRT-02 the Cedar runner itself: an answer with diagnostics errors prints decision null and exits non-zero"
+ok 'jq -e --arg d "$DEFEV" ".evaluators[] | select(.id == \$d) | .errors | type == \"string\" and startswith(\"/\")" "$T/gw.orig"' "X1-CRT-02 the default evaluator entry names its errors pointer (data)"
+printf 'import sys\nsys.stdin.read()\nprint(\x27{"decision": "allow", "reasons": ["x"], "errors": ["qa: a policy errored"]}\x27)\n' >"$R/qa/errans_eval.py"
+jq --argjson a "$(ev qa-errans decide 10 errans_eval.py)" '.evaluators += [$a]' "$T/gw.qa" >"$GW"
+setpol enforce '{}' qa-errans "$PERMIT_READ"; dec ee8 --kind file_read --inputs "$IN"
+ok '[ $RC = 1 ] && [ "$(jv ee8 .verdict)" = refuse ] && [ "$(jv ee8 .code)" = STL-GRD-735 ]' "X1-CRT-02 any evaluator: an allow whose errors pointer holds a non-empty list (exit 0) is refused STL-GRD-735"
+cp "$T/gw.qa" "$GW"
+# X1-CRT-05: the decision line masks run tokens (the one redactor, bin/redact_all.py) in values and keys, beside the catalog patterns
+TPFX=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import run_token; print(run_token.gateway()["token"]["prefix"])' "$R/bin")
+TOK="${TPFX}Qx7mZ2kP9vR4tW8yB3nC6dF1gH5jK0Ls"
+setpol audit '{}' "$DEFEV" '[[["shell"], "permit(principal, action, resource);"]]'; e0=$(nev)
+dec rt1 --kind shell --inputs "$(jq -nc --arg t "$TOK" '{tool: "shell", input: {command: ("echo " + $t), note: $t, ($t): 1}, cwd: "/w", command: ("echo " + $t)}')"
+ok '[ $RC = 0 ] && [ -n "$TPFX" ] && [ "$(tail -n +$((e0 + 1)) "$EV" | jq -c "select(.type == \"$DEV\")" | wc -l)" -ge 1 ] && ! tail -n +$((e0 + 1)) "$EV" | has -F "$TOK"' \
+  "X1-CRT-05 a run token in a command, a value and a key of the inputs is masked in the decision line (audit)"
+
 echo "# $ME: $n cases, $fails failed"
 [ "$fails" = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($fails)"
 [ "$fails" = 0 ]

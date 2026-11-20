@@ -462,6 +462,30 @@ pdp)   # the coding CLI's policy hook (worker side) asks the engine-side PDP rou
   kill "$MPID" 2>/dev/null; wait "$MPID" 2>/dev/null
   pw d5 qa-run-d5
   ok '[ "$c4" = y ] && [ $d = 0 ] && [ ! -e "$W/qa-qa-run-d5.txt" ]' "T-hooks enforce, everything allowed: the write happens while the PDP answers, and is refused once the PDP is unreachable (fail closed)"
+  # X1 last fix cycle (crt-final X1-CRT-03; new cases): with the gateway on, the hook matches every tool and the PDP decides tools of
+  # class other (tool_call), MCP tools (mcp_call) and tools not in the tool map (tool_call; refused in enforce whatever the policy says)
+  W=$(wt qa-o0); HKD=$(jq -c '.entries[] | select(.id == "qa-hook") | .policy.hook' "$AF")
+  mt() { python3 -I -c 'import sys, json; sys.path.insert(0, sys.argv[1]); import policy
+print(json.dumps([h["matcher"] for v in policy.render("qa-hook", sys.argv[2], gateway=sys.argv[3] == "on").values() if isinstance(v, list) for h in v if isinstance(h, dict) and "matcher" in h]))' "$R/bin" "$W" "$1"; }
+  ok '[ "$(mt on)" = "$(jq -c "[.match_all]" <<<"$HKD")" ] && [ "$(jq -r .match_all <<<"$HKD")" != null ] && [ "$(mt off)" != "$(mt on)" ]' "X1-CRT-03 gateway on: the rendered hook matcher is the entry's match-all matcher (data); off: the class matcher as before"
+  hkd() { python3 -I -c 'import sys, json; sys.path.insert(0, sys.argv[1]); import adapter, roles; e = roles.adapters()["qa-hook"]
+h = dict(e["policy"]["hook"]); h.pop("match_all", None); t = dict(e["policy"]["hook"]); t["template"] = {"matcher": "Bash", "hooks": []}
+print(adapter.hooked(e), adapter.hooked({**e, "policy": {**e["policy"], "hook": h}}), adapter.hooked({**e, "policy": {**e["policy"], "hook": t}}))' "$R/bin"; }
+  ok '[ "$(hkd)" = "True False False" ]' "X1-CRT-03 hooked() is true only when the rendered matcher covers every tool (no match-all, or a template that does not place the matcher: false)"
+  hk() { printf '%s' "$(jq -nc --arg w "$W" --arg t "$1" '{tool_name: $t, tool_input: {url: "https://example.invalid/x", prompt: "p"}, cwd: $w}')" | env "$TE=${2:-}" timeout 30 python3 -I "$R/bin/policy.py" hook --adapter qa-hook --worktree "$W" --gateway >"$T/o/hk.out" 2>&1; echo "$?:$(head -c 300 "$T/o/hk.out")"; }
+  r0=$(hk say)
+  ok '[ "${r0#*:}" != "" ] && has -E "STL-GRD-747" "$T/o/hk.out"' "X1-CRT-03 a class-other tool with the gateway on and no PDP reachable is refused (747), not let through"
+  python3 -I "$R/bin/capabilities_mcp.py" serve --port "$MP" >"$T/mcp2.out" 2>"$T/mcp2.err" & MPID=$!
+  for i in $(seq 50); do python3 -I -c 'import socket, sys; socket.create_connection(("127.0.0.1", int(sys.argv[1])), 0.2)' "$MP" 2>/dev/null && break; sleep 0.1; done
+  TKO=$(mint --run qa-run-o1 --role "$ROLE" --card qa-card-o1 --link qa-api/qa-m1)
+  allowall enforce; e0=$(nl "$EV"); r1=$(hk say "$TKO"); r2=$(hk mcp__qa__fetch "$TKO"); r3=$(hk QaNoSuchTool "$TKO")
+  ok '[ -n "$TKO" ] && [ "$r1" = "0:" ] && [ "$r2" = "0:" ] && [ "$(newdec "$e0" "{\"kind\": \"tool_call\", \"verdict\": \"allow\"}")" -ge 2 ] && [ "$(newdec "$e0" "{\"kind\": \"mcp_call\", \"verdict\": \"allow\"}")" -ge 1 ] && [ "${r3#*:}" != "" ] && has STL-GRD-747 "$T/o/hk.out"' \
+    "X1-CRT-03 enforce, everything allowed: a class-other tool (tool_call) and an MCP tool (mcp_call) are decided with a line and run; a tool not in the map is decided (a line) and refused (747)"
+  deny enforce tool_call; e0=$(nl "$EV"); r4=$(hk say "$TKO")
+  ok '[ "${r4#*:}" != "" ] && [ "$(newdec "$e0" "{\"kind\": \"tool_call\", \"verdict\": \"refuse\"}")" -ge 1 ]' "X1-CRT-03 enforce, no allow for tool_call: the class-other tool is refused, a tool_call refuse line"
+  allowall audit; e0=$(nl "$EV"); r5=$(hk QaNoSuchTool "$TKO")
+  ok '[ "$r5" = "0:" ] && [ "$(newdec "$e0" "{\"kind\": \"tool_call\"}")" -ge 1 ]' "X1-CRT-03 audit: a tool not in the map runs, and its decision line is written"
+  kill "$MPID" 2>/dev/null; wait "$MPID" 2>/dev/null
   ;;
 dc08)   # X1-DC-08: a hookless coding CLI is refused at start in enforce; an off-mode run is stopped when the owner apply turns enforce on
   allowall enforce
@@ -497,6 +521,18 @@ dc08)   # X1-DC-08: a hookless coding CLI is refused at start in enforce; an off
   kill "$GH" 2>/dev/null
   W=$(wt dc8-4); cli s4 qa-hook qa-run-k4 "$W" '[]'; spawned "$W" qa-run-k4
   ok 'rec qa-run-k4 | jq -e ".pid_start | type == \"string\" and length > 0"' "DC-08 a started run's record keeps its process's start fingerprint (pid_start)"
+  # X1 last fix cycle (final-critical-verifier X1-CVER-02; new case): the owner turns enforce on after start read the mode off and before
+  # the run record exists (a git on PATH flips the owner file at the start's own `rev-parse --abbrev-ref HEAD`, as an apply whose sweep
+  # saw no record): the run stops itself through the sweep path once its record is written
+  deny off qa-no-such-kind; RG=$(command -v git); FL=$T/flip-once
+  printf '#!/usr/bin/env bash\nif [ -e "%s" ] && [[ " $* " == *" --abbrev-ref HEAD"* ]]; then rm -f "%s"; jq ".mode.global = \\"enforce\\"" "%s" >"%s.n" && mv "%s.n" "%s"; fi\nexec "%s" "$@"\n' \
+    "$FL" "$FL" "$GP" "$GP" "$GP" "$GP" "$RG" >"$T/pb/git"; chmod +x "$T/pb/git"
+  W=$(wt dc8-5); touch "$FL"; e0=$(nl "$EV")
+  cli s5 qa-fake qa-run-k5 "$W" '[{"op": "shell", "cmd": "sleep 45"}, {"op": "write", "path": "qa-after.txt", "text": "x"}]'
+  rm -f "$T/pb/git"
+  for i in $(seq 60); do newev "$e0" adapter.run-stopped | has qa-run-k5 && break; sleep 0.5; done   # the stop's line comes once the group ended
+  ok '[ $RC = 0 ] && [ ! -e "$FL" ] && [ "$(jq -r .mode.global "$GP")" = enforce ] && rec qa-run-k5 | jq -e ".gateway.mode == \"off\" and (.stopped | tostring | test(\"gateway\"; \"i\"))" && [ "$(newev "$e0" adapter.run-stopped | grep -c qa-run-k5)" = 1 ] && sleep 2 && [ ! -e "$W/qa-after.txt" ]' \
+    "X1-CVER-02 the mode leaves off between start's read and its run record: the run stops itself through the sweep path (reason names the gateway, one adapter.run-stopped line), its next action never ran"
   ;;
 dc09)   # X1-DC-09: adapter.py start takes the project from the card's board binding and refuses another --project
   cat >"$T/pb/hermes" <<'SH'
