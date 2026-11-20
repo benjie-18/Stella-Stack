@@ -8,29 +8,35 @@ State is never a file of its own. state(card) is the fold of the trusted event l
 this writer whose mac verifies) whose type starts with "qa." and whose what is the card id; a line's payload is its fields
 outside the event envelope, then detail and new where those are objects. The untrusted stream, unchained and forged lines are
 never read. Lines the fold reads (who writes them):
-  qa.opened {project, tier, base, builder_role, preset, local_only}   (open) tier of record: the highest opened or raised
+  qa.opened {project, tier, base, builder_role, preset, local_only}   (open) the first line is of record; tier: the highest opened or raised
   qa.tier-raised {tier, from, reason}                                 (raise)
   qa.triggered {id, source, evidence, round}                          (open, freeze, trigger; B/A2 for a verdict source)
   qa.frozen {round, hash, tree, rung, depth, copy, base}              (freeze)
   qa.passed {round, hash} | qa.round-failed {round, open} | qa.escalated {round}   (A2 close): each closes its round
   qa.climbed {from_rung, to_rung, ...}: rung = to_rung, cap = rounds.cap_climb; qa.no-climb: cap = rounds.cap_no_climb
   qa.depth-raised {depth}: depth of record = the higher of it and the tier                                       (A2 close)
-  qa.reopened {hash, tests}: not done until a round after it passes                                              (C2)
-  qa.evidence {path, sha256, round}; qa.finding {fingerprint, round, role, severity, status, static, ...} (same fingerprint:
-  roles merged, highest severity kept); qa.finding-confirmed | qa.finding-unconfirmed {fingerprint}: its status;
+  qa.reopened {hash, tests}: not done until a round after it passes; after a pass in the last round the cap
+  becomes that round + rounds.normal (RT1-12: a reopened card gets rounds, then escalates)                       (C2)
+  qa.evidence {path, sha256, round}; qa.finding {fingerprint, round, role, severity, status, static, ...} (same fingerprint and
+  round: roles merged, highest severity and strongest status (STRENGTH) kept, each copy's role, repro, evidence and status kept
+  in subs, never replaced; a later round starts afresh); qa.finding-confirmed {fingerprint, round}: confirmed;
+  qa.finding-unconfirmed: unconfirmed, only from pending;
   qa.verdict {round, role, result, hash, evidence}: the last per round and role                                 (B)
+Card ids compare case-insensitively (same(): one card whatever the spelling); the spelling of the first qa.opened line is the
+card's (s["card"]), and every command writes its lines and paths under it.
 Before any climb the card is on rung 1 (bin/escalate.sh reads a card with no rungs.json entry as 1) and its cap is rounds.normal.
-CLI (on failure a catalog code and its plain message on stderr, one alert line, exit 1, and with --json {card, code, problem}
-on stdout; 2 usage):
+CLI (every subcommand takes --json: its answer is JSON in any case; on failure a catalog code and its plain message on stderr,
+one alert line, exit 1, and with --json {card, code, problem} on stdout; 2 usage):
   open --card C --project P --tier T --base H --builder-role R [--trigger ID]...   qa.opened (preset and local_only from
-       resolve.py role_view for R); each named trigger one qa.triggered line. A lower tier than the one of record: STL-QA-101.
+       resolve.py role_view for R); each named trigger one qa.triggered line. Opened once: a card already open under any
+       spelling is refused (STL-QA-101); raise and trigger change it.
   raise --card C --tier T --reason TEXT       only upward (else STL-QA-101); qa.tier-raised
   trigger --card C --id ID                    a trigger whose source is owner only (STL-QA-102 otherwise); qa.triggered once
   freeze --card C --repo PATH --hash H        H a full commit id; refused (STL-QA-103) while the last round is not closed, past
        the cap or after an escalation. The copy: a standalone clone under qa_copies (--no-local --no-checkout, hooks off, no
        config of the builder's repo or the user's, H checked out on a throwaway branch); the builder's repo is only read.
-       Triggers of source diff fire on the diff base..H (match.paths globs on changed paths, match.words regexes, case
-       insensitive, on added lines); of source fix from round 2 on, when this fix changes more files than the original change
+       Triggers of source diff fire on the diff base..H, rename detection off (match.paths globs on changed paths, both
+       sides of a rename, match.words regexes on added lines, both case insensitive); of source fix from round 2 on, when this fix changes more files than the original change
        (base..round 1) or is the second fix attempt; a diff that cannot be computed fires (fail closed). qa.triggered lines
        first, then qa.frozen.
   plan --card C --json                        per QA role {kind, count, depth, forced, slots[], note}: the card's depth capped
@@ -44,8 +50,8 @@ on stdout; 2 usage):
   done --card C --hash H                      exit 0 only when the last frozen round passed on exactly H and nothing was frozen
        or reopened after it (else STL-QA-106, no alert line).
   close --card C                              the open round (else STL-QA-110): refused (STL-QA-109, nothing written) while a
-       finding of the round is pending its repro (DG-2). The fix list is qa_findings.merge() of the round's findings whose
-       evidence still holds. No blocking finding and no slot role's verdict other than pass: qa.passed {round, hash} when every
+       finding of the round is pending its repro (DG-2). The fix list is qa_findings.merge() of the round's findings that
+       still stand (qa_findings.stands: the evidence of any copy holds). No blocking finding and no slot role's verdict other than pass: qa.passed {round, hash} when every
        role the plan gives a slot has a trusted pass on the frozen hash with evidence that holds, else STL-QA-110 (the round
        stays open, DG-1). A blocking finding or a failed verdict fails the round: after round rounds.normal the builder role
        climbs (bin/resolve.py resolve --rung rounds.climb_rung: a served rung, in cooldown too, -> qa.climbed {from_rung,
@@ -68,6 +74,7 @@ PENDING, NOT_CLOSED, NO_CLIMB, RUNGS, ESCALATED = "STL-QA-109", "STL-QA-110", "S
 PREFIX = "qa."
 CLOSE = ("qa.passed", "qa.round-failed", "qa.escalated")
 NOT_FIX = ("void", "pending", "unconfirmed")   # finding statuses that are not on the fix list
+STRENGTH = ("void", "unconfirmed", "reported", "pending", "static", "confirmed")   # finding statuses, weakest first
 SRC_DIFF, SRC_FIX, SRC_OWNER = "diff", "fix", "owner"   # trigger sources (qa-loop schema)
 ATTACK = "attack"   # the role kind extra_attacks adds to
 FIRST_RUNG = 1
@@ -112,14 +119,18 @@ def state(card, d=None):
     s = {"card": card, "opened": False, "project": None, "base": None, "builder_role": None, "preset": None, "local_only": False,
          "tier": None, "depth": None, "triggers": [], "round": 0, "rung": FIRST_RUNG, "cap": q["rounds"]["normal"], "frozen": None,
          "rounds": {}, "closed": [], "passed": None, "reopened": False, "escalated": False, "findings": {}, "verdicts": {}, "evidence": {}}
+    rank = lambda x: sev.index(x) if x in sev else len(sev)
+    strong = lambda x: STRENGTH.index(x) if x in STRENGTH else -1
     raised, reopened = None, -1
-    mine = [l for l in el.proof_lines() if l.get("what") == card and str(l.get("type", "")).startswith(PREFIX)]
+    mine = [l for l in el.proof_lines() if same(l.get("what"), card) and str(l.get("type", "")).startswith(PREFIX)]
     for n, line in enumerate(mine):
         t, p = line["type"], payload(line, d.envelope)
         rnd = p["round"] if type(p.get("round")) is int else s["round"]
         if t == "qa.opened":
-            s.update(opened=True, project=p.get("project"), base=p.get("base"), builder_role=p.get("builder_role"),
-                     preset=p.get("preset"), local_only=p.get("local_only") is True, tier=hi(s["tier"], p.get("tier")))
+            if not s["opened"]:   # opened once (RT1-08): the first line is of record, a later one can only raise the tier
+                s.update(opened=True, card=line["what"], project=p.get("project"), base=p.get("base"), builder_role=p.get("builder_role"),
+                         preset=p.get("preset"), local_only=p.get("local_only") is True)
+            s["tier"] = hi(s["tier"], p.get("tier"))
         elif t == "qa.tier-raised":
             s["tier"] = hi(s["tier"], p.get("tier"))
         elif t == "qa.depth-raised":
@@ -142,22 +153,34 @@ def state(card, d=None):
             s["cap"] = q["rounds"]["cap_no_climb"]
         elif t == "qa.reopened":
             reopened = n
+            if s["passed"] and s["passed"]["round"] == s["round"]:   # RT1-12: a passed card reopened gets rounds.normal more rounds
+                s["cap"] = max(s["cap"], s["round"] + q["rounds"]["normal"])
         elif t == "qa.evidence" and isinstance(p.get("path"), str):
             s["evidence"][p["path"]] = {"sha256": p.get("sha256"), "round": rnd}
         elif t == "qa.finding" and isinstance(p.get("fingerprint"), str):
-            f = s["findings"].setdefault(p["fingerprint"], {"roles": []})
-            old = f.get("severity")
-            f.update({k: v for k, v in p.items() if k not in ("fingerprint", "role")}, round=rnd)
-            if old in sev and (f.get("severity") not in sev or sev.index(old) < sev.index(f["severity"])):
-                f["severity"] = old
-            f["roles"] += [p["role"]] if p.get("role") not in f["roles"] else []
-        elif t.startswith("qa.finding-") and p.get("fingerprint") in s["findings"]:
-            s["findings"][p["fingerprint"]]["status"] = t[len("qa.finding-"):]
+            f = s["findings"].get(p["fingerprint"])
+            if not f or f["round"] != rnd:   # a round judges its findings afresh
+                f = s["findings"][p["fingerprint"]] = {"round": rnd, "severity": None, "status": None, "static": False, "roles": [], "subs": []}
+            # RT1-02: a copy adds its own repro and evidence (subs), never replaces them; severity and status only climb
+            f.update({k: p.get(k) for k in ("check", "file", "lines", "test")}, static=f["static"] or p.get("static") is True)
+            f["severity"] = p.get("severity") if rank(p.get("severity")) < rank(f["severity"]) else f["severity"]
+            f["status"] = p.get("status") if strong(p.get("status")) > strong(f["status"]) else f["status"]
+            f["subs"].append({k: p.get(k) for k in ("role", "repro", "evidence", "status")})
+            f["roles"] += [p["role"]] if isinstance(p.get("role"), str) and p["role"] not in f["roles"] else []
+        elif t in ("qa.finding-confirmed", "qa.finding-unconfirmed") and p.get("fingerprint") in s["findings"]:
+            f = s["findings"][p["fingerprint"]]
+            if f["round"] == rnd and (t == "qa.finding-confirmed" or f["status"] == NOT_FIX[1]):   # only a pending finding goes unconfirmed
+                f["status"] = t[len("qa.finding-"):]
         elif t == "qa.verdict" and isinstance(p.get("role"), str):
             s["verdicts"].setdefault(rnd, {})[p["role"]] = {"result": p.get("result"), "hash": p.get("hash"), "evidence": p.get("evidence")}
     s["depth"] = hi(s["tier"], raised)
     s["reopened"] = reopened > (s["passed"]["at"] if s["passed"] else -1)
     return s
+
+
+def same(what, card):
+    """RT1-07: one card id whatever its letter case (ids are ASCII: CARD)."""
+    return isinstance(what, str) and what.isascii() and isinstance(card, str) and what.lower() == card.lower()
 
 
 def is_done(s, h=None):
@@ -178,6 +201,7 @@ def opened(o, d):
     s = state(o.card, d)
     if not s["opened"]:
         raise Refuse(NOT_OPEN, f"card {o.card}")
+    o.card = s["card"]   # the spelling the card was opened under: every line and path uses it
     return s
 
 
@@ -203,8 +227,8 @@ def cmd_open(o, d):
         if t not in d.qa["triggers"]:
             raise Refuse(BAD, "a trigger is not one of the QA loop data's triggers")
     s = state(o.card, d)
-    if s["opened"] and d.tiers.index(o.tier) < d.tiers.index(s["tier"]):
-        raise Refuse(LOWER, f"open at tier {o.tier} is below the card's tier of record {s['tier']}")
+    if s["opened"]:   # RT1-08, RT1-07: opened once, under one spelling; the tier changes only through raise, triggers through trigger
+        raise Refuse(LOWER, f"card {s['card']} is already open at tier {s['tier']}: open is not run again (raise or trigger change it)")
     import resolve
     try:
         v = resolve.role_view(o.builder_role, o.project, o.card)
@@ -279,8 +303,9 @@ def make_copy(repo, h, card, n, d):
 
 def changed(dest, a, b, d):
     """The paths changed from a to b and the added lines, or None when the diff cannot be computed."""
-    names = git(["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", a, b, "--"], dest, d)
-    patch = git(["diff", "--no-ext-diff", "--no-textconv", "--no-color", "-U0", a, b, "--"], dest, d)
+    # --no-renames (RT1-06): a renamed file lists its old path too, so a rename cannot hide which file the change took from
+    names = git(["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", a, b, "--"], dest, d)
+    patch = git(["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", "-U0", a, b, "--"], dest, d)
     if names.returncode or patch.returncode:
         return None
     # shortcut: an added line whose text starts with "++ " is read as a file header and not scanned; parse hunks if that matters
@@ -288,7 +313,8 @@ def changed(dest, a, b, d):
 
 
 def glob(p, g):
-    """fnmatch (a * crosses folders); a leading **/ also matches at the top folder."""
+    """fnmatch (a * crosses folders), whatever the letter case (RT1-06); a leading **/ also matches at the top folder."""
+    p, g = p.lower(), g.lower()
     return fnmatch.fnmatchcase(p, g) or (g.startswith("**/") and fnmatch.fnmatchcase(p, g[3:]))
 
 
@@ -515,7 +541,7 @@ def cmd_close(o, d):
     pend = [x["fingerprint"][:12] for x in cur if x.get("status") == NOT_FIX[1]]
     if pend:
         raise Refuse(PENDING, f"round {n} has {len(pend)} finding(s) pending their repro ({', '.join(pend[:CAP])})")
-    cur = [x for x in cur if not x.get("evidence") or qf.holds(o.card, x["evidence"], s, d)]   # re-hashed: a changed file voids it
+    cur = [x for x in cur if qf.stands(o.card, x, s, d)]   # re-hashed: a changed file voids its copy
     fix = qf.merge(cur, s["depth"], q, qf.exempt(o.card))
     blocking = [x["fingerprint"] for x in fix if x["blocking"]][:CAP]
     roles = [r for r, e in plan(o.card, s, d)["roles"].items() if e["slots"]]
@@ -562,8 +588,7 @@ def main(argv):
     a = {c: sub.add_parser(c) for c in CMDS}
     for p in a.values():
         p.add_argument("--card", required=True)
-    for c in ("plan", "status"):
-        a[c].add_argument("--json", action="store_true")
+        p.add_argument("--json", action="store_true", help="the output is JSON in any case")
     a["open"].add_argument("--project", required=True)
     a["open"].add_argument("--tier", required=True)
     a["open"].add_argument("--base", required=True)

@@ -3311,9 +3311,9 @@
       "area": "QA",
       "severity": "warning",
       "title": "the card's QA tier cannot be lowered",
-      "message": "A QA loop request would lower the card's tier or did not raise it: {problem}. The tier stays as it was; nothing was changed.",
-      "action": "only the owner can lower a tier, and not through this command; to raise it, name a higher tier. See STL-QA-101 in docs/alert-codes.md.",
-      "cause": "open was run again with a lower tier, or raise named the same or a lower tier.",
+      "message": "A QA loop request would lower the card's tier, did not raise it or opened the card again: {problem}. The tier stays as it was; nothing was changed.",
+      "action": "only the owner can lower a tier, and not through this command; to raise it, name a higher tier (qa_loop.py raise); an open card is not opened again (its triggers through qa_loop.py trigger). See STL-QA-101 in docs/alert-codes.md.",
+      "cause": "open was run again for a card already open (under any letter case of its id: a card is opened once, its project, base, builder role and preset never change), or raise named the same or a lower tier.",
       "check": "qa_loop.py status --card C --json (tier); the event log (qa.opened, qa.tier-raised lines).",
       "related": "Q1 item A1 (design.md, rulings DG-3, DG-5, DG-7); bin/qa_loop.py",
       "resolvable": false

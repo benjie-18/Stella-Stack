@@ -17,13 +17,15 @@ CLI (on failure a catalog code STL-QA-150..155 and its plain message on stderr, 
            counts for nothing, and a void copy of a finding the round already has is not written), static, pending (blocking
            at the card's depth, not static, with a repro), unconfirmed (the same with no repro), reported (not blocking, not
            static); a same-round resubmission never lowers the status the round already has (STRENGTH).
-  repro    --card C --fingerprint F           a pending finding of the round: its argv in a fresh copy of the frozen copy (box,
-           tests.timeout_s); a non-zero exit or the timeout kill -> qa.finding-confirmed, exit 0 -> qa.finding-unconfirmed.
+  repro    --card C --fingerprint F           a pending finding of the round: the distinct repro argv of each of its copies
+           (in the order submitted, at most MAX_REPROS), each in a fresh copy of the frozen copy (box, tests.timeout_s); the
+           first non-zero exit or timeout kill -> qa.finding-confirmed, every one exit 0 -> qa.finding-unconfirmed.
   verdict  --card C --round N --role R --result pass|fail|unverified --evidence P   qa.verdict {round, role, result, hash,
            evidence: {path, sha256}}; refused without evidence that holds. A fail or unverified from a role of kind review
            fires each trigger whose source is verdict (one qa.triggered line each, once per card).
-  merge    --card C [--round N] --json         {card, round, depth, fix_list, blocking, pending}; see merge().
-Python: fingerprint(f); merge(findings, depth, qa, exempt=()); holds(card, entry, s=None)."""
+  merge    --card C [--round N] --json         {card, round, depth, fix_list, blocking, pending}; see merge(). A finding is
+           on it while it stands (the evidence of any of its copies holds); a later copy adds, never replaces.
+Python: fingerprint(f); merge(findings, depth, qa, exempt=()); holds(card, entry, s=None); stands(card, finding, s=None)."""
 import argparse, hashlib, json, os, shutil, sys, time
 
 BIN = os.path.dirname(os.path.abspath(__file__))
@@ -33,13 +35,13 @@ import qa_loop
 import qa_tests
 import stella_data as sd
 
-BAD, EVID, ROUND, NOFIND, NORUN, FAILED = (f"STL-QA-{n}" for n in range(150, 156))
-STRENGTH = ("void", "unconfirmed", "reported", "pending", "static", "confirmed")   # weakest first
+BAD, EVID, ROUND, NOFIND, NORUN, FAILED = "STL-QA-150", "STL-QA-151", "STL-QA-152", "STL-QA-153", "STL-QA-154", "STL-QA-155"
+STRENGTH = qa_loop.STRENGTH   # weakest first
 LISTED, BLOCKS = ("reported", "static", "confirmed"), ("static", "confirmed")   # statuses on the fix list; that can block
 RESULTS = ("pass", "fail", "unverified")
 REVIEWER, SRC_VERDICT = "review", "verdict"   # the role kind whose fail fires the triggers of source verdict (qa-loop schema)
 # shortcut: input caps in code (as bin/qa_tests.py has them), move to qa-loop.json when an owner needs to tune them
-MAX_FINDINGS, MAX_TEXT, MAX_PATH, MAX_EVIDENCE, MAX_ARGV, MAX_ARG = 200, 200, 400, 20, 64, 2000
+MAX_FINDINGS, MAX_TEXT, MAX_PATH, MAX_EVIDENCE, MAX_ARGV, MAX_ARG, MAX_REPROS = 200, 200, 400, 20, 64, 2000, 20
 
 
 class Refuse(Exception):
@@ -114,6 +116,13 @@ def holds(card, ev, s=None, d=None):
         return False
 
 
+def stands(card, f, s=None, d=None):
+    """RT1-02: a finding of the fold stands while the evidence of any of its copies (subs) still holds; one with no evidence
+    recorded at all (a mutant survivor) stands as it is."""
+    evs = [x["evidence"] for x in f.get("subs") or [] if x.get("evidence")]
+    return not evs or any(holds(card, e, s, d) for e in evs)
+
+
 # ---- inputs ----
 def current(o, d):
     """The state of an opened card whose current round is o.round, frozen and not closed."""
@@ -122,6 +131,7 @@ def current(o, d):
     s = qa_loop.state(o.card, d)
     if not s["opened"]:
         raise Refuse(ROUND, f"card {o.card} has no trusted qa.opened line")
+    o.card = s["card"]   # RT1-07: the spelling the card was opened under
     if getattr(o, "round", None) is not None and (o.round != s["round"] or not s["round"] or s["round"] in s["closed"] or s["escalated"]):
         raise Refuse(ROUND, f"round {o.round} is not the card's open round (current round {s['round']}, closed {s['closed'][-3:]})")
     return s
@@ -225,20 +235,26 @@ def cmd_repro(o, d):
     f = s["findings"].get(o.fingerprint)
     if not f or f.get("round") != s["round"] or f.get("status") != "pending" or s["round"] in s["closed"]:
         raise Refuse(NOFIND, f"no finding {str(o.fingerprint)[:64]} of the open round {s['round']} is pending its repro")
-    argv = argv_of(f.get("repro"))
+    # RT1-02: every copy's own repro, distinct, in the order submitted; the first that fails as stated confirms
+    argvs = list({json.dumps(x["repro"]): x["repro"] for x in f.get("subs") or [] if x.get("status") != STRENGTH[0] and x.get("repro") is not None}.values())
+    # shortcut: at most MAX_REPROS distinct repros run per finding (the earliest submitted); a cap in data if roles ever need more
+    argvs = [argv_of(a) for a in argvs[:MAX_REPROS]] or [argv_of(None)]
     try:
         src = qa_tests.copy_dir(el.path((s["frozen"] or {}).get("copy")))
-        copy = qa_tests.fresh(src, o.card)   # a disposable copy: a repro never changes the frozen copy
-        try:
-            rc, _ = qa_tests.run(copy, argv, d.qa["tests"]["timeout_s"])
-        finally:
-            shutil.rmtree(copy, ignore_errors=True)
+        for n, argv in enumerate(argvs, 1):
+            copy = qa_tests.fresh(src, o.card)   # a disposable copy: a repro never changes the frozen copy
+            try:
+                rc, _ = qa_tests.run(copy, argv, d.qa["tests"]["timeout_s"])
+            finally:
+                shutil.rmtree(copy, ignore_errors=True)
+            if rc != 0:
+                break
     except qa_tests.Stop as e:
         raise Refuse(NORUN, e.problem) from None
     except (OSError, ValueError, TypeError) as e:
         raise Refuse(NORUN, f"the round's frozen copy cannot be used ({type(e).__name__}: {str(e)[:120]})") from None
     t = "qa.finding-confirmed" if rc != 0 else "qa.finding-unconfirmed"
-    new = {"fingerprint": o.fingerprint, "round": s["round"], "exit": rc, "hash": s["frozen"].get("hash")}
+    new = {"fingerprint": o.fingerprint, "round": s["round"], "exit": rc, "repros_run": n, "hash": s["frozen"].get("hash")}
     write(t, o.card, new)
     return {"type": t, **new}
 
@@ -287,26 +303,27 @@ def merge(findings, depth, qa, exempt=()):
 
 
 def exempt(card):
-    """Tests a finding is not charged for: the last trusted qa.base-failures line's tests, and the tests of unexpired
-    qa_quarantine rows other than the card's own tests-first tests (DG-9); an unreadable quarantine file exempts nothing."""
+    """Tests a finding is not charged for: the last trusted qa.base-failures line's tests and the tests of unexpired
+    qa_quarantine rows, never the card's own tests-first tests (DG-9, RT1-03: they fail on the base by definition); an
+    unreadable quarantine file exempts nothing."""
     base = qa_tests.card_lines(card, "qa.base-failures")
     out = {t for t in (base[-1].get("tests") or []) if isinstance(t, str)} if base else set()
     try:
         v = qa_tests.read_json(qa_tests.index_path("qa_quarantine"))
+        rows, now = v.get("rows") if isinstance(v, dict) else None, time.time()
+        out |= {r["test"] for r in rows or [] if isinstance(r, dict) and isinstance(r.get("test"), str) and (qa_tests.expiry(r.get("expires")) or 0) > now}
     except qa_tests.Stop:
-        return out
-    rows, now = v.get("rows") if isinstance(v, dict) else None, time.time()
-    q = {r["test"] for r in rows or [] if isinstance(r, dict) and isinstance(r.get("test"), str) and (qa_tests.expiry(r.get("expires")) or 0) > now}
-    return out | (q - qa_tests.own_tests(card))
+        pass
+    return out - qa_tests.own_tests(card)
 
 
 def cmd_merge(o, d):
     s = current(argparse.Namespace(card=o.card), d)
     rnd = s["round"] if o.round is None else o.round
     fs = [dict(f, fingerprint=k) for k, f in s["findings"].items() if f.get("round") == rnd]
-    fs = [f for f in fs if not f.get("evidence") or holds(o.card, f["evidence"], s, d)]   # re-hashed: a changed file voids it
-    fix = merge(fs, s["depth"], d.qa, exempt(o.card))
-    return {"card": o.card, "round": rnd, "depth": s["depth"], "fix_list": fix, "blocking": sum(e["blocking"] for e in fix),
+    fs = [f for f in fs if stands(s["card"], f, s, d)]   # re-hashed: a changed file voids its copy
+    fix = merge(fs, s["depth"], d.qa, exempt(s["card"]))
+    return {"card": s["card"], "round": rnd, "depth": s["depth"], "fix_list": fix, "blocking": sum(e["blocking"] for e in fix),
             "pending": sum(1 for f in fs if f.get("status") == "pending")}
 
 
