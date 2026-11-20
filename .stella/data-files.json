@@ -488,6 +488,18 @@
       "id_field": "schema_version",
       "global_id": "08487483-445d-418d-9cf0-bc2126d20c58",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agent-protocols",
+      "path": ".stella/agent-protocols.json",
+      "schema": "agent-protocols",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "6fca5cb9-2256-4c84-a9a1-f1df2c767f0b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ],
   "spans": ".supervisor/logs/spans.jsonl",

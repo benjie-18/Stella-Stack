@@ -124,6 +124,7 @@
     "bin/conformance.py",
     "bin/stuck.py",
     ".stella/adapters.json",
+    ".stella/agent-protocols.json",
     ".stella/conformance.json",
     ".stella/policy.json",
     ".stella/host-policy.json",
