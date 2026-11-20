@@ -277,7 +277,13 @@ def box_prefix(role, aid, wt, label, cfg):
             raise Stop(C["box"], f"the worktree's repository is neither the stack root nor a project of the board: the run is not started")
         argv, over = box.box_argv(d, profs[0], {"card": label, "workspace": wt, "branch": git(wt, "rev-parse", "--abbrev-ref", "HEAD")},
                                   hermes_root=root, home=home, roots=proj, stack_root=sd.ROOT)
-        at = next((i for i, x in enumerate(argv) if x == "--remount-ro"), len(argv))   # before the read-only remounts, so its parents can be made
+        # the run config goes in just before the read-only remount of its deepest tmpfs ancestor: its parents can still be made there, and no
+        # later tmpfs of the walk covers it (live findings A and F); with no tmpfs ancestor it goes last, where its parents already exist
+        anc = [argv[i + 1] for i in range(len(argv) - 1) if argv[i] == "--tmpfs" and (cfg == argv[i + 1] or cfg.startswith(argv[i + 1].rstrip("/") + "/"))]
+        at = len(argv)
+        if anc:
+            deep = max(anc, key=len)
+            at = max((i for i in range(len(argv) - 1) if argv[i] == "--remount-ro" and argv[i + 1] == deep), default=len(argv))
         return argv[:at] + ["--ro-bind", cfg, cfg] + argv[at:] + ["--chdir", wt], over   # the run's config folder, read-only, nothing else of the state
     except Stop:
         raise

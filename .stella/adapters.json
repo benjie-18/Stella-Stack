@@ -37,15 +37,15 @@
       "tools": {
         "read": {
           "class": "read",
-          "path": "/filePath"
+          "path": "/path"
         },
         "edit": {
           "class": "write",
-          "path": "/filePath"
+          "path": "/path"
         },
         "write": {
           "class": "write",
-          "path": "/filePath"
+          "path": "/path"
         },
         "grep": {
           "class": "read",
@@ -53,7 +53,7 @@
         },
         "glob": {
           "class": "read",
-          "path": "/path"
+          "path": "/pattern"
         },
         "list": {
           "class": "read",
@@ -67,6 +67,13 @@
           "class": "other"
         },
         "task": {
+          "class": "other"
+        },
+        "shell": {
+          "class": "shell",
+          "command": "/command"
+        },
+        "skill": {
           "class": "other"
         }
       },
@@ -430,7 +437,7 @@
         "tool_name": "/part/tool",
         "tool_input": "/part/state/input",
         "tool_result": "/part/state/output",
-        "error": "/error",
+        "error": "/part/state/error",
         "usage": {
           "input": "/part/tokens/input",
           "output": "/part/tokens/output"
