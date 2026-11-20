@@ -275,6 +275,12 @@
     },
     "consent": {
       "mark": "hermetic"
+    },
+    "agent-runtime": {
+      "mark": "hermetic"
+    },
+    "agui-ui": {
+      "mark": "hermetic"
     }
   },
   "test_like": [
@@ -7131,6 +7137,156 @@
         "capabilities"
       ],
       "why": "extension manifests: validated by stella_data check (extension schema) and listed by capability search through their capability entries"
+    },
+    {
+      "globs": [
+        "bin/agent-runtime-selftest.sh",
+        "bin/mock_agui_agent.py",
+        "bin/agent_runtime.py",
+        "bin/agent_tool.py",
+        "bin/adapter.py",
+        "bin/policy.py",
+        "bin/model_proxy.py",
+        "bin/mock_provider.py",
+        "bin/ledger.py",
+        "bin/run_policy.py",
+        "bin/prompt.py",
+        "bin/agui_ui.py",
+        ".stella/adapters.json",
+        ".stella/agent-protocols.json",
+        ".stella/policy.json",
+        ".stella/run-policy.json",
+        ".stella/protocols.json",
+        ".stella/connections.json",
+        ".stella/schemas/adapters.schema.json",
+        ".stella/schemas/agent-protocols.schema.json"
+      ],
+      "targets": [
+        "agent-runtime"
+      ],
+      "why": "X1 item A (wave 1, tests first): the agent-runtime selftest starts runs of fake agent-runtime adapter entries (data) over bin/mock_agui_agent.py with the mock upstream and the model proxy, and checks the role run, the gates, the resolver, unoffered tools, messages and state, a second protocol, the canary and rulings X1-DC-01..05"
+    },
+    {
+      "globs": [
+        "bin/agui-ui-selftest.sh",
+        "bin/agui_ui.py",
+        "bin/approvals.py",
+        "bin/loopback-api-double.py",
+        "bin/loopback_guard.py",
+        ".stella/ui-components.json",
+        ".stella/loopback-api.json",
+        ".stella/connections.json",
+        ".stella/schemas/ui-components.schema.json",
+        ".stella/schemas/approval-request.schema.json"
+      ],
+      "targets": [
+        "agui-ui"
+      ],
+      "why": "X1 item U (wave 1, tests first): the agui-ui selftest ingests widgets through bin/agui_ui.py, reads them over the run-ui read endpoint of the loopback double, and checks approval claims, act, the canary and the allowlist"
+    },
+    {
+      "globs": [
+        ".stella/data-policy.json",
+        ".stella/prompt-profiles.json",
+        ".stella/role-assignments.json",
+        ".stella/routing.json",
+        ".stella/stuck.json",
+        "bin/approvals.py",
+        "bin/box.py",
+        "bin/false-close-guard.py",
+        "bin/log_filter.py",
+        "bin/mock_agent.py",
+        "bin/stuck.py",
+        "opencode.json"
+      ],
+      "targets": [
+        "agent-runtime"
+      ],
+      "why": "X1 wave 1 tests (items A, U): selftests the reach lint says can reach these files"
+    },
+    {
+      "globs": [
+        ".claude/settings.json",
+        ".claude/skills/stack-rules/SKILL.md",
+        ".stella/budgets.json",
+        ".stella/capability-sources.json",
+        ".stella/data-files.json",
+        ".stella/features.json",
+        ".stella/host-policy.json",
+        ".stella/install.json",
+        ".stella/limit-signals.json",
+        ".stella/model-check.json",
+        ".stella/run-gateway.json",
+        ".stella/schemas/event.schema.json",
+        ".stella/schemas/probes.schema.json",
+        ".stella/settings.json",
+        ".supervisor/limits.env",
+        "SUPERVISOR.md",
+        "bin/alert-catalog.sh",
+        "bin/alert.sh",
+        "bin/alert_catalog.py",
+        "bin/apply-hermes-local.sh",
+        "bin/budget.py",
+        "bin/capabilities.py",
+        "bin/capabilities_mcp.py",
+        "bin/compare.py",
+        "bin/consent.py",
+        "bin/cost.py",
+        "bin/credentials.py",
+        "bin/devices.py",
+        "bin/escalate-drain.sh",
+        "bin/escalate.sh",
+        "bin/escalation-complete.sh",
+        "bin/escalation-discord.sh",
+        "bin/escalation-on-block.sh",
+        "bin/escalation-on-claim.sh",
+        "bin/escalation-on-complete.sh",
+        "bin/escalation-thread.sh",
+        "bin/event_log.py",
+        "bin/event_untrusted.py",
+        "bin/host_access.py",
+        "bin/kanban-board.sh",
+        "bin/kanban-guard.sh",
+        "bin/model_check.py",
+        "bin/owner-config.sh",
+        "bin/owner_auth.py",
+        "bin/owner_config.py",
+        "bin/probe.py",
+        "bin/register-escalation-hook.sh",
+        "bin/register-toolsets.sh",
+        "bin/resolve.py",
+        "bin/role-guard.py",
+        "bin/roles.py",
+        "bin/route.py",
+        "bin/run_token.py",
+        "bin/settings.py",
+        "bin/stella-apply.py",
+        "bin/stella_data.py",
+        "bin/triage.py",
+        "bin/worker_env.py",
+        "docs/alert-codes.md",
+        "docs/hermes-local/alert-catalog.json",
+        "docs/hermes-local/board.md",
+        "docs/hermes-local/fallback-routing.json",
+        "docs/hermes-local/roles.json"
+      ],
+      "targets": [
+        "agent-runtime",
+        "agui-ui"
+      ],
+      "why": "X1 wave 1 tests (items A, U): selftests the reach lint says can reach these files"
+    },
+    {
+      "globs": [
+        ".stella/adapters.json",
+        ".stella/protocols.json",
+        "bin/ledger.py",
+        "bin/model_proxy.py"
+      ],
+      "targets": [
+        "agui-ui"
+      ],
+      "why": "X1 wave 1 tests (items A, U): selftests the reach lint says can reach these files"
     }
   ]
 }
