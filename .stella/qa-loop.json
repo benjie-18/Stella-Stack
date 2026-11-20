@@ -116,6 +116,7 @@
   },
   "triggers": {
     "security": {
+      "source": "diff",
       "tester": "full",
       "force_roles": [
         "red-team"
@@ -164,14 +165,17 @@
       }
     },
     "mismatch": {
+      "source": "verdict",
       "tester": "full",
       "force_roles": []
     },
     "fix_grew": {
+      "source": "fix",
       "tester": "full",
       "force_roles": []
     },
     "owner_full": {
+      "source": "owner",
       "tester": "full",
       "force_roles": [
         "red-team"

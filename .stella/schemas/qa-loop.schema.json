@@ -211,10 +211,20 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
+          "source",
           "tester",
           "force_roles"
         ],
         "properties": {
+          "source": {
+            "enum": [
+              "diff",
+              "verdict",
+              "fix",
+              "owner"
+            ],
+            "description": "what fires the trigger: diff = match on the frozen diff at freeze; verdict = a validator or verifier verdict fail or unverified; fix = the fix grew past the original change or is the second fix attempt; owner = only the owner's trigger command"
+          },
           "tester": {
             "enum": [
               "smoke",
