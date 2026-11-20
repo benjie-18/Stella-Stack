@@ -61,13 +61,20 @@ class Stop(Exception):
         self.code, self.problem = code, problem
 
 
-def data():
+def data(card=None):
+    """(the card's QA loop settings, tier ids): qa_loop.data, so overrides and the served-data rules apply alike."""
     try:
-        rows = {r["id"]: r for r in sd.rows()}
-        q, r = (sd.checked(sd.load(rows[i]["path"]), rows[i]["path"], rows[i]["schema"]) for i in (ROW, ROUTING))
-        return q, [t["id"] for t in r["task_tiers"]]
+        d = ql.data(card)
+        return d.qa, d.tiers
     except (sd.DataError, KeyError, TypeError) as e:
         raise Stop(DATA, f"the QA loop data cannot be used: {str(e)[:160] or 'no index row'}") from None
+
+
+def card_of(path):
+    """The card a folder under qa_copies belongs to (its first part), or None."""
+    top = index_path("qa_copies")
+    real = os.path.realpath(path)
+    return os.path.relpath(real, top).split(os.sep)[0] if el.inside(real, top) and real != top else None
 
 
 def index_path(key):
@@ -157,9 +164,9 @@ def run(copy, argv, timeout, scan=()):
         "--dir", "/tmp/qa-home", "--dir", "/tmp/qa-tmp", "--bind", real, real, "--chdir", real,
         "bash", "-c", 'echo started >&"$0" || exit 1; eval "exec $0>&-"; ulimit -f "$QA_FSIZE_KB" || exit 1; exec "$@"']   # one file (a deleted one held open too) stays within max_write_bytes
     env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL") if k in os.environ}
-    env.update(HOME="/tmp/qa-home", TMPDIR="/tmp/qa-tmp", PYTHONDONTWRITEBYTECODE="1", QA_FSIZE_KB=str(data()[0]["tests"]["max_write_bytes"] // 1024 + 1))   # one KiB over: a file cut there is over the limit, so the check names it (Q1-OF-CVER-11)
+    env.update(HOME="/tmp/qa-home", TMPDIR="/tmp/qa-tmp", PYTHONDONTWRITEBYTECODE="1", QA_FSIZE_KB=str(data(card_of(real))[0]["tests"]["max_write_bytes"] // 1024 + 1))   # one KiB over: a file cut there is over the limit, so the check names it (Q1-OF-CVER-11)
     sr, sw = os.pipe()
-    tq = data()[0]["tests"]
+    tq = data(card_of(real))[0]["tests"]   # the card's settings: the copy's first folder under qa_copies
     cap, over, wcap, wrote, stop = tq["max_output_bytes"], [], tq["max_write_bytes"], [], threading.Event()
 
     def used():   # bytes the copy takes on disk (links not followed); None when some of it cannot be read (Q1-OF-CVER-08: fail closed)
@@ -344,7 +351,7 @@ def files_of(test, paths=()):
 
 def frozen(card):
     """(round copy, base, frozen hash, qa_loop data) of the card's last frozen round; None when it has none."""
-    d = ql.data()
+    d = ql.data(card)
     s = ql.state(card, d)
     f = s["frozen"]
     return (el.path(f["copy"]), f.get("base") or s["base"], f["hash"], d) if f else None
@@ -440,9 +447,9 @@ def base_runs(card, copy, t, q):
     from the round copy (DIR when the card has no frozen round); None when that copy cannot be made (the caller fails closed)."""
     try:
         f = frozen(card)
-        d = f[3] if f else ql.data()
+        d = f[3] if f else ql.data(card)
         repo, base = (f[0], f[1]) if f else (copy, ql.state(card, d)["base"])
-        dest = ql.make_copy(repo, base, card, "base-" + uuid.uuid4().hex[:12], d, ql.state(card, d)["project"])[0]
+        dest = ql.make_copy(repo, base, card, "base-" + uuid.uuid4().hex[:12], d)[0]
     except Exception:   # no base, no state, or the base not in the copy: unknown, never "flaky on the base too"
         return None
     MADE.add(os.path.realpath(dest))
@@ -495,7 +502,7 @@ def verify(src):
     if not trees:
         return
     want, rel = trees[-1], os.path.relpath(real, el.ROOT)
-    q, _ = data()
+    q, _ = data(card_of(real))
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
     try:
@@ -632,7 +639,7 @@ def main(argv):
             raise Stop(sd.Refused.code, f"qa_tests.py {a.cmd} runs on the host only ({w}); nothing was run")
         if not CARD.fullmatch(a.card):
             raise Stop(INPUT, "--card must be a card id (letters, digits and _.-)")
-        q, tiers = data()
+        q, tiers = data(a.card)
         a.copy = copy_dir(a.copy)
         with ql.card_lock(a.card, ql.data()):   # RTF-05 family: every writer of a card's trusted lines holds the card's one lock
             out = {"baseline": cmd_baseline, "tests-first": cmd_tests_first, "flaky": cmd_flaky}[a.cmd](a, q) if a.cmd != "mutants" else cmd_mutants(a, q, tiers)

@@ -1,6 +1,10 @@
 {
   "schema_version": 1,
   "about": "QA loop mechanics for Stella's own cards (phase Q1; spec: Stella QA Loop Validator Verifier Red Team Tester.md). Read by bin/qa_loop.py, bin/qa_findings.py, bin/qa_tests.py, bin/qa_schedule.py and bin/qa_roles.py. Role, tier, preset and trigger ids are the ids of .stella/routing.json (card_roles, task_tiers, workflow.triggers) and .stella/role-assignments.json (effort_modes). Owner data: it decides when work is done, so no agent writes it. Precedence of test failure classes: any error class match refuses a tests-first test whatever else matches; a timeout is the runner's own kill (tests.timeout_s), never an exit code. when_local_only applies when resolve.py answers local_only true or the card's preset is listed there.",
+  "overrides": {
+    "projects": {},
+    "cards": {}
+  },
   "severities": [
     {
       "id": "critical",
@@ -187,10 +191,7 @@
     "quarantine_days": 14,
     "timeout_s": 600,
     "max_repros": 20,
-    "max_copy_bytes": {
-      "default": 4294967296,
-      "projects": {}
-    },
+    "max_copy_bytes": 4294967296,
     "max_output_bytes": 67108864,
     "max_write_bytes": 2147483648,
     "classes": [

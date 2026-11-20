@@ -369,8 +369,8 @@ def main(argv):
     a["verdict"].add_argument("--evidence", required=True)
     o = ap.parse_args(argv)
     try:
-        d = qa_loop.data()
-        lock = o.cmd != "merge" and qa_loop.CARD.fullmatch(o.card)   # a card id that is not plain is refused by the command itself
+        lock = o.cmd != "merge" and qa_loop.CARD.fullmatch(o.card)
+        d = qa_loop.data(o.card if qa_loop.CARD.fullmatch(o.card or "") else None)   # the card's own settings (overrides)   # a card id that is not plain is refused by the command itself
         with qa_loop.card_lock(o.card, d) if lock else contextlib.nullcontext():   # RTF-05
             print(json.dumps(CMDS[o.cmd](o, d)))
         return 0

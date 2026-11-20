@@ -98,17 +98,24 @@ class Refuse(Exception):
         self.code, self.problem = code, problem
 
 
-def data():
+def data(card=None, project=None):
     """The QA loop data and routing, served (sd.served: never while check refuses them or what they depend on, the presets
-    included), the index and the QA depths in order. sd.DataError otherwise."""
+    included), the index and the QA depths in order. sd.DataError otherwise. With a card: its settings, the file with its
+    project's and then its own overrides merged in (sd.qa_scoped; the project is open's --project, else the card's trusted
+    qa.opened line), refused when the merged settings break a rule."""
     rows = {r["schema"]: r["id"] for r in sd.rows() if r["format"] == "json" and r["schema"] in ("qa-loop", "routing")}
     if len(rows) != 2:
         raise sd.DataError("the index has no qa-loop or no routing row")
     by = sd.served(list(rows.values()))
     one = lambda s: by["_rows"][rows[s]][0][0][1]
-    return types.SimpleNamespace(qa=one("qa-loop"), rt=one("routing"), idx=sd.load(sd.INDEX), depths=sd.qa_depths(),
-                                 tiers=[t["id"] for t in one("routing")["task_tiers"]],
-                                 envelope=set(sd.load(f"{sd.SCHEMAS}/event.schema.json")["properties"]) - {"new", "detail"})
+    env = set(sd.load(f"{sd.SCHEMAS}/event.schema.json")["properties"]) - {"new", "detail"}
+    q = one("qa-loop")
+    if card is not None:
+        if project is None:
+            project = next((payload(x, env).get("project") for x in el.proof_lines() if x.get("type") == "qa.opened" and same(x.get("what"), card)), None)
+        q = sd.qa_scoped(q, one("routing"), project if isinstance(project, str) else None, card)
+    return types.SimpleNamespace(qa=q, rt=one("routing"), idx=sd.load(sd.INDEX), depths=sd.qa_depths(),
+                                 tiers=[t["id"] for t in one("routing")["task_tiers"]], envelope=env)
 
 
 def payload(line, envelope):
@@ -121,7 +128,7 @@ def payload(line, envelope):
 
 def state(card, d=None):
     """The fold of the card's trusted qa.* lines (module docstring)."""
-    d = d or data()
+    d = d or data(card)
     q, tiers = d.qa, d.tiers
     sev = [x["id"] for x in q["severities"]]
     hi = lambda a, b: b if b in tiers and (a is None or tiers.index(b) > tiers.index(a)) else a
@@ -296,13 +303,7 @@ def git(args, cwd, d):
     return r
 
 
-def copy_limit(project, d):
-    """The bytes a round copy's checked-out tree may hold (RTF-08): the project's own limit, else the default (qa-loop tests.max_copy_bytes)."""
-    m = d.qa["tests"]["max_copy_bytes"]
-    return m["projects"].get(project, m["default"])
-
-
-def make_copy(repo, h, card, n, d, project=None):
+def make_copy(repo, h, card, n, d):
     """(copy folder, tree id): H cloned standalone under qa_copies/<card>/round-<n>, checked out on a branch of its own. Before anything
     is cloned, the builder repo's history the clone takes (rev-list --all --disk-usage) plus H's tree (ls-tree -r -l: every blob) is
     checked against the project's limit (RTF-08, Q1-OF-CVER-03)."""
@@ -314,11 +315,11 @@ def make_copy(repo, h, card, n, d, project=None):
         size = sum(int(e.split(None, 4)[3]) for e in sizes[0].stdout.split("\0") if e and e.split(None, 4)[1] == "blob") + int(sizes[1].stdout.strip())
     except (ValueError, IndexError):
         raise Refuse(NO_COPY, "the size of the repository at that hash cannot be read") from None
-    cap = copy_limit(project, d)
+    cap = d.qa["tests"]["max_copy_bytes"]   # d holds the card's settings (its project's and its own overrides)
     if size > cap:
         # shortcut: --disk-usage is the history as stored in the builder repo; the clone repacks it, close to it, not equal
-        raise Refuse(NO_COPY, f"the frozen tree and the history the copy would clone hold {size} bytes, over the limit of {cap} for project "
-                              f"{project} (qa-loop tests.max_copy_bytes: the owner may set the project's own); nothing was cloned")
+        raise Refuse(NO_COPY, f"the frozen tree and the history the copy would clone hold {size} bytes, over the limit of {cap} "
+                              f"(qa-loop tests.max_copy_bytes: the owner may set a project's or a card's own in overrides); nothing was cloned")
     base = el.path(d.idx["qa_copies"])
     el.mkdirs(os.path.join(base, card))
     dest = os.path.join(base, card, f"round-{n}")
@@ -418,7 +419,7 @@ def cmd_freeze(o, d):
     repo = os.path.abspath(o.repo)
     if not os.path.isdir(repo):
         raise Refuse(BAD, "the repository path is not a folder")
-    dest, tree = make_copy(repo, o.hash, o.card, n, d, s["project"])
+    dest, tree = make_copy(repo, o.hash, o.card, n, d)
     for tid, src, ev in fired(s, d, dest, o.hash, n):
         put(o.card, "qa.triggered", {"id": tid, "source": src, "evidence": ev, "round": n}, f"trigger {tid} fired at the round {n} freeze")
     put(o.card, "qa.frozen", {"round": n, "hash": o.hash, "tree": tree, "rung": s["rung"], "depth": s["depth"],
@@ -666,7 +667,7 @@ def main(argv):
     a["done"].add_argument("--hash", required=True)
     o = ap.parse_args(argv)
     try:
-        d = data()
+        d = data(o.card, o.project if o.cmd == "open" else None)
         with card_lock(o.card, d) if o.cmd in WRITES else contextlib.nullcontext():
             return CMDS[o.cmd](o, d)
     except (Refuse, el.EventError) as e:

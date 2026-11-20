@@ -28,6 +28,25 @@
     "about": {
       "type": "string"
     },
+    "overrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings per project and per card (owner ask 2026-11-20): any key of this file but overrides and schema_version, merged over the file (objects key by key, anything else replaces); a card's entry over its project's. Each merged result keeps this schema and the QA loop rules (stella_data rule_qa_loop); a card key is the board's lowercase id.",
+      "properties": {
+        "projects": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "cards": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        }
+      }
+    },
     "severities": {
       "type": "array",
       "minItems": 1,
@@ -298,26 +317,9 @@
           "minimum": 1
         },
         "max_copy_bytes": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "default",
-            "projects"
-          ],
-          "description": "RTF-08: the bytes a round copy's checked-out tree may hold (every blob of git ls-tree -r -l), checked before the checkout; a tree over it is refused at freeze. default: every project; projects: {project id: bytes}, the owner's own limit for a project",
-          "properties": {
-            "default": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "projects": {
-              "type": "object",
-              "additionalProperties": {
-                "type": "integer",
-                "minimum": 1
-              }
-            }
-          }
+          "type": "integer",
+          "minimum": 1,
+          "description": "RTF-08: the bytes a round copy may hold (the frozen tree's blobs plus the history the clone takes), checked in the builder repo before anything is cloned; a project or a card sets its own through overrides"
         },
         "max_output_bytes": {
           "type": "integer",
