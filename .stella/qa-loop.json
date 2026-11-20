@@ -186,6 +186,7 @@
     "reruns": 4,
     "quarantine_days": 14,
     "timeout_s": 600,
+    "max_repros": 20,
     "classes": [
       {
         "id": "missing",

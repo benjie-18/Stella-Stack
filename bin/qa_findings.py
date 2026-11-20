@@ -7,7 +7,8 @@ Inputs from QA roles (findings files, paths, verdicts) are data: shapes and size
 list run in a disposable copy of the round's frozen copy through bin/qa_tests.py run() (its box), never a shell string.
 Evidence: a file inside qa_evidence/<card>/<round>/ (no link on the way), registered by a trusted qa.evidence {path, sha256,
 round} line; it holds only while the file's sha256 still equals the registered one and the one the finding or verdict recorded
-(re-hashed on every read: a changed file voids it).
+(re-hashed on every read: a changed file voids it). Evidence decides admission, not survival (RTF-03): a finding its repro
+confirmed on the frozen hash, or a static one, stays on the fix list whatever its evidence file does later.
 CLI (on failure a catalog code STL-QA-150..155 and its plain message on stderr, one alert line, exit 1; with --json also
 {card, code, problem} on stdout; 2 usage). --round must be the card's current round, frozen and not closed.
   evidence --card C --round N --file F        qa.evidence {path (root-relative), sha256, round}
@@ -17,16 +18,20 @@ CLI (on failure a catalog code STL-QA-150..155 and its plain message on stderr, 
            counts for nothing, and a void copy of a finding the round already has is not written), static, pending (blocking
            at the card's depth, not static, with a repro), unconfirmed (the same with no repro), reported (not blocking, not
            static); a same-round resubmission never lowers the status the round already has (STRENGTH).
-  repro    --card C --fingerprint F           a pending finding of the round: the distinct repro argv of each of its copies
-           (in the order submitted, at most MAX_REPROS), each in a fresh copy of the frozen copy (box, tests.timeout_s); the
-           first non-zero exit or timeout kill -> qa.finding-confirmed, every one exit 0 -> qa.finding-unconfirmed.
-  verdict  --card C --round N --role R --result pass|fail|unverified --evidence P   qa.verdict {round, role, result, hash,
-           evidence: {path, sha256}}; refused without evidence that holds. A fail or unverified from a role of kind review
+  repro    --card C --fingerprint F           a pending finding of the round: the distinct repro argv of its copies, those of
+           the evidence role first, then in the order submitted (RTF-06), at most tests.max_repros, each in a fresh copy of
+           the frozen copy (box, tests.timeout_s); the first non-zero exit or timeout kill -> qa.finding-confirmed; every one
+           exit 0 -> qa.finding-unconfirmed, unless more distinct repros were left unrun: then the finding stays pending
+           (STL-QA-156, fail closed).
+  verdict  --card C --round N --role R [--slot I] --result pass|fail|unverified --evidence P   qa.verdict {round, role, slot,
+           result, hash, evidence: {path, sha256}}; I (default 1) is one of the plan's slots of R (RTF-01); refused without
+           evidence that holds. A fail or unverified from a role of kind review
            fires each trigger whose source is verdict (one qa.triggered line each, once per card).
   merge    --card C [--round N] --json         {card, round, depth, fix_list, blocking, pending}; see merge(). A finding is
-           on it while it stands (the evidence of any of its copies holds); a later copy adds, never replaces.
+           on it while it stands (stands()); a later copy adds, never replaces.
+Every command but merge runs under qa_loop.card_lock (RTF-05).
 Python: fingerprint(f); merge(findings, depth, qa, exempt=()); holds(card, entry, s=None); stands(card, finding, s=None)."""
-import argparse, hashlib, json, os, shutil, sys, time
+import argparse, contextlib, hashlib, json, os, shutil, sys, time
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -35,13 +40,13 @@ import qa_loop
 import qa_tests
 import stella_data as sd
 
-BAD, EVID, ROUND, NOFIND, NORUN, FAILED = "STL-QA-150", "STL-QA-151", "STL-QA-152", "STL-QA-153", "STL-QA-154", "STL-QA-155"
+BAD, EVID, ROUND, NOFIND, NORUN, FAILED, OVER = "STL-QA-150", "STL-QA-151", "STL-QA-152", "STL-QA-153", "STL-QA-154", "STL-QA-155", "STL-QA-156"
 STRENGTH = qa_loop.STRENGTH   # weakest first
 LISTED, BLOCKS = ("reported", "static", "confirmed"), ("static", "confirmed")   # statuses on the fix list; that can block
-RESULTS = ("pass", "fail", "unverified")
-REVIEWER, SRC_VERDICT = "review", "verdict"   # the role kind whose fail fires the triggers of source verdict (qa-loop schema)
+RESULTS = qa_loop.RESULTS
+REVIEWER, SRC_VERDICT, EVIDENCE = "review", "verdict", "evidence"   # role kinds (qa-loop schema): a review fail fires the triggers of source verdict; the evidence role's repros run first
 # shortcut: input caps in code (as bin/qa_tests.py has them), move to qa-loop.json when an owner needs to tune them
-MAX_FINDINGS, MAX_TEXT, MAX_PATH, MAX_EVIDENCE, MAX_ARGV, MAX_ARG, MAX_REPROS = 200, 200, 400, 20, 64, 2000, 20
+MAX_FINDINGS, MAX_TEXT, MAX_PATH, MAX_EVIDENCE, MAX_ARGV, MAX_ARG = 200, 200, 400, 20, 64, 2000
 
 
 class Refuse(Exception):
@@ -118,7 +123,10 @@ def holds(card, ev, s=None, d=None):
 
 def stands(card, f, s=None, d=None):
     """RT1-02: a finding of the fold stands while the evidence of any of its copies (subs) still holds; one with no evidence
-    recorded at all (a mutant survivor) stands as it is."""
+    recorded at all (a mutant survivor) stands as it is. RTF-03: a confirmed or static one stands whatever its evidence does
+    after admission (a changed, unreadable or deleted file never removes a blocking finding)."""
+    if f.get("status") in BLOCKS:
+        return True
     evs = [x["evidence"] for x in f.get("subs") or [] if x.get("evidence")]
     return not evs or any(holds(card, e, s, d) for e in evs)
 
@@ -199,6 +207,7 @@ def cmd_submit(o, d):
     sev = [x["id"] for x in d.qa["severities"]]
     fs = [finding_of(x, sev) for x in v]   # every finding checked before any line is written
     out, seen = [], {}
+    rank = lambda x: sev.index(x) if x in sev else len(sev)
     for f in fs:
         fp = fingerprint(f)
         try:
@@ -206,13 +215,14 @@ def cmd_submit(o, d):
             why = None if ev else "no evidence"
         except Refuse as e:
             ev, why = None, e.problem
-        old = s["findings"].get(fp, {})
-        old = seen.get(fp) or (old.get("status") if old.get("round") == o.round else None)
+        fold = s["findings"].get(fp, {})
+        fold = fold if fold.get("round") == o.round else {}
+        old = seen.get(fp) or fold.get("status")
         if not ev:
             st = "void"
         elif f["static"]:
             st = "static"
-        elif blocks_on(d.qa, f["severity"], s["depth"]):
+        elif blocks_on(d.qa, min(f["severity"], fold.get("severity"), key=rank), s["depth"]):   # RTF-04: the round's highest severity
             st = "pending" if f["repro"] else "unconfirmed"
         else:
             st = "reported"
@@ -235,10 +245,11 @@ def cmd_repro(o, d):
     f = s["findings"].get(o.fingerprint)
     if not f or f.get("round") != s["round"] or f.get("status") != "pending" or s["round"] in s["closed"]:
         raise Refuse(NOFIND, f"no finding {str(o.fingerprint)[:64]} of the open round {s['round']} is pending its repro")
-    # RT1-02: every copy's own repro, distinct, in the order submitted; the first that fails as stated confirms
-    argvs = list({json.dumps(x["repro"]): x["repro"] for x in f.get("subs") or [] if x.get("status") != STRENGTH[0] and x.get("repro") is not None}.values())
-    # shortcut: at most MAX_REPROS distinct repros run per finding (the earliest submitted); a cap in data if roles ever need more
-    argvs = [argv_of(a) for a in argvs[:MAX_REPROS]] or [argv_of(None)]
+    # RT1-02: every copy's own repro, distinct; RTF-06: the evidence role's first, then in the order submitted; the first that fails confirms
+    first = {r for r, x in d.qa["roles"].items() if x["kind"] == EVIDENCE}
+    subs = sorted((x for x in f.get("subs") or [] if x.get("status") != STRENGTH[0] and x.get("repro") is not None), key=lambda x: x.get("role") not in first)
+    argvs, cap = list({json.dumps(x["repro"]): x["repro"] for x in subs}.values()), d.qa["tests"]["max_repros"]
+    left, argvs = argvs[cap:], [argv_of(a) for a in argvs[:cap]] or [argv_of(None)]
     try:
         src = qa_tests.copy_dir(el.path((s["frozen"] or {}).get("copy")))
         for n, argv in enumerate(argvs, 1):
@@ -253,6 +264,8 @@ def cmd_repro(o, d):
         raise Refuse(NORUN, e.problem) from None
     except (OSError, ValueError, TypeError) as e:
         raise Refuse(NORUN, f"the round's frozen copy cannot be used ({type(e).__name__}: {str(e)[:120]})") from None
+    if rc == 0 and left:   # fail closed: an unrun repro may be the one that fails
+        raise Refuse(OVER, f"finding {o.fingerprint[:12]}: {n} repros ran and passed, {len(left)} more over tests.max_repros ({cap}) did not run; it stays pending")
     t = "qa.finding-confirmed" if rc != 0 else "qa.finding-unconfirmed"
     new = {"fingerprint": o.fingerprint, "round": s["round"], "exit": rc, "repros_run": n, "hash": s["frozen"].get("hash")}
     write(t, o.card, new)
@@ -266,7 +279,10 @@ def cmd_verdict(o, d):
         raise Refuse(BAD, "the role is not one of the QA loop data's roles")
     if o.result not in RESULTS:
         raise Refuse(BAD, f"the result must be one of {', '.join(RESULTS)}")
-    new = {"round": o.round, "role": o.role, "result": o.result, "hash": s["frozen"].get("hash"), "evidence": entry(s, o.round, o.evidence, d)}
+    slots = len(qa_loop.plan(o.card, s, d)["roles"].get(o.role, {}).get("slots") or [])
+    if not 1 <= o.slot <= slots:   # RTF-01: a verdict is one slot's; close needs a pass from each
+        raise Refuse(BAD, f"slot {o.slot} is not one of the {slots} slot(s) the round's plan gives {o.role}")
+    new = {"round": o.round, "role": o.role, "slot": o.slot, "result": o.result, "hash": s["frozen"].get("hash"), "evidence": entry(s, o.round, o.evidence, d)}
     write("qa.verdict", o.card, new)
     fired = []
     if role["kind"] == REVIEWER and o.result != RESULTS[0]:
@@ -348,13 +364,17 @@ def main(argv):
     a["submit"].add_argument("--file", required=True)
     a["repro"].add_argument("--fingerprint", required=True)
     a["verdict"].add_argument("--role", required=True)
+    a["verdict"].add_argument("--slot", type=int, default=qa_loop.FIRST_SLOT)
     a["verdict"].add_argument("--result", required=True)
     a["verdict"].add_argument("--evidence", required=True)
     o = ap.parse_args(argv)
     try:
-        print(json.dumps(CMDS[o.cmd](o, qa_loop.data())))
+        d = qa_loop.data()
+        lock = o.cmd != "merge" and qa_loop.CARD.fullmatch(o.card)   # a card id that is not plain is refused by the command itself
+        with qa_loop.card_lock(o.card, d) if lock else contextlib.nullcontext():   # RTF-05
+            print(json.dumps(CMDS[o.cmd](o, d)))
         return 0
-    except (Refuse, el.EventError) as e:
+    except (Refuse, qa_loop.Refuse, el.EventError) as e:   # qa_loop's: its plan (a verdict's slots) refused
         code, problem = e.code, e.problem
     except sd.DataError as e:
         code, problem = FAILED, f"the QA loop data cannot be used: {str(e)[:200]}"

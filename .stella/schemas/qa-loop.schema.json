@@ -277,7 +277,8 @@
         "reruns",
         "quarantine_days",
         "timeout_s",
-        "classes"
+        "classes",
+        "max_repros"
       ],
       "properties": {
         "reruns": {
@@ -292,6 +293,12 @@
         "timeout_s": {
           "type": "integer",
           "minimum": 1
+        },
+        "max_repros": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "at most this many distinct repros of one finding run (the evidence role's first); a finding with more stays pending (STL-QA-156, fail closed)"
         },
         "classes": {
           "type": "array",
