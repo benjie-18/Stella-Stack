@@ -538,6 +538,16 @@ project from the run token) when `adapter.py start` rendered it with `--gateway`
 its start mode (`gateway.mode`); with `--card` its project is the card's board binding. In enforce a coding CLI with no policy
 hook is refused at start; applying this file stops the runs that started with the gateway off (and hookless ones under enforce).
 A tool call's inputs carry its `cwd` and its `path` as the canonical absolute path under that cwd (one spelling per file).
+With the gateway on, the CLI's hook matcher is the entry's `match_all` (every tool reaches the hook) and the PDP route decides
+tools of class other, MCP tools (`mcp_call`) and tools not in the tool map (`tool_call`; refused in enforce); an entry with no
+`match_all` counts as hookless. Per-process path aliases (/proc/self, /proc/thread-self, /proc/<n>, /dev/fd, /dev/std*) are refused,
+never resolved in the engine. An evaluator answer carrying errors (the entry's `errors` pointer; Cedar's diagnostics.errors) is an
+evaluator error: refused in enforce, would-refuse in audit. A run whose start read the mode off re-reads it once its record is
+written and stops itself through the sweep path when the mode has left off (closes the start/apply race).
+*Engine git (X1 last cycle):* every engine git call on a run's worktree pins GIT_DIR / the common dir recorded at start (taken
+before the agent spawns; a linked worktree's gitdir lies outside it), with no system, global or system-attributes config; agents may
+not write `.git` or anything under a `.git` folder. Residual: a plain repository's own `<wt>/.git` (allowed for unboxed test adapters
+only; the box takes linked worktrees).
 `logged_string_max`: a longer string input is logged as {`sha256`, `length`} (the evaluator gets it whole). The Cedar runner
 leaves null keys out of the context and passes a non-integer number as the string of its JSON text (`1.5` is `"1.5"`). A stop
 signals a run's process group only while its pid still has the start fingerprint kept in the record (`pid_start`).

@@ -2857,7 +2857,7 @@
       "title": "a run's worktree is not usable",
       "message": "A worker run was refused because of its worktree: {problem}.",
       "action": "start the run in the top folder of a git worktree.",
-      "cause": "The folder is missing, is not the top of a git worktree, or git failed in it.",
+      "cause": "The folder is missing, is not the top of a git worktree, git failed in it, or its git folder lies inside the worktree where the agent could rewrite it (a linked worktree is required, but for an unboxed test adapter on a plain repository).",
       "check": "`python3 bin/adapter.py list --json`; `python3 bin/stella_data.py check`; the run record and folder at the index key adapter_runs; `bash bin/adapter-selftest.sh`.",
       "related": "F3 item A; bin/adapter.py, .stella/adapters.json",
       "resolvable": false
@@ -3889,7 +3889,7 @@
       "title": "an agent's tool call left its worktree",
       "message": "An agent's tool call was refused at open: {problem}.",
       "action": "nothing; nothing was read or written outside.",
-      "cause": "A path of the call leads outside the worktree and the run's temporary folder, through a link or directly, is not a regular file, or (a write or edit) has a second name: a hard link may be a file outside the worktree.",
+      "cause": "A path of the call leads outside the worktree and the run temporary folder, through a link or directly, is not a regular file, names .git or a path under a .git folder, or (a write or edit) has a second name: a hard link may be a file outside the worktree.",
       "check": "`python3 bin/agent_runtime.py check`; the run record and its events.jsonl at the index key adapter_runs; `bash bin/agent-runtime-selftest.sh`.",
       "related": "X1 item A; bin/agent_runtime.py, bin/agent_tool.py, .stella/agent-protocols.json, .stella/adapters.json",
       "resolvable": false
@@ -3973,7 +3973,7 @@
       "title": "the policy evaluator failed",
       "message": "The policy gateway refused an action: {problem}.",
       "action": "check the policy text (an evaluator error is often a policy it cannot parse) and the evaluator entry; nothing ran. See STL-GRD-735 in docs/alert-codes.md.",
-      "cause": "The evaluator exited with an error (a crash, a missing script, a policy or request it cannot judge).",
+      "cause": "The evaluator exited with an error (a crash, a missing script, a policy or request it cannot judge), or its answer carried errors (a policy that failed to evaluate counts as an error, never as skipped).",
       "check": "`python3 -I bin/gateway.py check --json`; `python3 -I bin/stella_data.py check`; `bash bin/gateway-selftest.sh`.",
       "related": "X1 item G1 (design.md, G1); bin/gateway.py, .stella/gateway.json, .stella/gateway-policy.json",
       "resolvable": false
@@ -4093,7 +4093,7 @@
       "title": "a coding CLI's call was refused by the gateway",
       "message": "A worker's tool call was refused by the policy gateway: {problem}.",
       "action": "see the decision line in the event log; if the PDP route could not be asked, check that the capability server runs (capabilities_mcp.py serve). See STL-GRD-747 in docs/alert-codes.md.",
-      "cause": "The run's gateway mode is not off and its policy hook asked the PDP route: the gateway refused the call, or could not be asked (fail closed).",
+      "cause": "The run gateway mode is not off and its policy hook asked the PDP route: the gateway refused the call (including a tool not in the tool map, in enforce), or could not be asked (fail closed).",
       "check": "`python3 -I bin/gateway.py check --json`; `python3 -I bin/gateway.py lint`; `bash bin/gateway-hooks-selftest.sh`.",
       "related": "X1 item G2 (design.md, G2; rulings X1-DC-08, X1-DC-09); bin/adapter.py, bin/policy.py, bin/capabilities_mcp.py, .stella/gateway.json",
       "resolvable": false
