@@ -540,6 +540,10 @@
               "usage_key": {
                 "$ref": "#/$defs/pointer",
                 "description": "The message id a usage belongs to: a message given on several lines counts once (only what grows is added)."
+              },
+              "model": {
+                "$ref": "#/$defs/pointer",
+                "description": "The model the CLI says served a usage line (kept on its usage event); a cli-login conformance run judges tool_call by it, as an api run judges by the usage ledger (F3-CVER-03)."
               }
             },
             "required": [

@@ -441,6 +441,19 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
+      "id": "qa_loop",
+      "path": ".stella/qa-loop.json",
+      "schema": "qa-loop",
+      "format": "json",
+      "owner_only": true,
+      "record_kind": "qa-rule",
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "b9804134-2875-41b4-8bb4-52d4679170ee",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
       "id": "conformance",
       "path": ".stella/conformance.json",
       "schema": "conformance",
@@ -487,5 +500,9 @@
   "host_presence": ".supervisor/state/host-presence.json",
   "capabilities_mcp_state": ".supervisor/state/capabilities-mcp.json",
   "conformance_scratch": ".scratch/conformance",
-  "conformance_records": ".supervisor/state/conformance-records.json"
+  "conformance_records": ".supervisor/state/conformance-records.json",
+  "qa_evidence": ".supervisor/qa/evidence",
+  "qa_copies": ".supervisor/qa/copies",
+  "qa_quarantine": ".supervisor/state/qa-quarantine.json",
+  "qa_rungs": ".supervisor/state/rungs.json"
 }

@@ -1216,6 +1216,35 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
+      "id": "qa-loop",
+      "kind": "command",
+      "summary": "The QA loop of a card (host only): round state folded from trusted qa.* event lines, open with the tier floor, raise, the owner trigger, freeze of a commit into a disposable standalone clone (hooks off) with the diff and fix triggers, the round plan (counts, depths, forced roles, Local only, slots with distinct links) and done on an exact hash",
+      "keywords": [
+        "qa",
+        "qa loop",
+        "round",
+        "freeze",
+        "plan",
+        "tier",
+        "trigger",
+        "done",
+        "status"
+      ],
+      "inputs": "open --card C --project P --tier T --base H --builder-role R [--trigger ID]... | raise --card C --tier T --reason TEXT | trigger --card C --id ID | freeze --card C --repo PATH --hash H | plan --card C --json | status --card C [--head H] --json | done --card C --hash H | close --card C",
+      "outputs": "JSON (one line per trusted event line written; plan and status as JSON); exit 1 with a catalog code (STL-QA-100..113, STL-CFG-312 in a worker environment), and with --json {card, code, problem}; done exits 0 only when the last round passed on exactly that hash",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/qa_loop.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "d69dff69-359e-46f0-ac1b-21fe2e787b09",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
       "id": "policy",
       "kind": "command",
       "summary": "Policy layer: the stack rules (write boundary, protected paths, secret reads, commit rule, dispatcher-only actions, model limits) written once in .stella/policy.json and rendered into each worker CLI's own permission config through the shapes of .stella/adapters.json; checks the data (every rule kind carried by each adapter, token variables are worker signals, writable paths only the worktree), regenerates the committed generated configs, catches a hand edit of a generated block (drift), and judges one tool call for a CLI that runs a hook.",
@@ -2609,6 +2638,144 @@
         "result": "shipped"
       },
       "global_id": "1c748b6e-7e6b-4d4a-bb82-8aedb1d3a6cb",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "qa-tests",
+      "kind": "command",
+      "summary": "QA tests of a card (host only): run its {id, argv} tests in a disposable copy under qa_copies, boxed (no network, only the copy writable, private HOME and TMPDIR, killed at tests.timeout_s): baseline records the tests failing on the base hash, tests-first accepts only tests failing with an assertion class (a pass, an error class or a timeout refuses), flaky reruns a test and quarantines a mixed one with an expiry that test-map.py select honours (never a tests-first test of the same card), mutants applies the qa-loop.json operators in fresh copies and records a surviving mutant as a finding against the test; one trusted event line per result",
+      "keywords": [
+        "qa",
+        "tests first",
+        "baseline",
+        "flaky",
+        "quarantine",
+        "mutant",
+        "mutation",
+        "test"
+      ],
+      "inputs": "baseline|tests-first --card C --copy DIR --tests J | flaky --card C --copy DIR --test J | mutants --card C --copy DIR --file F --test J (J a JSON file: a list of {id, argv} or one)",
+      "outputs": "JSON: baseline {tests, classes}; tests-first {accepted, refused}; flaky {test, runs, flaky, quarantined, expires}; mutants {test, file, applied, cap_left, findings}; exit 1 with a catalog code (STL-QA-180..186, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/qa_tests.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "d4614afb-5252-462b-b3dd-860818087f66",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "qa-findings",
+      "kind": "command",
+      "summary": "QA findings of a card (host only): evidence registers a file inside qa_evidence/<card>/<round>/ by its sha256 (re-hashed on every read, a changed file voids it); submit records a role's findings (validated, size-capped, fingerprinted on check, file, lines and test; no evidence that holds -> void; a blocking non-static finding pending its repro); repro runs a pending finding's argv in a disposable copy of the round's frozen copy, boxed, and confirms it on a non-zero exit; verdict records a role's pass, fail or unverified with evidence (a reviewer's fail fires the verdict-source triggers); merge gives the round's fix list (deduped, highest severity, every role, sorted by the data's severity order, blocking by the card's depth, base failures and quarantined tests not charged); one trusted event line per state change",
+      "keywords": [
+        "qa",
+        "finding",
+        "evidence",
+        "repro",
+        "verdict",
+        "fix list",
+        "merge",
+        "fingerprint"
+      ],
+      "inputs": "evidence --card C --round N --file F | submit --card C --round N --role R --file J (J: {findings: [...]} or the list) | repro --card C --fingerprint F | verdict --card C --round N --role R --result pass|fail|unverified --evidence P | merge --card C [--round N] --json",
+      "outputs": "JSON: evidence {path, sha256, round}; submit {card, round, findings: [{fingerprint, status}]}; repro {type, fingerprint, round, exit, hash}; verdict {round, role, result, hash, evidence, triggered}; merge {card, round, depth, fix_list, blocking, pending}; exit 1 with a catalog code (STL-QA-150..155, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/qa_findings.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "98b4c26a-60de-4705-9be7-3c2d4d96e0b3",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "qa-roles",
+      "kind": "command",
+      "summary": "Runs the QA roles of a card's round (host only): run starts every slot of qa_loop.py plan as a process of its own, all at once (one after another under when_local_only), each the stub double bin/qa_stub_role.py (due D1) that registers evidence and submits findings and its verdict through qa_findings.py; refused while the stub-roles features entry is off; diagnose, only while the diagnosis flag is on, writes one brief file under the round's evidence folder and one trusted line, and is not a round",
+      "keywords": [
+        "qa",
+        "roles",
+        "stub",
+        "slot",
+        "parallel",
+        "diagnosis",
+        "round 2",
+        "brief"
+      ],
+      "inputs": "run --card C --round N | diagnose --card C (either with --json)",
+      "outputs": "JSON: run {card, round, parallel, slots}; diagnose {card, round, path, sha256}; exit 1 with a catalog code (STL-QA-230..233, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/qa_roles.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "f80a1ae0-75d4-407b-8857-edbf60158c62",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "qa-stub-role",
+      "kind": "tool",
+      "summary": "The stub QA role double (features qa-stub-roles, due D1): one slot of a card's round, started only by bin/qa_roles.py run; reads its fixture under the round's evidence folder, registers evidence, submits findings and its verdict through bin/qa_findings.py. Host only; a test double, never a real reviewer",
+      "keywords": [
+        "qa",
+        "stub",
+        "double",
+        "slot",
+        "role",
+        "D1"
+      ],
+      "inputs": "argv from bin/qa_roles.py: --card C --round N --role R --slot K",
+      "outputs": "trusted lines through qa_findings.py; exit non-zero on a failure (qa_roles.py reports STL-QA-231)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/qa_stub_role.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "d3288f84-ac23-440a-9988-054595c337d6",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "qa-schedule",
+      "kind": "command",
+      "summary": "The scheduled full-suite run of the QA loop (host only, from cron): when full_suite.interval_s has passed since the repo's last trusted qa.full-run line, runs the test map's runner on the repo's head in a disposable copy under qa_copies, boxed (no network, only the copy writable, killed at tests.timeout_s); on a failure bisects the failing tests over the done hashes since the last green run and writes qa.reopened for the culprit card only; one trusted qa.full-run line per run",
+      "keywords": [
+        "qa",
+        "full suite",
+        "schedule",
+        "cron",
+        "bisect",
+        "bisection",
+        "reopen",
+        "regression"
+      ],
+      "inputs": "tick --repo PATH [--now T] (T epoch seconds or ISO-8601 UTC; default the clock)",
+      "outputs": "JSON {ran, repo, ...}: not due {due}; a run {head, result, failing, last_green, culprit, reopened}; exit 1 with a catalog code (STL-QA-210..214, STL-QA-183 box, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/qa_schedule.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "b61ae89d-3e49-4d7d-89a2-a72aaaca2588",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

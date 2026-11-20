@@ -90,6 +90,15 @@
     "triggers": {
       "security": {
         "can_fire": true
+      },
+      "mismatch": {
+        "can_fire": true
+      },
+      "fix_grew": {
+        "can_fire": true
+      },
+      "owner_full": {
+        "can_fire": true
       }
     }
   },

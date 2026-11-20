@@ -1,0 +1,295 @@
+{
+  "schema_version": 1,
+  "about": "QA loop mechanics for Stella's own cards (phase Q1; spec: Stella QA Loop Validator Verifier Red Team Tester.md). Read by bin/qa_loop.py, bin/qa_findings.py, bin/qa_tests.py, bin/qa_schedule.py and bin/qa_roles.py. Role, tier, preset and trigger ids are the ids of .stella/routing.json (card_roles, task_tiers, workflow.triggers) and .stella/role-assignments.json (effort_modes). Owner data: it decides when work is done, so no agent writes it. Precedence of test failure classes: any error class match refuses a tests-first test whatever else matches; a timeout is the runner's own kill (tests.timeout_s), never an exit code. when_local_only applies when resolve.py answers local_only true or the card's preset is listed there.",
+  "overrides": {
+    "projects": {},
+    "cards": {}
+  },
+  "severities": [
+    {
+      "id": "critical",
+      "blocks_on": [
+        "light",
+        "medium",
+        "complex"
+      ]
+    },
+    {
+      "id": "high",
+      "blocks_on": [
+        "light",
+        "medium",
+        "complex"
+      ]
+    },
+    {
+      "id": "medium",
+      "blocks_on": [
+        "medium",
+        "complex"
+      ]
+    },
+    {
+      "id": "low",
+      "blocks_on": []
+    }
+  ],
+  "rounds": {
+    "normal": 2,
+    "climb_rung": 2,
+    "cap_climb": 4,
+    "cap_no_climb": 3
+  },
+  "depth_bump": {
+    "from": "light",
+    "to": "medium",
+    "after_failed_round": 2
+  },
+  "roles": {
+    "tester": {
+      "kind": "evidence",
+      "depth": {
+        "light": "smoke",
+        "medium": "full",
+        "complex": "full"
+      },
+      "count": {
+        "light": 1,
+        "medium": 1,
+        "complex": 1
+      }
+    },
+    "validator": {
+      "kind": "review",
+      "depth": {
+        "light": "quick",
+        "medium": "full",
+        "complex": "full"
+      },
+      "count": {
+        "light": 1,
+        "medium": 1,
+        "complex": 1
+      }
+    },
+    "verifier": {
+      "kind": "review",
+      "depth": {
+        "light": "quick",
+        "medium": "full",
+        "complex": "full"
+      },
+      "count": {
+        "light": 1,
+        "medium": 1,
+        "complex": 1
+      }
+    },
+    "red-team": {
+      "kind": "attack",
+      "depth": {
+        "light": "off",
+        "medium": "full",
+        "complex": "full"
+      },
+      "count": {
+        "light": 1,
+        "medium": 1,
+        "complex": 1
+      }
+    }
+  },
+  "presets": {
+    "eco": {
+      "max_tier": "medium",
+      "extra_attacks": 0,
+      "counts": {}
+    },
+    "max": {
+      "max_tier": null,
+      "extra_attacks": 1,
+      "counts": {}
+    }
+  },
+  "when_local_only": {
+    "count": 1,
+    "parallel": false,
+    "presets": [
+      "local_only"
+    ]
+  },
+  "triggers": {
+    "security": {
+      "source": "diff",
+      "evidence": "full",
+      "force_roles": [
+        "red-team"
+      ],
+      "match": {
+        "paths": [
+          "**/auth*",
+          "**/*auth*/**",
+          "**/*secret*",
+          "**/*credential*",
+          "**/*token*",
+          "**/*firewall*",
+          "**/*password*",
+          "**/*session*",
+          "**/*upload*",
+          "**/*payment*",
+          "**/*crypt*",
+          "**/.env*",
+          "**/*.pem",
+          "**/*.key"
+        ],
+        "words": [
+          "password",
+          "passwd",
+          "secret",
+          "api[_-]?key",
+          "token",
+          "credential",
+          "authori[sz]",
+          "authenticat",
+          "firewall",
+          "iptables",
+          "socket\\.",
+          "urlopen",
+          "requests\\.(get|post|put)",
+          "fetch\\(",
+          "upload",
+          "subprocess",
+          "os\\.system",
+          "eval\\(",
+          "exec\\(",
+          "chmod",
+          "expanduser",
+          "\\.\\./"
+        ]
+      }
+    },
+    "mismatch": {
+      "source": "verdict",
+      "evidence": "full",
+      "force_roles": []
+    },
+    "fix_grew": {
+      "source": "fix",
+      "evidence": "full",
+      "force_roles": []
+    },
+    "owner_full": {
+      "source": "owner",
+      "evidence": "full",
+      "force_roles": [
+        "red-team"
+      ]
+    }
+  },
+  "tests": {
+    "reruns": 4,
+    "quarantine_days": 14,
+    "timeout_s": 600,
+    "max_repros": 20,
+    "max_copy_bytes": 4294967296,
+    "max_output_bytes": 67108864,
+    "max_write_bytes": 2147483648,
+    "classes": [
+      {
+        "id": "missing",
+        "kind": "error",
+        "exit_codes": [
+          126,
+          127
+        ],
+        "patterns": [
+          "ModuleNotFoundError",
+          "ImportError",
+          "SyntaxError",
+          "command not found",
+          "Cannot find module",
+          "ERR_MODULE_NOT_FOUND",
+          "No such file or directory",
+          "NameError"
+        ]
+      },
+      {
+        "id": "assertion",
+        "kind": "assertion",
+        "exit_codes": [],
+        "patterns": [
+          "AssertionError",
+          "assert",
+          "FAIL",
+          "expected",
+          "Expected"
+        ]
+      }
+    ]
+  },
+  "mutants": {
+    "cap_per_card": 8,
+    "operators": [
+      {
+        "id": "eq-ne",
+        "find": "==",
+        "replace": "!="
+      },
+      {
+        "id": "ne-eq",
+        "find": "!=",
+        "replace": "=="
+      },
+      {
+        "id": "le-gt",
+        "find": "<=",
+        "replace": ">"
+      },
+      {
+        "id": "ge-lt",
+        "find": ">=",
+        "replace": "<"
+      },
+      {
+        "id": "and-or",
+        "find": " and ",
+        "replace": " or "
+      },
+      {
+        "id": "or-and",
+        "find": " or ",
+        "replace": " and "
+      },
+      {
+        "id": "true-false",
+        "find": "True",
+        "replace": "False"
+      },
+      {
+        "id": "false-true",
+        "find": "False",
+        "replace": "True"
+      },
+      {
+        "id": "sh-and-or",
+        "find": "&&",
+        "replace": "||"
+      },
+      {
+        "id": "sh-eq-ne",
+        "find": "-eq",
+        "replace": "-ne"
+      }
+    ]
+  },
+  "full_suite": {
+    "interval_s": 86400,
+    "timeout_s": 7200
+  },
+  "diagnosis": {
+    "flag": "qa-round2-diagnosis"
+  },
+  "stub_roles": {
+    "feature": "qa-stub-roles"
+  }
+}

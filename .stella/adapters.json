@@ -69,6 +69,9 @@
         "task": {
           "class": "other"
         },
+        "execute": {
+          "class": "other"
+        },
         "shell": {
           "class": "shell",
           "command": "/command"
@@ -133,11 +136,17 @@
             "/permission/bash",
             "/permission/edit",
             "/permission/read",
-            "/permission/external_directory"
+            "/permission/external_directory",
+            "/permission/execute"
           ]
         },
         "worktree_ref": null,
         "fixed": [
+          {
+            "pointer": "/permission/execute",
+            "key": "*",
+            "value": "deny"
+          },
           {
             "pointer": "/permission/bash",
             "key": "bin/escalate.sh *",
@@ -485,6 +494,9 @@
         "permission": {
           "skill": {
             "*": "deny"
+          },
+          "execute": {
+            "*": "deny"
           }
         }
       }
@@ -796,6 +808,7 @@
           "output": "/message/usage/output_tokens"
         },
         "usage_key": "/message/id",
+        "model": "/message/model",
         "final_text": "/result"
       },
       "supports": {

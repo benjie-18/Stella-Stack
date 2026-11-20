@@ -228,6 +228,26 @@
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The conformance records (F3 item Q, DC-07, schema conformance-records): one record per adapter, version and role with its cases and the digests of the data it was made on; bin/adapter.py start's gate reads it. Written on the host only, by bin/conformance.py; a protected state path, not a data file."
+    },
+    "qa_evidence": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The QA loop's evidence folder (Q1): <dir>/<card>/<round>/ holds the files the tester registers with a trusted qa.evidence line (path and sha256). Written on the host only; a protected state path. A file there counts as evidence only while its trusted line's digest still matches."
+    },
+    "qa_copies": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The folder of the QA loop's disposable copies of a frozen hash (Q1): <dir>/<card>/<round>-<hash>. Written on the host only; builder code in it runs only boxed. A protected state path."
+    },
+    "qa_quarantine": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The QA loop's flaky-test quarantine (Q1): rows {test, card, expires}; bin/test-map.py select skips a row's test until it expires. Written on the host only, after a trusted qa.flaky line; a protected state path."
+    },
+    "qa_rungs": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The card rungs file escalate.sh reads ({card: {role: rung}}, 1 when absent; F2b item E). The QA loop writes it after a trusted qa.climbed line, which stays the record; a protected state path."
     }
   },
   "required": [
@@ -257,7 +277,11 @@
     "model_check_state",
     "run_tokens",
     "model_proxy_state",
-    "capabilities_mcp_state"
+    "capabilities_mcp_state",
+    "qa_evidence",
+    "qa_copies",
+    "qa_quarantine",
+    "qa_rungs"
   ],
   "additionalProperties": false
 }

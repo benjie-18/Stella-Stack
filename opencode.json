@@ -288,6 +288,9 @@
     },
     "external_directory": {
       "*": "deny"
+    },
+    "execute": {
+      "*": "deny"
     }
   },
   "plugins": [

@@ -16,7 +16,7 @@ answer, denies). A denied action prints a tool_result with ok false and "denied"
 addendum (V2-09): every rule and hook judges the action as the model asked it; when no hook denies, a hook answer's updatedInput
 (any depth, the last hook's wins) replaces the input the action is done with, so a rewritten shell command's output is what the
 tool_result (what the model sees) holds.
-Output: {"type":"tool_use","name","input"} {"type":"tool_result","name","ok","output"[,"error" when not ok]} {"type":"usage","input_tokens","output_tokens"}
+Output: {"type":"tool_use","name","input"} {"type":"tool_result","name","ok","output"[,"error" when not ok]} {"type":"usage","input_tokens","output_tokens"[,"model": the action's model, else --model]}
 {"type":"result","text","exit":0}. Exit 0, or 1 when an action crashes.
 shortcut: pattern semantics are fnmatch on the raw and the absolute value, not each CLI's own; enough for a fake, not a CLI model."""
 import argparse, fnmatch, http.client, json, os, re, subprocess, sys, time, urllib.parse
@@ -190,7 +190,8 @@ def act(ctx, a):
                 act(ctx, x)
         return
     if op == "usage":
-        emit({"type": "usage", "input_tokens": int(a.get("input", 0)), "output_tokens": int(a.get("output", 0))})
+        emit({"type": "usage", "input_tokens": int(a.get("input", 0)), "output_tokens": int(a.get("output", 0)),
+              **({"model": a.get("model", ctx.model)} if a.get("model", ctx.model) else {})})   # the model it says served, as a CLI's stream does
         return
     if a.get("step") in getattr(ctx, "done", ()):   # a step the notes read earlier list as done is not done again (resume)
         return

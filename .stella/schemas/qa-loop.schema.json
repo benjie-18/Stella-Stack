@@ -1,0 +1,494 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QA loop",
+  "x-one-document": true,
+  "description": "QA loop mechanics (phase Q1). Ids are checked against routing and role-assignments data by bin/stella_data.py check.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "about",
+    "severities",
+    "rounds",
+    "depth_bump",
+    "roles",
+    "presets",
+    "when_local_only",
+    "triggers",
+    "tests",
+    "mutants",
+    "full_suite",
+    "diagnosis",
+    "stub_roles"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "about": {
+      "type": "string"
+    },
+    "overrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings per project and per card (owner ask 2026-11-20): any key of this file but overrides and schema_version, merged over the file (objects key by key, anything else replaces); a card's entry over its project's. Each merged result keeps this schema and the QA loop rules (stella_data rule_qa_loop); a card key is the board's lowercase id.",
+      "properties": {
+        "projects": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "cards": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "severities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "blocks_on"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "blocks_on": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "tier ids on which a finding of this severity blocks done"
+          }
+        }
+      }
+    },
+    "rounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "normal",
+        "climb_rung",
+        "cap_climb",
+        "cap_no_climb"
+      ],
+      "properties": {
+        "normal": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "climb_rung": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cap_climb": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cap_no_climb": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "depth_bump": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to",
+        "after_failed_round"
+      ],
+      "properties": {
+        "from": {
+          "type": "string",
+          "minLength": 1
+        },
+        "to": {
+          "type": "string",
+          "minLength": 1
+        },
+        "after_failed_round": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "roles": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "depth",
+          "count"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "evidence",
+              "review",
+              "attack"
+            ],
+            "description": "what the role does in a round: evidence (runs the tests and makes the evidence), review (judges claims and criteria from the evidence; its fail or unverified fires the triggers of source verdict), attack (tries to break the frozen copy; extra_attacks adds to it)"
+          },
+          "depth": {
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^[a-z0-9][a-z0-9._-]*$"
+            },
+            "additionalProperties": {
+              "enum": [
+                "off",
+                "smoke",
+                "quick",
+                "full"
+              ]
+            }
+          },
+          "count": {
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^[a-z0-9][a-z0-9._-]*$"
+            },
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16
+            }
+          }
+        }
+      }
+    },
+    "presets": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "max_tier",
+          "extra_attacks",
+          "counts"
+        ],
+        "properties": {
+          "max_tier": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "description": "the deepest tier this preset runs (null: no cap); never suppresses a trigger's forced roles"
+          },
+          "extra_attacks": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8
+          },
+          "counts": {
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^[a-z0-9][a-z0-9._-]*$"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "propertyNames": {
+                "pattern": "^[a-z0-9][a-z0-9._-]*$"
+              },
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 16
+              }
+            }
+          }
+        }
+      }
+    },
+    "triggers": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "evidence",
+          "force_roles"
+        ],
+        "properties": {
+          "source": {
+            "enum": [
+              "diff",
+              "verdict",
+              "fix",
+              "owner"
+            ],
+            "description": "what fires the trigger: diff = match on the frozen diff at freeze; verdict = a validator or verifier verdict fail or unverified; fix = the fix grew past the original change or is the second fix attempt; owner = only the owner's trigger command"
+          },
+          "evidence": {
+            "enum": [
+              "smoke",
+              "quick",
+              "full"
+            ],
+            "description": "the depth the trigger gives roles of kind evidence (keyed by kind, like the plan's depth)"
+          },
+          "force_roles": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "match": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "paths",
+              "words"
+            ],
+            "properties": {
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "words": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "description": "deterministic match on the frozen diff: a changed path matching a glob, or an added line matching a word regex (case-insensitive), fires the trigger"
+          }
+        }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reruns",
+        "quarantine_days",
+        "timeout_s",
+        "classes",
+        "max_repros",
+        "max_copy_bytes",
+        "max_output_bytes",
+        "max_write_bytes"
+      ],
+      "properties": {
+        "reruns": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 50
+        },
+        "quarantine_days": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeout_s": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_copy_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "RTF-08: the bytes a round copy may hold (the frozen tree's blobs plus the history the clone takes), checked in the builder repo before anything is cloned; a project or a card sets its own through overrides"
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "description": "RTF-08: the bytes of output one test run may write to the host; past it the run is killed (the runner's kill, as at timeout_s) and the output kept is cut at the cap"
+        },
+        "max_write_bytes": {
+          "type": "integer",
+          "minimum": 1048576,
+          "description": "Q1-OF-CVER-02: the bytes one test run may add to its throwaway copy (host disk); past it the run is killed (the runner's kill, as at timeout_s)"
+        },
+        "max_repros": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "at most this many distinct repros of one finding run (the evidence role's first); a finding with more stays pending (STL-QA-156, fail closed)"
+        },
+        "classes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "kind",
+              "exit_codes",
+              "patterns"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]*$"
+              },
+              "kind": {
+                "enum": [
+                  "assertion",
+                  "error"
+                ]
+              },
+              "exit_codes": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              },
+              "patterns": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "mutants": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cap_per_card",
+        "operators"
+      ],
+      "properties": {
+        "cap_per_card": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "operators": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "find",
+              "replace"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]*$"
+              },
+              "find": {
+                "type": "string",
+                "minLength": 1
+              },
+              "replace": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "full_suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interval_s",
+        "timeout_s"
+      ],
+      "properties": {
+        "interval_s": {
+          "type": "integer",
+          "minimum": 60
+        },
+        "timeout_s": {
+          "type": "integer",
+          "minimum": 60,
+          "description": "the scheduled full-suite run is killed after this many seconds (its own limit: the whole suite outlasts one test's tests.timeout_s)"
+        }
+      }
+    },
+    "diagnosis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "flag"
+      ],
+      "properties": {
+        "flag": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "stub_roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "feature"
+      ],
+      "properties": {
+        "feature": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "when_local_only": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "count",
+        "parallel",
+        "presets"
+      ],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "parallel": {
+          "type": "boolean"
+        },
+        "presets": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

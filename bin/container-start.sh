@@ -41,7 +41,7 @@ if jq --argjson m "${lm:-null}" --argjson r "${rec:-null}" '($r // {tool_calling
     providers: (.providers | .[$p].models = (if $m then {($m.id): {name: $m.id, capabilities: {tools: ($r.tool_calling == true),
       input: (["text"] + (if $r.vision == true then ["image"] else [] end)), output: ["text"]},
       limit: ({context: $r.context.effective, output: $m.limits.output_tokens} | with_entries(select((.value // 0) > 0)))}} else {} end)),
-    permission: {skill: (.permission.skill | del(.brainstorming))}}' \
+    permission: {skill: (.permission.skill | del(.brainstorming)), execute: .permission.execute}}' \
   /workspace/opencode.json > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
 then [ -n "$lm" ] || [ "$(python3 -I /workspace/bin/stella_data.py get --json connections 2>/dev/null | jq '[.entries[] | select(.enabled == true and .locality == "local")] | length' 2>/dev/null)" = 0 ] || fail "opencode.json names no model: $why (role ${role:-unknown})"
 else rm -f "$cfg.tmp"; fail "opencode.json not written (jq or mv failed); the previous config is kept"; fi

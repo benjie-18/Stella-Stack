@@ -50,13 +50,25 @@
     "bin/route.py",
     "bin/credentials.py",
     "bin/consent.py",
-    "bin/model_check.py"
+    "bin/model_check.py",
+    "bin/qa_loop.py",
+    "bin/qa_findings.py",
+    "bin/qa_tests.py",
+    "bin/qa_schedule.py",
+    "bin/qa_roles.py",
+    "bin/qa_stub_role.py"
   ],
   "owner_commands_by_name": [
     "bin/merge-card.sh"
   ],
   "boundary_paths": [
     "docs/hermes-local/alert-catalog.json",
+    "bin/qa_findings.py",
+    "bin/qa_loop.py",
+    "bin/qa_roles.py",
+    "bin/qa_schedule.py",
+    "bin/qa_stub_role.py",
+    "bin/qa_tests.py",
     "package.json",
     "bin/approvals.py",
     "bin/budget.py",
