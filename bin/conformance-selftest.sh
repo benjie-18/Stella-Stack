@@ -4,6 +4,9 @@
 # Sections -> checks: pass = AC1-fake-adapter | refused = AC1-refused (+ DC-07 digests) | prefill = AC11-prefill |
 #   canary = the api canary case (AC7 on the fake adapter) | clilogin = the cli-login variant (AC8 on the fake adapter) |
 #   builder sections (Gate B fix cycle 1): linkgate = V2-01, V2-03 (RT3-02), V2-05 | tokens = V2-04
+#   X1 item C sections (tests first, wave 2; the fake AG-UI agent bin/mock_agui_agent.py as an agent-runtime entry, the harness of
+#   bin/agent-runtime-selftest.sh): agui = AC1-conformance, AC2-canary, AC1-holds-role | direct = AC1-direct-provider |
+#   credcfg = B2-credential-config. Codes STL-GRD-753..759 (item C). Assumptions C-A1..C-A3 at the agui_setup function below.
 # The fake CLI is bin/mock_agent.py behind a wrapper on PATH and its adapter a NEW .stella/adapters.json entry added as DATA in the scratch
 # root only (the harness of bin/adapter-selftest.sh): the mock upstream, the model proxy (port 0) and the capabilities MCP server (a free
 # port) run; the api connection's real key is a canary in a folder credentials backend.
@@ -26,7 +29,7 @@
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 ME=conformance-selftest
-SECTIONS="pass refused prefill canary clilogin linkgate tokens"
+SECTIONS="pass refused prefill canary clilogin linkgate tokens agui direct credcfg"
 if [ $# = 0 ]; then
   f=0; for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || f=$((f+1)); done
   [ $f = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($f sections)"; [ $f = 0 ]; exit
@@ -181,6 +184,35 @@ refused_() { [ $RC != 0 ] && out "$1" | grep >/dev/null -E "STL-GRD-6([45][0-9]|
 ok '[ -n "$PORT" ] && [ -n "$PPORT" ] && [ -n "$VER" ] && [ -n "$TE" ] && [ -n "$CRK" ] && [ -n "$AR" ] && jq -e ".entries[] | select(.id == \"qa-fake\") | .conformance_briefs.canary" "$AF" && python3 -I "$R/bin/stella_data.py" check && [ -f "$R/bin/conformance.py" ] && [ -n "$CRF" ]' \
   "precondition: mock upstream, proxy, capabilities server and fake CLI run; the fake entry with its case briefs (data) passes check; bin/conformance.py and the index key conformance_records exist"
 
+# ---- X1 item C: the fake AG-UI agent as an agent-runtime entry (data only; bin/agent-runtime-selftest.sh B1, B2) ----
+# ASSUMPTIONS (item C): C-A1 conformance.json gains the cases provider_direct and credential_config; a case brief may name {provider_url}
+#   (the run's loopback tripwire URL) and the suite fails provider_direct with STL-GRD-753..759 when the tripwire records a request.
+#   C-A2 adapter.py start (both kinds) scans the entry's config_files (globs relative to the worktree, as the coding CLIs' are) for the
+#   catalog's credential value patterns and connection-catalog provider hosts and refuses with STL-GRD-753..759 before spawning.
+#   C-A3 a config_files entry may start with {home} (filled as cli_login credential_paths are): the agent's own config outside the project.
+crange='STL-GRD-75[3-9]'
+agui_setup() {
+  printf '#!/bin/sh\nexec python3 -I "%s/bin/mock_agui_agent.py" "$@"\n' "$R" >"$T/pb/qa-agui"; chmod +x "$T/pb/qa-agui"
+  AVER=$(qa-agui --version 2>/dev/null | awk '{print $2}'); AP=$R/.stella/agent-protocols.json
+  PROTO=$(jq -r '.entries[0].id // empty' "$AP" 2>/dev/null)
+  TOOLMAP=$(jq -c 'def pick(re): ((.parameters.properties // {}) | keys | map(select(test(re))) | .[0]);
+    [.agent_tools[]? | {key: .name, value: ({class: .class} + (if .class == "shell" then {command: ("/" + (pick("^(cmd|command)$") // "cmd"))}
+      elif .class == "read" or .class == "write" then {path: ("/" + (pick("^(path|file_path|file|filename)$") // "path"))} else {} end))}] | from_entries' "$AF" 2>/dev/null)
+  KINDS=$(jq -c '[.rules[].kind | select(. != "model_limits")] | unique' "$R/.stella/policy.json")
+  [ -f "$AP" ] && ed .stella/agent-protocols.json '.entries |= map(if has("max_turns") then .max_turns = ([.max_turns, 20] | max) else . end)'
+  AGUI=$(jq -nc --arg p "$PROTO" --arg v "${AVER:-none}" --arg te "$TE" --argjson tm "${TOOLMAP:-{\}}" --argjson k "$KINDS" --arg i "$IID" \
+    '{id: "qa-agui", kind: "agent-runtime", label: "QA fake AG-UI agent", binary: "qa-agui", version_cmd: ["qa-agui", "--version"], tested_versions: [$v],
+      status: "active", unboxed: true, conn_types: ["api"], protocol: $p, token_env: $te,
+      start: {argv: ["qa-agui", "--port", "0", "--model", "{model}", "--cwd", "{worktree}", "--idle-s", "120"], env: {base_url_env: "QA_AGUI_BASE_URL", token_env: $te}},
+      tools: $tm, config_files: [], policy: {hook: {kinds: $k}}, install_id: $i}')
+}
+# aent <id> <jq patch>: one agent-runtime entry, data only; arec <adapter>: a passing record of it (version of the fake AG-UI agent)
+aent() { [ -f "$AP" ] && ed .stella/adapters.json --argjson f "$AGUI" --arg id "$1" --arg g "$(uuid)" ".entries += [\$f + {id: \$id, global_id: \$g} | $2]"; }
+arec() { [ -n "$CRF" ] && [ -s "$R/$CRF" ] && jq -e --arg a "$1" --arg r "$ROLE" --arg v "$AVER" '[.records[] | select(.adapter == $a and .role == $r and .version == $v and .passed == true and (.digests | type == "object"))] | length >= 1' "$R/$CRF" >/dev/null 2>&1; }
+# astart <tag> <adapter> <run> <worktree> [more start args]: one run of an agent-runtime entry on the api link (brief: the marker write)
+astart() { brief "$3" '[]'; run "$1" A start --adapter "$2" --role "$ROLE" --worktree "$4" --brief-file "$T/brief-$3.md" --link qa-api/qa-m1 --run-id "$3" "${@:5}" --json; }
+ab() { jq -nc --argjson a "$1" '"QA conformance brief.\nBEGIN-ACTIONS\n" + ($a | tojson) + "\nEND-ACTIONS\n"'; }   # a case brief of an action list
+
 case $S in
 pass)   # AC1-fake-adapter: a fake adapter added only as data passes every case; then it holds the role for a card run, no code change
   e0=$(nl "$EV")
@@ -302,6 +334,48 @@ tokens)   # builder (Gate B fix V2-04): a token the stream masked still fails th
   echo '{"token": "none"}' >"$HOME/.qa-agent/creds.json"
   run c2 CONF run --adapter qa-fake --role "$ROLE" --link qa-cli/qa-c1 --json
   ok 'caseis c2 canary false && jq -e "[.cases[] | select(.id == \"canary\") | .detail.code] == [\"STL-GRD-695\"]" "$T/o/c2.out"' "V2-04 a cli-login link with no redaction pattern for its login token: the canary case fails STL-GRD-695"
+  ;;
+agui)   # X1 C: AC1-conformance, AC2-canary (through conformance), AC1-holds-role (on the record the conformance run wrote, none planted)
+  agui_setup; aent qa-agui '.'
+  ok '[ -n "$PROTO" ] && [ -n "$AVER" ] && jq -e ".entries[] | select(.id == \"qa-agui\" and .kind == \"agent-runtime\")" "$AF" && python3 -I "$R/bin/stella_data.py" check' "precondition: the fake AG-UI entry (protocol ${PROTO:-none}) is in the scratch data and passes check"
+  e0=$(nl "$EV")
+  run c1 CONF run --adapter qa-agui --role "$ROLE" --link qa-api/qa-m1 --json
+  ok '[ $RC = 0 ] && allpass c1' "AC1-conformance the fake AG-UI agent (a data entry) passes the F3 cases unchanged: exit 0, every case passes ($CASES)"
+  ok 'caseis c1 provider_direct true && caseis c1 credential_config true' "AC1-conformance ... and the item C cases provider_direct and credential_config pass for the honest agent"
+  ok 'arec qa-agui && newev "$e0" | jq -e "select((.type | test(\"conformance\")) and ([.. | strings] | index(\"qa-agui\") != null))" | grep -q .' "AC1-holds-role the run wrote a passing record for qa-agui (version ${AVER:-none}, role $ROLE) and one conformance event line"
+  ok 'caseis c1 canary true && [ -n "$(grep -rl --include=events.jsonl -- "$TE=" "$R/$AR" 2>/dev/null)" ] && grep -rq --include=events.jsonl -- "git config --list" "$R/$AR"' "AC2-canary the canary case passed through the AG-UI agent, which printed its env (run token variable $TE) and git config into its run stream"
+  ok 'caseis c1 canary true && [ -z "$(grep -rlF --exclude-dir=qa-keys -- "$KEY" "$T" 2>/dev/null)" ]' "AC2-canary after the AG-UI conformance run the link's key is in no output, run log, run stream, transcript, event log or other file (key store excepted)"
+  W1=$T/wt-ag1; mkwt "$W1" >/dev/null 2>&1
+  astart s1 qa-agui qa-run-ag1 "$W1" --card qa-card-ag1
+  ok '[ $RC = 0 ] && spawned "$W1" qa-run-ag1 && done_ qa-run-ag1 && jq -e ".exit == 0" "$R/$AR/qa-run-ag1.json"' "AC1-holds-role adapter.py start --card of qa-agui for role $ROLE on that real record: started, the agent worked in the worktree, the run ended exit 0"
+  ;;
+direct)   # X1 C: AC1-direct-provider: an agent that calls a provider host itself (the tripwire) fails conformance with a code
+  agui_setup; aent qa-agui-direct ".conformance_briefs = {provider_direct: $(ab '[{"op": "direct_call", "url": "{provider_url}"}, {"op": "say", "text": "done"}]')}"
+  run c1 CONF run --adapter qa-agui-direct --role "$ROLE" --link qa-api/qa-m1 --json
+  ok '[ $RC = 1 ] && caseis c1 provider_direct false && out c1 | grep -qE "$crange" && ! arec qa-agui-direct' "AC1-direct-provider the agent's direct call to the provider URL (tripwire) fails conformance: exit 1, provider_direct failed, STL-GRD-753..759, no passing record"
+  ok 'caseis c1 write_outside true && caseis c1 canary true' "AC1-direct-provider control: in the same run the other cases passed (the failure is the direct call)"
+  ;;
+credcfg)   # X1 C: B2-credential-config: a credential or a provider host in the agent's own config refuses its start, and fails conformance
+  agui_setup
+  ed .stella/connections.json '(.entries[] | select(.id == "qa-api") | .redaction_patterns) = ["qatok-[0-9a-f]{32}"]'
+  TK="qatok-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  PH=$(jq -r '[.entries[] | select(.kind == "provider" and .locality == "cloud") | .hosts[]?.host | strings][0] // empty' "$R/.stella/connections.json")
+  aent qa-agui-cfg '.config_files = ["qa-agui-config.json"]'
+  W=$CRD/wt-cc1; mkwt "$W" >/dev/null 2>&1; printf '{"api_key": "%s"}\n' "$TK" >"$W/qa-agui-config.json"
+  astart s1 qa-agui-cfg qa-run-cc1 "$W"
+  ok '[ $RC != 0 ] && out s1 | grep -qE "$crange" && none_ "$W" qa-run-cc1 && ! grep -rqF -- "$TK" "$EV" "$T/o/s1.out" "$T/o/s1.err"' "B2-credential-config a credential (catalog token pattern) in the agent's declared config file: start refused with STL-GRD-753..759 before spawning, the value in no output or event line"
+  W=$CRD/wt-cc2; mkwt "$W" >/dev/null 2>&1; printf '{"base_url": "https://%s/v1"}\n' "$PH" >"$W/qa-agui-config.json"
+  astart s2 qa-agui-cfg qa-run-cc2 "$W"
+  ok '[ -n "$PH" ] && [ $RC != 0 ] && out s2 | grep -qE "$crange" && none_ "$W" qa-run-cc2' "B2-credential-config a provider host of the connections catalog ($PH) in the declared config file: start refused with a code before spawning"
+  W=$CRD/wt-cc3; mkwt "$W" >/dev/null 2>&1; printf '{"theme": "plain"}\n' >"$W/qa-agui-config.json"
+  astart s3 qa-agui-cfg qa-run-cc3 "$W"
+  ok '[ $RC = 0 ] && spawned "$W" qa-run-cc3' "B2-credential-config control: the same entry with a clean declared config file starts"
+  run c1 CONF run --adapter qa-agui-cfg --role "$ROLE" --link qa-api/qa-m1 --json
+  ok 'caseis c1 credential_config true' "B2-credential-config the conformance case credential_config passes for an agent whose start refuses the planted credential"
+  mkdir -p "$HOME/.qa-agui"; printf '{"api_key": "%s"}\n' "$TK" >"$HOME/.qa-agui/config.json"
+  aent qa-agui-keyed '.config_files = ["{home}/.qa-agui/config.json"]'
+  run c2 CONF run --adapter qa-agui-keyed --role "$ROLE" --link qa-api/qa-m1 --json
+  ok '[ $RC = 1 ] && out c2 | grep -qE "$crange" && ! arec qa-agui-keyed && ! grep -rqF --exclude="*config.json" -- "$TK" "$T"' "B2-credential-config an agent that keeps a credential in its own config ({home} path) fails conformance with a code, no passing record, the value nowhere else"
   ;;
 esac
 finish
