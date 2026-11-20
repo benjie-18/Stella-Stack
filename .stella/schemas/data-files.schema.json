@@ -248,6 +248,11 @@
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The card rungs file escalate.sh reads ({card: {role: rung}}, 1 when absent; F2b item E). The QA loop writes it after a trusted qa.climbed line, which stays the record; a protected state path."
+    },
+    "ui_streams": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The generative UI read stream (X1 item U, bin/agui_ui.py): one JSON-lines file per run, <dir>/<run>.jsonl, each line a stored widget {seq, at, run, component, props, actions, global_id, install_id}, redacted. Written on the host only, by agui_ui.ingest; a protected state path, not a data file. The loopback read endpoint run-ui serves it (agui_ui.read)."
     }
   },
   "required": [

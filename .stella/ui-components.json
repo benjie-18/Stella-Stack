@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "about": "The generative UI component allowlist (X1 item U, body B3): only these components render; a widget is untrusted content, its actions only open approval requests (bin/agui_ui.py act). Owner data: add a component as a row, no code change.",
+  "limits": {
+    "payload_bytes": 16384,
+    "records_per_run": 1000,
+    "summary_value_chars": 120,
+    "approval_ttl_s": 86400
+  },
+  "components": []
+}

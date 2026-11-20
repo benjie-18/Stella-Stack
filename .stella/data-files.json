@@ -488,6 +488,19 @@
       "id_field": "schema_version",
       "global_id": "08487483-445d-418d-9cf0-bc2126d20c58",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "ui-components",
+      "path": ".stella/ui-components.json",
+      "schema": "ui-components",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": "components",
+      "id_field": "id",
+      "record_kind": "ui-component",
+      "global_id": "19f4ac3a-3cb1-4442-92bb-3c8d90397ade",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ],
   "spans": ".supervisor/logs/spans.jsonl",
@@ -504,5 +517,6 @@
   "qa_evidence": ".supervisor/qa/evidence",
   "qa_copies": ".supervisor/qa/copies",
   "qa_quarantine": ".supervisor/state/qa-quarantine.json",
-  "qa_rungs": ".supervisor/state/rungs.json"
+  "qa_rungs": ".supervisor/state/rungs.json",
+  "ui_streams": ".supervisor/state/ui-streams"
 }

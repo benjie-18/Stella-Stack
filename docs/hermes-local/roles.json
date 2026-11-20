@@ -134,7 +134,8 @@
     "bin/log_filter.py",
     "bin/policy.py",
     "bin/run_policy.py",
-    "bin/run_token.py"
+    "bin/run_token.py",
+    ".stella/ui-components.json"
   ],
   "write_tools": [
     "write_file",

@@ -3605,6 +3605,90 @@
       "check": "`python3 -I bin/stella_data.py check`; `python3 -I bin/qa_loop.py status --card C --json`.",
       "related": "Q1 item D (design.md, D); bin/qa_roles.py, bin/qa_stub_role.py",
       "resolvable": false
+    },
+    {
+      "code": "STL-GRD-720",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "the UI component list cannot be used",
+      "message": "No agent widget was shown: {problem}.",
+      "action": "ask Stella to check the UI component list; nothing for the owner unless it repeats.",
+      "cause": "The allowlist .stella/ui-components.json fails its schema, cannot be read, or a component's props schema or approval class is not usable. Every widget is dropped until it is fixed (fail closed).",
+      "check": "`python3 -I bin/agui_ui.py read --run <run> --json`; `python3 -I bin/stella_data.py check`; the read stream at the index key ui_streams; `bash bin/agui-ui-selftest.sh`.",
+      "related": "X1 item U; bin/agui_ui.py, .stella/ui-components.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-721",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "an agent widget was not on the allowed list",
+      "message": "An agent's widget was dropped: {problem}.",
+      "action": "nothing; add the component to the allowed list only if you want agents to show it.",
+      "cause": "An agent sent a UI event for a component the allowlist does not name. Widgets are untrusted content, so it was not stored or shown.",
+      "check": "`python3 -I bin/agui_ui.py read --run <run> --json`; `python3 -I bin/stella_data.py check`; the read stream at the index key ui_streams; `bash bin/agui-ui-selftest.sh`.",
+      "related": "X1 item U; bin/agui_ui.py, .stella/ui-components.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-722",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "an agent widget had wrong content",
+      "message": "An agent's widget was dropped: {problem}.",
+      "action": "nothing; it repeats only if the agent keeps sending the wrong shape.",
+      "cause": "The widget's props do not fit the component's props schema (a wrong type, too long, or a required prop missing). It was not stored or shown.",
+      "check": "`python3 -I bin/agui_ui.py read --run <run> --json`; `python3 -I bin/stella_data.py check`; the read stream at the index key ui_streams; `bash bin/agui-ui-selftest.sh`.",
+      "related": "X1 item U; bin/agui_ui.py, .stella/ui-components.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-723",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a widget action is not allowed",
+      "message": "A widget action was refused: {problem}.",
+      "action": "nothing; a widget can only offer the actions its component lists.",
+      "cause": "The widget or the act request names an action its component does not list. Nothing was stored, opened or run.",
+      "check": "`python3 -I bin/agui_ui.py read --run <run> --json`; `python3 -I bin/stella_data.py check`; the read stream at the index key ui_streams; `bash bin/agui-ui-selftest.sh`.",
+      "related": "X1 item U; bin/agui_ui.py, .stella/ui-components.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-724",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "an agent widget was malformed or too large",
+      "message": "An agent's widget was dropped: {problem}.",
+      "action": "nothing unless it repeats; then ask Stella to look at the agent.",
+      "cause": "The run id is not well formed, the widget is not a JSON object, its actions are not a list of ids, it is larger than limits.payload_bytes, or the run's read stream is full (limits.records_per_run).",
+      "check": "`python3 -I bin/agui_ui.py read --run <run> --json`; `python3 -I bin/stella_data.py check`; the read stream at the index key ui_streams; `bash bin/agui-ui-selftest.sh`.",
+      "related": "X1 item U; bin/agui_ui.py, .stella/ui-components.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-725",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "the UI read stream could not be written or read",
+      "message": "An agent's widget could not be stored or read: {problem}.",
+      "action": "ask Stella to check the UI read stream; nothing for the owner unless it repeats.",
+      "cause": "The index has no usable ui_streams path, the stream file cannot be opened or parsed, or the trusted event line could not be written (then the record is taken back).",
+      "check": "`python3 -I bin/agui_ui.py read --run <run> --json`; `python3 -I bin/stella_data.py check`; the read stream at the index key ui_streams; `bash bin/agui-ui-selftest.sh`.",
+      "related": "X1 item U; bin/agui_ui.py, .stella/ui-components.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-726",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "that widget or run is unknown",
+      "message": "A widget request was refused: {problem}.",
+      "action": "check the run id and widget number; nothing was opened.",
+      "cause": "act or read named a widget the run's read stream does not hold, a run with no readable run record and card, or a bad --after. No approval request was opened.",
+      "check": "`python3 -I bin/agui_ui.py read --run <run> --json`; `python3 -I bin/stella_data.py check`; the read stream at the index key ui_streams; `bash bin/agui-ui-selftest.sh`.",
+      "related": "X1 item U; bin/agui_ui.py, .stella/ui-components.json",
+      "resolvable": false
     }
   ]
 }
