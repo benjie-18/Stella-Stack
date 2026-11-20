@@ -298,7 +298,8 @@ def severity(q, tiers):
 
 
 def fingerprint(f):
-    return hashlib.sha256(json.dumps([f["check"], f["file"], f["lines"], f["test"]], separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    import qa_findings   # the one fingerprint (item B); imported here, since qa_findings imports this module
+    return qa_findings.fingerprint(f)
 
 
 def fresh(src, card, rel=None, text=None):

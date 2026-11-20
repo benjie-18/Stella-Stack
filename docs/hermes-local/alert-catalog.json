@@ -3341,6 +3341,78 @@
       "check": "the command's output; .supervisor/logs/alerts.log.",
       "related": "Q1 item A1 (design.md, rulings DG-3, DG-5, DG-7); bin/qa_loop.py",
       "resolvable": false
+    },
+    {
+      "code": "STL-QA-150",
+      "area": "QA",
+      "severity": "warning",
+      "title": "QA findings input refused",
+      "message": "A QA findings step was refused: {problem}. Nothing was run and nothing was recorded.",
+      "action": "fix the findings file or the argument the message names and run the step again. See STL-QA-150 in docs/alert-codes.md.",
+      "cause": "The findings file is not JSON, too large, or a finding breaks its shape (a repro given as a shell string, not an argv list; a severity or role the data does not list), or the card id is malformed.",
+      "check": "The findings file named in the command; `python3 -I bin/qa_findings.py submit --help`.",
+      "related": "Q1 item B (design.md, rulings DG-1, DG-2, DG-7); bin/qa_findings.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-151",
+      "area": "QA",
+      "severity": "warning",
+      "title": "QA evidence refused",
+      "message": "Evidence for a QA round was refused: {problem}. It counts for nothing and nothing was recorded.",
+      "action": "put the file inside the evidence folder of the card's current round (index key qa_evidence, then the card id and the round), with no link on the way, register it, and do not change it afterwards. See STL-QA-151 in docs/alert-codes.md.",
+      "cause": "The file lies outside qa_evidence/<card>/<round>/, is or passes through a link, is not a regular file, was never registered by a trusted qa.evidence line, or changed after it was registered.",
+      "check": "`jq -r .qa_evidence .stella/data-files.json`; the trusted qa.evidence lines of the card.",
+      "related": "Q1 item B (design.md, rulings DG-1, DG-2, DG-7); bin/qa_findings.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-152",
+      "area": "QA",
+      "severity": "warning",
+      "title": "QA round not open",
+      "message": "A QA findings step was refused: {problem}. Nothing was recorded.",
+      "action": "open the card's QA loop and freeze its round first, and name the current round. See STL-QA-152 in docs/alert-codes.md.",
+      "cause": "The card has no trusted qa.opened line, no round is frozen, the round named is not the current one, or the round is already closed or escalated.",
+      "check": "`python3 -I bin/qa_loop.py status --card C --json`.",
+      "related": "Q1 item B (design.md, rulings DG-1, DG-2, DG-7); bin/qa_findings.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-153",
+      "area": "QA",
+      "severity": "warning",
+      "title": "no pending QA finding",
+      "message": "A repro was asked for a finding that is not waiting for one: {problem}. Nothing was run.",
+      "action": "check the fingerprint against the round's fix list (qa_findings.py merge); only a pending finding of the open round is reproduced. See STL-QA-153 in docs/alert-codes.md.",
+      "cause": "The fingerprint is unknown, belongs to an earlier round, or its finding is already confirmed, unconfirmed, static, reported or void.",
+      "check": "`python3 -I bin/qa_findings.py merge --card C --json`; the trusted qa.finding lines of the card.",
+      "related": "Q1 item B (design.md, rulings DG-1, DG-2, DG-7); bin/qa_findings.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-154",
+      "area": "QA",
+      "severity": "warning",
+      "title": "QA repro could not run",
+      "message": "A finding's repro could not run in the round's frozen copy: {problem}. The finding stays pending, so the round cannot close.",
+      "action": "check that the frozen copy exists under the QA copies folder and that bubblewrap (bwrap) runs on the host, then run the repro again. See STL-QA-154 in docs/alert-codes.md.",
+      "cause": "The frozen copy is missing or outside qa_copies, or the box did not start.",
+      "check": "`jq -r .qa_copies .stella/data-files.json`; `bwrap --version`.",
+      "related": "Q1 item B (design.md, rulings DG-1, DG-2, DG-7); bin/qa_findings.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-QA-155",
+      "area": "QA",
+      "severity": "warning",
+      "title": "the QA findings tool failed",
+      "message": "The QA findings tool stopped on a problem: {problem}. Nothing more was written after it.",
+      "action": "fix the data the message names and run the data check; if it is an unexpected failure, run the same command again and, if it fails the same way, ask your coding agent to look at bin/qa_findings.py. See STL-QA-155 in docs/alert-codes.md.",
+      "cause": "The QA loop data cannot be served, a file the tool reads is damaged, or a bug.",
+      "check": "`python3 -I bin/stella_data.py check`; the command's output; .supervisor/logs/alerts.log.",
+      "related": "Q1 item B (design.md, rulings DG-1, DG-2, DG-7); bin/qa_findings.py",
+      "resolvable": false
     }
   ]
 }
