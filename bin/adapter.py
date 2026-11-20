@@ -38,7 +38,7 @@ if __name__ == "__main__" and not sys.flags.isolated:   # run directly: PYTHONPA
     except OSError:
         sys.exit("STL-CFG-310 adapter.py could not restart itself isolated (python3 -I); nothing was started")
 
-import argparse, contextlib, datetime, hashlib, json, pwd, re, select, shutil, signal, stat, subprocess, time, uuid
+import argparse, contextlib, datetime, glob, hashlib, json, pwd, re, select, shutil, signal, stat, subprocess, time, uuid
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)
@@ -48,7 +48,8 @@ import worker_env
 
 C = {"data": "STL-GRD-640", "stub": "STL-GRD-641", "binary": "STL-GRD-642", "version": "STL-GRD-643", "untested": "STL-GRD-644", 
      "link": "STL-GRD-645", "terms": "STL-GRD-646", "conformance": "STL-GRD-647", "scratch": "STL-GRD-648", "box": "STL-GRD-649", 
-     "prepare": "STL-GRD-650", "run": "STL-GRD-651", "spawn": "STL-GRD-652", "worktree": "STL-GRD-653", "stop": "STL-GRD-654"}   # literal: the alert lint finds each sender by its code
+     "prepare": "STL-GRD-650", "run": "STL-GRD-651", "spawn": "STL-GRD-652", "worktree": "STL-GRD-653", "stop": "STL-GRD-654",
+     "cfgcred": "STL-GRD-754", "cfghost": "STL-GRD-755", "cfgscan": "STL-GRD-757"}   # literal: the alert lint finds each sender by its code
 ROW, RUNS, RECORDS, SCRATCH = "adapters", "adapter_runs", "conformance_records", "conformance_scratch"
 AGENT = "agent-runtime"   # the adapter kind of X1 item A (bin/agent_runtime.py); an entry with no kind is a coding CLI
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
@@ -568,6 +569,48 @@ def cmd_version(a):
     return 0
 
 
+def scan_data(e):
+    """(value patterns, cloud provider hosts) of the connections catalog for the config scan; Stop when the catalog cannot be read."""
+    import route
+    pats = sd.value_pats()
+    try:
+        d = route.data()
+        hosts = sorted({h["host"].lower() for c in d[1].values() if c.get("kind") == "provider" and c.get("locality") != "local"
+                        for h in c.get("hosts") or [] if h["host"] not in d[3]})
+    except (sd.DataError, route.Stop, KeyError, TypeError):
+        pats = None
+    if pats is None:
+        raise Stop(C["cfgscan"], f"adapter {e['id']}: the connections catalog cannot be read, so its config files cannot be scanned")
+    return pats, hosts
+
+
+def scan_config(e, wt):
+    """X1 item C preflight (both kinds): the entry's own config files (config_files globs relative to the worktree, or {home}/...) and its
+    start template must hold no catalog value pattern (a credential) and no host of a cloud provider connection (a direct route around
+    the proxy). Stop with a code before anything is spawned; the refusal names the file, never the value.
+    shortcut: a file is read to its first 1 MiB, and 400 files per entry."""
+    pats, hosts = scan_data(e)
+    home = os.environ.get((e.get("cli_login") or {}).get("home_env") or "HOME", "")
+    todo = []
+    for g in e.get("config_files") or []:
+        for m in sorted(glob.glob(home + g[6:] if g.startswith("{home}") else os.path.join(glob.escape(wt), g))):
+            todo += [os.path.join(t, f) for t, _, fs in os.walk(m) for f in fs] if os.path.isdir(m) else [m]
+    for p in todo[:400]:
+        try:
+            fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as f:
+                text = f.read(1 << 20).decode("utf-8", "replace") if stat.S_ISREG(os.fstat(fd).st_mode) else ""
+        except OSError:
+            continue
+        name = os.path.relpath(p, wt) if inside(p, wt) else "{home}/" + os.path.relpath(p, home)
+        if any(x.search(text) for x in pats):
+            raise Stop(C["cfgcred"], f"adapter {e['id']}: its config file {sd.idn(name)} holds a credential (a value the connections catalog masks); keys reach an agent through the proxy only")
+        if any(h in text.lower() for h in hosts):
+            raise Stop(C["cfghost"], f"adapter {e['id']}: its config file {sd.idn(name)} names a provider host of the connections catalog; the agent must reach models through the proxy only")
+    if any(x.search(json.dumps(e.get("start") or {})) for x in pats):
+        raise Stop(C["cfgcred"], f"adapter {e['id']}: its start template holds a credential (a value the connections catalog masks)")
+
+
 def cmd_start(a):
     d = doc()
     e = entry(a.adapter, d)
@@ -596,6 +639,7 @@ def cmd_start(a):
             raise Stop(C["terms"], f"connection {conn}: the owner has not set terms_ok, so no agent runs on this login")
     if a.card:
         gate(e, ver, a.role, f"{conn}/{model}", ctype)
+    scan_config(e, wt)
     run = a.run_id or "run-" + uuid.uuid4().hex[:12]
     rdir = os.path.join(runs_dir(), run)
     if os.path.lexists(rec_path(run)) or os.path.lexists(rdir):
