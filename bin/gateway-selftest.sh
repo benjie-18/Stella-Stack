@@ -150,8 +150,8 @@ SPAWN=$R/qa/spawned
 
 # the evaluator entries (data only): each clones the default entry's fields, then its own argv / request / timeout
 ev() {   # <id> <fake mode> <timeout_s> [script]
-  jq -c --arg id "$1" --arg m "$2" --argjson t "$3" --arg s "${4:-fake_eval.py}" --arg def "$DEFEV" --arg g "$(uuid)" --arg i "$IID" '
-    (([.evaluators[]? | select(.id == $def)][0]) // {verdict: "/decision", reason: "/reasons/0", status: "approved"})
+  jq -c --arg id "$1" --arg m "$2" --argjson t "$3" --arg s "${4:-fake_eval.py}" --arg dflt "$DEFEV" --arg g "$(uuid)" --arg i "$IID" '
+    (([.evaluators[]? | select(.id == $dflt)][0]) // {verdict: "/decision", reason: "/reasons/0", status: "approved"})
     + {id: $id, kind: "subprocess", argv: ["python3", "-I", "{stack}/qa/\($s)", $m, "{stack}/qa/spawned"],
        request: {kind: "{kind}", role: "{role}", project: "{project}", inputs: "{inputs}", policies: "{policies}"},
        timeout_s: $t, global_id: $g, install_id: $i}' "$T/gw.orig"; }
