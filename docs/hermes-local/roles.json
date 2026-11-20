@@ -144,7 +144,8 @@
     "package-lock.json",
     "bin/agent_runtime.py",
     "bin/agent_tool.py",
-    "bin/agui_ui.py"
+    "bin/agui_ui.py",
+    "bin/redact_all.py"
   ],
   "write_tools": [
     "write_file",
