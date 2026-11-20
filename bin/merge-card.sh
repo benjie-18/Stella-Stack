@@ -4,7 +4,8 @@
 # Refuses (exit 3) unless: no worker environment (a worker marker of the role table's worker_markers, or a worker profile's HERMES_HOME); the repo's main checkout is clean and on main; exactly one card branch
 # <project>/<id>-* exists and is ahead of main; the card's worktree is clean; the reviewer approved (its latest kanban run
 # on the card is completed with metadata.review "approved", see docs/hermes-local/board.md) or --owner-approved is
-# given; the card worktree's tests pass (npm test, package.json scripts.test).
+# given; the card worktree's tests pass (npm test, package.json scripts.test); a card with a trusted qa.opened line passed its QA loop
+# on exactly the branch tip (bin/qa_loop.py done, Q1 DG-8: STL-QA-106 otherwise).
 # F1 W4 (B3/K1, the merge is the single place every card change passes, however it was made: a Hermes terminal, plumbing, another agent
 # CLI's git, a patch): git computes the tree the merge would produce (git merge-tree: every merge base, nothing written to the checkout), and the
 # paths that tree changes in main (-z, no rename detection in the compare) must hold no path a role may not write: owner data, the owner
@@ -81,6 +82,15 @@ st=$(GIT_COMMON_DIR=$common git --git-dir="$wtg" --work-tree="$wt" -c core.fsmon
 tip=$(g rev-parse --verify "refs/heads/$branch^{commit}") || refuse "cannot read the tip of $branch"   # read first: the commit checked and tested below is the commit merged
 # VH-02: a box writes the shared objects folder, so a commit can keep its id while its content changes; fsck compares every object with its id
 g fsck --no-dangling --no-progress >/dev/null 2>&1 || refuse "git fsck reports a damaged or altered object in $top; nothing was merged"
+# DG-8 (Q1 A2): a card with a trusted qa.opened line merges only when qa_loop.py done exits 0 on exactly the tip read above; a card
+# with none merges as before. A QA state that cannot be read is refused, never read as "no QA loop".
+qa=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import qa_loop; print("open" if qa_loop.state(sys.argv[2])["opened"] else "none")' "$here" "$card" 2>/dev/null)
+case "$qa" in
+  none) ;;
+  open) python3 -I "$here/qa_loop.py" done --card "$card" --hash "$tip" >/dev/null 2>&1 \
+          || coded STL-QA-106 "card $card, branch tip $tip" "the card's QA loop has no round that passed on the tip of $branch (qa_loop.py status --card $card --head $tip --json); nothing was merged" ;;
+  *) coded STL-CFG-303 "the QA loop state of $card cannot be read" "so it is not known whether its QA loop must pass first; nothing was merged" ;;
+esac
 # K1 (F1 W4): the check judges what the merge will do. git computes the tree the merge would produce (merge-tree: every merge base, the
 # merge's own rename handling, nothing written to the checkout), and the paths compared are the ones that tree changes in main (-z, no
 # rename detection in the compare). After the merge below, its tree must be that tree. Names are compared with the lists by identity
