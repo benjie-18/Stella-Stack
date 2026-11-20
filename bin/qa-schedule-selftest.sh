@@ -89,7 +89,13 @@ C1=t_0a0f3001 C2=t_0a0f3002 C3=t_0a0f3003
 echo a >"$S/a.txt"; G "$S" add -A; G "$S" commit -qm "card 1"; HA=$(G "$S" rev-parse HEAD)
 printf 'echo "AssertionError: expected beta"\nexit 1\n' >"$S/bin/beta-selftest.sh"; G "$S" commit -qam "card 2"; HB=$(G "$S" rev-parse HEAD)
 echo c >"$S/c.txt"; G "$S" add -A; G "$S" commit -qm "card 3"; HC=$(G "$S" rev-parse HEAD)
-for k in "$C1:$HA" "$C2:$HB" "$C3:$HC"; do plant qa.passed "${k%%:*}" "$(jq -nc --arg h "${k#*:}" '{round: 1, hash: $h}')"; done
+TIER=$(jq -r '.task_tiers[0].id' "$R/.stella/routing.json"); BROLE=$(jq -r '.builder_roles[0]' "$R/.stella/routing.json")
+# a card is done only on a round it froze after opening (qa_loop.py done reads qa.opened and qa.frozen too): plant the whole trail
+for k in "$C1:$HA" "$C2:$HB" "$C3:$HC"; do
+  plant qa.opened "${k%%:*}" "$(jq -nc --arg t "$TIER" --arg r "$BROLE" '{project: "p", tier: $t, base: null, builder_role: $r}')"
+  plant qa.frozen "${k%%:*}" "$(jq -nc --arg h "${k#*:}" '{round: 1, hash: $h}')"
+  plant qa.passed "${k%%:*}" "$(jq -nc --arg h "${k#*:}" '{round: 1, hash: $h}')"
+done
 done_rc() { python3 -I "$QL" done --card "$1" --hash "$2" >/dev/null 2>&1; echo $?; }
 d1=$(done_rc "$C1" "$HA"); d2=$(done_rc "$C2" "$HB"); d3=$(done_rc "$C3" "$HC")
 # tick 2, before the interval: nothing at all

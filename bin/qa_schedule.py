@@ -4,7 +4,7 @@ only: refuses in a worker environment (STL-CFG-312) before anything is read or p
   tick --repo PATH [--now T]   does nothing (exit 0, no line) until full_suite.interval_s of .stella/qa-loop.json has passed since
        this repo's last trusted qa.full-run line (none yet: it runs). Then the full suite runs on the repo's HEAD in a disposable
        copy (qa_loop.make_copy: a standalone clone under qa_copies, hooks off, removed after the run) through bin/qa_tests.py's box
-       (qa_tests.run: no network, only the copy writable, killed at tests.timeout_s). The suite's argv is the "runner" of
+       (qa_tests.run: no network, only the copy writable, killed at full_suite.timeout_s). The suite's argv is the "runner" of
        .stella/test-map.json (bin/test-map.py load), run at the copy's root with no argument; with test names it runs only those.
        On a failure the failing tests (the runner's "FAIL <name>" lines) are bisected over the done hashes since the last green
        run: the qa.passed hash (qa_loop.state) of each card not reopened since, that is an ancestor of HEAD and not of the last
@@ -72,8 +72,7 @@ def suite(repo, h, n, rel, d, names=()):
     except ql.Refuse as e:
         raise Stop(COPY, f"the copy of {h[:12]}: {e.problem}"[:200]) from None
     try:
-        # shortcut: the suite shares the per-test limit (tests.timeout_s); give full_suite its own when the stack's suite outgrows it
-        rc, out = qt.run(copy, [os.path.join(copy, rel), *names], d.qa["tests"]["timeout_s"])
+        rc, out = qt.run(copy, [os.path.join(copy, rel), *names], d.qa["full_suite"]["timeout_s"])
     finally:
         shutil.rmtree(copy, ignore_errors=True)
     return rc, sorted(set(FAIL.findall(out)))

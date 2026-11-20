@@ -377,12 +377,18 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "interval_s"
+        "interval_s",
+        "timeout_s"
       ],
       "properties": {
         "interval_s": {
           "type": "integer",
           "minimum": 60
+        },
+        "timeout_s": {
+          "type": "integer",
+          "minimum": 60,
+          "description": "the scheduled full-suite run is killed after this many seconds (its own limit: the whole suite outlasts one test's tests.timeout_s)"
         }
       }
     },

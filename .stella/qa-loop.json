@@ -275,7 +275,8 @@
     ]
   },
   "full_suite": {
-    "interval_s": 86400
+    "interval_s": 86400,
+    "timeout_s": 7200
   },
   "diagnosis": {
     "flag": "qa-round2-diagnosis"
