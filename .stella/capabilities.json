@@ -2667,6 +2667,34 @@
       },
       "global_id": "d4614afb-5252-462b-b3dd-860818087f66",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "qa-findings",
+      "kind": "command",
+      "summary": "QA findings of a card (host only): evidence registers a file inside qa_evidence/<card>/<round>/ by its sha256 (re-hashed on every read, a changed file voids it); submit records a role's findings (validated, size-capped, fingerprinted on check, file, lines and test; no evidence that holds -> void; a blocking non-static finding pending its repro); repro runs a pending finding's argv in a disposable copy of the round's frozen copy, boxed, and confirms it on a non-zero exit; verdict records a role's pass, fail or unverified with evidence (a reviewer's fail fires the verdict-source triggers); merge gives the round's fix list (deduped, highest severity, every role, sorted by the data's severity order, blocking by the card's depth, base failures and quarantined tests not charged); one trusted event line per state change",
+      "keywords": [
+        "qa",
+        "finding",
+        "evidence",
+        "repro",
+        "verdict",
+        "fix list",
+        "merge",
+        "fingerprint"
+      ],
+      "inputs": "evidence --card C --round N --file F | submit --card C --round N --role R --file J (J: {findings: [...]} or the list) | repro --card C --fingerprint F | verdict --card C --round N --role R --result pass|fail|unverified --evidence P | merge --card C [--round N] --json",
+      "outputs": "JSON: evidence {path, sha256, round}; submit {card, round, findings: [{fingerprint, status}]}; repro {type, fingerprint, round, exit, hash}; verdict {round, role, result, hash, evidence, triggered}; merge {card, round, depth, fix_list, blocking, pending}; exit 1 with a catalog code (STL-QA-150..155, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/qa_findings.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "98b4c26a-60de-4705-9be7-3c2d4d96e0b3",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }
