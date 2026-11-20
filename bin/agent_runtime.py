@@ -145,13 +145,13 @@ def gates(e, names, name, inp, wt, ctx=None):
         spec = e["tools"][name]
         if not got and spec["class"] == "shell":
             got = words(e, str(policy.get(inp, spec["command"]) or ""), wt)
+        gin = policy.gateway_inputs(spec, name, inp, wt)   # the canonical path under the worktree, the cwd: what the gateway judges
     except Exception as x:   # fail closed, as the hook does
         return "STL-GRD-617", f"the policy check cannot judge this call ({type(x).__name__})"
     if got:
         return got
-    x = policy.gateway_inputs(spec, name, inp)
     for k in dict.fromkeys(("tool_call", names[name].get("gateway_kind"))):   # a row with no gateway_kind is refused by the gateway (unknown kind)
-        d = gateway.check(k, x, ctx or {})
+        d = gateway.check(k, gin, ctx or {})
         if d.verdict == "refuse":
             return d.code, f"the policy gateway refused the call: {d.reason}"
     return None

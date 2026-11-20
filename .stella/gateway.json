@@ -3,6 +3,7 @@
   "about": "Policy gateway stack data (X1 G1, hooks X1 G2). Each action kind lists its hook sites: the functions that call gateway.check with it before the action (`gateway.py lint` fails a kind with none). The capabilities MCP server function pdp is the engine-side decision route the coding CLIs' policy hook asks. browser_action and vm_guest are registered by the phases that build them.",
   "decision_event": "gateway_decision",
   "default_timeout_s": 10,
+  "logged_string_max": 256,
   "action_kinds": [
     {
       "id": "file_read",
@@ -124,7 +125,7 @@
   "evaluators": [
     {
       "id": "cedar",
-      "summary": "Cedar (@cedar-policy/cedar-wasm, pinned in package.json) through bin/cedar_eval.mjs: principal = the role, action = the kind, resource = the input's target, context = the inputs",
+      "summary": "Cedar (@cedar-policy/cedar-wasm, pinned in package.json) through bin/cedar_eval.mjs: principal = the role, action = the kind, resource = the input's target, context = the inputs (a null key left out, a non-integer number as the string of its JSON text)",
       "kind": "subprocess",
       "argv": [
         "node",

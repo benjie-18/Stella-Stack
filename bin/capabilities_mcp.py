@@ -20,7 +20,8 @@ One request, in this order (an HTTP refusal answers a JSON-RPC error object with
      The PDP route (X1 G2): tools/call of the unlisted name PDP {kind, inputs} is the policy gateway's decision for a worker-side hook
      (the coding CLIs' policy hook, bin/policy.py hook --gateway): gateway.check with the role, run, card and project of the token
      record, for a kind whose gateway data names this route as a hook (else isError STL-GRD-748); the result is the decision
-     {verdict, mode, code, reason}, its trusted line written here, engine side.
+     {verdict, mode, code, reason}, its trusted line written here, engine side. The path is placed first (policy.placed: the canonical
+     absolute path under the cwd the hook sent; relative with no absolute cwd: STL-GRD-748).
 Importers (the worker side of bin/capabilities.py, DC-05): call(tool, arguments) -> the tool's structured result, or raises
 ClientError(code, problem); the token comes from the owner-auth worker_signals.token_env variables, the address from the state file.
 Exit: 0 when stopped; 1 refused (the catalog code and its plain message on stderr); 2 usage."""
@@ -105,7 +106,11 @@ def pdp(rec, args):
         return tool_error(PDP_KIND, "the arguments of the PDP route must be {kind (string), inputs (object)}")
     if args["kind"] not in kinds:
         return tool_error(PDP_KIND, f"the PDP route does not decide kind {sd.idn(args['kind'], True)} (the gateway data names it no hook here)")
-    d = gateway.check(args["kind"], args["inputs"], ctx_of(rec))
+    import policy   # the one rule for paths: the canonical absolute path under the cwd the hook sent (the worker side places it too)
+    inputs = policy.placed(args["inputs"])
+    if inputs is None:
+        return tool_error(PDP_KIND, "the path of the request is not a string, or is relative with no absolute cwd: it cannot be placed")
+    d = gateway.check(args["kind"], inputs, ctx_of(rec))
     out = {k: d[k] for k in ("verdict", "mode", "code", "reason")}
     return {"content": [{"type": "text", "text": json.dumps(out)}], "structuredContent": out, "isError": False}
 

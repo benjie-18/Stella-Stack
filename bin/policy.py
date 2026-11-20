@@ -564,15 +564,34 @@ def judge(ad, payload, worktree):
     return None
 
 
-def gateway_inputs(spec, name, inp):
-    """The policy gateway's inputs of a tool call (X1 G2): the tool, its input and, by its class, the path or command the gateway data's
-    target pointers name."""
-    x = {"tool": name, "input": inp}
+def placed(x):
+    """Policy gateway inputs x with the cwd canonical (realpath) and path made the canonical absolute path it names under that cwd
+    (realpath: links that exist resolved, the rest normalised), so a policy sees one spelling of one file; None when path is not a
+    string or is relative with no absolute cwd (it cannot be placed). A cwd that is not an absolute path is dropped."""
+    x, cwd = dict(x), x.get("cwd")
+    x.pop("cwd", None)
+    if isinstance(cwd, str) and os.path.isabs(cwd):
+        x["cwd"] = os.path.realpath(cwd)
+    if "path" in x:
+        if not isinstance(x["path"], str) or not (os.path.isabs(x["path"]) or "cwd" in x):
+            return None
+        x["path"] = os.path.realpath(os.path.join(x.get("cwd", "/"), x["path"]))
+    return x
+
+
+def gateway_inputs(spec, name, inp, cwd):
+    """The policy gateway's inputs of a tool call (X1 G2): the tool, its input, the cwd and, by its class, the command or the path the
+    gateway data's target pointers name, the path placed under the cwd (placed(); a read with no path is the cwd itself, as judge
+    reads it). ValueError when it cannot be placed: the caller refuses."""
+    x = {"tool": name, "input": inp, "cwd": cwd}
     if spec.get("class") == "shell":
         x["command"] = str(get(inp, spec.get("command")) or "")
     elif spec.get("class") in ("read", "write"):
-        x["path"] = str(get(inp, spec.get("path")) or "")
-    return x
+        x["path"] = os.path.expanduser(str(get(inp, spec.get("path")) or "."))
+    out = placed(x)
+    if out is None:
+        raise ValueError("the path of the call cannot be placed (no absolute working folder)")
+    return out
 
 
 def pdp(ad, payload):
@@ -587,7 +606,7 @@ def pdp(ad, payload):
         return "STL-GRD-747", f"no gateway kind is named for tool class {spec['class']}, so the call cannot be decided"
     import capabilities_mcp as mcp
     try:
-        d = mcp.call(mcp.PDP, {"kind": kind, "inputs": gateway_inputs(spec, payload.get("tool_name"), payload.get("tool_input") or {})})
+        d = mcp.call(mcp.PDP, {"kind": kind, "inputs": gateway_inputs(spec, payload.get("tool_name"), payload.get("tool_input") or {}, payload.get("cwd") or os.getcwd())})
     except mcp.ClientError as e:
         return "STL-GRD-747", f"the policy gateway could not be asked ({e.code} {e.problem[:120]}), so the call is refused"
     if isinstance(d, dict) and d.get("verdict") in ("allow", "would-refuse"):   # audit: the call runs, its line says would-refuse

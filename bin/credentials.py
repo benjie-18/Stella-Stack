@@ -59,11 +59,12 @@ def get(name, ctx=None):
     d = gateway.check("broker_call", {"name": name}, ctx or {})
     if d.verdict == "refuse":
         raise Refused(d.code, f"the policy gateway refused reading {sd.idn(str(name), True)}: {d.reason}")
-    return value(name)
+    return _value(name)
 
 
-def value(name):
-    """The value of the secret `name` with no gateway decision: only state() calls it, to see that a key is there (never handed out)."""
+def _value(name):
+    """The value of the secret `name` with no gateway decision: private to this file; only state() calls it, to see that a key is there
+    (never handed out). Every other reader goes through get(), which the gateway decides (broker_call)."""
     bid, b = backend()
     if b["kind"] != FOLDER:
         raise Refused(NOT_READ, f"key store backend {sd.idn(bid, True)} holds no key (nothing is read until the secrets broker)")
@@ -96,7 +97,7 @@ def state(names=()):
     missing = []
     for n in names:
         try:
-            value(n)
+            _value(n)
         except Refused as e:
             if e.code != NOT_READ:
                 raise

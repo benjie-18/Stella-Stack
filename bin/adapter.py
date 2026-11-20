@@ -25,7 +25,9 @@ Every CLI-specific name is data (.stella/adapters.json); a new CLI is a new entr
       a coding CLI with no policy hook (its actions cannot reach the gateway before they run) is refused (STL-GRD-745); when the
       mode is not off the rendered hook asks the gateway's PDP route (policy.py hook --gateway, a flag and no secret).
       The run goes on in the background (--wait: in the foreground); the run record is <adapter_runs>/<run>.json.
-  stop --run R [--reason TEXT]                 revokes the run token, then ends the CLI's process group, one event line
+  stop --run R [--reason TEXT]                 revokes the run token, then ends the CLI's process group, one event line; the group is
+                                               signalled only while its pid is still the run's (the /proc start fingerprint kept in the
+                                               record at start, pid_start), else the record is marked ended (exit -1) and nothing is signalled
                                                (gateway_sweep(): after an owner apply of the gateway policy, stops every running run whose
                                                start mode was off while its project's mode is not off now, and every hookless one under
                                                enforce, DC-08; bin/stella-apply.py calls it)
@@ -844,7 +846,8 @@ def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None, agent=None):
     finally:
         for fd in fds:   # the CLI holds the slots now: they end with its last process
             os.close(fd)
-    update(run, **{**rec, "pid": p.pid, "pgid": p.pid})
+    import roles   # pid_start: the process's /proc start fingerprint, so a stop never signals a group whose pid was recycled
+    update(run, **{**rec, "pid": p.pid, "pgid": p.pid, "pid_start": roles.fingerprint(p.pid)})
     event("adapter.run-started", run, rec["role"], adapter=rec["adapter"], version=rec["version"], card=rec["card"], link=rec["link"],
           conn_type=rec["conn_type"], boxed=rec["boxed"], pid=p.pid)
     if w is not None:
@@ -909,6 +912,12 @@ def cmd_stop(a):
     return 0
 
 
+def ours(rec):
+    """Whether the run's recorded process is still the one it started: its pid alive with the /proc start fingerprint kept at start."""
+    import roles
+    return isinstance(rec.get("pid_start"), str) and rec["pid_start"] != "" and type(rec.get("pid")) is int and roles.fingerprint(rec["pid"]) == rec["pid_start"]
+
+
 def stop(run, reason=None):
     rec = read_rec(run)
     pg = rec.get("pgid")
@@ -918,7 +927,9 @@ def stop(run, reason=None):
         err = None
     except Stop as x:
         err = x
-    if rec.get("exit") is None and type(pg) is int:
+    if rec.get("exit") is None and type(pg) is int and not ours(rec):   # the recorded group is no longer the run's: nothing is signalled
+        update(run, ended=rec.get("ended") or now(), exit=-1)
+    elif rec.get("exit") is None and type(pg) is int:
         grace = doc().get("stop_grace_s", 10)
         for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, grace)):
             with contextlib.suppress(ProcessLookupError):

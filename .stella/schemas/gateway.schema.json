@@ -9,6 +9,7 @@
     "schema_version",
     "decision_event",
     "default_timeout_s",
+    "logged_string_max",
     "action_kinds",
     "evaluators"
   ],
@@ -29,6 +30,12 @@
       "minimum": 1,
       "maximum": 300,
       "description": "Seconds an evaluator may take when its entry names no timeout_s; past it the decision is an evaluator failure."
+    },
+    "logged_string_max": {
+      "type": "integer",
+      "minimum": 64,
+      "maximum": 65536,
+      "description": "Characters of one string input a decision line shows; a longer one is logged as {sha256, length} (the evaluator still gets it whole)."
     },
     "action_kinds": {
       "type": "array",

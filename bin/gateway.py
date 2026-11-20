@@ -10,7 +10,8 @@ ctx = {role, run, card, project, adapter}. The caller runs its action unless ver
   covering the kind (732), an evaluator not there or off (733), that cannot start (734), that fails (735), times out (736) or
   answers no allow/deny (737), or a deny (738) refuse in enforce and give would-refuse in audit; unreadable data refuses (730; an
   unreadable owner file counts as enforce). Then, before returning, one trusted line through event_log.append (type: the data's
-  decision_event): kind, inputs masked (the index's redact keys and the catalog's value patterns), policy_version (sha256 of the
+  decision_event): kind, inputs masked (the index's redact keys and the catalog's value patterns; a string longer than the data's
+  logged_string_max as {sha256, length}: the evaluator still gets it whole), policy_version (sha256 of the
   canonical policies plus the evaluator entry used, DC-07), evaluator, mode, verdict, reason, code. When that line cannot be
   written (739, alerted): enforce refuses, audit allows. In a worker environment the log refuses, so only off passes there: a
   worker-side caller asks the engine-side PDP route (item G2).
@@ -115,6 +116,15 @@ def shown(v, red):
     return m(el.mask(v, red))
 
 
+def capped(v, n):
+    """v as a line keeps it: a string longer than n characters becomes {sha256, length} (a whole file a write carries is no log line)."""
+    if isinstance(v, str):
+        return {"sha256": hashlib.sha256(v.encode("utf-8", "surrogatepass")).hexdigest(), "length": len(v)} if len(v) > n else v
+    if isinstance(v, list):
+        return [capped(x, n) for x in v]
+    return {k: capped(x, n) for k, x in v.items()} if isinstance(v, dict) else v
+
+
 def text(x):
     return x if isinstance(x, str) else None if x is None else str(x)
 
@@ -193,7 +203,7 @@ def check(kind, inputs, ctx):
         if gw is None:
             raise Refusal(C["data"], "the gateway data names no decision event type it can be read from")
         k = kind if isinstance(kind, str) and kind in {x["id"] for x in gw["action_kinds"]} else None
-        new = {"kind": k or shown(text(kind), red), "inputs": shown(inputs, red), "policy_version": d["policy_version"],
+        new = {"kind": k or shown(text(kind), red), "inputs": capped(shown(inputs, red), gw["logged_string_max"]), "policy_version": d["policy_version"],
                "evaluator": d["evaluator"], "mode": d["mode"], "verdict": verdict, "reason": d["reason"], "code": d["code"],
                **{x: shown(text(ctx.get(x)), red) for x in ("run", "card", "project", "adapter")}}
         el.append(el.build(gw["decision_event"], f"{grow['id']}/{k or 'unknown'}", new=new, code=d["code"],

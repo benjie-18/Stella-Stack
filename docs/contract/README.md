@@ -537,6 +537,10 @@ access decide (`host_session`). A coding CLI's policy hook asks the MCP server's
 project from the run token) when `adapter.py start` rendered it with `--gateway` (the run's mode is not off). A run's record keeps
 its start mode (`gateway.mode`); with `--card` its project is the card's board binding. In enforce a coding CLI with no policy
 hook is refused at start; applying this file stops the runs that started with the gateway off (and hookless ones under enforce).
+A tool call's inputs carry its `cwd` and its `path` as the canonical absolute path under that cwd (one spelling per file).
+`logged_string_max`: a longer string input is logged as {`sha256`, `length`} (the evaluator gets it whole). The Cedar runner
+leaves null keys out of the context and passes a non-integer number as the string of its JSON text (`1.5` is `"1.5"`). A stop
+signals a run's process group only while its pid still has the start fingerprint kept in the record (`pid_start`).
 
 ### `.stella/settings.json` (settings registry)
 Every owner-editable setting: `key`, `label`, `type`, `validation`, `scope`, `sensitivity` (plain, identity_critical,

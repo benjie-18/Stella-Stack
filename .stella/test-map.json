@@ -8278,6 +8278,16 @@
         "write-guard"
       ],
       "why": "X1 G2: credentials.get, the model proxy forward, the capabilities MCP server and host access decide now call bin/gateway.py, and bin/stella-apply.py imports bin/adapter.py (the DC-08 sweep after a gateway policy apply), so these selftests reach these files (bin/test-map.py reach)"
+    },
+    {
+      "globs": [
+        "package-lock.json",
+        "package.json"
+      ],
+      "targets": [
+        "gateway-hooks"
+      ],
+      "why": "X1 fix round G: the gateway-hooks agent section runs the real Cedar evaluator (node_modules and the pin read from the source tree)"
     }
   ]
 }
