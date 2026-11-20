@@ -140,7 +140,10 @@
     ".stella/gateway.json",
     "bin/gateway.py",
     "bin/cedar_eval.mjs",
-    "package-lock.json"
+    "package-lock.json",
+    "bin/agent_runtime.py",
+    "bin/agent_tool.py",
+    "bin/agui_ui.py"
   ],
   "write_tools": [
     "write_file",

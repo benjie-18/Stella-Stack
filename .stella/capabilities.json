@@ -3087,6 +3087,32 @@
       },
       "global_id": "55fa9689-4c7e-434f-96ce-ea23a2cf4516",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "mock-agui-agent",
+      "kind": "tool",
+      "summary": "Test rig: a fake agent-runtime agent speaking AG-UI over HTTP+SSE (port 0, ready line on stdout), driven by an action list in its user message (tool calls to offered tools, model call through the proxy, direct call, env, ui, state, say); --protocol-map renames events for a second protocol",
+      "keywords": [
+        "mock",
+        "agent",
+        "fake agent",
+        "ag-ui",
+        "agent-runtime",
+        "test rig"
+      ],
+      "inputs": "--port 0 [--protocol-map F] | --version",
+      "outputs": "a ready line {ready, port} on stdout, then AG-UI events over SSE per run request",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/mock_agui_agent.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "ba8c48e8-0c49-4dd7-9233-9f2b6a0b847b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }
