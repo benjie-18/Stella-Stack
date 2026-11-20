@@ -13,7 +13,7 @@
     "depth_bump",
     "roles",
     "presets",
-    "local_only",
+    "when_local_only",
     "triggers",
     "tests",
     "mutants",
@@ -202,23 +202,6 @@
         }
       }
     },
-    "local_only": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "count",
-        "parallel"
-      ],
-      "properties": {
-        "count": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "parallel": {
-          "type": "boolean"
-        }
-      }
-    },
     "triggers": {
       "type": "object",
       "propertyNames": {
@@ -246,6 +229,31 @@
               "type": "string",
               "minLength": 1
             }
+          },
+          "match": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "paths",
+              "words"
+            ],
+            "properties": {
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "words": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "description": "deterministic match on the frozen diff: a changed path matching a glob, or an added line matching a word regex (case-insensitive), fires the trigger"
           }
         }
       }
@@ -293,8 +301,7 @@
               "kind": {
                 "enum": [
                   "assertion",
-                  "error",
-                  "timeout"
+                  "error"
                 ]
               },
               "exit_codes": {
@@ -392,6 +399,32 @@
         "feature": {
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "when_local_only": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "count",
+        "parallel",
+        "presets"
+      ],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "parallel": {
+          "type": "boolean"
+        },
+        "presets": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     }

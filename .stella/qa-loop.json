@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "about": "QA loop mechanics for Stella's own cards (phase Q1; spec: Stella QA Loop Validator Verifier Red Team Tester.md). Read by bin/qa_loop.py, bin/qa_findings.py, bin/qa_tests.py, bin/qa_schedule.py and bin/qa_roles.py. Role, tier, preset and trigger ids are the ids of .stella/routing.json (card_roles, task_tiers, workflow.triggers) and .stella/role-assignments.json (effort_modes). Owner data: it decides when work is done, so no agent writes it.",
+  "about": "QA loop mechanics for Stella's own cards (phase Q1; spec: Stella QA Loop Validator Verifier Red Team Tester.md). Read by bin/qa_loop.py, bin/qa_findings.py, bin/qa_tests.py, bin/qa_schedule.py and bin/qa_roles.py. Role, tier, preset and trigger ids are the ids of .stella/routing.json (card_roles, task_tiers, workflow.triggers) and .stella/role-assignments.json (effort_modes). Owner data: it decides when work is done, so no agent writes it. Precedence of test failure classes: any error class match refuses a tests-first test whatever else matches; a timeout is the runner's own kill (tests.timeout_s), never an exit code. when_local_only applies when resolve.py answers local_only true or the card's preset is listed there.",
   "severities": [
     {
       "id": "critical",
@@ -107,16 +107,61 @@
       "counts": {}
     }
   },
-  "local_only": {
+  "when_local_only": {
     "count": 1,
-    "parallel": false
+    "parallel": false,
+    "presets": [
+      "local_only"
+    ]
   },
   "triggers": {
     "security": {
       "tester": "full",
       "force_roles": [
         "red-team"
-      ]
+      ],
+      "match": {
+        "paths": [
+          "**/auth*",
+          "**/*auth*/**",
+          "**/*secret*",
+          "**/*credential*",
+          "**/*token*",
+          "**/*firewall*",
+          "**/*password*",
+          "**/*session*",
+          "**/*upload*",
+          "**/*payment*",
+          "**/*crypt*",
+          "**/.env*",
+          "**/*.pem",
+          "**/*.key"
+        ],
+        "words": [
+          "password",
+          "passwd",
+          "secret",
+          "api[_-]?key",
+          "token",
+          "credential",
+          "authori[sz]",
+          "authenticat",
+          "firewall",
+          "iptables",
+          "socket\\.",
+          "urlopen",
+          "requests\\.(get|post|put)",
+          "fetch\\(",
+          "upload",
+          "subprocess",
+          "os\\.system",
+          "eval\\(",
+          "exec\\(",
+          "chmod",
+          "expanduser",
+          "\\.\\./"
+        ]
+      }
     },
     "mismatch": {
       "tester": "full",
@@ -139,15 +184,6 @@
     "timeout_s": 600,
     "classes": [
       {
-        "id": "timeout",
-        "kind": "timeout",
-        "exit_codes": [
-          124,
-          137
-        ],
-        "patterns": []
-      },
-      {
         "id": "missing",
         "kind": "error",
         "exit_codes": [
@@ -161,7 +197,8 @@
           "command not found",
           "Cannot find module",
           "ERR_MODULE_NOT_FOUND",
-          "No such file or directory"
+          "No such file or directory",
+          "NameError"
         ]
       },
       {
