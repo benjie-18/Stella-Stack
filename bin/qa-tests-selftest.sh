@@ -246,8 +246,10 @@ read -r OW3_RC OW3_S _ <"$T/o/ow3.out" 2>/dev/null
 run ow4 python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import qa_tests as q; rc, out = q.run(sys.argv[2], json.loads(sys.argv[3]), 60); print(rc, "wrote=153" in out)' "$R/bin" "$D" \
   '["bash", "-c", "exec 3>f; rm f; head -c 52428800 /dev/zero >&3; echo wrote=$?; exit 0"]'
 read -r OW4_RC OW4_CUT <"$T/o/ow4.out" 2>/dev/null
-ok '[ "$OW3_RC" = None ] && [ "$OW3_S" -lt 15 ] && [ "$OW4_CUT" = True ]' \
-  "Q1-OF-CVER-08 54 MiB written into a folder then made unreadable: killed (rc $OW3_RC, $OW3_S s); 50 MiB into a deleted file held open: the write stops at the file-size limit (SIGXFSZ: $OW4_CUT)"
+run ow5 QR '["bash", "-c", "head -c 52428800 /dev/zero >one.bin; echo 1 passed; exit 0"]'
+read -r OW5_RC _ OW5_NAMED <"$T/o/ow5.out" 2>/dev/null
+ok '[ "$OW3_RC" = None ] && [ "$OW3_S" -lt 15 ] && [ "$OW4_CUT" = True ] && [ "$OW5_RC" = None ] && [ "$OW5_NAMED" = True ]' \
+  "Q1-OF-CVER-08/11 54 MiB written into a folder then made unreadable: killed (rc $OW3_RC, $OW3_S s); 50 MiB into a deleted file held open: cut at the file-size limit (SIGXFSZ: $OW4_CUT); one 50 MiB file, the error ignored and 'passed' printed: the run is the runner's kill naming max_write_bytes (rc $OW5_RC, named: $OW5_NAMED)"
 # Q1-OF-CVER-09: mutants count lines as git does (only \n ends a line): a CR inside an earlier line moves no mutant
 P9=$T/p9; mkdir -p "$P9"; printf '# a\rb\nx=1\n[ "$x" = 2 ] && exit 1\nexit 0\n' >"$P9/mod.sh"; G "$P9" init -q -b main; G "$P9" add -A; G "$P9" commit -qm base; B9=$(G "$P9" rev-parse HEAD)
 printf '# a\rb\nx=1\n[ "$x" == 2 ] && exit 1\nexit 0\n' >"$P9/mod.sh"; G "$P9" commit -qam card; H9=$(G "$P9" rev-parse HEAD)
