@@ -3163,6 +3163,78 @@
       "resolvable": false
     },
     {
+      "code": "STL-GRD-753",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "an agent called a provider itself",
+      "message": "The agent reached a provider address directly, around the proxy, in the provider_direct case: {problem}. The case failed.",
+      "action": "make the agent send every model call to the proxy URL it is given, then run the suite again. See STL-GRD-753 in docs/alert-codes.md.",
+      "cause": "The agent opened a connection to the loopback tripwire the case names as a provider address.",
+      "check": "`bash bin/selftests.sh conformance`; `python3 bin/stella_data.py check`.",
+      "related": "X1 item C; bin/conformance.py, bin/adapter.py, .stella/conformance.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-754",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a credential in an agent config file",
+      "message": "Adapter start was refused: {problem}. Nothing was started.",
+      "action": "remove the key from that config file; keys reach an agent only through the proxy and the run token. See STL-GRD-754 in docs/alert-codes.md.",
+      "cause": "A file the adapter entry lists in config_files (or its start template) holds a value the connections catalog masks.",
+      "check": "`bash bin/selftests.sh conformance`; `python3 bin/stella_data.py check`.",
+      "related": "X1 item C; bin/conformance.py, bin/adapter.py, .stella/conformance.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-755",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a provider host in an agent config file",
+      "message": "Adapter start was refused: {problem}. Nothing was started.",
+      "action": "remove the provider address from that config file; the agent must use the proxy URL it is given. See STL-GRD-755 in docs/alert-codes.md.",
+      "cause": "A file the adapter entry lists in config_files names a cloud provider host of the connections catalog.",
+      "check": "`bash bin/selftests.sh conformance`; `python3 bin/stella_data.py check`.",
+      "related": "X1 item C; bin/conformance.py, bin/adapter.py, .stella/conformance.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-756",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "the credential_config case failed",
+      "message": "The credential_config case failed: {problem}. The case counts as failed.",
+      "action": "fix the adapter entry's config files so that start refuses a planted key and a planted provider host, then run the suite again. See STL-GRD-756 in docs/alert-codes.md.",
+      "cause": "Start did not refuse a planted credential or host, or the entry's own config files already hold one.",
+      "check": "`bash bin/selftests.sh conformance`; `python3 bin/stella_data.py check`.",
+      "related": "X1 item C; bin/conformance.py, bin/adapter.py, .stella/conformance.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-757",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "the config files cannot be scanned",
+      "message": "Adapter start was refused: {problem}. Nothing was started.",
+      "action": "fix the connections catalog so that python3 bin/stella_data.py check passes, then start again. See STL-GRD-757 in docs/alert-codes.md.",
+      "cause": "The catalog's value patterns or provider hosts cannot be read (fail closed).",
+      "check": "`bash bin/selftests.sh conformance`; `python3 bin/stella_data.py check`.",
+      "related": "X1 item C; bin/conformance.py, bin/adapter.py, .stella/conformance.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-758",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "no canary can be made for the credential_config case",
+      "message": "The credential_config case could not run: {problem}. The case counts as failed.",
+      "action": "give a connection of the catalog a redaction pattern of a simple form and a cloud provider host, then run the suite again. See STL-GRD-758 in docs/alert-codes.md.",
+      "cause": "No redaction pattern of the catalog can be turned into a sample string, or no cloud provider host is listed.",
+      "check": "`bash bin/selftests.sh conformance`; `python3 bin/stella_data.py check`.",
+      "related": "X1 item C; bin/conformance.py, bin/adapter.py, .stella/conformance.json",
+      "resolvable": false
+    },
+    {
       "code": "STL-QA-180",
       "area": "QA",
       "severity": "warning",

@@ -126,6 +126,10 @@
               "sandbox": {
                 "type": "string",
                 "pattern": "^[0-9a-f]{64}$"
+              },
+              "protocol": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
               }
             }
           },
