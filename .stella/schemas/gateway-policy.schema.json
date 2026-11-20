@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Policy gateway: the owner's modes and policies",
+  "description": "Owner data (X1 item G1; body B4): the gateway mode, global and per project (off, the default: no evaluation and no line; audit: every decision logged, a refusal only logged as would-refuse; enforce: an action no policy allows, an evaluator failure or a kind with no policy is refused), the evaluator that judges (an id of gateway.json evaluators), and the policies in that evaluator's language, each covering some action kinds. Written only through the owner path (bin/stella-apply.py: owner proof, backup, one event line).",
+  "x-one-document": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mode",
+    "evaluator",
+    "policies"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "about": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "global",
+        "projects"
+      ],
+      "properties": {
+        "global": {
+          "$ref": "#/$defs/mode",
+          "x-owner-only": true
+        },
+        "projects": {
+          "type": "object",
+          "description": "A project's own mode (by project id); a project not named takes the global one. A check that names no project takes the strictest mode present.",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/mode"
+          },
+          "x-owner-only": true
+        }
+      }
+    },
+    "evaluator": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]*$",
+      "description": "The id of the gateway.json evaluator that decides (gateway.py check reports one that is not there; a decision refuses).",
+      "x-owner-only": true
+    },
+    "policies": {
+      "type": "array",
+      "x-owner-only": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kinds",
+          "text",
+          "global_id",
+          "install_id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+          },
+          "kinds": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_.-]*$"
+            },
+            "description": "The action kinds this policy covers; a kind no policy covers is refused in enforce."
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 65536,
+            "description": "The policy in the evaluator's language (for the default evaluator: one Cedar policy)."
+          },
+          "global_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "install_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "mode": {
+      "enum": [
+        "off",
+        "audit",
+        "enforce"
+      ]
+    }
+  }
+}

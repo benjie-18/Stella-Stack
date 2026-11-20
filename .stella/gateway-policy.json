@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "about": "Owner data (X1 G1): the gateway mode (off by default), the evaluator and the policies. Change it only through bin/stella-apply.py apply <row> --from <file>.",
+  "mode": {
+    "global": "off",
+    "projects": {}
+  },
+  "evaluator": "cedar",
+  "policies": []
+}

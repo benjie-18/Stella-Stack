@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Policy gateway",
+  "description": "The policy gateway's stack data (X1 item G1; body B4): the action kinds every action passes before it runs, each with its hook sites (the functions that call gateway.check with that kind; `gateway.py lint` fails a kind with no hook), and the evaluators a policy can be judged by (a subprocess fed one JSON request on stdin, answering one JSON object on stdout). The owner's modes and policies are in gateway-policy.json. A boundary path: no role writes it.",
+  "x-one-document": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "decision_event",
+    "default_timeout_s",
+    "action_kinds",
+    "evaluators"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "about": {
+      "type": "string"
+    },
+    "decision_event": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]*$",
+      "description": "The type of the one trusted event line written per decision (mode audit or enforce)."
+    },
+    "default_timeout_s": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 300,
+      "description": "Seconds an evaluator may take when its entry names no timeout_s; past it the decision is an evaluator failure."
+    },
+    "action_kinds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "summary",
+          "hooks",
+          "global_id",
+          "install_id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_.-]*$"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string",
+            "pattern": "^(/[^/]*)+$",
+            "description": "JSON pointer into the action's inputs: the action's target ({target} of an evaluator request; empty when the inputs have no string there)."
+          },
+          "hooks": {
+            "type": "array",
+            "description": "Where the kind is checked: each a function (in a file relative to the stack) that calls gateway.check with this kind (a literal, or a kind read from data). The lint fails a kind with none.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "file",
+                "function"
+              ],
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*\\.py$"
+                },
+                "function": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                }
+              }
+            }
+          },
+          "global_id": {
+            "$ref": "#/$defs/global_id"
+          },
+          "install_id": {
+            "$ref": "#/$defs/install_id"
+          }
+        }
+      }
+    },
+    "evaluators": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "argv",
+          "request",
+          "verdict",
+          "reason",
+          "status",
+          "global_id",
+          "install_id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_.-]*$"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "subprocess"
+            ]
+          },
+          "argv": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "The command, never a shell string; {stack} is the stack folder."
+          },
+          "request": {
+            "description": "The JSON written to the evaluator's stdin: a template. A string that is exactly one placeholder becomes its value (typed); other {name} placeholders are filled as text. Names: kind, role, project, run, card, adapter, target, inputs (the action's inputs, unmasked), policies (the owner policies covering the kind: [{id, text}]), stack."
+          },
+          "verdict": {
+            "type": "string",
+            "pattern": "^(/[^/]*)+$",
+            "description": "JSON pointer to the decision in the answer: \"allow\" allows, \"deny\" denies, anything else is a bad answer."
+          },
+          "reason": {
+            "type": "string",
+            "pattern": "^(/[^/]*)+$",
+            "description": "JSON pointer to a reason text in the answer (absent: none given)."
+          },
+          "timeout_s": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 300
+          },
+          "status": {
+            "enum": [
+              "approved",
+              "off"
+            ],
+            "description": "Only an approved evaluator decides; naming one that is off refuses."
+          },
+          "global_id": {
+            "$ref": "#/$defs/global_id"
+          },
+          "install_id": {
+            "$ref": "#/$defs/install_id"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "global_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "install_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    }
+  }
+}

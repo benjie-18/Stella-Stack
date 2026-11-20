@@ -5,5 +5,8 @@
     "test": "bin/selftests.sh",
     "test:quick": "bin/selftests.sh --quick",
     "lint": "for f in bin/*.sh .devcontainer/*.sh; do bash -n \"$f\" || exit 1; done && jq empty opencode.json package.json .devcontainer/managed-settings.json .devcontainer/devcontainer.json"
+  },
+  "dependencies": {
+    "@cedar-policy/cedar-wasm": "4.14.0"
   }
 }

@@ -120,7 +120,8 @@
     "owner-settings:/OWNER_DISCORD_USER_ID",
     "settings",
     "channels",
-    "loopback-api"
+    "loopback-api",
+    "gateway-policy"
   ],
   "channel_kinds": {
     "discord": true,

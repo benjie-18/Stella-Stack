@@ -19,3 +19,6 @@ docs/spec/
 .env.*
 .claude/skills/agentic-test-audit/
 .claude/skills/break-ai-fix-loops/
+
+# npm packages (package.json / package-lock.json pin them; npm ci installs them): never committed
+node_modules/

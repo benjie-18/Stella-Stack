@@ -7473,6 +7473,19 @@
         "stuck"
       ],
       "why": "X1 item U: bin/loopback-api-double.py imports bin/agui_ui.py to serve the run-ui endpoint's body, so the loopback selftest can reach it"
+    },
+    {
+      "globs": [
+        "package-lock.json"
+      ],
+      "targets": [
+        "alert",
+        "container-start",
+        "firewall-probe",
+        "init-firewall",
+        "profile-hooks"
+      ],
+      "why": "X1 G1: from reach: these selftests can reach the npm lockfile (tracked since G1 pins @cedar-policy/cedar-wasm), as they reach package.json"
     }
   ]
 }

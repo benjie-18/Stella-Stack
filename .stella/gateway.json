@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "about": "Policy gateway stack data (X1 G1). Each action kind lists its hook sites; the sites are filled by X1 item G2 (until then `gateway.py lint` reports every kind whose hook does not call gateway.check yet). browser_action and vm_guest are registered by the phases that build them.",
+  "decision_event": "gateway_decision",
+  "default_timeout_s": 10,
+  "action_kinds": [
+    {
+      "id": "file_read",
+      "summary": "Read a file (an agent-runtime read tool)",
+      "target": "/path",
+      "hooks": [
+        {
+          "file": "bin/agent_runtime.py",
+          "function": "gate_tool"
+        }
+      ],
+      "global_id": "b75bb0d2-eda3-418c-9ffe-3be338403d0b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "file_write",
+      "summary": "Write or edit a file (an agent-runtime write or edit tool)",
+      "target": "/path",
+      "hooks": [
+        {
+          "file": "bin/agent_runtime.py",
+          "function": "gate_tool"
+        }
+      ],
+      "global_id": "306ec062-82ec-4149-b2bb-fcb6ed0fd843",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "shell",
+      "summary": "Run a shell command (an agent-runtime shell tool, through the gated executor)",
+      "target": "/command",
+      "hooks": [
+        {
+          "file": "bin/agent_runtime.py",
+          "function": "gate_tool"
+        }
+      ],
+      "global_id": "1cac75a9-2b37-4263-9e61-9f77e37192de",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "tool_call",
+      "summary": "Call a tool Stella offered an agent runtime",
+      "target": "/tool",
+      "hooks": [
+        {
+          "file": "bin/agent_runtime.py",
+          "function": "gate_tool"
+        }
+      ],
+      "global_id": "c6b9cb34-8a51-46be-a79c-c71f8caf914c",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "mcp_call",
+      "summary": "A capability tool call through the capabilities MCP server",
+      "target": "/tool",
+      "hooks": [
+        {
+          "file": "bin/capabilities_mcp.py",
+          "function": "tool_call"
+        }
+      ],
+      "global_id": "b55ea9d9-12d3-4716-8786-0affee24bbcd",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "network_request",
+      "summary": "A model call the model proxy forwards upstream",
+      "target": "/url",
+      "hooks": [
+        {
+          "file": "bin/model_proxy.py",
+          "function": "forward"
+        }
+      ],
+      "global_id": "14bf39f0-2045-4e06-b9f4-fbe4f625b0be",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "broker_call",
+      "summary": "A credential read through the broker (credentials.get)",
+      "target": "/name",
+      "hooks": [
+        {
+          "file": "bin/credentials.py",
+          "function": "get"
+        }
+      ],
+      "global_id": "39222b04-109b-4792-b6a7-0d772181d3fc",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "host_session",
+      "summary": "A host-access decision (host session action)",
+      "target": "/action",
+      "hooks": [
+        {
+          "file": "bin/host_access.py",
+          "function": "decide"
+        }
+      ],
+      "global_id": "26955e6d-ceed-438d-9fd0-d73ac20d0057",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    }
+  ],
+  "evaluators": [
+    {
+      "id": "cedar",
+      "summary": "Cedar (@cedar-policy/cedar-wasm, pinned in package.json) through bin/cedar_eval.mjs: principal = the role, action = the kind, resource = the input's target, context = the inputs",
+      "kind": "subprocess",
+      "argv": [
+        "node",
+        "{stack}/bin/cedar_eval.mjs"
+      ],
+      "request": {
+        "principal": {
+          "type": "Stella::Role",
+          "id": "{role}"
+        },
+        "action": {
+          "type": "Stella::Action",
+          "id": "{kind}"
+        },
+        "resource": {
+          "type": "Stella::Target",
+          "id": "{target}"
+        },
+        "context": "{inputs}",
+        "policies": "{policies}"
+      },
+      "verdict": "/decision",
+      "reason": "/reasons/0",
+      "timeout_s": 10,
+      "status": "approved",
+      "global_id": "5784e2de-acc5-4f0a-8877-f2698f098a49",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    }
+  ]
+}

@@ -3033,6 +3033,60 @@
       },
       "global_id": "998f4ee9-71b8-40f6-b167-66bc646c3863",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "gateway",
+      "kind": "command",
+      "summary": "The policy gateway (opt-in strict mode): decide one action against the owner policies (off, audit or enforce, global or per project) through the evaluator named in data (Cedar by default), writing the decision to the trusted log before the action runs; check the gateway data and the owner policy file; lint that every action kind has its gateway hook",
+      "keywords": [
+        "policy",
+        "gateway",
+        "decision",
+        "enforce",
+        "audit",
+        "cedar",
+        "evaluator",
+        "lint",
+        "hook"
+      ],
+      "inputs": "check|lint [--json]; decide --kind K --inputs JSON [--project P] [--role R] [--run X] [--card C] [--adapter A] [--json]",
+      "outputs": "decide: JSON {verdict, mode, code, reason, policy_version}, exit 0 may run, 1 refused (STL-GRD-730..739), STL-CFG-312 in a worker environment; check: STL-GRD-741; lint: STL-GRD-740 naming each kind",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/gateway.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "145e9543-dd89-4e45-8dcd-f6ba7e89a242",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "cedar-eval",
+      "kind": "command",
+      "summary": "The Cedar evaluator runner of the policy gateway: one authorization request on stdin (principal, action, resource, context, policies), the Cedar decision on stdout; run only by bin/gateway.py through the cedar evaluator entry of the gateway data",
+      "keywords": [
+        "cedar",
+        "policy",
+        "evaluator",
+        "gateway",
+        "authorization"
+      ],
+      "inputs": "stdin JSON {principal, action, resource: {type, id}, context, policies: [{id, text}]}",
+      "outputs": "stdout JSON {decision: allow|deny, reasons, errors}; decision null and a non-zero status when Cedar cannot judge the request",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/cedar_eval.mjs",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "55fa9689-4c7e-434f-96ce-ea23a2cf4516",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }
