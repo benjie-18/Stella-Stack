@@ -2667,6 +2667,34 @@
       },
       "global_id": "d4614afb-5252-462b-b3dd-860818087f66",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "qa-schedule",
+      "kind": "command",
+      "summary": "The scheduled full-suite run of the QA loop (host only, from cron): when full_suite.interval_s has passed since the repo's last trusted qa.full-run line, runs the test map's runner on the repo's head in a disposable copy under qa_copies, boxed (no network, only the copy writable, killed at tests.timeout_s); on a failure bisects the failing tests over the done hashes since the last green run and writes qa.reopened for the culprit card only; one trusted qa.full-run line per run",
+      "keywords": [
+        "qa",
+        "full suite",
+        "schedule",
+        "cron",
+        "bisect",
+        "bisection",
+        "reopen",
+        "regression"
+      ],
+      "inputs": "tick --repo PATH [--now T] (T epoch seconds or ISO-8601 UTC; default the clock)",
+      "outputs": "JSON {ran, repo, ...}: not due {due}; a run {head, result, failing, last_green, culprit, reopened}; exit 1 with a catalog code (STL-QA-210..214, STL-QA-183 box, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/qa_schedule.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "b61ae89d-3e49-4d7d-89a2-a72aaaca2588",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }
