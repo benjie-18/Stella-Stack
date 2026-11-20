@@ -3235,6 +3235,18 @@
       "resolvable": false
     },
     {
+      "code": "STL-QA-186",
+      "area": "QA",
+      "severity": "warning",
+      "title": "frozen QA copy changed",
+      "message": "A QA step was refused before it ran: {problem}. A round is judged only on the exact files frozen for it.",
+      "action": "find and stop what wrote into the QA copies folder (index key qa_copies) after the freeze; this copy is not used again, so the card's next round needs a new freeze. See STL-QA-186 in docs/alert-codes.md.",
+      "cause": "The files of the round's copy no longer make the tree recorded when the round was frozen (something wrote into the copy after the freeze), or git could not hash them.",
+      "check": "`python3 -I bin/qa_loop.py status --card <card> --json` (copy and tree); `git -C <copy> status`.",
+      "related": "Q1 item C1; bin/qa_tests.py, bin/qa_findings.py repro",
+      "resolvable": false
+    },
+    {
       "code": "STL-QA-210",
       "area": "QA",
       "severity": "warning",
@@ -3265,7 +3277,7 @@
       "title": "full suite red with no culprit card",
       "message": "The scheduled full-suite run is red and no done card could be reopened: {problem}. The run is recorded; no card was reopened.",
       "action": "read the failing tests named in the message, fix the head (or the runner) and let the next tick run. See STL-QA-212 in docs/alert-codes.md.",
-      "cause": "The suite failed without a FAIL line naming a test (a crash or the timeout kill), or the failing tests also fail on every done hash since the last green run (the cause is a commit no done card owns).",
+      "cause": "The suite failed without a FAIL line naming a test (a crash or the timeout kill), or no FAIL line names a test whose file the head has, or the failing tests also fail on every done hash since the last green run (the cause is a commit no done card owns).",
       "check": "`python3 -I bin/event_log.py tail --json` (the last qa.full-run line); run the runner of .stella/test-map.json on the head.",
       "related": "Q1 item C2; bin/qa_schedule.py, .stella/qa-loop.json full_suite",
       "resolvable": false

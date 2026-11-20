@@ -499,6 +499,8 @@ def main(argv):
             # no file name at all (an empty stdin, no argument) is a failed diff, not "nothing changed": the full suite
             sel = select(files, m) if files else {"full": True, "reason": ["no file name given"], "targets": sorted(m["always"])}
             q = quarantined() - set(m["always"])   # a flaky test sits out until its row expires; an always gate never does
+            changed = {os.path.normpath(f) for f in files}
+            q = {t for t in q if os.path.normpath(m["test_file"].replace("{name}", t)) not in changed}   # DG-9: a change of a test's own file runs it
             if not sel["full"] and q & set(sel["targets"]):
                 notes.append(f"quarantined as flaky, not selected: {', '.join(sorted(q & set(sel['targets'])))}")
                 sel["targets"] = sorted(set(sel["targets"]) - q)
