@@ -85,7 +85,7 @@ for f in .git/qa-flaky-n "$CNT"; do echo \$((n + 1)) >"\$f" 2>/dev/null; done
 echo "AssertionError: expected the call to pass"; exit 1
 SH
 G "$P" init -q -b main; G "$P" add -A; G "$P" commit -qm base; HB=$(G "$P" rev-parse HEAD)
-ok '(cd "$P" && bash tests/real.sh) && cp -r "$P" "$T/mut" && sed -i "s/==/!=/" "$T/mut/impl.py" && ! (cd "$T/mut" && bash tests/real.sh) && (cd "$P" && bash tests/importerr.sh >"$T/ie.out" 2>&1; grep -q FAILED "$T/ie.out" && grep -q ModuleNotFoundError "$T/ie.out")' \
+ok '(cd "$P" && bash tests/real.sh) && cp -r "$P" "$T/mut" && rm -rf "$T/mut/__pycache__" && sed -i "s/==/!=/" "$T/mut/impl.py" && ! (cd "$T/mut" && bash tests/real.sh) && (cd "$P" && bash tests/importerr.sh >"$T/ie.out" 2>&1; grep -q FAILED "$T/ie.out" && grep -q ModuleNotFoundError "$T/ie.out")' \
   "precondition: the real test passes on impl.py and fails once == is flipped; the import-error test prints FAILED and ModuleNotFoundError"
 # mkcopy <card>: a standalone clone of the base hash under qa_copies/<card>/ (no hooks); prints its path
 mkcopy() { local d=$R/$QC/$1/base; mkdir -p "$(dirname "$d")"; git clone -q --no-local --no-checkout -c core.hooksPath=/dev/null "$P" "$d" && G "$d" checkout -q -b qa-base "$HB" && echo "$d"; }
