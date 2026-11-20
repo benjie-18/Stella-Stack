@@ -265,6 +265,7 @@ def judge_case(ctx, c, wt, outside, wt_base, rid):
             budget = run_policy.effective(run_policy.load(), ctx.role)["prefill_budget_tokens"]
         except run_policy.Stop as x:
             return False, rid, {"problem": x.problem, "code": x.code}
+        budget += int(ctx.e.get("prefill_baseline_tokens") or 0)   # the CLI's own fixed prompt and built-in tools, per adapter (owner decision 2026-11-20)
         got = []
         if led:
             t = led[0].get("tokens") or {}

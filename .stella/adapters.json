@@ -818,10 +818,12 @@
         "compaction (--autocompact) and subagents (--agents) are from --help; the other supports flags are not checked",
         "run policy (item X2): the log filter hook is a second entry in the policy hook's list that rewrites a shell call's command through updatedInput of a PreToolUse hook (hooks guide shape; not run here, and whether a hook that gives updatedInput with no permissionDecision keeps the permission rules is unverified); compaction is unverified because `claude --autocompact` takes a token window, not the policy's percentage, and no settings key for a percentage was verified; subagent is true (`claude --agents`) but no settings template applies explore_in_subagent yet, so it is only listed as supported; deferred_tools, clear_tool_results and working_notes have no verified setting",
         "RT3-07 adapter half: --setting-sources user (from claude --help 2.1.328) leaves out the project and local settings a worktree could plant; the generated --settings file still applies; not run live",
-        "stream (RT3-04, V2-06): usage is read from every assistant message (input plus cache creation and cache read tokens, counted once per message id), tool results are matched to their tool_use by id; written from the stream-json message format, not captured from a real run"
+        "stream (RT3-04, V2-06): usage is read from every assistant message (input plus cache creation and cache read tokens, counted once per message id), tool results are matched to their tool_use by id; written from the stream-json message format, not captured from a real run",
+        "prefill_baseline_tokens 20000: the CLI's own system prompt and built-in tool definitions, measured about 20000 of 23394 first-call input tokens on 2.1.329 (live run 2026-11-20); an owner setting"
       ],
       "global_id": "5444b0a4-6d63-40d6-8631-e27d626a4abd",
-      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
+      "prefill_baseline_tokens": 20000
     },
     {
       "id": "codex",

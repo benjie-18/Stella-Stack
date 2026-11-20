@@ -635,6 +635,11 @@
           "unboxed": {
             "type": "boolean",
             "description": "Item X2 (DC-02): true only for an adapter that may run outside the OS box (the fake and test adapters). Absent or false: a run needs a boxed profile of the role for this adapter, else it is refused."
+          },
+          "prefill_baseline_tokens": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Tokens of the CLI's own fixed system prompt and built-in tool definitions; conformance allows the role's prefill budget plus this (owner decision 2026-11-20). Absent: 0."
           }
         },
         "required": [
