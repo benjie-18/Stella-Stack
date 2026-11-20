@@ -2725,6 +2725,32 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
+      "id": "qa-stub-role",
+      "kind": "tool",
+      "summary": "The stub QA role double (features qa-stub-roles, due D1): one slot of a card's round, started only by bin/qa_roles.py run; reads its fixture under the round's evidence folder, registers evidence, submits findings and its verdict through bin/qa_findings.py. Host only; a test double, never a real reviewer",
+      "keywords": [
+        "qa",
+        "stub",
+        "double",
+        "slot",
+        "role",
+        "D1"
+      ],
+      "inputs": "argv from bin/qa_roles.py: --card C --round N --role R --slot K",
+      "outputs": "trusted lines through qa_findings.py; exit non-zero on a failure (qa_roles.py reports STL-QA-231)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/qa_stub_role.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "d3288f84-ac23-440a-9988-054595c337d6",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
       "id": "qa-schedule",
       "kind": "command",
       "summary": "The scheduled full-suite run of the QA loop (host only, from cron): when full_suite.interval_s has passed since the repo's last trusted qa.full-run line, runs the test map's runner on the repo's head in a disposable copy under qa_copies, boxed (no network, only the copy writable, killed at tests.timeout_s); on a failure bisects the failing tests over the done hashes since the last green run and writes qa.reopened for the culprit card only; one trusted qa.full-run line per run",

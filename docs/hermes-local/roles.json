@@ -55,7 +55,8 @@
     "bin/qa_findings.py",
     "bin/qa_tests.py",
     "bin/qa_schedule.py",
-    "bin/qa_roles.py"
+    "bin/qa_roles.py",
+    "bin/qa_stub_role.py"
   ],
   "owner_commands_by_name": [
     "bin/merge-card.sh"
