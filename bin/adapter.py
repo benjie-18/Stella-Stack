@@ -50,6 +50,7 @@ C = {"data": "STL-GRD-640", "stub": "STL-GRD-641", "binary": "STL-GRD-642", "ver
      "link": "STL-GRD-645", "terms": "STL-GRD-646", "conformance": "STL-GRD-647", "scratch": "STL-GRD-648", "box": "STL-GRD-649", 
      "prepare": "STL-GRD-650", "run": "STL-GRD-651", "spawn": "STL-GRD-652", "worktree": "STL-GRD-653", "stop": "STL-GRD-654"}   # literal: the alert lint finds each sender by its code
 ROW, RUNS, RECORDS, SCRATCH = "adapters", "adapter_runs", "conformance_records", "conformance_scratch"
+AGENT = "agent-runtime"   # the adapter kind of X1 item A (bin/agent_runtime.py); an entry with no kind is a coding CLI
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
 VERSION = re.compile(r"\d+(?:\.\d+)+[0-9A-Za-z.+-]*")
 EVENTS, LOG, CFG = "events.jsonl", "run.log", "cfg"
@@ -185,10 +186,15 @@ def digests(aid, role):
         t = run_policy.load()
         rp = {**{k: v for k, v in t.items() if k != "roles"}, "roles": {role: t["roles"].get(role)}}
         import roles
-        top = {k: v for k, v in row_doc(ROW).items() if k != "entries"}   # env_keep, run_env, caps: what every run of every adapter gets (RTF-03)
-        return {"adapter": canon(entry(aid)), "policy": canon(policy.render(aid)), "run_policy": canon(rp),
-                "stuck": canon(row_doc("stuck")), "conformance": canon(row_doc("conformance")),
-                "adapters": canon(top), "sandbox": canon(roles.sandbox(roles.load()))}
+        e = entry(aid)
+        top = {k: v for k, v in row_doc(ROW).items() if k != "entries" and (k != "agent_tools" or e.get("kind") == AGENT)}   # env_keep, run_env, caps: what every run of every adapter gets (RTF-03); agent_tools only an agent runtime's
+        out = {"adapter": canon(e), "policy": canon(policy.render(aid)), "run_policy": canon(rp),
+               "stuck": canon(row_doc("stuck")), "conformance": canon(row_doc("conformance")),
+               "adapters": canon(top), "sandbox": canon(roles.sandbox(roles.load()))}
+        if e.get("kind") == AGENT:   # X1-DC-03: a change of its protocol entry voids the record
+            import agent_runtime
+            out["protocol"] = canon(agent_runtime.protocol(e))
+        return out
     except Stop:
         raise
     except Exception as e:
@@ -568,7 +574,7 @@ def cmd_start(a):
     if e.get("status") != "active":
         raise Stop(C["stub"], f"adapter {e['id']} is a stub (status {e.get('status')!r}): it cannot start a run")
     st = e.get("start") or {}
-    if not (st.get("argv") and e.get("stream") and e.get("conn_types")):
+    if not (st.get("argv") and (e.get("stream") or e.get("kind") == AGENT) and e.get("conn_types")):
         raise Stop(C["prepare"], f"adapter {e['id']} has no start argv, stream or conn_types")
     ver, tested = version(e)
     wt = os.path.realpath(a.worktree)
@@ -619,29 +625,31 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
     if probs or not e.get("policy"):
         raise Stop(C["prepare"], f"the policy of adapter {e['id']} cannot be generated: {probs[0][1][:140] if probs else 'no policy part'}")
     tr = json.loads(tool([os.path.join(BIN, "run_policy.py"), "translate", "--adapter", e["id"], "--role", a.role], C["prepare"], "translating the run policy"))
-    rend = policy.render(e["id"], wt, stack=sd.ROOT)   # the run's own stack: its hook and its paths exist in the box (live finding I)
-    hk = e["policy"].get("hook")
-    if tr["hook"] and hk:   # the log filter joins the policy hook's list in the generated config (the entry's own hook template and pointer)
-        rend[hk["pointer"]].append(policy.fill(hk["template"], tr["hook"]))
-    settings = policy.merged({}, rend)
     v = {"base_url": proxy or "", "model": model, "token_env": e.get("token_env") or "", "token": token, "worktree": wt}
-    if ctype == "api" and st.get("settings"):
-        merge(settings, policy.fill(st["settings"], v))
-    mc = e.get("mcp") or {}
     url = endpoint("capabilities_mcp_state")
-    gw = sd.load(next(r["path"] for r in sd.rows() if r["id"] == "run-gateway"))["mcp"]
-    mcp_doc = policy.fill(mc["template"], {**v, "url": url, "auth_header": gw["auth_header"], "auth_value": f"{gw['auth_scheme']} {token}"}) \
-        if url and mc.get("template") else {}
-    sfile = os.path.join(cfg, os.path.basename(e["policy"]["target"]["file"]))
-    if mc.get("into") == "settings":
-        merge(settings, mcp_doc)
-        mfile = sfile
-    else:
-        mfile = write_json(os.path.join(cfg, "mcp.json"), mcp_doc)
-    merge(settings, tr["settings"])   # core tools only, compaction, clearing, the log filter hook: each where the entry says the CLI supports it
-    merge(settings, e.get("run_settings") or {})   # the entry's fixed settings for every adapter run, e.g. its own skill loader off (skills come through capability load; F3-CVER-01)
+    settings, sfile, mfile = {}, "", ""
+    if e.get("kind") != AGENT:   # an agent runtime has no CLI config: its tool calls are gated and run engine side (bin/agent_runtime.py)
+        rend = policy.render(e["id"], wt, stack=sd.ROOT)   # the run's own stack: its hook and its paths exist in the box (live finding I)
+        hk = e["policy"].get("hook")
+        if tr["hook"] and hk:   # the log filter joins the policy hook's list in the generated config (the entry's own hook template and pointer)
+            rend[hk["pointer"]].append(policy.fill(hk["template"], tr["hook"]))
+        settings = policy.merged({}, rend)
+        if ctype == "api" and st.get("settings"):
+            merge(settings, policy.fill(st["settings"], v))
+        mc = e.get("mcp") or {}
+        gw = sd.load(next(r["path"] for r in sd.rows() if r["id"] == "run-gateway"))["mcp"]
+        mcp_doc = policy.fill(mc["template"], {**v, "url": url, "auth_header": gw["auth_header"], "auth_value": f"{gw['auth_scheme']} {token}"}) \
+            if url and mc.get("template") else {}
+        sfile = os.path.join(cfg, os.path.basename(e["policy"]["target"]["file"]))
+        if mc.get("into") == "settings":
+            merge(settings, mcp_doc)
+            mfile = sfile
+        else:
+            mfile = write_json(os.path.join(cfg, "mcp.json"), mcp_doc)
+        merge(settings, tr["settings"])   # core tools only, compaction, clearing, the log filter hook: each where the entry says the CLI supports it
+        merge(settings, e.get("run_settings") or {})   # the entry's fixed settings for every adapter run, e.g. its own skill loader off (skills come through capability load; F3-CVER-01)
+        write_json(sfile, settings)
     write_json(os.path.join(cfg, "run-policy.json"), tr)
-    write_json(sfile, settings)
     attached = None
     if a.card_file:
         try:
@@ -683,6 +691,7 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
            "ended": None, "exit": None, "stopped": None, "notes": tr["notes"]["path"].replace("{card}", a.card or run),   # the notes file stays out of the progress digest (stuck.py)
            "run_policy": {"applied": tr["applied"], "unsupported": tr["unsupported"], "hook": bool(tr["hook"] and e["policy"].get("hook"))}, "global_id": str(uuid.uuid4()), "install_id": sd.install_id()}
     out = {"run": run, "adapter": e["id"], "version": ver, "tested": tested, "link": link, "conn_type": ctype, "background": not a.wait}
+    agent = {"pre": pre, "prompt": r["text"], "model": model, "core": tr["core_tools"]} if e.get("kind") == AGENT else None
     import ledger   # the run's lease: the link's slots, taken here and held by the CLI's process (as ledger.py hold does: it cannot run with a worker's env)
     try:
         fds = ledger.acquire(conn, model, f"adapter run {run}")
@@ -692,7 +701,7 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
     except ledger.Stop as r:
         raise Stop(r.code, r.problem) from None
     if a.wait:
-        rc = supervise(cmd, wt, env, rec, e, d, rx, fds)
+        rc = supervise(cmd, wt, env, rec, e, d, rx, fds, agent=agent)
         print(json.dumps({**out, "exit": rc}) if a.json else run)
         return 0
     r_, w_ = os.pipe()
@@ -703,7 +712,7 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
             nul = os.open(os.devnull, os.O_RDWR)
             for fd in (0, 1, 2):
                 os.dup2(nul, fd)
-            supervise(cmd, wt, env, rec, e, d, rx, fds, w_)
+            supervise(cmd, wt, env, rec, e, d, rx, fds, w_, agent=agent)
         except BaseException as x:   # the parent learns it, when the start was not reported yet (a closed pipe: it was)
             with contextlib.suppress(OSError):
                 os.write(w_, json.dumps({"code": C["spawn"], "problem": f"{type(x).__name__} in the supervisor of run {run}"}).encode())
@@ -749,7 +758,7 @@ def st_env(e):
     return [env.get("base_url_env"), env.get("token_env")]
 
 
-def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None):
+def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None, agent=None):
     run = rec["run"]
     try:
         p = subprocess.Popen(cmd, cwd=wt, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
@@ -773,16 +782,26 @@ def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None):
     # the stuck watcher (engine side, outside the CLI's process group so a stuck stop does not kill it); a card-less run gets no card block
     watch = subprocess.Popen([sys.executable, "-I", os.path.join(BIN, "stuck.py"), "watch", "--run", run, "--role", rec["role"]] + (["--card", rec["card"]] if rec["card"] else []),
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-    rc = None
+    rc = ax = None
     try:
-        for raw in p.stdout:
-            try:
-                s.line(raw)
-            except Exception as x:   # one bad line never ends the supervisor (RTF-01): the run is still ended, snapshotted and revoked
-                with contextlib.suppress(Exception):
-                    event("adapter.stream-error", run, rec["role"], adapter=rec["adapter"], card=rec["card"], error=type(x).__name__)
-        rc = p.wait()
+        if agent is not None:   # X1 item A: the run loop speaks the entry's protocol; the record's exit is its outcome (DC-05)
+            import agent_runtime
+            rc = agent_runtime.loop(p, s, rec, e, env, d, agent)
+        else:
+            for raw in p.stdout:
+                try:
+                    s.line(raw)
+                except Exception as x:   # one bad line never ends the supervisor (RTF-01): the run is still ended, snapshotted and revoked
+                    with contextlib.suppress(Exception):
+                        event("adapter.stream-error", run, rec["role"], adapter=rec["adapter"], card=rec["card"], error=type(x).__name__)
+            rc = p.wait()
     finally:
+        if agent is not None:   # an agent is a server that never ends by itself: its group ends after the loop; its own status is agent_exit
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                with contextlib.suppress(Exception):
+                    os.killpg(p.pid, sig)
+                    ax = p.wait(timeout=d.get("stop_grace_s", 10))
+                    break
         if rc is None:   # the loop itself failed: end the CLI's group so the run cannot outlive its supervisor
             with contextlib.suppress(Exception):
                 os.killpg(p.pid, signal.SIGKILL)
@@ -793,7 +812,7 @@ def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None):
         except Exception:
             final = None
         try:
-            update(run, ended=now(), exit=rc, final=final, masked=s.hits or {})
+            update(run, ended=now(), exit=rc, final=final, masked=s.hits or {}, **({"agent_exit": ax} if agent is not None else {}))
         finally:
             try:
                 tool([os.path.join(BIN, "run_token.py"), "revoke", "--run", run], C["stop"], "revoking the run token")

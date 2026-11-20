@@ -7162,7 +7162,12 @@
         ".stella/schemas/agent-protocols.schema.json"
       ],
       "targets": [
-        "agent-runtime"
+        "adapter",
+        "adapter-run",
+        "agent-runtime",
+        "conformance",
+        "false-close-guard",
+        "stuck"
       ],
       "why": "X1 item A (wave 1, tests first): the agent-runtime selftest starts runs of fake agent-runtime adapter entries (data) over bin/mock_agui_agent.py with the mock upstream and the model proxy, and checks the role run, the gates, the resolver, unoffered tools, messages and state, a second protocol, the canary and rulings X1-DC-01..05"
     },
@@ -7180,7 +7185,12 @@
         ".stella/schemas/approval-request.schema.json"
       ],
       "targets": [
-        "agui-ui"
+        "adapter",
+        "adapter-run",
+        "agui-ui",
+        "conformance",
+        "false-close-guard",
+        "stuck"
       ],
       "why": "X1 item U (wave 1, tests first): the agui-ui selftest ingests widgets through bin/agui_ui.py, reads them over the run-ui read endpoint of the loopback double, and checks approval claims, act, the canary and the allowlist"
     },
@@ -7203,6 +7213,30 @@
         "agent-runtime"
       ],
       "why": "X1 wave 1 tests (items A, U): selftests the reach lint says can reach these files"
+    },
+    {
+      "globs": [
+        "bin/agent_runtime.py",
+        "bin/agent_tool.py",
+        ".stella/agent-protocols.json"
+      ],
+      "targets": [
+        "adapter",
+        "adapter-run",
+        "conformance",
+        "false-close-guard",
+        "stuck"
+      ],
+      "why": "X1 item A: bin/adapter.py runs the agent-runtime loop (and its digests read the protocol entry), so every selftest that reaches adapter.py reaches these"
+    },
+    {
+      "globs": [
+        ".stella/agent-protocols.json"
+      ],
+      "targets": [
+        "profile-hooks"
+      ],
+      "why": "X1 item A: the role table lists the agent protocols file among its boundary_paths"
     },
     {
       "globs": [
@@ -7293,7 +7327,12 @@
         "bin/agui_ui.py"
       ],
       "targets": [
-        "loopback"
+        "adapter",
+        "adapter-run",
+        "conformance",
+        "false-close-guard",
+        "loopback",
+        "stuck"
       ],
       "why": "X1 item U: bin/loopback-api-double.py imports bin/agui_ui.py to serve the run-ui endpoint's body, so the loopback selftest can reach it"
     }

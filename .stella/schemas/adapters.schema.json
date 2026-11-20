@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Worker adapters",
-  "description": "One entry per coding CLI (F3): every CLI-specific name lives here. Item P: id, binary, token_env, model_flags, tools, policy. Item A: label, status, version_cmd, tested_versions, conn_types, protocols, start, cli_login, stream, supports, mcp, unverified and the top-level run_env, env_keep, output_cap, stop_grace_s. Item X2: run_policy templates.",
+  "description": "One entry per coding CLI (F3): every CLI-specific name lives here. Item P: id, binary, token_env, model_flags, tools, policy. Item A: label, status, version_cmd, tested_versions, conn_types, protocols, start, cli_login, stream, supports, mcp, unverified and the top-level run_env, env_keep, output_cap, stop_grace_s. Item X2: run_policy templates. X1 item A: kind (coding-cli, the default, or agent-runtime), protocol (an agent-runtime entry's .stella/agent-protocols.json id) and the top-level agent_tools (the one list of tools Stella offers an agent runtime); an agent-runtime entry's policy is {hook: {kinds}} with no target (bin/policy.py problems and bin/agent_runtime.py check judge the rest).",
   "x-one-document": true,
   "type": "object",
   "properties": {
@@ -332,11 +332,7 @@
                   }
                 },
                 "required": [
-                  "pointer",
-                  "form",
-                  "kinds",
-                  "template",
-                  "deny"
+                  "kinds"
                 ],
                 "additionalProperties": false
               },
@@ -348,11 +344,9 @@
                 }
               }
             },
-            "required": [
-              "target",
-              "shapes"
-            ],
-            "additionalProperties": false
+            "required": [],
+            "additionalProperties": false,
+            "description": "A coding CLI's policy part needs target and shapes (and a hook its pointer, form, template and deny); an agent-runtime entry's is {hook: {kinds}} and no target (bin/policy.py problems)."
           },
           "version_cmd": {
             "type": "array",
@@ -648,6 +642,18 @@
           "run_settings": {
             "type": "object",
             "description": "Settings merged into every adapter run's generated config (not the committed generated file), e.g. the CLI's own skill loader off so skills come only through capability load."
+          },
+          "kind": {
+            "enum": [
+              "coding-cli",
+              "agent-runtime"
+            ],
+            "description": "X1 item A: coding-cli (the default when absent) or agent-runtime (an agent of any framework spoken to through protocol; bin/agent_runtime.py)."
+          },
+          "protocol": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$",
+            "description": "X1 item A, agent-runtime only: the id of its .stella/agent-protocols.json entry."
           }
         },
         "required": [
@@ -663,6 +669,87 @@
       "type": "integer",
       "minimum": 1,
       "description": "Bytes the engine reads of one untracked file in an agent's worktree for the progress digest (V2-11); links are never followed."
+    },
+    "agent_tools": {
+      "type": "array",
+      "description": "X1 item A: the tools Stella offers an agent runtime. class is the F3 tool-map class the policy hook judges; executor is the engine-side executor (bin/agent_tool.py <executor>) and must match the class (read->read, write->write|edit, shell->shell, other->capability: DC-02); inputs are the pointers of the values the executor uses in a call's arguments; toolset: offered only to a role whose platform toolsets hold it; a capability row is offered only when the role's run policy core_tools name it, and runs bin/capabilities.py <capability> through the capability server.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "class": {
+            "enum": [
+              "read",
+              "write",
+              "shell",
+              "other"
+            ]
+          },
+          "executor": {
+            "enum": [
+              "read",
+              "write",
+              "edit",
+              "shell",
+              "capability"
+            ]
+          },
+          "gateway_kind": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "toolset": {
+            "type": "string",
+            "minLength": 1
+          },
+          "capability": {
+            "enum": [
+              "search",
+              "describe",
+              "load"
+            ]
+          },
+          "parameters": {
+            "type": "object",
+            "description": "The JSON Schema of the tool's arguments, as the agent sees it."
+          },
+          "inputs": {
+            "type": "object",
+            "propertyNames": {
+              "enum": [
+                "path",
+                "text",
+                "old",
+                "new",
+                "command",
+                "query",
+                "id"
+              ]
+            },
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^/"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "class",
+          "executor",
+          "parameters",
+          "inputs"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [

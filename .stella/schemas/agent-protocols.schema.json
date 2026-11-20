@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent-runtime protocols",
+  "description": "X1 item A (design section A, ruling X1-DC-06): the protocols an agent-runtime adapter speaks, as data. bin/agent_runtime.py reads them; a new protocol is a new entry. Pointers are RFC 6901. The host is never in this file: the agent binds a loopback port itself and reports it on its ready line.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "about": {"type": "string"},
+    "excerpt_chars": {"type": "integer", "minimum": 1, "maximum": 4000, "description": "The length of the redacted excerpt a trusted adapter.agent-message or adapter.agent-state line carries."},
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+          "label": {"type": "string", "minLength": 1},
+          "transport": {"enum": ["http-sse"]},
+          "ready": {
+            "type": "object",
+            "properties": {"pointer": {"$ref": "#/$defs/pointer"}},
+            "required": ["pointer"],
+            "additionalProperties": false
+          },
+          "request": {
+            "type": "object",
+            "properties": {
+              "method": {"enum": ["POST", "PUT"]},
+              "path": {"type": "string", "pattern": "^/"},
+              "headers": {"type": "object", "additionalProperties": {"type": "string"}},
+              "body": {"type": "object", "description": "The run input template: {thread}, {run}, {messages}, {tools}, {state}, {model}."}
+            },
+            "required": ["method", "path", "body"],
+            "additionalProperties": false
+          },
+          "messages": {
+            "type": "object",
+            "properties": {
+              "user": {"type": "object", "description": "{id}, {text}"},
+              "assistant_tool_calls": {"type": "object", "description": "{id}, {tool_id}, {tool_name}, {args} (the arguments as JSON text)"},
+              "tool": {"type": "object", "description": "{id}, {tool_id}, {result} (the executor's answer as JSON text)"}
+            },
+            "required": ["user", "assistant_tool_calls", "tool"],
+            "additionalProperties": false
+          },
+          "tool": {"type": "object", "description": "One offered tool: {name}, {description}, {parameters} (an agent_tools row)."},
+          "events": {
+            "type": "object",
+            "properties": {
+              "type": {"$ref": "#/$defs/pointer"},
+              "map": {
+                "type": "object",
+                "additionalProperties": {"enum": ["lifecycle_start", "lifecycle_end", "error", "message_start", "message_delta", "message_end", "tool_start", "tool_args", "tool_end", "tool_result", "state_snapshot", "state_delta", "messages_snapshot", "custom", "step"]}
+              },
+              "pointers": {
+                "type": "object",
+                "propertyNames": {"enum": ["message_id", "delta", "tool_id", "tool_name", "args_delta", "result", "state", "delta_ops", "messages", "custom_name", "custom_value", "error"]},
+                "additionalProperties": {"$ref": "#/$defs/pointer"}
+              }
+            },
+            "required": ["type", "map", "pointers"],
+            "additionalProperties": false
+          },
+          "ui_custom_names": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+          "max_turns": {"type": "integer", "minimum": 1, "maximum": 1000},
+          "ready_timeout_s": {"type": "integer", "minimum": 1, "maximum": 600},
+          "turn_timeout_s": {"type": "integer", "minimum": 1, "maximum": 3600},
+          "global_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+          "install_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+        },
+        "required": ["id", "transport", "ready", "request", "messages", "tool", "events", "max_turns", "ready_timeout_s", "turn_timeout_s", "global_id", "install_id"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["schema_version", "excerpt_chars", "entries"],
+  "additionalProperties": false,
+  "$defs": {
+    "pointer": {"type": "string", "pattern": "^(/.*)?$"}
+  }
+}

@@ -160,8 +160,8 @@ ARC() { timeout 60 python3 -I "$R/bin/agent_runtime.py" "$@"; }
 range='STL-GRD-7(0[0-9]|1[0-9])'
 
 run c0 ARC check
-ok '[ -n "$PORT" ] && [ -n "$PPORT" ] && [ -n "$VER" ] && [ -n "$TE" ] && [ -n "$AR" ] && [ -n "$CRF" ] && [ -n "$PROTO" ] && [ -n "$TW" ] && [ -n "$TR" ] && [ -n "$TS" ] && [ -n "$PW" ]
-    && jq -e ".entries[] | select(.id == \"qa-agui\" and .kind == \"agent-runtime\")" "$AF" && python3 -I "$R/bin/stella_data.py" check && [ $RC = 0 ]' \
+ok '[ -n "$PORT" ] && [ -n "$PPORT" ] && [ -n "$VER" ] && [ -n "$TE" ] && [ -n "$AR" ] && [ -n "$CRF" ] && [ -n "$PROTO" ] && [ -n "$TW" ] && [ -n "$TR" ] && [ -n "$TS" ] && [ -n "$PW" ] &&
+    jq -e ".entries[] | select(.id == \"qa-agui\" and .kind == \"agent-runtime\")" "$AF" && python3 -I "$R/bin/stella_data.py" check && [ $RC = 0 ]' \
   "precondition: mock upstream (port ${PORT:-none}), proxy (port ${PPORT:-none}) and fake agent (version ${VER:-none}) run; agent_tools offers a read, write and shell executor (write ${TW:-none}, read ${TR:-none}, shell ${TS:-none}); protocol ${PROTO:-none}; the scratch data (two agent-runtime entries, a second protocol) passes stella_data.py check and agent_runtime.py check"
 plant qa-agui 2>>"$T/o/last"
 
@@ -227,8 +227,8 @@ ok '[ $d = 0 ] && [ "$(calls)" = $((k0 + 1)) ]' "AC1-resolver the agent's model 
 ok '[ -s "$UL" ] && jq -e "select(.session == \"qa-run-r1\" and .model == \"qa-m1\" and .connection == \"qa-api\")" "$UL" | grep -q .' "AC1-resolver a usage ledger line names the run (session) and the resolver link's model (qa-api/qa-m1)"
 ok 'grep -qE "^QA_AGUI_BASE_URL=https?://(127\.0\.0\.1|localhost|\[::1\]):$PPORT(/|$)" "$T/o/r1-env.txt" && grep -q "^$TE=." "$T/o/r1-env.txt"' "AC1-resolver the agent env holds the proxy URL (port $PPORT) in base_url_env and the run token in $TE"
 ALLOW=$(jq -r --arg te "$TE" '[.env_keep[], (.run_env | .[]), "QA_AGUI_BASE_URL", $te, "PWD", "OLDPWD", "SHLVL", "_"] | .[]' "$AF" 2>/dev/null; jq -r '.worker_markers[], (.worker_pins // {} | .[])' "$RJ")
-ok '[ -s "$T/o/r1-env.txt" ] && ! grep -qF -- "$KEY" "$T/o/r1-env.txt" && ! grep -q "^$KN=" "$T/o/r1-env.txt" && ! grep -qF ":$PORT" "$T/o/r1-env.txt"
-    && [ -z "$(grep -oE "^[A-Za-z_][A-Za-z0-9_]*=" "$T/o/r1-env.txt" | tr -d = | grep -vxF -f <(printf "%s\n" $ALLOW))" ]' \
+ok '[ -s "$T/o/r1-env.txt" ] && ! grep -qF -- "$KEY" "$T/o/r1-env.txt" && ! grep -q "^$KN=" "$T/o/r1-env.txt" && ! grep -qF ":$PORT" "$T/o/r1-env.txt" &&
+    [ -z "$(grep -oE "^[A-Za-z_][A-Za-z0-9_]*=" "$T/o/r1-env.txt" | tr -d = | grep -vxF -f <(printf "%s\n" $ALLOW))" ]' \
   "AC1-resolver no key, no upstream address and no variable outside env_keep, the worker markers, run_env and the entry's two names in the agent env"
 
 # ---- T-unoffered-tool: a call to a tool that was not offered is refused and stops the run with a code ----
@@ -283,5 +283,5 @@ D2=$(digest_of qa-agui)
 ok '[ -n "$D1" ] && [ -n "$D2" ] && [ "$D1" != "$D2" ]' "DC-03 adapter.digests of the agent-runtime entry change when its agent-protocols.json entry changes"
 WC=$T/wt-card-d3; mkwt "$WC" >/dev/null 2>&1
 go d3 qa-agui qa-run-d3 "$WC" '[]' --card qa-card-d3
-ok '[ $RC = 1 ] && out d3 | grep -q STL-GRD-647 && sleep 2 && [ ! -e "$WC/qamark-qa-run-d3.txt" ]' "DC-03 ... so start --card is refused STL-GRD-647 (the record passed on other data) and no agent is spawned"
+ok '[ $RC = 1 ] && out d3 | grep -c STL-GRD-647 >/dev/null && sleep 2 && [ ! -e "$WC/qamark-qa-run-d3.txt" ]' "DC-03 ... so start --card is refused STL-GRD-647 (the record passed on other data) and no agent is spawned"
 finish

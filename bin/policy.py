@@ -125,10 +125,10 @@ def render(aid, worktree=None, p=None, table=None, ads=None, stack=None):
                     for t in temps:
                         put(s["pointer"], s["form"], fill(t, {**base, **v}), s.get("value"))
     h = pol.get("hook")
-    if h:
+    if h and "template" in h:   # an agent-runtime hook is kinds only: its calls are judged engine side, nothing is rendered
         matcher = "|".join(n for n, t in ad["tools"].items() if t["class"] != "other")
         out.setdefault(h["pointer"], []).append(fill(h["template"], {"matcher": matcher, "command": hook_command(ad, wt, stack)}))
-    for ptr in pol["target"]["owned_pointers"]:
+    for ptr in (pol.get("target") or {}).get("owned_pointers", []):
         out.setdefault(ptr, {} if any(s["pointer"] == ptr and s["form"] == "map" for ss in pol.get("shapes", {}).values() for s in ss) else [])
     return out
 
@@ -159,12 +159,71 @@ def merged(doc, rendered):
     return doc
 
 
+# --- X1 item A: the agent-runtime kind. Its tool calls are judged engine side by bin/agent_runtime.py (the same judge() below, then
+# the commit and dispatcher words); its policy part is {hook: {kinds}} and a kind counts as covered only when those gates enforce it.
+AGENT, AGENT_DATA = "agent-runtime", "STL-GRD-700"
+AGENT_EXEC = {"read": ("read",), "write": ("write", "edit"), "shell": ("shell",), "other": ("capability",)}   # DC-02: tool-map class -> executors
+AGENT_NEEDS = {"read": ("path",), "write": ("path", "text"), "edit": ("path", "old", "new"), "shell": ("command",)}   # the inputs each executor reads
+AGENT_KINDS = ("write_boundary", "protected_read", "secret_read", "commit_rule", "dispatcher_only")   # what the agent-runtime gates enforce (DC-04)
+# model_limits is not among them: an agent runtime has no model flag; its model is the run token's link at the model proxy
+
+
+def agent_tool_problems(d):
+    """[(code, problem)] of the agent_tools rows: unique names, executor matching class, the inputs the executor reads."""
+    out, seen = [], set()
+    for t in d.get("agent_tools", []):
+        n = t["name"]
+        if n in seen:
+            out.append((AGENT_DATA, f"agent tool {n} is listed twice"))
+        seen.add(n)
+        if t["executor"] not in AGENT_EXEC[t["class"]]:
+            out.append((AGENT_DATA, f"agent tool {n}: its executor {t['executor']} does not match its class {t['class']} (DC-02)"))
+        need = AGENT_NEEDS.get(t["executor"]) or (("query",) if t.get("capability") == "search" else ("id",))
+        if t["executor"] == "capability" and not t.get("capability"):
+            out.append((AGENT_DATA, f"agent tool {n}: a capability executor needs its capability operation"))
+        miss = [k for k in need if k not in t["inputs"]]
+        if miss:
+            out.append((AGENT_DATA, f"agent tool {n}: its inputs lack {', '.join(miss)}"))
+    return out
+
+
+def agent_problems(e, d):
+    """[(code, problem)] of one agent-runtime entry (X1-DC-02..04): connection type, start env, policy part, and a tool map that judges every agent
+    tool on the same field the executor uses (else the hook and the executor would read different paths)."""
+    out, aid = [], e["id"]
+    if e.get("conn_types") != ["api"]:
+        out.append((AGENT_DATA, f"adapter {aid}: an agent runtime runs on an api link only (the model proxy), conn_types must be [api]"))
+    env = (e.get("start") or {}).get("env") or {}
+    if not (env.get("base_url_env") and env.get("token_env")):
+        out.append((AGENT_DATA, f"adapter {aid}: start.env must name base_url_env and token_env"))
+    pol = e.get("policy") or {}
+    hook = pol.get("hook") or {}
+    if set(pol) - {"hook", "unverified"} or set(hook) != {"kinds"}:
+        out.append((AGENT_DATA, f"adapter {aid}: an agent runtime's policy is {{hook: {{kinds}}}} and no target, shapes or CLI hook template (DC-03)"))
+    kinds = set(hook.get("kinds", []))
+    for k in sorted(kinds - set(AGENT_KINDS)):
+        out.append((AGENT_DATA, f"adapter {aid}: rule kind {k} is listed but the agent-runtime gates do not enforce it"))
+    for k in AGENT_KINDS:
+        if k not in kinds:
+            out.append((AGENT_DATA, f"adapter {aid}: rule kind {k} is not covered (its hook kinds must list it)"))
+    tools = e.get("tools") or {}
+    for t in d.get("agent_tools", []):
+        m = tools.get(t["name"])
+        ptr = {"read": "path", "write": "path", "shell": "command"}.get(t["class"])
+        if not isinstance(m, dict) or m.get("class") != t["class"]:
+            out.append((AGENT_DATA, f"adapter {aid}: its tool map has no {t['name']} of class {t['class']}"))
+        elif ptr and m.get(ptr) != t["inputs"].get(ptr):
+            out.append((AGENT_DATA, f"adapter {aid}: its tool map judges {t['name']} on {m.get(ptr)}, the executor uses {t['inputs'].get(ptr)}"))
+    return out
+
+
 def problems():
     """[(code, problem)] of the policy data and every adapter's policy part."""
     out = []
     try:
         p, table, ads = roles.policy(), roles.load(), roles.adapters()
-    except roles.RolesError as e:
+        adoc = roles._data("adapters")[0]
+    except (roles.RolesError, OSError, ValueError, StopIteration) as e:
         return [("STL-GRD-610", str(e))]
     for rel, schema in ((".stella/policy.json", "policy"), (".stella/adapters.json", "adapters")):
         try:
@@ -188,7 +247,13 @@ def problems():
             continue
         if tokens is not None and ad.get("token_env") not in tokens:
             out.append(("STL-GRD-612", f"adapter {aid}: its token_env {ad.get('token_env')!r} is not an owner-auth worker_signals.token_env name, so a CLI run would not count as a worker"))
+        if ad.get("kind") == AGENT:   # X1-DC-03/04: no CLI config; a rule kind is covered only when the agent-runtime gates enforce it
+            out += [x for x in agent_tool_problems(adoc) if x not in out] + agent_problems(ad, adoc)
+            continue
         hook = pol.get("hook") or {}
+        if not pol.get("target") or "shapes" not in pol or (hook and not {"pointer", "form", "template", "deny"} <= set(hook)):
+            out.append(("STL-GRD-611", f"adapter {aid}: a coding CLI's policy part needs target and shapes, and a hook its pointer, form, template and deny"))
+            continue
         covered = set(hook.get("kinds", []))
         for kind, shapes in pol.get("shapes", {}).items():   # a shape covers its kind only when it renders something for this adapter (V1-11)
             try:

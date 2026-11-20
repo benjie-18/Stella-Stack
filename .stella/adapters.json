@@ -27,6 +27,170 @@
   "output_cap": 4000,
   "stop_grace_s": 10,
   "read_cap_bytes": 1048576,
+  "agent_tools": [
+    {
+      "name": "read",
+      "description": "Read a file, or list a folder, inside the worktree.",
+      "class": "read",
+      "executor": "read",
+      "gateway_kind": "file_read",
+      "toolset": "file",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "The file or folder, relative to the worktree."
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "inputs": {
+        "path": "/path"
+      }
+    },
+    {
+      "name": "write",
+      "description": "Write a whole file inside the worktree (its folders are made).",
+      "class": "write",
+      "executor": "write",
+      "gateway_kind": "file_write",
+      "toolset": "file",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "The file, relative to the worktree."
+          },
+          "content": {
+            "type": "string",
+            "description": "The whole new content."
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "inputs": {
+        "path": "/path",
+        "text": "/content"
+      }
+    },
+    {
+      "name": "edit",
+      "description": "Replace one exact occurrence of a text in a file inside the worktree.",
+      "class": "write",
+      "executor": "edit",
+      "gateway_kind": "file_write",
+      "toolset": "file",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "The file, relative to the worktree."
+          },
+          "old_string": {
+            "type": "string",
+            "description": "The text to replace; it must occur exactly once."
+          },
+          "new_string": {
+            "type": "string",
+            "description": "The replacement."
+          }
+        },
+        "required": [
+          "path",
+          "old_string",
+          "new_string"
+        ],
+        "additionalProperties": false
+      },
+      "inputs": {
+        "path": "/path",
+        "old": "/old_string",
+        "new": "/new_string"
+      }
+    },
+    {
+      "name": "shell",
+      "description": "Run a shell command in the worktree; its output (capped) is the result.",
+      "class": "shell",
+      "executor": "shell",
+      "gateway_kind": "shell",
+      "toolset": "terminal",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The command line."
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false
+      },
+      "inputs": {
+        "command": "/command"
+      }
+    },
+    {
+      "name": "capabilities.search",
+      "description": "Search the capabilities (skills, tools, MCP servers) this role may use.",
+      "class": "other",
+      "executor": "capability",
+      "gateway_kind": "tool_call",
+      "capability": "search",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Words to search for."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "inputs": {
+        "query": "/query"
+      }
+    },
+    {
+      "name": "capabilities.load",
+      "description": "Load the definition of an available capability by id.",
+      "class": "other",
+      "executor": "capability",
+      "gateway_kind": "tool_call",
+      "capability": "load",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The capability id."
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "inputs": {
+        "id": "/id"
+      }
+    }
+  ],
   "entries": [
     {
       "id": "opencode",
