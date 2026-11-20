@@ -286,6 +286,18 @@ agent)   # the agent-runtime executor (bin/agent-runtime-selftest.sh harness: a 
   ag a6 qa-run-a6 "$(jq -nc --argjson a "$(wr qa-a6.txt)" --argjson b "$(sh_ 'touch qa-a6-shell.txt')" '[$a, $b]')"
   ok 'hooked file_write agent_runtime.py && hooked tool_call agent_runtime.py && [ $d = 0 ] && [ -e "$W/qa-a6.txt" ] && [ -e "$W/qa-a6-shell.txt" ] && nodec "$e0"' \
     "AC4-off agent-runtime (its hooks registered), off with a denying policy: write and shell run as today, no decision line"
+  # fix round G (pass 3, new cases): the gateway judges the canonical path (resolved against the run's cwd), so a Cedar policy on the
+  # worktree holds for every spelling of the same file (real cedar-wasm: node_modules read only from the source tree)
+  [ -d "$ROOT/node_modules" ] && ln -s "$ROOT/node_modules" "$R/node_modules"; cp "$ROOT/package.json" "$ROOT/package-lock.json" "$R/" 2>/dev/null
+  cedar() { setpol enforce '{}' cedar "$(jq -nc --arg t "$1" --arg u "${2:-}" '[[["tool_call"], "permit(principal, action == Stella::Action::\"tool_call\", resource);"], [["file_write"], $t]] + (if $u != "" then [[["file_write"], $u]] else [] end)')"; }
+  agr() { brief "$1" "$2"; run "$1" A start --adapter qa-agui --role "$ROLE" --worktree "$W" --brief-file "$T/brief-$1.md" --link qa-api/qa-m1 --run-id "$1" --json; done_ "$1"; }
+  W=$(wt qa-rel-a); cedar "permit(principal, action == Stella::Action::\"file_write\", resource) when { context has path && context.path like \"$W/*\" };"
+  agr qa-rel-a "$(jq -nc --argjson a "$(wr "$W/abs.txt")" --argjson b "$(wr rel.txt)" '[$a, $b]')"
+  ok '[ -e "$W/abs.txt" ] && [ -e "$W/rel.txt" ]' "T-hooks agent-runtime canonical path: a policy permitting writes inside the worktree allows the absolute and the relative spelling"
+  W=$(wt qa-rel-b); mkdir -p "$W/protected"
+  cedar "permit(principal, action == Stella::Action::\"file_write\", resource);" "forbid(principal, action == Stella::Action::\"file_write\", resource) when { context has path && context.path like \"$W/protected/*\" };"
+  agr qa-rel-b "$(jq -nc --argjson a "$(wr "$W/protected/abs.txt")" --argjson b "$(wr protected/rel.txt)" --argjson c "$(wr ./protected//dot.txt)" '[$a, $b, $c]')"
+  ok '[ ! -e "$W/protected/abs.txt" ] && [ ! -e "$W/protected/rel.txt" ] && [ ! -e "$W/protected/dot.txt" ]' "AC4-enforce-refuse agent-runtime canonical path: a forbid on a worktree folder refuses its absolute, relative and ./x//y spellings"
   ;;
 mcp)   # capabilities_mcp tools/call (bin/capabilities-mcp-selftest.sh harness: a fake skill as data, a minted run token, MCP over HTTP)
   SRC=$(ix '[.capability_sources // empty | .. | strings]')
@@ -336,6 +348,14 @@ PYM
   deny off mcp_call; e0=$(nl "$EV")
   load m3
   ok 'hooked mcp_call capabilities_mcp.py && answered m3 && [ -n "$(newev "$e0" capability-load)" ] && nodec "$e0"' "AC4-off MCP load (its hook registered), off: answered and logged as today, no decision line"
+  # fix round G (pass 3, new cases): the PDP route canonicalises a worker's path against the cwd it sends, and refuses a relative path with none
+  pdp_() { run "$1" python3 -I "$T/mcp.py" "$MP" "$TK" gateway.decide "$2"; }
+  allowall enforce; e0=$(nl "$EV"); mkdir -p "$T/pcwd/sub"
+  pdp_ m4 "$(jq -nc --arg c "$T/pcwd" '{kind: "file_write", inputs: {path: "sub/../qa-p.txt", cwd: $c}}')"
+  ok 'jq -e ".body.result.structuredContent.verdict == \"allow\"" "$T/o/m4.out" && [ "$(newdec "$e0" "{\"kind\": \"file_write\", \"path\": \"$T/pcwd/qa-p.txt\", \"cwd\": \"$T/pcwd\"}")" -ge 1 ]' \
+    "T-hooks PDP route: a relative path is decided (and logged) as the absolute path under the cwd the hook sent"
+  pdp_ m5 '{"kind": "file_write", "inputs": {"path": "qa-p.txt"}}'
+  ok 'jq -e ".body.result.isError == true" "$T/o/m5.out" && grep -q STL-GRD-748 "$T/o/m5.out"' "T-hooks PDP route: a relative path with no absolute cwd is refused STL-GRD-748 (it cannot be placed)"
   ;;
 proxy)   # model_proxy upstream forward (bin/model-proxy-selftest.sh call shape)
   HDR=$(jq -r '.entries[0].request.headers | keys[0]' "$R/.stella/protocols.json"); HTPL=$(jq -r --arg h "$HDR" '.entries[0].request.headers[$h]' "$R/.stella/protocols.json")
@@ -454,6 +474,19 @@ dc08)   # X1-DC-08: a hookless coding CLI is refused at start in enforce; an off
   for i in $(seq 40); do rec qa-run-k3 | jq -e '.stopped != null' >/dev/null 2>&1 && break; sleep 0.5; done
   ok '[ $RC = 0 ] && rec qa-run-k3 | jq -e "(.stopped | tostring | test(\"gateway\"; \"i\"))" && [ "$(newev "$e0" adapter.run-stopped | grep -c qa-run-k3)" = 1 ] && sleep 2 && [ ! -e "$W/qa-after.txt" ]' \
     "DC-08 the owner apply turning the global mode to enforce stops the running off-mode run: stopped (reason names the gateway), one adapter.run-stopped line, its next action never ran"
+  # fix round G (pass 3, new cases): a recorded process group is signalled only while it is still the run's (its pid's /proc start
+  # fingerprint as recorded at start); else the record is marked ended and nothing is signalled (a recycled pid is someone else's)
+  setsid sleep 300 & GH=$!; for i in $(seq 20); do [ -r "/proc/$GH/stat" ] && break; sleep 0.1; done
+  ghost() { jq -nc --arg r "$1" --arg role "$ROLE" --arg w "$W" --argjson p "$GH" --arg g "$(uuid)" --arg i "$IID" '{schema_version: 1, run: $r, role: $role, card: null, project: null, adapter: "qa-fake",
+    worktree: $w, pid: $p, pgid: $p, pid_start: "qa-not-this-process", started: "2026-01-01T00:00:00Z", ended: null, exit: null, stopped: null, gateway: {mode: "off", hooked: false}, global_id: $g, install_id: $i}' >"$R/$AR/$1.json"; }
+  ghost qa-run-g1; jq '.mode.projects = {"qa-proj-z": "enforce"}' "$GP" >"$T/gp.cand2"
+  run ap2 python3 -I "$R/bin/stella-apply.py" apply "${GPID:-no-gateway-policy-row}" --from "$T/gp.cand2"
+  ok '[ $RC = 0 ] && kill -0 "$GH" && rec qa-run-g1 | jq -e ".ended != null and .stopped != null"' "DC-08 the sweep meets a record whose pgid is no longer its run's process: nothing signalled (the process lives), the record marked ended"
+  ghost qa-run-g2; run st2 A stop --run qa-run-g2 --reason "qa ghost"
+  ok '[ $RC = 0 ] && kill -0 "$GH" && rec qa-run-g2 | jq -e ".ended != null"' "DC-08 adapter.py stop on such a record: nothing signalled, the record marked ended"
+  kill "$GH" 2>/dev/null
+  W=$(wt dc8-4); cli s4 qa-hook qa-run-k4 "$W" '[]'; spawned "$W" qa-run-k4
+  ok 'rec qa-run-k4 | jq -e ".pid_start | type == \"string\" and length > 0"' "DC-08 a started run's record keeps its process's start fingerprint (pid_start)"
   ;;
 dc09)   # X1-DC-09: adapter.py start takes the project from the card's board binding and refuses another --project
   cat >"$T/pb/hermes" <<'SH'

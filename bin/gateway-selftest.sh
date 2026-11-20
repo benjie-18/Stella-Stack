@@ -14,6 +14,8 @@
 #   AC5-lint            planted kinds in a scratch gateway.json fail the lint; the shipped data passes it (needs G2's hooks)
 #   AC5-fake-evaluator  a scratch script plus a data entry decides, no code change
 #   AC5-owner-only      protected-path rule, owner-only row, identity-critical settings, stella-apply refusals, the owner path
+#   (fix round G, pass 3) T-cedar null and float inputs; AC4-evaluator-crash 737 vs 735 each on its own path; AC4-log-before a long
+#                       input logged as digest and length while the evaluator gets it whole
 # ASSUMPTIONS (names the design leaves open; the builder matches them or tells the tester):
 #  G-A1 `gateway.py decide --kind K --inputs JSON [--project P] [--role R] --json`: stdout one JSON object holding verdict, mode,
 #       code, reason, policy_version; exit 0 when the action may run (allow, or audit's would-refuse), exit 1 when refused.
@@ -346,6 +348,39 @@ ok '[ $RC = 1 ] && [ "$(jv ce2 .verdict)" = refuse ] && [[ $(jv ce2 .code) =~ $C
 setpol enforce '{}' "$DEFEV" '[[["file_read"], "this is not cedar ((("]]'
 dec ce3 --kind file_read --inputs '{"path": "qa-notes.txt", "qa_gate": "open"}'
 ok '[ $RC = 1 ] && [ "$(jv ce3 .verdict)" = refuse ]' "T-cedar a policy Cedar cannot parse refuses (evaluator error)"
+
+# ======== X1 fix round G (pass 3, new cases; the cases above are unchanged) ========
+# T-cedar: Cedar has no null and no float; the runner drops null keys and passes a non-integer number as its JSON text (a string)
+setpol enforce '{}' "$DEFEV" '[[["file_write"], "permit(principal, action, resource);"]]'
+dec cf1 --kind file_write --inputs '{"path": "/x", "n": null}'
+ok '[ $RC = 0 ] && [ "$(jv cf1 .verdict)" = allow ]' "T-cedar a null tool input under a permit-all policy is allowed (not an evaluator failure)"
+dec cf2 --kind file_write --inputs '{"path": "/x", "n": 1.5, "deep": [{"m": null, "f": -0.25}]}'
+ok '[ $RC = 0 ] && [ "$(jv cf2 .verdict)" = allow ]' "T-cedar a float tool input (top level and nested) under a permit-all policy is allowed"
+setpol enforce '{}' "$DEFEV" '[[["file_write"], "permit(principal, action, resource) when { !(context has n) && context.f == \"1.5\" };"]]'
+dec cf3 --kind file_write --inputs '{"path": "/x", "n": null, "f": 1.5}'
+ok '[ $RC = 0 ] && [ "$(jv cf3 .verdict)" = allow ]' "T-cedar the mapping as documented: a null key is absent from the context, a float is the string of its JSON text"
+# AC4-evaluator-crash: each error path keeps its own code (an answer with no allow/deny 737, a non-zero exit after an allow 735)
+printf 'import sys\nsys.stdin.read()\nprint(\x27{"decision": "maybe", "reasons": [], "errors": []}\x27)\n' >"$R/qa/maybe_eval.py"
+printf 'import sys\nsys.stdin.read()\nprint(\x27{"decision": "allow", "reasons": ["x"], "errors": []}\x27)\nsys.stdout.flush()\nsys.exit(3)\n' >"$R/qa/allowcrash_eval.py"
+cat >"$R/qa/len_eval.py" <<'PY'
+import json, sys
+q = json.loads(sys.stdin.read())   # allows only when the evaluator got the whole text (800 characters): the cap is the logged copy's alone
+print(json.dumps({"decision": "allow" if len(q["inputs"].get("text", "")) == 800 else "deny", "reasons": ["qa-len"], "errors": []}))
+PY
+jq --argjson a "$(ev qa-maybe decide 10 maybe_eval.py)" --argjson b "$(ev qa-allowcrash decide 10 allowcrash_eval.py)" --argjson c "$(ev qa-len decide 10 len_eval.py)" \
+   '.evaluators += [$a, $b, $c]' "$T/gw.qa" >"$T/gw.fix"; cp "$T/gw.fix" "$GW"
+setpol enforce '{}' qa-maybe "$PERMIT_READ"; dec fx1 --kind file_read --inputs "$IN"
+ok '[ $RC = 1 ] && [ "$(jv fx1 .verdict)" = refuse ] && [ "$(jv fx1 .code)" = STL-GRD-737 ]' "AC4-evaluator-crash valid JSON with no allow or deny: refused STL-GRD-737"
+setpol enforce '{}' qa-allowcrash "$PERMIT_READ"; dec fx2 --kind file_read --inputs "$IN"
+ok '[ $RC = 1 ] && [ "$(jv fx2 .verdict)" = refuse ] && [ "$(jv fx2 .code)" = STL-GRD-735 ]' "AC4-evaluator-crash an allow printed by an evaluator that then exits 3: refused STL-GRD-735"
+# AC4-log-before: a long string input is logged as its digest and length; the evaluator still gets the whole value
+LONG=$(printf 'qa text %.0s' $(seq 100)); LSHA=$(printf '%s' "$LONG" | sha256sum | awk '{print $1}')
+setpol enforce '{}' qa-len '[[["file_write"], "qa len"]]'; e0=$(nev)
+dec fx3 --kind file_write --inputs "$(jq -nc --arg t "$LONG" '{path: "/x", text: $t}')"
+ok '[ $RC = 0 ] && [ "$(jv fx3 .verdict)" = allow ] && tail -n +$((e0 + 1)) "$EV" | grep -q "$LSHA" && ! tail -n +$((e0 + 1)) "$EV" | grep -qF "${LONG:0:600}"' \
+  "AC4-log-before an 800-character input (over logged_string_max, under the mask limit): the evaluator got it whole (allow), the decision line holds its sha256 and not the text"
+ok '[ "$(QA lines "$EV" "$DEV" "{\"length\": 800}")" -ge 1 ]' "AC4-log-before the capped input's line also holds its length"
+cp "$T/gw.qa" "$GW"
 
 echo "# $ME: $n cases, $fails failed"
 [ "$fails" = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($fails)"
