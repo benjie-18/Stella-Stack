@@ -2,7 +2,7 @@
 # Hermetic self-test for bin/qa_tests.py (phase Q1 item C1: tests first, baseline, flaky, mutants) and bin/test-map.py select
 # honouring the quarantine. Written test-first.
 # Cases (tests.json ids): AC7-tf-pass-refused, AC7-tf-import-refused, DG-6 (a test that hangs past tests.timeout_s is refused as
-#   timeout), AC7-mutant, AC7-flaky, DG-9, the quarantine unreadable or expired (select skips nothing), AC7-base-not-charged, T-WORKER.
+#   timeout), AC7-mutant, AC7-flaky, DG-9, RTF-07 (flaky judged on the base hash too), the quarantine unreadable or expired (select skips nothing), AC7-base-not-charged, T-WORKER.
 # The tests run are scripts of a scratch project; each card gets a disposable clone of its base hash under qa_copies (made here).
 # ASSUMPTIONS (what design.md leaves open; the builder aligns with them or raises them):
 #  C1 --tests J / --test J name a JSON file: a list of {id, argv} / one {id, argv}; argv runs with the copy as its working folder.
@@ -197,6 +197,22 @@ printf 'import sys\nn = int(sys.argv[1])\nprint("AssertionError: x")\nprint("." 
 run tl python3 -I "$QT" tests-first --card "$CL" --copy "$DL" --tests "$T/long.json"
 ok 'jq -e "([.refused[].id] | index(\"qa-t-long\")) != null and ([.refused[].id] | index(\"qa-t-short\")) != null" "$T/o/tl.out"' "RT1-11 ModuleNotFoundError in the middle of a 2.4 MB output refuses the tests-first test, as it does in a short one"
 ok '[ -s "$T/o/tf.out" ] && ! grep -qE "a (error|unclassified|assertion)" "$T/o/tf.out" "$T/o/tl.out"' "pass 1 a tests-first refusal names its class kind plainly (never 'a error class')"
+
+# RTF-07: a test flaky on the frozen hash but stable on the base hash is the card's regression, never quarantined (an unchanged
+# reg.sh made flaky through lib.sh); flaky on the base too (control: the base is the flaky lib, the card changes a.txt only): quarantined
+P7=$T/proj7; mkdir -p "$P7"; printf '. ./lib.sh\ncheck_it || { echo "AssertionError: expected check_it"; exit 1; }\necho "1 passed"\n' >"$P7/reg.sh"
+printf 'check_it() { return 0; }\n' >"$P7/lib.sh"; G "$P7" init -q -b main; G "$P7" add -A; G "$P7" commit -qm base; B7=$(G "$P7" rev-parse HEAD)
+printf 'check_it() { if [ -e .n ]; then rm .n; return 0; else touch .n; return 1; fi; }\n' >"$P7/lib.sh"; G "$P7" commit -qam "lib made flaky"; H7=$(G "$P7" rev-parse HEAD)
+echo x >"$P7/a.txt"; G "$P7" add -A; G "$P7" commit -qm "a.txt only"; H7B=$(G "$P7" rev-parse HEAD)
+fz7() { python3 -I "$QL" open --card "$1" --project qa-proj --tier "$TIER" --base "$2" --builder-role "$BR" >/dev/null 2>&1
+  python3 -I "$QL" freeze --card "$1" --repo "$P7" --hash "$3" >/dev/null 2>&1; echo "$R/$(python3 -I "$QL" status --card "$1" --json 2>/dev/null | jq -r .copy)"; }
+jq -nc '{id: "qa-t-reg", argv: ["sh", "reg.sh"]}' >"$T/reg.json"
+C07=t_0a0f200d; RC07=$(fz7 "$C07" "$B7" "$H7"); run g1 python3 -I "$QT" flaky --card "$C07" --copy "$RC07" --test "$T/reg.json"
+ok '[ $RC = 0 ] && jq -e ".flaky == true and .quarantined == false" "$T/o/g1.out" && ! quar qa-t-reg ""' \
+  "RTF-07 a test the card made flaky through code only (reg.sh unchanged, green on the base hash) gets no quarantine row: it stays the card's"
+C07B=t_0a0f200e; RC07B=$(fz7 "$C07B" "$H7" "$H7B"); run g2 python3 -I "$QT" flaky --card "$C07B" --copy "$RC07B" --test "$T/reg.json"
+ok '[ $RC = 0 ] && jq -e ".flaky == true and .quarantined == true" "$T/o/g2.out" && quar qa-t-reg "$C07B"' \
+  "RTF-07 (control) a test flaky on the card's base hash too is quarantined"
 
 # ---- T-WORKER: every command refuses in a worker environment, the trusted log untouched ----
 D=$(mkcopy t_0a0f2007); S0=$(logsum)
