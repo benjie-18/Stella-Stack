@@ -4,7 +4,9 @@ it. The backend is data: `credentials` of the routing data. A backend that is no
 is refused. A folder backend (a test backend) keeps one file per secret name in a folder inside a protected state path (`check` of
 bin/stella_data.py refuses any other place): this user's, mode 0600, one hard link, no symbolic link on its way, holding the value as
 one line of printable ASCII with no line break.
-Importers: get(name) -> the value, in-process only (bin/route.py puts it into the request header and nowhere else);
+Importers: get(name, ctx=None) -> the value, in-process only (bin/route.py puts it into the request header and nowhere else); the
+policy gateway decides each get as kind broker_call before the key is read (bin/gateway.py; ctx {role, run, card, project, adapter},
+none: the strictest mode present), its refusal is Refused with the gateway's code;
 check(names) -> True only when the backend holds keys and every name, False for anything else (the resolver asks it for an
 aggregator's broker entries; a plain yes or no that raises no refusal); state(names) -> {backend, kind, ok, missing}; never a value.
 Nothing is read in a worker environment (bin/worker_env.py): get and state refuse, check says no. A key never reaches a worker,
@@ -19,6 +21,7 @@ import functools, json, os, re, stat, sys
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
 import event_log as el
+import gateway
 import stella_data as sd
 import worker_env
 
@@ -50,8 +53,17 @@ def backend():
     return cr["backend"], cr["backends"][cr["backend"]]
 
 
-def get(name):
-    """The value of the secret `name`, or Refused; the caller never prints or logs it."""
+def get(name, ctx=None):
+    """The value of the secret `name`, or Refused; the caller never prints or logs it. The policy gateway decides it first (broker_call)."""
+    backend()   # a worker environment is refused before anything else
+    d = gateway.check("broker_call", {"name": name}, ctx or {})
+    if d.verdict == "refuse":
+        raise Refused(d.code, f"the policy gateway refused reading {sd.idn(str(name), True)}: {d.reason}")
+    return value(name)
+
+
+def value(name):
+    """The value of the secret `name` with no gateway decision: only state() calls it, to see that a key is there (never handed out)."""
     bid, b = backend()
     if b["kind"] != FOLDER:
         raise Refused(NOT_READ, f"key store backend {sd.idn(bid, True)} holds no key (nothing is read until the secrets broker)")
@@ -84,7 +96,7 @@ def state(names=()):
     missing = []
     for n in names:
         try:
-            get(n)
+            value(n)
         except Refused as e:
             if e.code != NOT_READ:
                 raise

@@ -14,7 +14,9 @@ One request, in this order (a refusal answers an HTTP status >= 400 with {"error
   4. a model call: the body is one JSON object (proxy.max_body_bytes, else 400/413 STL-MDL-795) and the model is set to the run's
      at every place the protocol's body template holds {model} (the path's {model} too): a token is valid for its run's model only;
      the budget gate (bin/route.py budget_gate: bin/budget.py) and a ledger slot (bin/ledger.py acquire; refused: 429 STL-MDL-798);
-  5. every client header is dropped but proxy.forward_headers (never an auth header); the key (bin/credentials.py get) goes in the
+  5. the policy gateway decides the upstream request (bin/gateway.py, kind network_request: url, method, link; the run token's role, run,
+     card and project) before the key is read or a byte is sent: refused 403 with the gateway's code (X1 G2);
+     every client header is dropped but proxy.forward_headers (never an auth header); the key (bin/credentials.py get) goes in the
      protocol's own header templates (route.headers_of); the request goes to the connection's catalog host only (route.url_of),
      with http.client: no redirect is followed and no proxy from the environment is used; no answer: 502 STL-MDL-796;
   6. the answer streams back as it arrives (the key masked wherever it stands, also across chunks); a model call's usage (the JSON
@@ -36,6 +38,7 @@ sys.path.insert(0, BIN)
 import cost
 import credentials
 import event_log as el
+import gateway
 import ledger
 import route
 import run_token
@@ -235,17 +238,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 os.close(fd)
 
     def forward(self, rec, tid, prov, proto, link, local, out_path, body, call):
+        url = route.url_of(prov, link, local, out_path)
+        ctx = {"role": rec["role"], "run": rec["run"], "card": rec["card"], "project": rec.get("project"), "adapter": None}
+        d = gateway.check("network_request", {"url": url, "method": self.command, "link": f"{prov['id']}/{rec['model']}"}, ctx)
+        if d.verdict == "refuse":   # before the key is read and before any byte goes upstream
+            raise Refuse(403, d.code, f"run {rec['run']}: the policy gateway refused the upstream request: {d.reason}")
         key = None
         if prov["secrets"]:   # shortcut: the entry's first secret is its API key (as route.py reads it), upgrade when secrets carry a purpose
             try:
-                key = credentials.get(prov["secrets"][0])
+                key = credentials.get(prov["secrets"][0], ctx)
             except credentials.Refused as x:
                 raise Refuse(503, x.code, f"link {prov['id']}/{rec['model']}: {x.problem}") from None
         forms = (key, json.dumps(key)[1:-1]) if key else ()
         el.SECRETS.update(forms)
         hs = {k: v for k, v in self.headers.items() if k.lower() in self.gw["proxy"]["forward_headers"] and k.lower() not in self.auth}
         hs.update(route.headers_of(proto["request"], key))
-        u = urllib.parse.urlsplit(route.url_of(prov, link, local, out_path))
+        u = urllib.parse.urlsplit(url)
         t0, zero, status = time.monotonic(), dict.fromkeys(cost.types(), 0), None
         conn = (http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection)(u.hostname, u.port, timeout=route.timeout_of())
         try:

@@ -19,8 +19,16 @@ Every CLI-specific name is data (.stella/adapters.json); a new CLI is a new entr
       names only, sandbox.env_unset removed (the entry's own token variable exempt), every worker marker set (DC-03); its output goes
       to the run log (redacted, run tokens masked, each masked hit counted by pattern class into the record's masked) and, parsed by
       the entry's stream pointers, to <run>/events.jsonl (design 3c). At its exit the record keeps the git evidence (final).
+      Policy gateway (X1 G2, DC-08, DC-09): with --card the project is the card's board binding (`hermes kanban show`); a --project
+      that differs, or that the binding cannot confirm, is refused (STL-GRD-746). The run's gateway mode is the owner policy's for
+      that project (no project: the strictest present; unreadable: enforce), kept in the record (gateway {mode, hooked}); in enforce
+      a coding CLI with no policy hook (its actions cannot reach the gateway before they run) is refused (STL-GRD-745); when the
+      mode is not off the rendered hook asks the gateway's PDP route (policy.py hook --gateway, a flag and no secret).
       The run goes on in the background (--wait: in the foreground); the run record is <adapter_runs>/<run>.json.
   stop --run R [--reason TEXT]                 revokes the run token, then ends the CLI's process group, one event line
+                                               (gateway_sweep(): after an owner apply of the gateway policy, stops every running run whose
+                                               start mode was off while its project's mode is not off now, and every hookless one under
+                                               enforce, DC-08; bin/stella-apply.py calls it)
   logs --run R [--follow]                      the run log
   evidence --run R --json                      {exit_code, base, head, branch, on_branch, commits, files_changed, all_inside_worktree,
                                                tool_calls, errors, tokens}, git as it was at the run's exit (commits: base..the branch the
@@ -49,7 +57,8 @@ import worker_env
 C = {"data": "STL-GRD-640", "stub": "STL-GRD-641", "binary": "STL-GRD-642", "version": "STL-GRD-643", "untested": "STL-GRD-644", 
      "link": "STL-GRD-645", "terms": "STL-GRD-646", "conformance": "STL-GRD-647", "scratch": "STL-GRD-648", "box": "STL-GRD-649", 
      "prepare": "STL-GRD-650", "run": "STL-GRD-651", "spawn": "STL-GRD-652", "worktree": "STL-GRD-653", "stop": "STL-GRD-654",
-     "cfgcred": "STL-GRD-754", "cfghost": "STL-GRD-755", "cfgscan": "STL-GRD-757"}   # literal: the alert lint finds each sender by its code
+     "cfgcred": "STL-GRD-754", "cfghost": "STL-GRD-755", "cfgscan": "STL-GRD-757",
+     "hookless": "STL-GRD-745", "project": "STL-GRD-746", "sweep": "STL-GRD-749"}   # literal: the alert lint finds each sender by its code
 ROW, RUNS, RECORDS, SCRATCH = "adapters", "adapter_runs", "conformance_records", "conformance_scratch"
 AGENT = "agent-runtime"   # the adapter kind of X1 item A (bin/agent_runtime.py); an entry with no kind is a coding CLI
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
@@ -217,6 +226,33 @@ def gate(e, ver, role, link, ctype):
         raise Stop(C["conformance"], f"adapter {e['id']} {ver} has no passing conformance record for role {role} on link {link} ({ctype})")
     if not any(r.get("digests") == digests(e["id"], role) for r in mine):
         raise Stop(C["conformance"], f"adapter {e['id']} {ver} passed conformance for role {role} on other data (entry, policy or run policy changed since)")
+
+
+def card_project(card):
+    """(known, project) of a card's board binding (DC-09): the board's `show` answer, task.project; (False, None) when it cannot be read."""
+    import roles
+    try:
+        t = roles.kanban(roles.board(), "show", card)["task"]
+        p = t.get("project")
+        return (True, p) if p is None or isinstance(p, str) else (False, None)
+    except Exception:   # an unreadable board confirms nothing
+        return False, None
+
+
+def gateway_mode(project):
+    """The policy gateway mode a run of project starts under: the owner policy's (no project: the strictest present, DC-09); enforce when
+    the policy cannot be read (as gateway.check judges it)."""
+    import gateway
+    try:
+        return gateway.mode_of(gateway.doc(gateway.POL)[1], project)
+    except Exception:
+        return "enforce"
+
+
+def hooked(e):
+    """Whether every action of an entry's runs reaches the gateway before it runs: an agent runtime's are gated engine side, a coding CLI's
+    only through a rendered policy hook."""
+    return e.get("kind") == AGENT or "template" in ((e.get("policy") or {}).get("hook") or {})
 
 
 def scratch_root():
@@ -628,6 +664,15 @@ def cmd_start(a):
             raise Stop(C["run"], f"the {k.replace('_', ' ')} is not well formed")
     if not a.card and (not inside(wt, scratch_root()) or wt == scratch_root()):
         raise Stop(C["scratch"], "a run with no card runs only in a worktree under the conformance scratch root")
+    if a.card:   # DC-09: the project is the card's board binding, never the caller's word
+        known, bound = card_project(a.card)
+        if a.project is not None and (not known or a.project != bound):
+            raise Stop(C["project"], f"--project {sd.idn(a.project)} is not the board binding of card {a.card}" +
+                       (f" ({sd.idn(bound) if bound else 'no project'})" if known else " (the board cannot be read to confirm it)"))
+        a.project = bound
+    a.gateway_mode = gateway_mode(a.project)
+    if a.gateway_mode == "enforce" and not hooked(e):
+        raise Stop(C["hookless"], f"the policy gateway enforces for this run, and adapter {e['id']} has no policy hook: its actions cannot be decided before they run")
     conn, model, prov = pick_link(a.role, a.link, a.project, a.card)
     ctype = prov.get("type")
     if ctype not in e["conn_types"]:
@@ -673,7 +718,7 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
     url = endpoint("capabilities_mcp_state")
     settings, sfile, mfile = {}, "", ""
     if e.get("kind") != AGENT:   # an agent runtime has no CLI config: its tool calls are gated and run engine side (bin/agent_runtime.py)
-        rend = policy.render(e["id"], wt, stack=sd.ROOT)   # the run's own stack: its hook and its paths exist in the box (live finding I)
+        rend = policy.render(e["id"], wt, stack=sd.ROOT, gateway=a.gateway_mode != "off")   # the run's own stack: its hook and its paths exist in the box (live finding I)
         hk = e["policy"].get("hook")
         if tr["hook"] and hk:   # the log filter joins the policy hook's list in the generated config (the entry's own hook template and pointer)
             rend[hk["pointer"]].append(policy.fill(hk["template"], tr["hook"]))
@@ -733,7 +778,8 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
            "version": ver, "tested": tested, "link": link, "conn_type": ctype, "unattended": True, "background": not a.wait,
            "boxed": pre is not None, "worktree": wt, "base": base, "branch": None if branch == "HEAD" else branch, "run_dir": rdir, "pid": None, "pgid": None, "started": now(),
            "ended": None, "exit": None, "stopped": None, "notes": tr["notes"]["path"].replace("{card}", a.card or run),   # the notes file stays out of the progress digest (stuck.py)
-           "run_policy": {"applied": tr["applied"], "unsupported": tr["unsupported"], "hook": bool(tr["hook"] and e["policy"].get("hook"))}, "global_id": str(uuid.uuid4()), "install_id": sd.install_id()}
+           "run_policy": {"applied": tr["applied"], "unsupported": tr["unsupported"], "hook": bool(tr["hook"] and e["policy"].get("hook"))},
+           "gateway": {"mode": a.gateway_mode, "hooked": hooked(e)}, "global_id": str(uuid.uuid4()), "install_id": sd.install_id()}
     out = {"run": run, "adapter": e["id"], "version": ver, "tested": tested, "link": link, "conn_type": ctype, "background": not a.wait}
     agent = {"pre": pre, "prompt": r["text"], "model": model, "core": tr["core_tools"]} if e.get("kind") == AGENT else None
     import ledger   # the run's lease: the link's slots, taken here and held by the CLI's process (as ledger.py hold does: it cannot run with a worker's env)
@@ -877,11 +923,17 @@ def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None, agent=None):
 
 
 def cmd_stop(a):
-    rec = read_rec(a.run)
+    stop(a.run, a.reason)
+    print(json.dumps({"run": a.run, "stopped": True}))
+    return 0
+
+
+def stop(run, reason=None):
+    rec = read_rec(run)
     pg = rec.get("pgid")
-    update(a.run, stopped=(a.reason or "stopped")[:200])   # before the kill: whoever sees the run ended also sees why
+    update(run, stopped=(reason or "stopped")[:200])   # before the kill: whoever sees the run ended also sees why
     try:   # the token first (RT3-06): a process group that does not end must not keep a live token
-        tool([os.path.join(BIN, "run_token.py"), "revoke", "--run", a.run], C["stop"], "revoking the run token")
+        tool([os.path.join(BIN, "run_token.py"), "revoke", "--run", run], C["stop"], "revoking the run token")
         err = None
     except Stop as x:
         err = x
@@ -900,12 +952,29 @@ def cmd_stop(a):
                 continue
             break
         else:
-            raise Stop(C["stop"], f"the process group of run {a.run} did not end")
+            raise Stop(C["stop"], f"the process group of run {run} did not end")
     if err:
         raise err
-    event("adapter.run-stopped", a.run, rec.get("role"), reason=(a.reason or "stopped")[:200], card=rec.get("card"))
-    print(json.dumps({"run": a.run, "stopped": True}))
-    return 0
+    event("adapter.run-stopped", run, rec.get("role"), reason=(reason or "stopped")[:200], card=rec.get("card"))
+
+
+def gateway_sweep():
+    """DC-08, after the owner changed the gateway policy: stop every running run whose start mode was off (or not recorded) while its
+    project's mode is not off now, and every hookless one while its project's mode is enforce. [(run, problem or None)] of the runs
+    it stopped or failed to stop."""
+    out = []
+    for r in records():
+        if r.get("exit") is not None or r.get("stopped") is not None or not isinstance(r.get("run"), str):
+            continue
+        g = r.get("gateway") if isinstance(r.get("gateway"), dict) else {}
+        now_ = gateway_mode(r.get("project"))
+        if now_ != "off" and (g.get("mode", "off") == "off" or (now_ == "enforce" and g.get("hooked") is not True)):
+            try:
+                stop(r["run"], f"gateway mode change: the policy gateway is {now_} for this run's project, it started {g.get('mode', 'with no gateway')}")
+                out.append((r["run"], None))
+            except Exception as x:   # every other run is still stopped; the caller reports this one
+                out.append((r["run"], getattr(x, "problem", type(x).__name__)))
+    return out
 
 
 def cmd_logs(a):

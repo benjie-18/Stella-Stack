@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Host-session and input-source risk decisions (F3 item H; body B11, AC10; design section 10, rulings DC-08, DC-09 amended, DC-10),
 stdlib only. Host side: refused in a worker environment (bin/worker_env.py, STL-CFG-312) before it reads anything.
-decide() is pure over data and host-written facts; it changes nothing. The request carries only {capability, role, run, request, target
+decide() reads data and host-written facts and changes nothing, but for the policy gateway's decision (X1 G2): a request every check
+below allows is then decided by bin/gateway.py as kind host_session (its trusted line written before decide returns; off: no line),
+and its refusal is a refusal with the gateway's code. The request carries only {capability, role, run, request, target
 {app, domain}, action {type}, confirmation} (request: the id the host wrote when the owner started the request): every other fact comes
 from a record, never from the request:
   the capability's risk class and roles from the registry (index row capabilities, validated with its schema; risk_class
@@ -30,6 +32,7 @@ import argparse, calendar, hashlib, hmac, json, os, re, sys, time
 sys.dont_write_bytecode = True
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
+import gateway
 import roles
 import stella_data as sd
 import worker_env
@@ -141,7 +144,7 @@ def confirmed(q):
 
 
 def decide(q):
-    """{allowed: True, ...} or raise Refused(code, problem). Pure: reads data and host-written records, writes nothing."""
+    """{allowed: True, ...} or raise Refused(code, problem). Reads data and host-written records; writes only the gateway's decision line."""
     bad = shape(q)
     need(bad is None, "STL-GRD-620", bad or "")
     cap, role, run, tgt, act = q["capability"], q["role"], q["run"], q["target"], q["action"]["type"]
@@ -206,6 +209,9 @@ def decide(q):
     if a["state"] == "ask":
         why = confirmed(q)
         need(why is None, "STL-GRD-637", why or "")
+    d = gateway.check("host_session", {"capability": cap, "action": act, "app": app, "domain": dom, "route": route["id"], "risk_class": kind_cls},
+                      {"role": role, "run": run, "card": rr.get("card"), "project": rr.get("project"), "adapter": rr.get("adapter")})
+    need(d.verdict != "refuse", d.code, f"the policy gateway refused the host action {act}: {d.reason}")
     return {"allowed": True, "capability": cap, "risk_class": kind_cls, "action": act, "state": a["state"], "route": route["id"]}
 
 
