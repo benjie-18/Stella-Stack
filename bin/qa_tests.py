@@ -16,7 +16,9 @@ A finding's repro and the scheduled full-suite run go through the same two funct
               results: qa.flaky, then a quarantine row {test, card, expires, files} in qa_quarantine (atomic, under a lock) that
               bin/test-map.py select honours. Never for a test the card owns (DG-9, own_tests): a tests-first test of the card, or
               a test whose files (the test map's file of its id, the paths in its argv) the card changed from its base to its
-              frozen hash; that one stays a blocking finding. No round is used.
+              frozen hash; nor a test not flaky on the card's base hash (qa.opened), rerun as often in a copy qa_loop.make_copy
+              makes from the round copy (DIR without one): the card made it flaky (RTF-07). That one stays a blocking finding.
+              No round is used.
   mutants     --card C --copy DIR --file F --test J   the test must pass on the copy; then each operator of mutants.operators is
               applied to one line of F holding its find text outside a string or a # comment: a line the card changed (base to
               frozen hash) when it has a frozen round, each operator on a line no earlier one took where it can; each in a
@@ -362,23 +364,45 @@ def quarantine(test, card, until, files):
         raise Stop(QUAR, f"the quarantine row for {test} was not written ({el.why(e) if isinstance(e, OSError) else e}); the trusted qa.flaky line stands"[:200]) from None
 
 
-def cmd_flaky(a, q):
-    t = tests_of(a.test, True)[0]
-    d = fresh(a.copy, a.card)   # one throwaway for every rerun: what a run leaves is what the next one meets, never in DIR
+def reruns(d, t, q):
+    """The test's results over tests.reruns runs in the one throwaway d (what a run leaves is what the next one meets), then d goes."""
     try:
-        rs = [run_test(d, t, q)["result"] for _ in range(q["tests"]["reruns"])]
+        return [run_test(d, t, q)["result"] for _ in range(q["tests"]["reruns"])]
     finally:
         drop(d)
+
+
+def base_runs(card, copy, t, q):
+    """RTF-07: the test's reruns on the card's base hash, in a copy made the way freeze makes a round copy (qa_loop.make_copy)
+    from the round copy (DIR when the card has no frozen round); None when that copy cannot be made (the caller fails closed)."""
+    try:
+        f = frozen(card)
+        d = f[3] if f else ql.data()
+        repo, base = (f[0], f[1]) if f else (copy, ql.state(card, d)["base"])
+        dest = ql.make_copy(repo, base, card, "base-" + uuid.uuid4().hex[:12], d)[0]
+    except Exception:   # no base, no state, or the base not in the copy: unknown, never "flaky on the base too"
+        return None
+    MADE.add(os.path.realpath(dest))
+    return reruns(dest, t, q)
+
+
+def cmd_flaky(a, q):
+    t = tests_of(a.test, True)[0]
+    rs = reruns(fresh(a.copy, a.card), t, q)
     out = {"test": t["id"], "runs": rs, "flaky": len(set(rs)) > 1}
     if not out["flaky"]:
         return out
     files = files_of(t["id"], t["argv"])
     ch = changed_by(a.card)
     own = t["id"] in own_tests(a.card) or ch is None or bool(files & ch)
+    if not own:   # flaky here but stable on the base hash: the card made it flaky (RTF-07)
+        out["base_runs"] = base_runs(a.card, a.copy, t, q)
+        own = not out["base_runs"] or len(set(out["base_runs"])) < 2
     until = None if own else iso(time.time() + q["tests"]["quarantine_days"] * 86400)
     out.update(quarantined=not own, expires=until)
     if own:
-        out["why"] = "a tests-first test of this card or a test whose file it changed: never quarantined for it, it stays a blocking finding"
+        out["why"] = ("a tests-first test of this card, a test whose file it changed, or one not flaky on the card's base hash: never "
+                      "quarantined for it, it stays a blocking finding")
     write("qa.flaky", a.card, out)
     if not own:
         quarantine(t["id"], a.card, until, sorted(files))
