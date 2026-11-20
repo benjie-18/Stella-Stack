@@ -136,11 +136,17 @@
             "/permission/bash",
             "/permission/edit",
             "/permission/read",
-            "/permission/external_directory"
+            "/permission/external_directory",
+            "/permission/execute"
           ]
         },
         "worktree_ref": null,
         "fixed": [
+          {
+            "pointer": "/permission/execute",
+            "key": "*",
+            "value": "deny"
+          },
           {
             "pointer": "/permission/bash",
             "key": "bin/escalate.sh *",

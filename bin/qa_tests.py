@@ -155,31 +155,47 @@ def run(copy, argv, timeout, scan=()):
     # with the stack roots, the homes and /tmp hidden, no network, and only the throwaway copy writable.
     cmd = box.BASE + ["--unshare-net"] + [a for x in hidden() for a in ("--tmpfs", x)] + [
         "--dir", "/tmp/qa-home", "--dir", "/tmp/qa-tmp", "--bind", real, real, "--chdir", real,
-        "bash", "-c", 'echo started >&"$0" || exit 1; eval "exec $0>&-"; exec "$@"']
+        "bash", "-c", 'echo started >&"$0" || exit 1; eval "exec $0>&-"; ulimit -f "$QA_FSIZE_KB" || exit 1; exec "$@"']   # one file (a deleted one held open too) stays within max_write_bytes
     env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL") if k in os.environ}
-    env.update(HOME="/tmp/qa-home", TMPDIR="/tmp/qa-tmp", PYTHONDONTWRITEBYTECODE="1")
+    env.update(HOME="/tmp/qa-home", TMPDIR="/tmp/qa-tmp", PYTHONDONTWRITEBYTECODE="1", QA_FSIZE_KB=str(max(data()[0]["tests"]["max_write_bytes"] // 1024, 1)))
     sr, sw = os.pipe()
     tq = data()[0]["tests"]
     cap, over, wcap, wrote, stop = tq["max_output_bytes"], [], tq["max_write_bytes"], [], threading.Event()
 
-    def used():   # bytes the copy takes on disk (links not followed)
-        return sum(os.lstat(os.path.join(r, f)).st_blocks * 512 for r, _, fs in os.walk(real) for f in fs)
+    def used():   # bytes the copy takes on disk (links not followed); None when some of it cannot be read (Q1-OF-CVER-08: fail closed)
+        n, blind = 0, []
+        for r, _, fs in os.walk(real, onerror=blind.append):
+            for f in fs:
+                try:
+                    n += os.lstat(os.path.join(r, f)).st_blocks * 512
+                except FileNotFoundError:   # removed while the walk ran
+                    pass
+                except OSError as e:
+                    blind.append(e)
+        return None if blind else n
 
     def free():
         s = os.statvfs(real)
         return s.f_bavail * s.f_frsize
 
-    def grew():   # Q1-OF-CVER-02: the cheap free-space drop first, then the copy's own size (other writers on the disk are not charged)
-        return free0 - free() > wcap and used() - used0 > wcap
+    def grew():   # Q1-OF-CVER-02: the cheap free-space drop first, then the copy's own size (other writers on the disk are not charged);
+        if free0 - free() <= wcap:   # a copy that cannot be measured counts as grown
+            return False
+        u = used()
+        return u is None or u - used0 > wcap
 
     def watch():
-        while not stop.wait(0.2):
-            if grew():
-                wrote.append(True)
-                kill()
-                return
+        try:
+            while not stop.wait(0.2):
+                if grew():
+                    wrote.append(True)
+                    kill()
+                    return
+        except Exception:   # a watch that cannot look stops the run (fail closed)
+            wrote.append(True)
+            kill()
 
-    used0, free0 = used(), free()
+    used0, free0 = used() or 0, free()
 
     def kill():
         try:
@@ -506,7 +522,7 @@ def fresh(src, card, rel=None, text=None):
     shutil.copytree(src, d, symlinks=True, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     MADE.add(os.path.realpath(d))
     if rel is not None:
-        with open(os.path.join(d, rel), "w", encoding="utf-8") as f:
+        with open(os.path.join(d, rel), "w", encoding="utf-8", newline="") as f:
             f.write(text)
     return d
 
@@ -557,13 +573,13 @@ def cmd_mutants(a, q, tiers):
     if os.path.isabs(a.file) or rel.split(os.sep)[0] == ".." or not os.path.isfile(src) or os.path.realpath(src) != src:
         raise Stop(INPUT, f"--file {a.file[:100]} is not a plain file inside the copy (no link on the way)")
     try:
-        with open(src, encoding="utf-8") as f:
+        with open(src, encoding="utf-8", newline="") as f:   # Q1-OF-CVER-09: no newline translation, lines counted as git counts them
             body = f.read(MAX_JSON + 1)
     except (OSError, UnicodeDecodeError) as e:
         raise Stop(INPUT, f"--file {rel} cannot be read as text ({type(e).__name__})") from None
     if len(body) > MAX_JSON:
         raise Stop(INPUT, f"--file {rel} is larger than {MAX_JSON} characters")
-    lines = body.splitlines(keepends=True)
+    lines = re.findall(r"[^\n]*\n|[^\n]+\Z", body)   # only \n ends a line (splitlines also breaks at \r, \f, \x85, ...)
     left = q["mutants"]["cap_per_card"] - sum(len(p.get("applied") or []) for p in card_lines(a.card, "qa.mutants"))
     out = {"test": t["id"], "file": rel, "applied": [], "cap_left": max(left, 0)}
     if left <= 0:
