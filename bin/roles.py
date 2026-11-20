@@ -535,7 +535,7 @@ STATE_KEYS = ("backup_dir", "applied_state", "event_log", "owner_key", "approval
               "routing_state", "card_facts", "probe_records", "triage_calibration",
               "benchmark_results", "usage_ledger", "ledger_state", "spans", "budget_state", "model_check_state",
               "run_tokens", "model_proxy_state", "adapter_runs", "host_presence", "capabilities_mcp_state",
-              "conformance_records")   # the index keys that name state paths (B1, F1c D0; F2 DC-06: failover state and card facts)
+              "conformance_records", "ui_streams")   # the index keys that name state paths (B1, F1c D0; F2 DC-06: failover state and card facts)
 
 
 def index(d, root=None):

@@ -1,11 +1,89 @@
 {
   "schema_version": 1,
-  "about": "The generative UI component allowlist (X1 item U, body B3): only these components render; a widget is untrusted content, its actions only open approval requests (bin/agui_ui.py act). Owner data: add a component as a row, no code change.",
+  "about": "The generative UI component allowlist (X1 item U, body B3): only these components render; a widget is untrusted content, its actions only open approval requests (bin/agui_ui.py act). Stack data on a boundary path (owner-reviewed merge): add a component as a row, no code change.",
   "limits": {
     "payload_bytes": 16384,
     "records_per_run": 1000,
     "summary_value_chars": 120,
     "approval_ttl_s": 86400
   },
-  "components": []
+  "components": [
+    {
+      "id": "text-card",
+      "summary": "A titled block of plain text (no markup is rendered)",
+      "props": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "body"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
+      },
+      "actions": [],
+      "global_id": "746f1a9d-2bc5-470a-9388-a856686e2c5b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "progress",
+      "summary": "A labelled progress bar, value in percent",
+      "props": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "label",
+          "percent"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "percent": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          }
+        }
+      },
+      "actions": [],
+      "global_id": "3d080aee-a09f-4b78-ad41-691a0146644a",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "confirm",
+      "summary": "A question the agent puts to the owner; answering opens an approval request, never runs anything",
+      "props": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "maxLength": 400
+          }
+        }
+      },
+      "actions": [
+        {
+          "id": "proceed",
+          "approval_class": "write",
+          "summary": "Agent asks to proceed: {question}"
+        }
+      ],
+      "global_id": "9b6301c6-0629-4072-b104-2eecf913ff96",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    }
+  ]
 }
