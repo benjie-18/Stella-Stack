@@ -733,6 +733,8 @@
           "--output-format",
           "stream-json",
           "--verbose",
+          "--allowedTools",
+          "Bash,mcp__stella-capabilities",
           "--model",
           "{model}",
           "--settings",
