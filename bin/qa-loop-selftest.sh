@@ -6,6 +6,7 @@
 #   bind   AC2-bind, DG-1, DG-2                   trust  AC3-untrusted, T-STATE-TRUSTED, DG-5 (owner trigger)
 #   plan   AC4-eco-security, AC6-data-only, T-LOCAL1, T-TIER-FLOOR       data   AC4-preset-refused, T-COUNT0 (DG-3)
 #   worker T-WORKER   copy DG-7   merge DG-8 (bin/merge-card.sh's QA check on a scratch repo, run here: merge-card-selftest is shared)
+#   rt1    fix round 1: RT1-06 (rename, case), RT1-07 (card id case), RT1-08 (open once), QL-M2, RT1-12 (reopen at cap), DG-1 evidence, close --json
 # A mock builder: each round is a new commit of a scratch git repo; findings, evidence and verdicts go through bin/qa_findings.py
 # (item B) as design.md specifies. Exit codes, catalog codes, JSON fields and trusted event lines are asserted, never wording.
 # ASSUMPTIONS (what design.md leaves open; nothing else is assumed):
@@ -19,7 +20,7 @@
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 ME=qa-loop-selftest
-SECTIONS="climb stop3 depth bind trust plan data worker copy merge"
+SECTIONS="climb stop3 depth bind trust plan data worker copy merge rt1"
 if [ $# = 0 ]; then
   f=0; for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || f=$((f+1)); done
   [ $f = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($f sections)"; [ $f = 0 ]; exit
@@ -340,6 +341,57 @@ merge)   # DG-8: merge-card.sh refuses a card with a trusted qa.opened line unle
   Cc=t_0a000015; TC=$(card $Cc "c1"); open_ $Cc "$MEDIUM" "$MB"; frz $Cc "$M" "$TC"; pass_round $Cc 1; run mc MC $Cc
   ok '[ "$(rc mk)" = 0 ] && [ "$(rc mc)" = 0 ] && [ "$(cnt qa.passed $Cc)" = 1 ] && G "$M" merge-base --is-ancestor "$TC" main && G "$M" merge-base --is-ancestor "$TK" main' \
     "DG-8 a card with no qa.opened line merges as before, and a card whose round passed on its tip merges"
+  ;;
+rt1)   # fix round 1 of Q1: RT1-06, RT1-07, RT1-08, QL-M2 (the fold keeps the highest tier), RT1-12, DG-1 evidence re-hash (pass 2 L4), close --json
+  plant() { python3 -I "$R/bin/event_log.py" append --type "$1" --what "$2" --new "$3" >>"$T/o/last" 2>&1; }   # a trusted line, as the owner's tools write it
+  fired() { lines qa.triggered "$1" | jq -e --arg t "$SEC" '[.[] | select(.id == $t)] | length == 1' >/dev/null; }
+  sbase() {   # <dir>: main with src/auth.py (an admin check and helpers) and a.txt; prints the base commit
+    git init -q -b main "$1" && mkdir -p "$1/src" && { printf 'def allowed(user):\n    if user.role != "admin":\n        return False\n    return True\n'
+    for i in $(seq 1 12); do printf 'def helper%s(x):\n    return x + %s\n' "$i" "$i"; done; } >"$1/src/auth.py" && echo x >"$1/a.txt" &&
+    G "$1" add -A && G "$1" commit -qm base && G "$1" rev-parse HEAD; }
+  C=t_0a000020; R6=$T/b20; B6=$(sbase "$R6"); open_ $C "$LIGHT" "$B6"
+  G "$R6" mv src/auth.py src/helpers.py; sed -i '2,3d' "$R6/src/helpers.py"; G "$R6" commit -qam "move helpers"; frz $C "$R6" "$(G "$R6" rev-parse HEAD)"
+  K=t_0a000021; R7=$T/b21; B7=$(sbase "$R7"); open_ $K "$LIGHT" "$B7"
+  mkdir -p "$R7/lib/Auth"; printf 'def ok(u):\n    return True\n' >"$R7/lib/Auth/Login.py"; printf 'STORE = {}\n' >"$R7/src/Session.py"
+  G "$R7" add -A; G "$R7" commit -qm login; frz $K "$R7" "$(G "$R7" rev-parse HEAD)"
+  ok '[ "$(cnt qa.frozen $C)" = 1 ] && fired $C' "RT1-06 src/auth.py renamed to src/helpers.py with its admin check deleted fires $SEC (the diff has rename detection off: the old path is matched)"
+  ok '[ "$(cnt qa.frozen $K)" = 1 ] && fired $K' "RT1-06 new files lib/Auth/Login.py and src/Session.py fire $SEC (path globs match whatever the letter case)"
+  # RT1-07: one card id whatever its letter case
+  V=T_0A000022; v=t_0a000022; RV=$T/b22; BV=$(mkrepo "$RV"); HV=$(step "$RV" a.txt r1); open_ $V "$MEDIUM" "$BV"; frz $V "$RV" "$HV"
+  DG8=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import qa_loop; print("open" if qa_loop.state(sys.argv[2])["opened"] else "none")' "$R/bin" "$v" 2>>"$T/o/last")   # merge-card.sh's DG-8 query
+  run o7 QL open --card "$v" --project "$P" --tier "$MEDIUM" --base "$BV" --builder-role "$BR"; run o8 QL open --card t_0A000022 --project "$P" --tier "$MEDIUM" --base "$BV" --builder-role "$BR"
+  ok '[ "$DG8" = open ] && stq "$v" ".round == 1 and .done == false" && [ "$(rc o7)" != 0 ] && [ "$(rc o7)" != 2 ] && coded o7 && [ "$(rc o8)" != 0 ] && [ "$(rc o8)" != 2 ] &&
+    [ "$(cnt qa.opened "$v")" = 0 ] && [ "$(cnt qa.opened t_0A000022)" = 0 ] && [ "$(cnt qa.opened $V)" = 1 ]' \
+    "RT1-07 a loop opened as $V is the loop of $v: merge-card's DG-8 query sees it, status answers round 1, and open of a case variant is refused (coded, no line)"
+  # RT1-08: open once; a re-open (same tier, other project) is refused, and a later trusted qa.opened line changes nothing of record
+  C=t_0a000023; R8=$T/b23; B8=$(mkrepo "$R8"); H8=$(step "$R8" a.txt r1); open_ $C "$MEDIUM" "$B8"; frz $C "$R8" "$H8"
+  PL='{preset, local_only, parallel, counts: [.roles[] | .count]}'; P0=$(plan $C | jq -cS "$PL")
+  run o9 QL open --card $C --project qa-other --tier "$MEDIUM" --base "$H8" --builder-role "$BR"
+  ok '[ -n "$P0" ] && [ "$(rc o9)" != 0 ] && [ "$(rc o9)" != 2 ] && coded o9 && [ "$(cnt qa.opened $C)" = 1 ] && [ "$(plan $C | jq -cS "$PL")" = "$P0" ]' \
+    "RT1-08 a re-open at the same tier with another project inside an open round is refused (coded, no line); the plan is unchanged"
+  plant qa.opened $C "$(jq -nc --arg t "$LIGHT" --arg b "$BR" --arg p "$LOCALP" --arg h "$H8" '{project: "qa-other", tier: $t, base: $h, builder_role: $b, preset: $p, local_only: true}')"
+  plant qa.tier-raised $C "$(jq -nc --arg t "$LIGHT" '{tier: $t, reason: "lower"}')"; plant qa.depth-raised $C "$(jq -nc --arg t "$LIGHT" '{depth: $t}')"
+  ok '[ "$(cnt qa.opened $C)" = 2 ] && [ "$(plan $C | jq -cS "$PL")" = "$P0" ] && stq $C ".local_only == false"' \
+    "RT1-08 a second trusted qa.opened line (another project, preset $LOCALP, local_only) changes neither the plan nor local_only: the first open is of record"
+  ok 'stq $C ".tier == \"$MEDIUM\" and .depth == \"$MEDIUM\""' "QL-M2 trusted qa.opened, qa.tier-raised and qa.depth-raised lines at $LIGHT after $MEDIUM: tier and depth stay $MEDIUM (the highest, not the last)"
+  # RT1-12: a card that passed at round $NORMAL and was reopened gets rounds again, and is escalated at the end of them
+  C=t_0a000024; R9=$T/b24; B9=$(mkrepo "$R9"); open_ $C "$MEDIUM" "$B9"
+  for r in $(seq 1 "$NORMAL"); do H=$(step "$R9" a.txt "round $r"); frz $C "$R9" "$H"; if [ "$r" -lt "$NORMAL" ]; then fail_round $C "$r" "$BLOCK"; else pass_round $C "$r"; fi; done
+  P9=$(isdone $C "$H" && echo yes); plant qa.reopened $C "$(jq -nc --arg c $C --arg h "$H" '{card: $c, hash: $h, tests: ["qa-t-x"]}')"
+  H=$(step "$R9" a.txt fix); run f9 QL freeze --card $C --repo "$R9" --hash "$H"
+  ok '[ "$P9" = yes ] && [ "$(rc f9)" = 0 ] && stq $C ".round == $((NORMAL + 1)) and .cap == $((2 * NORMAL)) and .done == false"' \
+    "RT1-12 a card reopened after passing in round $NORMAL can be frozen again: round $((NORMAL + 1)), cap $((2 * NORMAL)) ($NORMAL more rounds)"
+  a0=$(alerts); fail_round $C $((NORMAL + 1)) "$BLOCK"
+  for r in $(seq $((NORMAL + 2)) $((2 * NORMAL))); do H=$(step "$R9" a.txt "round $r"); frz $C "$R9" "$H"; fail_round $C "$r" "$BLOCK"; done
+  ok '[ "$(cnt qa.escalated $C)" = 1 ] && [ "$(alerts)" -gt "$a0" ] && [ "$(cnt qa.climbed $C)" = 0 ]' "RT1-12 the reopened card failing to its new cap is escalated (qa.escalated, an owner alert), never stuck"
+  # pass 2 L4 (DG-1): a pass verdict whose evidence changed after the verdict does not count; close --json answers JSON
+  C=t_0a000025; R5=$T/b25; B5=$(mkrepo "$R5"); H5=$(step "$R5" a.txt r1); open_ $C "$MEDIUM" "$B5"; frz $C "$R5" "$H5"; verdicts $C 1
+  VE=$(ls "$R/$QEV/$C/1/"v-*.txt 2>/dev/null | head -n 1); echo tampered >>"$VE"
+  run c5 QL close --card $C
+  ok '[ -n "$VE" ] && [ "$(rc c5)" != 0 ] && [ "$(rc c5)" != 2 ] && coded c5 && [ "$(cnt qa.passed $C)" = 0 ] && ! isdone $C "$H5"' \
+    "DG-1 a pass verdict whose evidence ($(basename "$VE")) changed after the verdict: close does not pass (coded), done refuses"
+  run c6 QL close --card $C --json
+  ok '[ "$(rc c6)" != 0 ] && [ "$(rc c6)" != 2 ] && jq -e --arg c $C ".card == \$c and (.code | test(\"^STL-QA-[0-9]{3}$\"))" "$T/o/c6.out"' "close --json: a refusal answers {card, code, problem} on stdout"
   ;;
 esac
 finish

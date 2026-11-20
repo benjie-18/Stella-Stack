@@ -167,6 +167,36 @@ ok '[ -n "$FU" ] && lines qa.finding-unconfirmed "$CM" | jq -e --arg f "$FU" "an
 ok '[ -n "$FC" ] && lines qa.finding-confirmed "$CM" | jq -e --arg f "$FC" "any(.[]; [.. | strings] | any(. == \$f))" && blocking "$CM" cnf' \
   "AC7-unconfirmed (control) a repro that fails on the frozen copy: qa.finding-confirmed, blocking"
 
+# ---- RT1-02: a same-fingerprint copy from another role adds its repro and evidence, never replaces the first role's ----
+E4=$(evf "$CM" rt1-first.log); reg "$CM" "$E4" >/dev/null 2>&1; E5=$(evf "$CM" rt1-second.log); reg "$CM" "$E5" >/dev/null 2>&1
+fnd ovr "$S_HI" qa-t-ovr false '["false"]' "$(arr "$E4")" | mkset ovr1.json; run so1 SUB "$CM" "$R1" ovr1.json
+fnd ovr "$S_HI" qa-t-ovr false '["true"]' "$(arr "$E5")" | mkset ovr2.json; run so2 SUB "$CM" "$R2" ovr2.json
+FO=$(fpr "$CM" ovr); run ro python3 -I "$QF" repro --card "$CM" --fingerprint "${FO:-none}"
+ok '[ -n "$FO" ] && lines qa.finding-confirmed "$CM" | jq -e --arg f "$FO" "any(.[]; [.. | strings] | any(. == \$f))" && blocking "$CM" ovr' \
+  "RT1-02 a second copy ($R2) whose repro passes does not replace the first ($R1) whose repro fails: qa.finding-confirmed, blocking"
+echo rewritten >>"$R/$E5"
+ok 'blocking "$CM" ovr' "RT1-02 the second copy's evidence changes after the confirmation: the first copy's evidence still holds, the finding still blocks"
+
+# ---- RT1-03: the card's own tests-first test is charged even when it is a base failure (it fails on the base by definition) ----
+plant qa.base-failures "$CM" '{"tests": ["qa-t-basefail", "qa-t-acc"]}'
+plant qa.tests-first "$CM" "$(jq -nc --arg k "$(jq -r '.tests.classes[0].id' "$QJ")" '{accepted: [{id: "qa-t-acc", class: $k}], refused: []}')"
+fnd acc "$S_HI" qa-t-acc true null "$EJ1" | mkset acc.json; run sa SUB "$CM" "$R1" acc.json
+ok 'blocking "$CM" acc && uncharged "$CM" bnc' "RT1-03 a $S_HI finding on the card's own tests-first test blocks though the test is on the qa.base-failures line (another base failure stays not charged)"
+
+# ---- pass 2 F3/F4: merge() itself dedupes by fingerprint, keeps the highest severity and lists every role ----
+cat >"$T/dedupe.py" <<'PY'
+import json, sys
+top = sys.argv[1]; sys.path.insert(0, top + "/bin")
+import qa_findings as qf
+qa = json.load(open(top + "/.stella/qa-loop.json"))
+sev, roles = [x["id"] for x in qa["severities"]], list(qa["roles"])
+base = {"check": "c", "file": "f.py", "lines": [1, 2], "test": "t1", "static": True, "status": "static"}
+fs = [dict(base, severity=sev[-1], role=roles[0]), dict(base, severity=sev[0], role=roles[1]), dict(base, severity=sev[len(sev) // 2], role=roles[0])]
+out = qf.merge(fs, qa["depth_bump"]["to"], qa)
+sys.exit(0 if len(out) == 1 and out[0]["severity"] == sev[0] and sorted(out[0]["roles"]) == sorted({roles[0], roles[1]}) else 1)
+PY
+ok 'python3 -I "$T/dedupe.py" "$R"' "merge() of three copies of one finding (severities ${SEVS[-1]}, ${SEVS[0]}, a middle one; two roles): one entry, severity ${SEVS[0]}, both roles"
+
 # ---- T-WORKER: every command refuses in a worker environment, the trusted log untouched ----
 S0=$(logsum)
 for c in "evidence --card $CM --round 1 --file $R/$E1" "submit --card $CM --round 1 --role $R1 --file $T/ev.json" "repro --card $CM --fingerprint ${FC:-none}" \
