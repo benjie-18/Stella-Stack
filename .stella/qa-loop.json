@@ -192,6 +192,7 @@
       "projects": {}
     },
     "max_output_bytes": 67108864,
+    "max_write_bytes": 2147483648,
     "classes": [
       {
         "id": "missing",

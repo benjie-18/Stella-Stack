@@ -137,7 +137,7 @@ MADE = set()   # real paths of the throwaway copies this process made (fresh): r
 
 
 def run(copy, argv, timeout, scan=()):
-    """(exit code or None on the runner's kill: timeout or tests.max_output_bytes, output) of argv in the box, cwd a throwaway copy: a folder not in MADE (a round or
+    """(exit code or None on the runner's kill: timeout, tests.max_output_bytes or tests.max_write_bytes, output) of argv in the box, cwd a throwaway copy: a folder not in MADE (a round or
     base copy) is copied first by fresh() (which checks a round copy's tree) and the copy removed after, so no run ever writes
     the folder it was given. A long output keeps its head and tail; each string of scan found anywhere in it is named on a last
     line, so a class pattern in the cut middle still counts. Stop when the box did not start."""
@@ -159,7 +159,27 @@ def run(copy, argv, timeout, scan=()):
     env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL") if k in os.environ}
     env.update(HOME="/tmp/qa-home", TMPDIR="/tmp/qa-tmp", PYTHONDONTWRITEBYTECODE="1")
     sr, sw = os.pipe()
-    cap, over = data()[0]["tests"]["max_output_bytes"], []
+    tq = data()[0]["tests"]
+    cap, over, wcap, wrote, stop = tq["max_output_bytes"], [], tq["max_write_bytes"], [], threading.Event()
+
+    def used():   # bytes the copy takes on disk (links not followed)
+        return sum(os.lstat(os.path.join(r, f)).st_blocks * 512 for r, _, fs in os.walk(real) for f in fs)
+
+    def free():
+        s = os.statvfs(real)
+        return s.f_bavail * s.f_frsize
+
+    def grew():   # Q1-OF-CVER-02: the cheap free-space drop first, then the copy's own size (other writers on the disk are not charged)
+        return free0 - free() > wcap and used() - used0 > wcap
+
+    def watch():
+        while not stop.wait(0.2):
+            if grew():
+                wrote.append(True)
+                kill()
+                return
+
+    used0, free0 = used(), free()
 
     def kill():
         try:
@@ -184,8 +204,9 @@ def run(copy, argv, timeout, scan=()):
             os.close(sr); os.close(sw)
             raise Stop(NOBOX, f"the box could not be started ({el.why(e)[:100]}); the tests never run outside it") from None
         os.close(sw)
-        reader = threading.Thread(target=pump, daemon=True)
+        reader, watcher = threading.Thread(target=pump, daemon=True), threading.Thread(target=watch, daemon=True)
         reader.start()
+        watcher.start()
         try:
             rc = p.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -193,7 +214,11 @@ def run(copy, argv, timeout, scan=()):
             kill()
             p.wait()
         reader.join(10)   # shortcut: a process left holding the pipe past 10 s is not read further; the box kills it with its launcher
-        rc = None if over else rc
+        stop.set()
+        watcher.join()
+        if not wrote and grew():   # written faster than the watch looks
+            wrote.append(True)
+        rc = None if over or wrote else rc
         os.set_blocking(sr, False)
         try:
             started = os.read(sr, 64).startswith(b"started")
@@ -219,6 +244,8 @@ def run(copy, argv, timeout, scan=()):
                 out += b"\n[the cut middle of the output holds: " + b", ".join(sorted(seen)) + b"]\n"
         if over:
             out += f"\n[the output passed tests.max_output_bytes ({cap}): the run was killed]\n".encode()
+        if wrote:
+            out += f"\n[the run wrote more than tests.max_write_bytes ({wcap}) into its copy: it was killed]\n".encode()
     return rc, out.decode("utf-8", "replace")
 
 

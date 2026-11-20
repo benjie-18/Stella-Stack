@@ -289,8 +289,11 @@ def git(args, cwd, d):
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
     # shortcut: git calls share the test runner's limit (tests.timeout_s); give them their own when the data has one
-    return subprocess.run(["git", "-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false", *args], cwd=cwd, env=env,
-                          capture_output=True, text=True, errors="replace", timeout=d.qa["tests"]["timeout_s"])
+    r = subprocess.run(["git", "-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false", *args], cwd=cwd, env=env,
+                       capture_output=True, timeout=d.qa["tests"]["timeout_s"])
+    # bytes decoded here, not text=True: universal newlines would turn a CR inside a line into a line break (Q1-OF-CVER-01)
+    r.stdout, r.stderr = r.stdout.decode("utf-8", "replace"), r.stderr.decode("utf-8", "replace")
+    return r
 
 
 def copy_limit(project, d):
@@ -300,8 +303,22 @@ def copy_limit(project, d):
 
 
 def make_copy(repo, h, card, n, d, project=None):
-    """(copy folder, tree id): H cloned standalone under qa_copies/<card>/round-<n>, checked out on a branch of its own. The tree's
-    size (git ls-tree -r -l: every blob) is checked against the project's limit before the checkout, so nothing big is written out."""
+    """(copy folder, tree id): H cloned standalone under qa_copies/<card>/round-<n>, checked out on a branch of its own. Before anything
+    is cloned, the builder repo's history the clone takes (rev-list --all --disk-usage) plus H's tree (ls-tree -r -l: every blob) is
+    checked against the project's limit (RTF-08, Q1-OF-CVER-03)."""
+    sizes = [git(["ls-tree", "-r", "-l", "-z", h], repo, d), git(["rev-list", "--objects", "--all", "--disk-usage"], repo, d)]
+    bad = next((r for r in sizes if r.returncode), None)
+    if bad:
+        raise Refuse(NO_COPY, f"the size of the repository at that hash cannot be read (exit {bad.returncode}): {bad.stderr.strip()[-160:]}")
+    try:   # <mode> <type> <object> <size>\t<path>; a submodule's size is "-"
+        size = sum(int(e.split(None, 4)[3]) for e in sizes[0].stdout.split("\0") if e and e.split(None, 4)[1] == "blob") + int(sizes[1].stdout.strip())
+    except (ValueError, IndexError):
+        raise Refuse(NO_COPY, "the size of the repository at that hash cannot be read") from None
+    cap = copy_limit(project, d)
+    if size > cap:
+        # shortcut: --disk-usage is the history as stored in the builder repo; the clone repacks it, close to it, not equal
+        raise Refuse(NO_COPY, f"the frozen tree and the history the copy would clone hold {size} bytes, over the limit of {cap} for project "
+                              f"{project} (qa-loop tests.max_copy_bytes: the owner may set the project's own); nothing was cloned")
     base = el.path(d.idx["qa_copies"])
     el.mkdirs(os.path.join(base, card))
     dest = os.path.join(base, card, f"round-{n}")
@@ -311,16 +328,11 @@ def make_copy(repo, h, card, n, d, project=None):
         shutil.rmtree(dest)   # a copy left by a freeze that wrote no line
     try:
         steps = (["clone", "--quiet", "--no-local", "--no-checkout", "--no-hardlinks", "-c", f"core.hooksPath={os.devnull}", "--", repo, dest], None), \
-                (["ls-tree", "-r", "-l", "-z", h], dest), (["checkout", "--quiet", "-b", f"qa/{card}/round-{n}", h], dest)
+                (["checkout", "--quiet", "-b", f"qa/{card}/round-{n}", h], dest)
         for args, cwd in steps:
             r = git(args, cwd, d)
             if r.returncode:
                 raise Refuse(NO_COPY, f"git {args[0]} failed (exit {r.returncode}): {r.stdout.strip()[-160:]}")
-            if args[0] == "ls-tree":   # <mode> <type> <object> <size>\t<path>; a submodule's size is "-"
-                size, cap = sum(int(e.split(None, 4)[3]) for e in r.stdout.split("\0") if e and e.split(None, 4)[1] == "blob"), copy_limit(project, d)
-                if size > cap:
-                    raise Refuse(NO_COPY, f"the frozen tree holds {size} bytes, over the limit of {cap} for project {project} "
-                                          f"(qa-loop tests.max_copy_bytes: the owner may set the project's own); nothing was checked out")
         head, tree = (git(["rev-parse", "--verify", x], dest, d).stdout.strip() for x in ("HEAD", "HEAD^{tree}"))
         if head != h or not HASH.fullmatch(tree):
             raise Refuse(NO_COPY, "the copy's HEAD is not the commit asked for")
@@ -343,7 +355,7 @@ def changed(dest, a, b, d):
     if names.returncode or patch.returncode:
         return None
     added, hunk = [], False
-    for l in patch.stdout.splitlines():   # Q1-CVER-04: a file's header lines come before its first @@, so "+++ " inside a hunk is an added line
+    for l in patch.stdout.split("\n"):   # Q1-CVER-04: a file's header lines come before its first @@, so "+++ " inside a hunk is an added line; only \n ends a line (Q1-OF-CVER-01)
         if l.startswith("diff --git "):
             hunk = False
         elif l.startswith("@@"):

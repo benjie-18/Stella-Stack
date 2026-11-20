@@ -280,7 +280,8 @@
         "classes",
         "max_repros",
         "max_copy_bytes",
-        "max_output_bytes"
+        "max_output_bytes",
+        "max_write_bytes"
       ],
       "properties": {
         "reruns": {
@@ -322,6 +323,11 @@
           "type": "integer",
           "minimum": 1024,
           "description": "RTF-08: the bytes of output one test run may write to the host; past it the run is killed (the runner's kill, as at timeout_s) and the output kept is cut at the cap"
+        },
+        "max_write_bytes": {
+          "type": "integer",
+          "minimum": 1048576,
+          "description": "Q1-OF-CVER-02: the bytes one test run may add to its throwaway copy (host disk); past it the run is killed (the runner's kill, as at timeout_s)"
         },
         "max_repros": {
           "type": "integer",

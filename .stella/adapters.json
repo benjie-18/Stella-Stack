@@ -488,6 +488,9 @@
         "permission": {
           "skill": {
             "*": "deny"
+          },
+          "execute": {
+            "*": "deny"
           }
         }
       }
