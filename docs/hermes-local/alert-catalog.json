@@ -3443,7 +3443,7 @@
       "area": "QA",
       "severity": "warning",
       "title": "the card's rung projection was not written",
-      "message": "The card climbed (the trusted qa.climbed line stands), but the rungs file bin/escalate.sh reads was not written: {problem}.",
+      "message": "The card climbed (the trusted qa.climbed line stands), but the card rungs file the escalation script reads was not written: {problem}.",
       "action": "fix the rungs file (it must be a JSON object, not a link) and set the card's rung as the message says; the trusted line wins on any mismatch. See STL-QA-112 in docs/alert-codes.md.",
       "cause": "The rungs file is damaged, is a link, or its folder cannot be written.",
       "check": ".supervisor/state/rungs.json; the event log (qa.climbed lines).",
