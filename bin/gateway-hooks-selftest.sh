@@ -33,6 +33,7 @@
 #       bin/capabilities_mcp.py, network_request bin/model_proxy.py, broker_call bin/credentials.py, host_session bin/host_access.py;
 #       the PDP route (bin/capabilities_mcp.py) is a registered hook of file_write too (the coding CLIs' writes reach it).
 set -u
+has() { grep "$@" >/dev/null; }   # grep that reads its whole input: under pipefail an early-exit grep -q kills the writer with SIGPIPE (141), which flips found or not-found (final-pass tester, R1)
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 ME=gateway-hooks-selftest
 SECTIONS="agent mcp proxy broker host pdp dc08 dc09 lint"
@@ -125,7 +126,7 @@ print(match(sys.argv[1], sys.argv[2], json.loads(sys.argv[3])))   # <log> <type>
 PY
 # newdec <line count before> <want JSON>: decision lines written since, holding every key: value at any depth (G-A3)
 newdec() { tail -n +$(($1 + 1)) "$EV" 2>/dev/null >"$T/o/evtail"; python3 -I "$T/qa.py" "$T/o/evtail" "$DEV" "$2"; }
-nodec() { [ "$(newdec "$1" '{}')" = 0 ] && ! tail -n +$(($1 + 1)) "$EV" 2>/dev/null | grep -q '"would-refuse"'; }
+nodec() { [ "$(newdec "$1" '{}')" = 0 ] && ! tail -n +$(($1 + 1)) "$EV" 2>/dev/null | has '"would-refuse"'; }
 # hooked <kind> <file>: gateway.json registers the kind with a hook in that file (so off is a hooked path)
 hooked() { jq -e --arg k "$1" --arg f "$2" '[.action_kinds[]? | select(.id == $k) | .hooks[]? | select(.file | endswith($f))] | length > 0' "$GW" >/dev/null 2>&1; }
 ev() {   # <id> <fake mode> <timeout_s>: the default entry's fields, then the fake script's argv / request / timeout
@@ -263,24 +264,24 @@ agent)   # the agent-runtime executor (bin/agent-runtime-selftest.sh harness: a 
   ok '[ -n "$PROTO" ] && [ -n "$TW" ] && [ -n "$TR" ] && [ -n "$TS" ] && jq -e ".entries[] | select(.id == \"qa-agui\")" "$AF"' "precondition: the fake AG-UI entry (protocol ${PROTO:-none}; write ${TW:-none}, read ${TR:-none}, shell ${TS:-none} tools) is in the scratch data"
   deny enforce file_write; e0=$(nl "$EV")
   ag a1 qa-run-a1 "$(jq -nc --argjson a "$(wr qa-a1.txt)" --argjson b "$(sh_ 'touch qa-a1-shell.txt')" '[$a, $b]')"
-  ok '[ $d = 0 ] && [ ! -e "$W/qa-a1.txt" ] && res qa-run-a1 qa-a1.txt | jq -e "select(.ok == false)" | grep -q . && [ "$(newdec "$e0" "{\"kind\": \"file_write\", \"verdict\": \"refuse\"}")" -ge 1 ]' \
+  ok '[ $d = 0 ] && [ ! -e "$W/qa-a1.txt" ] && res qa-run-a1 qa-a1.txt | jq -e "select(.ok == false)" | has . && [ "$(newdec "$e0" "{\"kind\": \"file_write\", \"verdict\": \"refuse\"}")" -ge 1 ]' \
     "AC4-enforce-refuse/T-hooks agent-runtime write, enforce, no allow for file_write: no file, tool_result ok false, a file_write refuse decision line"
   ok '[ $d = 0 ] && [ -e "$W/qa-a1-shell.txt" ] && [ "$(newdec "$e0" "{\"kind\": \"shell\", \"verdict\": \"allow\"}")" -ge 1 ]' "T-hooks agent-runtime control in the same run: a shell call the policy permits runs, with an allow line (the refusal is the kind's)"
   deny enforce shell; e0=$(nl "$EV")
   ag a2 qa-run-a2 "$(jq -nc --argjson b "$(sh_ 'touch qa-a2-shell.txt')" '[$b]')"
-  ok '[ $d = 0 ] && [ ! -e "$W/qa-a2-shell.txt" ] && res qa-run-a2 qa-a2-shell | jq -e "select(.ok == false)" | grep -q . && [ "$(newdec "$e0" "{\"kind\": \"shell\", \"verdict\": \"refuse\"}")" -ge 1 ]' \
+  ok '[ $d = 0 ] && [ ! -e "$W/qa-a2-shell.txt" ] && res qa-run-a2 qa-a2-shell | jq -e "select(.ok == false)" | has . && [ "$(newdec "$e0" "{\"kind\": \"shell\", \"verdict\": \"refuse\"}")" -ge 1 ]' \
     "AC4-enforce-refuse/T-hooks agent-runtime shell, enforce, no allow for shell: the command never ran, tool_result ok false, a shell refuse line"
   deny enforce file_read; e0=$(nl "$EV"); RD=QA-READ-$RANDOM$RANDOM
   W=$(wt qa-run-a3); printf '%s\n' "$RD" >"$W/qa-a3.txt"; brief qa-run-a3 "$(jq -nc --argjson r "$(act read "$TR" '{"path": "qa-a3.txt"}')" '[$r]')"
   run a3 A start --adapter qa-agui --role "$ROLE" --worktree "$W" --brief-file "$T/brief-qa-run-a3.md" --link qa-api/qa-m1 --run-id qa-run-a3 --json; done_ qa-run-a3; d=$?
-  ok '[ $d = 0 ] && res qa-run-a3 qa-a3.txt | jq -e "select(.ok == false)" | grep -q . && ! grep -rqF -- "$RD" "$R/$AR/qa-run-a3" "$EV" && [ "$(newdec "$e0" "{\"kind\": \"file_read\", \"verdict\": \"refuse\"}")" -ge 1 ]' \
+  ok '[ $d = 0 ] && res qa-run-a3 qa-a3.txt | jq -e "select(.ok == false)" | has . && ! grep -rqF -- "$RD" "$R/$AR/qa-run-a3" "$EV" && [ "$(newdec "$e0" "{\"kind\": \"file_read\", \"verdict\": \"refuse\"}")" -ge 1 ]' \
     "AC4-enforce-refuse/T-hooks agent-runtime read, enforce, no allow for file_read: tool_result ok false, the content in no run file or event line, a file_read refuse line"
   deny enforce tool_call; e0=$(nl "$EV")
   ag a4 qa-run-a4 "$(jq -nc --argjson a "$(wr qa-a4.txt)" '[$a]')"
   ok '[ $d = 0 ] && [ ! -e "$W/qa-a4.txt" ] && [ "$(newdec "$e0" "{\"kind\": \"tool_call\", \"verdict\": \"refuse\"}")" -ge 1 ]' "AC4-enforce-refuse/T-hooks agent-runtime, enforce, no allow for tool_call: the offered write never ran, a tool_call refuse line"
   deny audit file_write; e0=$(nl "$EV")
   ag a5 qa-run-a5 "$(jq -nc --argjson a "$(wr qa-a5.txt)" '[$a]')"
-  ok '[ $d = 0 ] && [ -e "$W/qa-a5.txt" ] && res qa-run-a5 qa-a5.txt | jq -e "select(.ok == true)" | grep -q . && [ "$(newdec "$e0" "{\"kind\": \"file_write\", \"verdict\": \"would-refuse\"}")" -ge 1 ]' \
+  ok '[ $d = 0 ] && [ -e "$W/qa-a5.txt" ] && res qa-run-a5 qa-a5.txt | jq -e "select(.ok == true)" | has . && [ "$(newdec "$e0" "{\"kind\": \"file_write\", \"verdict\": \"would-refuse\"}")" -ge 1 ]' \
     "AC4-audit agent-runtime write, audit, no allow for file_write: the file is written (ok true), a would-refuse line"
   deny off file_write; e0=$(nl "$EV")
   ag a6 qa-run-a6 "$(jq -nc --argjson a "$(wr qa-a6.txt)" --argjson b "$(sh_ 'touch qa-a6-shell.txt')" '[$a, $b]')"
@@ -298,6 +299,15 @@ agent)   # the agent-runtime executor (bin/agent-runtime-selftest.sh harness: a 
   cedar "permit(principal, action == Stella::Action::\"file_write\", resource);" "forbid(principal, action == Stella::Action::\"file_write\", resource) when { context has path && context.path like \"$W/protected/*\" };"
   agr qa-rel-b "$(jq -nc --argjson a "$(wr "$W/protected/abs.txt")" --argjson b "$(wr protected/rel.txt)" --argjson c "$(wr ./protected//dot.txt)" '[$a, $b, $c]')"
   ok '[ ! -e "$W/protected/abs.txt" ] && [ ! -e "$W/protected/rel.txt" ] && [ ! -e "$W/protected/dot.txt" ]' "AC4-enforce-refuse agent-runtime canonical path: a forbid on a worktree folder refuses its absolute, relative and ./x//y spellings"
+  # (final-pass tester, mutant P2) a link that exists is resolved too (policy.placed: realpath): a worktree link to the forbidden folder
+  # is the same place; control: under a permit-all policy the same write through the link lands in the folder
+  W=$(wt qa-rel-c); mkdir -p "$W/protected"; ln -s protected "$W/lnk"; WC=$W
+  cedar "permit(principal, action == Stella::Action::\"file_write\", resource);"
+  agr qa-rel-c "$(jq -nc --argjson a "$(wr lnk/ctl.txt)" '[$a]')"
+  W=$(wt qa-rel-d); mkdir -p "$W/protected"; ln -s protected "$W/lnk"
+  cedar "permit(principal, action == Stella::Action::\"file_write\", resource);" "forbid(principal, action == Stella::Action::\"file_write\", resource) when { context has path && context.path like \"$W/protected/*\" };"
+  agr qa-rel-d "$(jq -nc --argjson a "$(wr lnk/via-link.txt)" '[$a]')"
+  ok '[ -e "$WC/protected/ctl.txt" ] && [ ! -e "$W/protected/via-link.txt" ]' "AC4-enforce-refuse agent-runtime canonical path (final-pass tester): a forbid on a worktree folder refuses a write through a worktree link to it (control: the link write lands when permitted)"
   ;;
 mcp)   # capabilities_mcp tools/call (bin/capabilities-mcp-selftest.sh harness: a fake skill as data, a minted run token, MCP over HTTP)
   SRC=$(ix '[.capability_sources // empty | .. | strings]')
@@ -336,11 +346,11 @@ PYM
   TK=$(mint --run qa-run-m1 --role "$ROLE" --card qa-card-m1 --link qa-api/qa-m1)
   load() { run "$1" python3 -I "$T/mcp.py" "$MP" "$TK" load '{"id": "qa-fake-skill"}'; }
   answered() { [ "$(jq -r .status "$T/o/$1.out")" = 200 ] && jq -e '.body.result != null and (.body.result.isError // false) == false' "$T/o/$1.out" >/dev/null; }
-  refused() { jq -e '.body.error != null or .body.result.isError == true' "$T/o/$1.out" >/dev/null && grep -qE "$GCODE" "$T/o/$1.out"; }
+  refused() { jq -e '.body.error != null or .body.result.isError == true' "$T/o/$1.out" >/dev/null && has -E "$GCODE" "$T/o/$1.out"; }
   ok '[ -n "$TK" ] && python3 -I "$R/bin/stella_data.py" check' "precondition: a run token minted, the scratch registry with the fake skill passes check"
   deny enforce mcp_call; e0=$(nl "$EV")
   load m1
-  ok 'refused m1 && ! grep -q QA-SKILL "$T/o/m1.out" && [ -z "$(newev "$e0" capability-load)" ] && [ "$(newdec "$e0" "{\"kind\": \"mcp_call\", \"verdict\": \"refuse\"}")" -ge 1 ]' \
+  ok 'refused m1 && ! has QA-SKILL "$T/o/m1.out" && [ -z "$(newev "$e0" capability-load)" ] && [ "$(newdec "$e0" "{\"kind\": \"mcp_call\", \"verdict\": \"refuse\"}")" -ge 1 ]' \
     "AC4-enforce-refuse/T-hooks MCP tools/call load, enforce, no allow for mcp_call: refused with a gateway code, no definition, no capability-load line, an mcp_call refuse line"
   deny audit mcp_call; e0=$(nl "$EV")
   load m2
@@ -355,7 +365,7 @@ PYM
   ok 'jq -e ".body.result.structuredContent.verdict == \"allow\"" "$T/o/m4.out" && [ "$(newdec "$e0" "{\"kind\": \"file_write\", \"path\": \"$T/pcwd/qa-p.txt\", \"cwd\": \"$T/pcwd\"}")" -ge 1 ]' \
     "T-hooks PDP route: a relative path is decided (and logged) as the absolute path under the cwd the hook sent"
   pdp_ m5 '{"kind": "file_write", "inputs": {"path": "qa-p.txt"}}'
-  ok 'jq -e ".body.result.isError == true" "$T/o/m5.out" && grep -q STL-GRD-748 "$T/o/m5.out"' "T-hooks PDP route: a relative path with no absolute cwd is refused STL-GRD-748 (it cannot be placed)"
+  ok 'jq -e ".body.result.isError == true" "$T/o/m5.out" && has STL-GRD-748 "$T/o/m5.out"' "T-hooks PDP route: a relative path with no absolute cwd is refused STL-GRD-748 (it cannot be placed)"
   ;;
 proxy)   # model_proxy upstream forward (bin/model-proxy-selftest.sh call shape)
   HDR=$(jq -r '.entries[0].request.headers | keys[0]' "$R/.stella/protocols.json"); HTPL=$(jq -r --arg h "$HDR" '.entries[0].request.headers[$h]' "$R/.stella/protocols.json")
@@ -367,7 +377,7 @@ proxy)   # model_proxy upstream forward (bin/model-proxy-selftest.sh call shape)
   ok '[ -n "$TK" ] && [ -n "$PPORT" ] && [ -n "$PORT" ]' "precondition: the mock upstream (port ${PORT:-none}) and the proxy (port ${PPORT:-none}) run, a run token is minted"
   deny enforce network_request; e0=$(nl "$EV"); k0=$(calls)
   pcall p1
-  ok '[ "$(pst p1)" -ge 400 ] && grep -qE "$GCODE" "$T/o/p1.out" && [ "$(calls)" = "$k0" ] && [ "$(newdec "$e0" "{\"kind\": \"network_request\", \"verdict\": \"refuse\"}")" -ge 1 ]' \
+  ok '[ "$(pst p1)" -ge 400 ] && has -E "$GCODE" "$T/o/p1.out" && [ "$(calls)" = "$k0" ] && [ "$(newdec "$e0" "{\"kind\": \"network_request\", \"verdict\": \"refuse\"}")" -ge 1 ]' \
     "AC4-enforce-refuse/T-hooks proxy call, enforce, no allow for network_request: HTTP >= 400 with a gateway code, no upstream request, a network_request refuse line"
   deny audit network_request; e0=$(nl "$EV"); k0=$(calls)
   pcall p2
@@ -395,7 +405,7 @@ PY
   ok '[ $RC = 0 ] && jq -e --arg s "$KSHA" ".got == true and .sha == \$s" "$T/o/b0.out"' "precondition: credentials.get reads the scratch key (folder backend) with everything allowed"
   deny enforce broker_call; e0=$(nl "$EV")
   get b1
-  ok 'jq -e ".got == false" "$T/o/b1.out" && grep -qE "$GCODE" "$T/o/b1.out" && [ "$(newdec "$e0" "{\"kind\": \"broker_call\", \"verdict\": \"refuse\"}")" -ge 1 ]' \
+  ok 'jq -e ".got == false" "$T/o/b1.out" && has -E "$GCODE" "$T/o/b1.out" && [ "$(newdec "$e0" "{\"kind\": \"broker_call\", \"verdict\": \"refuse\"}")" -ge 1 ]' \
     "AC4-enforce-refuse/T-hooks credentials.get, enforce, no allow for broker_call: Refused with a gateway code, no value, a broker_call refuse line"
   deny audit broker_call; e0=$(nl "$EV")
   get b2
@@ -426,7 +436,7 @@ host)   # host_access decide (bin/host-access-selftest.sh baseline: the operator
   ok '[ $RC = 0 ]' "precondition: the baseline host-session request is allowed (host access data as bin/host-access-selftest.sh plants it)"
   deny enforce host_session; e0=$(nl "$EV")
   hdec h1
-  ok '[ $RC = 1 ] && out h1 | grep -qE "$GCODE" && [ "$(newdec "$e0" "{\"kind\": \"host_session\", \"verdict\": \"refuse\"}")" -ge 1 ]' "AC4-enforce-refuse/T-hooks host access decide, enforce, no allow for host_session: refused (exit 1) with a gateway code, a host_session refuse line"
+  ok '[ $RC = 1 ] && out h1 | has -E "$GCODE" && [ "$(newdec "$e0" "{\"kind\": \"host_session\", \"verdict\": \"refuse\"}")" -ge 1 ]' "AC4-enforce-refuse/T-hooks host access decide, enforce, no allow for host_session: refused (exit 1) with a gateway code, a host_session refuse line"
   deny audit host_session; e0=$(nl "$EV")
   hdec h2
   ok '[ $RC = 0 ] && [ "$(newdec "$e0" "{\"kind\": \"host_session\", \"verdict\": \"would-refuse\"}")" -ge 1 ]' "AC4-audit host access decide, audit: allowed, a host_session would-refuse line"
@@ -456,7 +466,7 @@ pdp)   # the coding CLI's policy hook (worker side) asks the engine-side PDP rou
 dc08)   # X1-DC-08: a hookless coding CLI is refused at start in enforce; an off-mode run is stopped when the owner apply turns enforce on
   allowall enforce
   W=$(wt dc8-1); cli s1 qa-fake qa-run-k1 "$W" '[]'
-  ok '[ $RC != 0 ] && out s1 | grep -qE "$G2CODE" && none_ "$W" qa-run-k1' "DC-08 enforce, everything allowed: the hookless coding CLI (no policy hook) is refused at start with STL-GRD-745..752, nothing spawned"
+  ok '[ $RC != 0 ] && out s1 | has -E "$G2CODE" && none_ "$W" qa-run-k1' "DC-08 enforce, everything allowed: the hookless coding CLI (no policy hook) is refused at start with STL-GRD-745..752, nothing spawned"
   W=$(wt dc8-2); cli s2 qa-hook qa-run-k2 "$W" '[]'
   ok '[ $RC = 0 ] && spawned "$W" qa-run-k2 && [ "$(newdec 0 "{\"verdict\": \"allow\"}")" -ge 1 ]' "DC-08 control: in the same mode the hook-capable CLI starts and its actions are decided (allow lines)"
   # the owner path (bin/gateway-selftest.sh AC5-owner-only): this root's owner key; identity_critical takes the key alone (no terminal in a test)
@@ -500,7 +510,7 @@ SH
   W1=$T/wt-card-9a; mkwt "$W1" >/dev/null 2>&1; W2=$T/wt-card-9b; mkwt "$W2" >/dev/null 2>&1
   cli s1 qa-hook qa-run-n1 "$W1" '[]' --card qa-card-n1 --project qa-proj-b; r1=$RC; cp "$T/o/s1.out" "$T/o/s1.keep"; cat "$T/o/s1.err" >>"$T/o/s1.keep"
   cli s2 qa-hook qa-run-n2 "$W2" '[]' --card qa-card-n2 --project qa-proj-a; r2=$RC
-  ok '[ $r1 != 0 ] && grep -qE "$GCODE" "$T/o/s1.keep" && none_ "$W1" qa-run-n1 && [ $r2 = 0 ] && spawned "$W2" qa-run-n2' \
+  ok '[ $r1 != 0 ] && has -E "$GCODE" "$T/o/s1.keep" && none_ "$W1" qa-run-n1 && [ $r2 = 0 ] && spawned "$W2" qa-run-n2' \
     "DC-09 start --card with --project other than the card's board binding (qa-proj-b vs qa-proj-a) is refused with a code, nothing spawned; the bound project starts"
   ;;
 lint)   # AC5-lint on the shipped data, and every kind's hook at its site (T-hooks)

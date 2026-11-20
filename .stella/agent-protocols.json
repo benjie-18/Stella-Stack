@@ -1,25 +1,66 @@
 {
   "schema_version": 1,
-  "about": "Agent-runtime protocols (X1 item A, design section A, ruling X1-DC-06): how bin/agent_runtime.py talks to an agent built on any framework. One entry per protocol; a second protocol is a new entry (another type map and pointers over the same transport), never code. request: the run input template ({thread}, {run}, {messages}, {tools}, {state}, {model}; a string that is exactly one placeholder takes the typed value). messages: the templates of the user prompt, an assistant tool call and a tool result. tool: the template of one offered tool (an adapters.json agent_tools row). events: type is the pointer of an event's type, map turns a protocol type into a Stella kind (a type not in map is ignored), pointers name the fields of the event. ready: the pointer of the port in the agent's one ready line on stdout (the agent binds port 0 itself). ui_custom_names: the custom event names that are generative UI events (handed to bin/agui_ui.py). max_open and max_turn_bytes: how many messages and tool calls may be open in one turn and how many bytes they may hold together (over either: the run stops, STL-GRD-712).",
+  "about": "Agent-runtime protocols (X1 item A, ruling X1-DC-06): how bin/agent_runtime.py talks to an agent of any framework. One entry per protocol; a second protocol is a new entry, never code. request: the run input template ({thread}, {run}, {messages}, {tools}, {state}, {model}; a string that is one placeholder takes the typed value). messages: templates of the user prompt, an assistant tool call and a tool result. tool: the template of one offered tool (an agent_tools row). events: type = pointer of the event type; map = protocol type -> Stella kind (unmapped types are ignored); pointers = the event fields. ready: pointer of the port in the agent ready line (the agent binds port 0). ui_custom_names: custom events that are generative UI (to bin/agui_ui.py). max_open, max_turn_bytes: open messages and calls per turn and their bytes (over: STL-GRD-712).",
   "excerpt_chars": 240,
   "entries": [
     {
       "id": "ag-ui",
       "label": "AG-UI (Agent-User Interaction protocol) over HTTP and server-sent events",
       "transport": "http-sse",
-      "ready": {"pointer": "/port"},
+      "ready": {
+        "pointer": "/port"
+      },
       "request": {
         "method": "POST",
         "path": "/",
-        "headers": {"Content-Type": "application/json", "Accept": "text/event-stream"},
-        "body": {"threadId": "{thread}", "runId": "{run}", "messages": "{messages}", "tools": "{tools}", "state": "{state}", "context": [], "forwardedProps": {"model": "{model}"}}
+        "headers": {
+          "Content-Type": "application/json",
+          "Accept": "text/event-stream"
+        },
+        "body": {
+          "threadId": "{thread}",
+          "runId": "{run}",
+          "messages": "{messages}",
+          "tools": "{tools}",
+          "state": "{state}",
+          "context": [],
+          "forwardedProps": {
+            "model": "{model}"
+          }
+        }
       },
       "messages": {
-        "user": {"id": "{id}", "role": "user", "content": "{text}"},
-        "assistant_tool_calls": {"id": "{id}", "role": "assistant", "toolCalls": [{"id": "{tool_id}", "type": "function", "function": {"name": "{tool_name}", "arguments": "{args}"}}]},
-        "tool": {"id": "{id}", "role": "tool", "toolCallId": "{tool_id}", "content": "{result}"}
+        "user": {
+          "id": "{id}",
+          "role": "user",
+          "content": "{text}"
+        },
+        "assistant_tool_calls": {
+          "id": "{id}",
+          "role": "assistant",
+          "toolCalls": [
+            {
+              "id": "{tool_id}",
+              "type": "function",
+              "function": {
+                "name": "{tool_name}",
+                "arguments": "{args}"
+              }
+            }
+          ]
+        },
+        "tool": {
+          "id": "{id}",
+          "role": "tool",
+          "toolCallId": "{tool_id}",
+          "content": "{result}"
+        }
       },
-      "tool": {"name": "{name}", "description": "{description}", "parameters": "{parameters}"},
+      "tool": {
+        "name": "{name}",
+        "description": "{description}",
+        "parameters": "{parameters}"
+      },
       "events": {
         "type": "/type",
         "map": {
@@ -54,7 +95,9 @@
           "error": "/message"
         }
       },
-      "ui_custom_names": ["ui"],
+      "ui_custom_names": [
+        "ui"
+      ],
       "max_turns": 50,
       "max_open": 16,
       "max_turn_bytes": 4194304,

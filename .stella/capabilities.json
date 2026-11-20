@@ -3113,6 +3113,59 @@
       },
       "global_id": "ba8c48e8-0c49-4dd7-9233-9f2b6a0b847b",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "mock-agui-raw",
+      "kind": "tool",
+      "summary": "Test rig: a raw-event AG-UI agent that sends exactly the events a scenario file lists (malformed calls, names carrying secrets, a foreign port), so the agent-runtime selftest can play a hostile agent; not product code",
+      "keywords": [
+        "mock",
+        "agent",
+        "ag-ui",
+        "hostile",
+        "raw events",
+        "test rig"
+      ],
+      "inputs": "--scenario F --token-env NAME | --version",
+      "outputs": "a ready line, then the scenario events over SSE per run request",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/mock_agui_raw.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "6a799edc-6d74-4fc4-bae8-ba642c6ae383",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "redact-all",
+      "kind": "tool",
+      "summary": "Library: one masking rule for agent-supplied data (X1 fix round): run tokens and the catalog value patterns masked in dict keys and agent-chosen names as well as values, fail closed; used by the adapter run stream, agent_runtime alert and event lines and agui_ui",
+      "keywords": [
+        "redact",
+        "mask",
+        "secret",
+        "canary",
+        "run token",
+        "keys",
+        "names"
+      ],
+      "inputs": "a value (string, dict or list) or a name",
+      "outputs": "the masked copy; on an unreadable catalog the whole value is masked",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/redact_all.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "308cd9b0-2201-40d9-8740-c0aca1c7d93b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

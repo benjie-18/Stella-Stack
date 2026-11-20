@@ -31,6 +31,7 @@
 #  G-A6 `gateway.py lint` exit 0 clean, non-zero with the offending kind named; it scans bin/*.py for gateway.check calls.
 #  G-A7 codes: every G1 refusal carries a code in STL-GRD-730..744.
 set -u
+has() { grep "$@" >/dev/null; }   # grep that reads its whole input: under pipefail an early-exit grep -q kills the writer with SIGPIPE (141), which flips found or not-found (final-pass tester, R1)
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 ME=gateway-selftest
 T=$(mktemp -d "${TMPDIR:-/tmp}/$ME.XXXXXX"); T=$(cd "$T" && pwd -P)
@@ -185,7 +186,7 @@ ok '[ -n "$GPID" ] && jq -e --arg i "$GPID" ".files[] | select(.id == \$i) | .ow
 ok '[ -n "$GPID" ] && [ "$(jq --arg i "$GPID" "[.entries[] | select(.store.data == \$i)] | length" "$R/.stella/settings.json")" -ge 2 ] && jq -e --arg i "$GPID" "[.entries[] | select(.store.data == \$i) | .sensitivity == \"identity_critical\"] | all" "$R/.stella/settings.json"' "AC5-owner-only settings registry rows (global mode, evaluator) store into the policy file and are identity_critical"
 ok '[ -f "$GP" ] && [ "$(jq -r .mode.global "$T/gp.orig")" = off ]' "AC5-owner-only/AC4-off the shipped owner file holds the default mode off"
 run hits sh -c 'printf "%s\0" "$1" | python3 -I "$2/bin/roles.py" hits "$2" refused | tr "\0" "\n"' _ "$GPREL" "$R"
-ok '[ $RC = 0 ] && grep -qxF "$GPREL" "$T/o/hits.out"' "AC5-owner-only the protected-path rule (roles.py hits <root> refused, every guard's one test) refuses an agent write of $GPREL"
+ok '[ $RC = 0 ] && has -xF "$GPREL" "$T/o/hits.out"' "AC5-owner-only the protected-path rule (roles.py hits <root> refused, every guard's one test) refuses an agent write of $GPREL"
 run ownerdata python3 -I "$R/bin/roles.py" owner-data "$R"
 ok '[ $RC = 0 ] && jq -e --arg p "$GPREL" "index(\$p) != null" "$T/o/ownerdata.out"' "AC5-owner-only $GPREL is owner data (roles.py owner-data)"
 run boundary python3 -I "$R/bin/roles.py" boundary
@@ -197,9 +198,9 @@ git -C "$R" add -A >/dev/null 2>&1; git -C "$R" -c user.name=qa -c user.email=qa
 AP() { python3 -I "$R/bin/stella-apply.py" "$@"; }
 e0=$(nev)
 run apnokey python3 -I "$R/bin/stella-apply.py" apply "${GPID:-no-gateway-policy-row}" --from "$T/gp.cand"
-ok '[ -n "$GPID" ] && [ $RC = 1 ] && grep -q STL-OWN-806 "$T/o/last" && cmp -s "$GP" "$T/gp.orig" && [ "$(nev)" = "$e0" ]' "AC5-owner-only stella-apply with no owner proof (no owner key): STL-OWN-806, the file unchanged, no event line"
+ok '[ -n "$GPID" ] && [ $RC = 1 ] && has STL-OWN-806 "$T/o/last" && cmp -s "$GP" "$T/gp.orig" && [ "$(nev)" = "$e0" ]' "AC5-owner-only stella-apply with no owner proof (no owner key): STL-OWN-806, the file unchanged, no event line"
 run apworker env STUB_WORKER_MARK=1 python3 -I "$R/bin/stella-apply.py" apply "${GPID:-no-gateway-policy-row}" --from "$T/gp.cand"
-ok '[ -n "$GPID" ] && [ $RC = 1 ] && grep -q STL-CFG-312 "$T/o/last" && cmp -s "$GP" "$T/gp.orig" && [ "$(nev)" = "$e0" ]' "AC5-owner-only stella-apply from a worker environment: STL-CFG-312, the file unchanged, no event line"
+ok '[ -n "$GPID" ] && [ $RC = 1 ] && has STL-CFG-312 "$T/o/last" && cmp -s "$GP" "$T/gp.orig" && [ "$(nev)" = "$e0" ]' "AC5-owner-only stella-apply from a worker environment: STL-CFG-312, the file unchanged, no event line"
 # the owner path: this root's owner key; identity_critical takes the key alone here, as in stella-apply-selftest (no terminal in a test)
 python3 -I "$R/bin/owner_auth.py" init-key >/dev/null 2>&1
 jq '.actions.identity_critical = .actions.owner_write' "$POL" >"$T/oa" && cp "$T/oa" "$POL"
@@ -233,7 +234,7 @@ drive lb1 file_read "{\"path\": \"qa-notes.txt\", \"api_key\": \"$CAN1\", \"note
 ok '[ $RC = 0 ] && [ "$(jv lb1 .acted)" = true ] && [ "$(jv lb1 .at_action)" = $(( $(jv lb1 .before) + 1 )) ]' "AC4-log-before allow: the decision line is in the trusted log when the action runs"
 L=$(QA line "$EV" "$DEV" '{"kind": "file_read", "verdict": "allow"}' 2>/dev/null); echo "$L" >"$T/o/lb.line"
 ok '[ -n "$L" ] && echo "$L" | jq -e "[.. | objects | to_entries[]] as \$e | ([\$e[] | select(.key == \"policy_version\") | .value | strings | test(\"^[0-9a-f]{64}$\")] | any) and ([\$e[] | select(.key == \"evaluator\") | .value] | index(\"qa-fake\") != null) and ([\$e[] | select(.key == \"mode\") | .value] | index(\"enforce\") != null) and ([\$e[] | select(.key == \"reason\")] | length > 0) and ([\$e[] | select(.key == \"inputs\")] | length > 0)"' "AC4-log-before the line holds kind, verdict, mode, evaluator, reason, inputs and a sha256 policy_version"
-ok '! grep -qF "$CAN1" "$EV" "$AL" && ! grep -qF "$CAN2" "$EV" "$AL" && grep -qF "\"***\"" "$T/o/lb.line"' "AC4-log-before inputs masked: neither canary (key-named, value pattern) in the event log or the alerts; *** in the line"
+ok '! has -F "$CAN1" "$EV" "$AL" && ! has -F "$CAN2" "$EV" "$AL" && has -F "\"***\"" "$T/o/lb.line"' "AC4-log-before inputs masked: neither canary (key-named, value pattern) in the event log or the alerts; *** in the line"
 ok '[ -n "$L" ] && echo "$L" | jq -e "has(\"mac\") and has(\"seq\")" && python3 -I "$R/bin/event_log.py" verify' "AC4-log-before the line is a chained trusted line (event_log.py writer) and the chain verifies"
 drive lb2 shell '{"command": "true"}'
 ok '[ $RC = 0 ] && [ "$(jv lb2 .verdict)" = refuse ] && [ "$(jv lb2 .after)" = $(( $(jv lb2 .before) + 1 )) ] && [ "$(QA lines "$EV" "$DEV" "{\"kind\": \"shell\", \"verdict\": \"refuse\"}")" -ge 1 ]' "AC4-log-before a refusal is logged too (verdict refuse) before check() returns"
@@ -320,14 +321,14 @@ ok '[ $RC = 0 ]' "AC5-lint the shipped data passes the lint (every kind has its 
 ok 'jq -e "[.action_kinds[].id] as \$k | ([\"file_read\",\"file_write\",\"shell\",\"tool_call\",\"mcp_call\",\"network_request\",\"broker_call\",\"host_session\"] - \$k) == [] and (\$k | index(\"browser_action\") == null and index(\"vm_guest\") == null)" "$T/gw.orig"' "AC5-lint gateway.json registers the eight X1 kinds and not browser_action / vm_guest (no hook yet)"
 plant qa-planted-kind '[]'
 run li1 python3 -I "$R/bin/gateway.py" lint
-ok '[ $RC != 0 ] && grep -q qa-planted-kind "$T/o/last"' "AC5-lint a planted kind with no hook fails, naming the kind"
+ok '[ $RC != 0 ] && has qa-planted-kind "$T/o/last"' "AC5-lint a planted kind with no hook fails, naming the kind"
 printf 'def qa_hook(x):\n    return x\n' >"$R/bin/qa_planted_hook.py"
 plant qa-planted-kind '[{"file": "bin/qa_planted_hook.py", "function": "qa_hook"}]'
 run li2 python3 -I "$R/bin/gateway.py" lint
-ok '[ $RC != 0 ] && grep -q qa-planted-kind "$T/o/last"' "AC5-lint a planted kind whose hook function does not call gateway.check fails"
+ok '[ $RC != 0 ] && has qa-planted-kind "$T/o/last"' "AC5-lint a planted kind whose hook function does not call gateway.check fails"
 plant qa-planted-kind '[{"file": "bin/qa_no_such_file.py", "function": "qa_hook"}]'
 run li3 python3 -I "$R/bin/gateway.py" lint
-ok '[ $RC != 0 ] && grep -q qa-planted-kind "$T/o/last"' "AC5-lint a planted kind whose hook file is missing fails"
+ok '[ $RC != 0 ] && has qa-planted-kind "$T/o/last"' "AC5-lint a planted kind whose hook file is missing fails"
 printf 'import gateway\n\n\ndef qa_hook(x):\n    if gateway.check("qa-planted-kind", {"x": x}, {})["verdict"] == "refuse":\n        return None\n    return x\n' >"$R/bin/qa_planted_hook.py"
 plant qa-planted-kind '[{"file": "bin/qa_planted_hook.py", "function": "qa_hook"}]'
 run li4 python3 -I "$R/bin/gateway.py" lint
@@ -335,7 +336,7 @@ ok '[ $RC = 0 ]' "AC5-lint control: the planted kind with a hook that calls gate
 cp "$T/gw.qa" "$GW"; rm -f "$R/bin/qa_planted_hook.py"
 printf 'import gateway\n\n\ndef qa_ghost(x):\n    return gateway.check("qa-ghost-kind", {"x": x}, {})\n' >"$R/bin/qa_ghost.py"
 run li5 python3 -I "$R/bin/gateway.py" lint
-ok '[ $RC != 0 ] && grep -q qa-ghost-kind "$T/o/last"' "AC5-lint code calling gateway.check with a kind not in data fails, naming the kind"
+ok '[ $RC != 0 ] && has qa-ghost-kind "$T/o/last"' "AC5-lint code calling gateway.check with a kind not in data fails, naming the kind"
 rm -f "$R/bin/qa_ghost.py"
 
 # ======== T-cedar (shared: the real @cedar-policy/cedar-wasm from the source tree's node_modules, read only) ========
@@ -377,7 +378,7 @@ ok '[ $RC = 1 ] && [ "$(jv fx2 .verdict)" = refuse ] && [ "$(jv fx2 .code)" = ST
 LONG=$(printf 'qa text %.0s' $(seq 100)); LSHA=$(printf '%s' "$LONG" | sha256sum | awk '{print $1}')
 setpol enforce '{}' qa-len '[[["file_write"], "qa len"]]'; e0=$(nev)
 dec fx3 --kind file_write --inputs "$(jq -nc --arg t "$LONG" '{path: "/x", text: $t}')"
-ok '[ $RC = 0 ] && [ "$(jv fx3 .verdict)" = allow ] && tail -n +$((e0 + 1)) "$EV" | grep -q "$LSHA" && ! tail -n +$((e0 + 1)) "$EV" | grep -qF "${LONG:0:600}"' \
+ok '[ $RC = 0 ] && [ "$(jv fx3 .verdict)" = allow ] && tail -n +$((e0 + 1)) "$EV" | has "$LSHA" && ! tail -n +$((e0 + 1)) "$EV" | has -F "${LONG:0:600}"' \
   "AC4-log-before an 800-character input (over logged_string_max, under the mask limit): the evaluator got it whole (allow), the decision line holds its sha256 and not the text"
 ok '[ "$(QA lines "$EV" "$DEV" "{\"length\": 800}")" -ge 1 ]' "AC4-log-before the capped input's line also holds its length"
 cp "$T/gw.qa" "$GW"
