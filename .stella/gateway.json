@@ -1,17 +1,21 @@
 {
   "schema_version": 1,
-  "about": "Policy gateway stack data (X1 G1). Each action kind lists its hook sites; the sites are filled by X1 item G2 (until then `gateway.py lint` reports every kind whose hook does not call gateway.check yet). browser_action and vm_guest are registered by the phases that build them.",
+  "about": "Policy gateway stack data (X1 G1, hooks X1 G2). Each action kind lists its hook sites: the functions that call gateway.check with it before the action (`gateway.py lint` fails a kind with none). The capabilities MCP server function pdp is the engine-side decision route the coding CLIs' policy hook asks. browser_action and vm_guest are registered by the phases that build them.",
   "decision_event": "gateway_decision",
   "default_timeout_s": 10,
   "action_kinds": [
     {
       "id": "file_read",
-      "summary": "Read a file (an agent-runtime read tool)",
+      "summary": "Read a file (an agent-runtime read tool; a coding CLI's through its policy hook and the PDP route)",
       "target": "/path",
       "hooks": [
         {
           "file": "bin/agent_runtime.py",
-          "function": "gate_tool"
+          "function": "gates"
+        },
+        {
+          "file": "bin/capabilities_mcp.py",
+          "function": "pdp"
         }
       ],
       "global_id": "b75bb0d2-eda3-418c-9ffe-3be338403d0b",
@@ -19,12 +23,16 @@
     },
     {
       "id": "file_write",
-      "summary": "Write or edit a file (an agent-runtime write or edit tool)",
+      "summary": "Write or edit a file (an agent-runtime write or edit tool; a coding CLI's through its policy hook and the PDP route)",
       "target": "/path",
       "hooks": [
         {
           "file": "bin/agent_runtime.py",
-          "function": "gate_tool"
+          "function": "gates"
+        },
+        {
+          "file": "bin/capabilities_mcp.py",
+          "function": "pdp"
         }
       ],
       "global_id": "306ec062-82ec-4149-b2bb-fcb6ed0fd843",
@@ -32,12 +40,16 @@
     },
     {
       "id": "shell",
-      "summary": "Run a shell command (an agent-runtime shell tool, through the gated executor)",
+      "summary": "Run a shell command (an agent-runtime shell tool, through the gated executor; a coding CLI's through its policy hook and the PDP route)",
       "target": "/command",
       "hooks": [
         {
           "file": "bin/agent_runtime.py",
-          "function": "gate_tool"
+          "function": "gates"
+        },
+        {
+          "file": "bin/capabilities_mcp.py",
+          "function": "pdp"
         }
       ],
       "global_id": "1cac75a9-2b37-4263-9e61-9f77e37192de",
@@ -50,7 +62,7 @@
       "hooks": [
         {
           "file": "bin/agent_runtime.py",
-          "function": "gate_tool"
+          "function": "gates"
         }
       ],
       "global_id": "c6b9cb34-8a51-46be-a79c-c71f8caf914c",

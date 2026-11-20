@@ -15,7 +15,12 @@ One request, in this order (an HTTP refusal answers a JSON-RPC error object with
   4. methods initialize, notifications/initialized (and any notification or response: 202, no body), ping, tools/list, tools/call;
      another method or bad params: a JSON-RPC error with STL-GRD-678. Tools: search {query, limit?}, describe {id},
      request {id, reason}, load {id}. A refusal of bin/capabilities.py (STL-GRD-660..667) is a tool result with isError true.
-     load and request write their trusted lines through bin/capabilities.py and bin/approvals.py (engine side).
+     load and request write their trusted lines through bin/capabilities.py and bin/approvals.py (engine side). Before a tool runs
+     the policy gateway decides it as kind mcp_call (bin/gateway.py; its refusal is a tool result with isError true and its code).
+     The PDP route (X1 G2): tools/call of the unlisted name PDP {kind, inputs} is the policy gateway's decision for a worker-side hook
+     (the coding CLIs' policy hook, bin/policy.py hook --gateway): gateway.check with the role, run, card and project of the token
+     record, for a kind whose gateway data names this route as a hook (else isError STL-GRD-748); the result is the decision
+     {verdict, mode, code, reason}, its trusted line written here, engine side.
 Importers (the worker side of bin/capabilities.py, DC-05): call(tool, arguments) -> the tool's structured result, or raises
 ClientError(code, problem); the token comes from the owner-auth worker_signals.token_env variables, the address from the state file.
 Exit: 0 when stopped; 1 refused (the catalog code and its plain message on stderr); 2 usage."""
@@ -33,11 +38,14 @@ BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)
 import capabilities as cap
 import event_log as el
+import gateway
 import run_token
 import stella_data as sd
 import worker_env
 
 AUTH, HOST, BADREQ, BADCALL, FAILED, SERVE, UNREACHABLE, ANSWER = ("STL-GRD-675", "STL-GRD-676", "STL-GRD-677", "STL-GRD-678", "STL-GRD-679", "STL-GRD-680", "STL-GRD-681", "STL-GRD-682")
+PDP_KIND = "STL-GRD-748"   # a PDP request whose kind this route does not decide, or whose arguments are not {kind, inputs}
+PDP = "gateway.decide"   # the PDP route's tool name: answered, never listed (an agent gains nothing by calling it: a decision, no action)
 STATE_KEY = "capabilities_mcp_state"
 STR, INT = {"type": "string"}, {"type": "integer", "minimum": 1}
 TOOLS = {   # name -> (description, properties, required); the role is never an argument
@@ -77,9 +85,37 @@ def rpc_error(rid, rpc, code, problem):
     return {"jsonrpc": "2.0", "id": rid, "error": {"code": rpc, "message": f"{code} {el.scrub(problem)}", "data": {"code": code}}}
 
 
+def tool_error(code, problem):
+    err = {"code": code, "message": problem}
+    return {"content": [{"type": "text", "text": json.dumps({"error": err})}], "structuredContent": {"error": err}, "isError": True}
+
+
+def ctx_of(rec):
+    return {"role": rec["role"], "run": rec["run"], "card": rec["card"], "project": rec.get("project"), "adapter": None}
+
+
+def pdp(rec, args):
+    """The PDP route: the policy gateway's decision for a worker-side hook, with the token record's role, run, card and project."""
+    try:
+        kinds = {k["id"] for k in gateway.doc(gateway.GW)[1]["action_kinds"]
+                 if any(os.path.basename(h["file"]) == os.path.basename(__file__) and h["function"] == "pdp" for h in k["hooks"])}
+    except gateway.Refusal as r:
+        return tool_error(r.code, r.problem)
+    if not (isinstance(args, dict) and isinstance(args.get("kind"), str) and isinstance(args.get("inputs"), dict)):
+        return tool_error(PDP_KIND, "the arguments of the PDP route must be {kind (string), inputs (object)}")
+    if args["kind"] not in kinds:
+        return tool_error(PDP_KIND, f"the PDP route does not decide kind {sd.idn(args['kind'], True)} (the gateway data names it no hook here)")
+    d = gateway.check(args["kind"], args["inputs"], ctx_of(rec))
+    out = {k: d[k] for k in ("verdict", "mode", "code", "reason")}
+    return {"content": [{"type": "text", "text": json.dumps(out)}], "structuredContent": out, "isError": False}
+
+
 def tool_call(rec, params):
-    """The tools/call result for the token's run: role, card and run from the record; a capabilities.py refusal is isError true."""
+    """The tools/call result for the token's run: role, card and run from the record; a capabilities.py refusal is isError true; the policy
+    gateway decides the call (kind mcp_call) before it runs."""
     name, args = params.get("name"), params.get("arguments", {})
+    if name == PDP:
+        return pdp(rec, args)
     if name not in TOOLS:
         raise Refuse(200, BADCALL, "no such tool", -32602)
     _, props, req = TOOLS[name]
@@ -89,14 +125,17 @@ def tool_call(rec, params):
         raise Refuse(200, BADCALL, f"the arguments of {name} must be " + ", ".join(f"{k} ({s['type']})" for k, s in props.items()), -32602)
     a = types.SimpleNamespace(role=rec["role"], card=rec["card"], run=rec["run"], id=args.get("id"), reason=args.get("reason"),
                               words=[args.get("query", "")], limit=args.get("limit"))
+    d = gateway.check("mcp_call", {"tool": name, "arguments": args}, ctx_of(rec))
+    if d.verdict == "refuse":
+        sd.say(d.code, d.reason)
+        return tool_error(d.code, f"the policy gateway refused {name}: {d.reason}")
     try:
         if not cap.role_ok(a.role):
             raise cap.Refuse("STL-GRD-663", "the role of the run token is not in the role table")
         out = getattr(cap, "cmd_" + name)(a, cap.sources(), cap.registry())
     except cap.Refuse as r:
         sd.say(r.full(), r.problem, alert=r.alert)   # the server's own stderr and alert log, as the CLI does
-        err = {"code": r.full(), "message": r.problem}
-        return {"content": [{"type": "text", "text": json.dumps({"error": err})}], "structuredContent": {"error": err}, "isError": True}
+        return tool_error(r.full(), r.problem)
     out = {"results": out} if isinstance(out, list) else out
     return {"content": [{"type": "text", "text": json.dumps(out)}], "structuredContent": out, "isError": False}
 

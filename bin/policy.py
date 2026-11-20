@@ -10,10 +10,12 @@ CLI: policy.py check [--json]          validate the policy and every adapter's p
      policy.py generate --all [--write] [--json]   every committed generated file (each adapter's policy.target.file): which differ;
                                        --write rewrites their owned pointers (the rest of each file is kept)
      policy.py drift [--json]          exit 1 and STL-GRD-613 per committed file whose owned pointers differ from a fresh render
-     policy.py hook --adapter A [--worktree W]   a pre-tool-call decision on the payload on stdin {tool_name, tool_input, cwd}:
+     policy.py hook --adapter A [--worktree W] [--gateway]   a pre-tool-call decision on the payload on stdin {tool_name, tool_input, cwd}:
                                        no output = no objection; a refusal is the adapter's deny template (STL-GRD-615 a write
                                        outside the write boundary, 616 a read of a secret or protected path, 617 an unreadable
-                                       payload or policy)
+                                       payload or policy). --gateway (rendered by adapter.py start when the run's gateway mode is not
+                                       off, X1 G2): a call the rules let pass is then asked of the engine-side PDP route of the
+                                       capabilities MCP server (bin/capabilities_mcp.py); its refusal, or no answer, refuses (STL-GRD-747)
 Exit: 0 ok; 1 a problem (a catalog code and its plain message); 2 usage."""
 import argparse, copy, fnmatch, json, os, re, shlex, sys, tempfile
 
@@ -95,15 +97,16 @@ def fill(t, v):
     return t
 
 
-def hook_command(ad, worktree, stack=None):
-    cmd = ["python3", "-I", os.path.join(stack or STACK, "bin", "policy.py"), "hook", "--adapter", ad["id"]]
+def hook_command(ad, worktree, stack=None, gateway=False):
+    cmd = ["python3", "-I", os.path.join(stack or STACK, "bin", "policy.py"), "hook", "--adapter", ad["id"]] + (["--gateway"] if gateway else [])
     return shlex.join(cmd) + (f' --worktree "{worktree}"' if worktree and worktree == ad["policy"].get("worktree_ref") else
                               f" --worktree {shlex.quote(worktree)}" if worktree else "")
 
 
-def render(aid, worktree=None, p=None, table=None, ads=None, stack=None):
+def render(aid, worktree=None, p=None, table=None, ads=None, stack=None, gateway=False):
     """{owned pointer: value} of adapter aid for worktree (None: the adapter's worktree_ref, which may be null). stack: the stack folder the
-    rendered paths name; None is the installed stack (the committed generated files), a run passes the root it runs from (F3 live finding I)."""
+    rendered paths name; None is the installed stack (the committed generated files), a run passes the root it runs from (F3 live finding I).
+    gateway: the run's hook also asks the policy gateway's PDP route (a run whose gateway mode is not off, X1 G2)."""
     p, table, ads = p or roles.policy(), table or roles.load(), ads or roles.adapters()
     ad = ads[aid]
     pol = ad["policy"]
@@ -127,7 +130,7 @@ def render(aid, worktree=None, p=None, table=None, ads=None, stack=None):
     h = pol.get("hook")
     if h and "template" in h:   # an agent-runtime hook is kinds only: its calls are judged engine side, nothing is rendered
         matcher = "|".join(n for n, t in ad["tools"].items() if t["class"] != "other")
-        out.setdefault(h["pointer"], []).append(fill(h["template"], {"matcher": matcher, "command": hook_command(ad, wt, stack)}))
+        out.setdefault(h["pointer"], []).append(fill(h["template"], {"matcher": matcher, "command": hook_command(ad, wt, stack, gateway)}))
     for ptr in (pol.get("target") or {}).get("owned_pointers", []):
         out.setdefault(ptr, {} if any(s["pointer"] == ptr and s["form"] == "map" for ss in pol.get("shapes", {}).values() for s in ss) else [])
     return out
@@ -514,14 +517,46 @@ def judge(ad, payload, worktree):
     return None
 
 
-def hook(aid, worktree):
+def gateway_inputs(spec, name, inp):
+    """The policy gateway's inputs of a tool call (X1 G2): the tool, its input and, by its class, the path or command the gateway data's
+    target pointers name."""
+    x = {"tool": name, "input": inp}
+    if spec.get("class") == "shell":
+        x["command"] = str(get(inp, spec.get("command")) or "")
+    elif spec.get("class") in ("read", "write"):
+        x["path"] = str(get(inp, spec.get("path")) or "")
+    return x
+
+
+def pdp(ad, payload):
+    """(code, why) when the policy gateway refuses a tool call of class read, write or shell, or cannot be asked (fail closed), else None.
+    Worker side: the engine-side PDP route of the capabilities MCP server decides with the role and project of the run token. The
+    gateway kind of a class is the adapters data's agent_tools row of that class (gateway_kind)."""
+    spec = ad["tools"].get(payload.get("tool_name"))
+    if not spec or spec["class"] == "other":
+        return None
+    kind = next((r["gateway_kind"] for r in roles._data("adapters")[0].get("agent_tools", []) if r.get("class") == spec["class"]), None)
+    if kind is None:
+        return "STL-GRD-747", f"no gateway kind is named for tool class {spec['class']}, so the call cannot be decided"
+    import capabilities_mcp as mcp
+    try:
+        d = mcp.call(mcp.PDP, {"kind": kind, "inputs": gateway_inputs(spec, payload.get("tool_name"), payload.get("tool_input") or {})})
+    except mcp.ClientError as e:
+        return "STL-GRD-747", f"the policy gateway could not be asked ({e.code} {e.problem[:120]}), so the call is refused"
+    if isinstance(d, dict) and d.get("verdict") in ("allow", "would-refuse"):   # audit: the call runs, its line says would-refuse
+        return None
+    code = d.get("code") if isinstance(d, dict) and isinstance(d.get("code"), str) else "STL-GRD-747"
+    return code, f"the policy gateway refused the call: {str(d.get('reason') if isinstance(d, dict) else d)[:200]}"
+
+
+def hook(aid, worktree, gateway=False):
     raw = sys.stdin.read()
     try:
         ad = roles.adapters()[aid]
         payload = json.loads(raw)
         if not isinstance(payload, dict):
             raise ValueError("not an object")
-        got = judge(ad, payload, worktree)
+        got = judge(ad, payload, worktree) or (pdp(ad, payload) if gateway else None)
     except Exception as e:   # fail closed: an unreadable payload, policy or adapter refuses the call
         ad = ad if "ad" in locals() else None
         got = ("STL-GRD-617", f"the policy check cannot judge this call ({type(e).__name__})")
@@ -543,13 +578,13 @@ def main(argv):
     g = sub.add_parser("generate"); g.add_argument("--adapter"); g.add_argument("--all", action="store_true"); g.add_argument("--worktree")
     g.add_argument("--out"); g.add_argument("--write", action="store_true"); g.add_argument("--json", action="store_true")
     d = sub.add_parser("drift"); d.add_argument("--json", action="store_true")
-    h = sub.add_parser("hook"); h.add_argument("--adapter", required=True); h.add_argument("--worktree")
+    h = sub.add_parser("hook"); h.add_argument("--adapter", required=True); h.add_argument("--worktree"); h.add_argument("--gateway", action="store_true")
     try:
         a = ap.parse_args(argv)
     except SystemExit as e:
         return 2 if e.code else 0
     if a.cmd == "hook":
-        return hook(a.adapter, a.worktree)
+        return hook(a.adapter, a.worktree, a.gateway)
     try:
         if a.cmd == "check":
             probs = problems()

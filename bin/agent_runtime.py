@@ -11,7 +11,7 @@ kind, calls loop() instead of reading a CLI's stdout. The loop (engine side, in 
     adapter.agent-message / adapter.agent-state line each; a custom event whose name is a UI name goes to bin/agui_ui.py ingest
     (only when that module is there; otherwise nothing is recorded for it);
   3 each completed tool call is a tool_use record; a tool that was not offered stops the run (an agent-side tool cannot be gated);
-    an offered one passes gates() and then runs as a child bin/agent_tool.py <executor> with the agent's own environment and box
+    an offered one passes gates() (the last gate: the policy gateway, kinds tool_call and the row's gateway_kind) and then runs as a child bin/agent_tool.py <executor> with the agent's own environment and box
     (DC-01); its answer is a tool_result record and a tool message for the next turn;
   4 the turn's end with no pending call ends the run (outcome 0); an agent error, an agent-side tool result, max_turns or a broken
     stream stop it with a catalog code, whose number is the record's exit (DC-05).
@@ -33,6 +33,7 @@ import argparse, contextlib, hashlib, http.client, ipaddress, json, re, select, 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)
 import event_log as el
+import gateway
 import policy
 import stella_data as sd
 
@@ -151,11 +152,12 @@ def words(e, cmd, wt):
     return None
 
 
-def gates(e, names, name, inp, wt):
+def gates(e, names, name, inp, wt, ctx=None):
     """(code, why) of the first gate that refuses a completed tool call, else None. In order: (a) the role's offered set and the entry's
     tool map (an unknown name is refused, never judged as None), (b) policy.judge with the pinned payload {tool_name, tool_input, cwd}
-    (DC-02; the same judge as the CLI hook), (c) the shell words of the commit and dispatcher rules (DC-04).
-    Item G2 adds gateway.check here, after (c)."""
+    (DC-02; the same judge as the CLI hook), (c) the shell words of the commit and dispatcher rules (DC-04), (d) the policy gateway
+    (X1 G2): kind tool_call, then the kind the offered row names for its class (gateway_kind), each decision logged before the call
+    runs; ctx {role, run, card, project, adapter}."""
     if name not in names or not isinstance((e.get("tools") or {}).get(name), dict):
         return C["unoffered"], f"tool {sd.idn(str(name))[:80]} was not offered to this run"
     if not isinstance(inp, dict):
@@ -167,7 +169,14 @@ def gates(e, names, name, inp, wt):
             got = words(e, str(policy.get(inp, spec["command"]) or ""), wt)
     except Exception as x:   # fail closed, as the hook does
         return "STL-GRD-617", f"the policy check cannot judge this call ({type(x).__name__})"
-    return got
+    if got:
+        return got
+    x = policy.gateway_inputs(spec, name, inp)
+    for k in dict.fromkeys(("tool_call", names[name].get("gateway_kind"))):   # a row with no gateway_kind is refused by the gateway (unknown kind)
+        d = gateway.check(k, x, ctx or {})
+        if d.verdict == "refuse":
+            return d.code, f"the policy gateway refused the call: {d.reason}"
+    return None
 
 
 def execute(row, inp, wt, env, pre, timeout):
@@ -397,7 +406,8 @@ class Run:
         shown = s.red(inp if isinstance(inp, dict) else {"value": raw[:s.cap]})
         name = name if isinstance(name, str) else str(name)[:128]
         self.put({"type": "tool_use", "name": name, "input": shown, "signature": self.ad.canon([name, shown])})
-        got = gates(self.e, rows, name, inp, wt)
+        got = gates(self.e, rows, name, inp, wt, {"role": self.rec["role"], "run": self.rec["run"], "card": self.rec["card"],
+                                                   "project": self.rec.get("project"), "adapter": self.e["id"]})
         r = {"ok": False, "code": got[0], "output": f"{got[0]} {got[1]}"} if got else \
             execute(rows[name], inp, wt, self.env, self.a["pre"], self.pr["turn_timeout_s"])
         out = s.filt(s.red(r.get("output") if isinstance(r.get("output"), str) else json.dumps(r.get("output"))))

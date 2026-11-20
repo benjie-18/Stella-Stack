@@ -3989,6 +3989,66 @@
       "check": "`python3 -I bin/gateway.py check --json`; `python3 -I bin/stella_data.py check`; `bash bin/gateway-selftest.sh`.",
       "related": "X1 item G1 (design.md, G1); bin/gateway.py, .stella/gateway.json, .stella/gateway-policy.json",
       "resolvable": false
+    },
+    {
+      "code": "STL-GRD-745",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a run without a gateway hook was refused (enforce)",
+      "message": "An adapter run was not started: {problem}.",
+      "action": "use an adapter whose policy hook is rendered into its config (a coding CLI with policy.hook, or an agent runtime), or set the gateway mode of this project to audit or off through the owner path. See STL-GRD-745 in docs/alert-codes.md.",
+      "cause": "The policy gateway is in enforce for the run's project, and the adapter's actions cannot reach the gateway before they run (no policy hook).",
+      "check": "`python3 -I bin/gateway.py check --json`; `python3 -I bin/gateway.py lint`; `bash bin/gateway-hooks-selftest.sh`.",
+      "related": "X1 item G2 (design.md, G2; rulings X1-DC-08, X1-DC-09); bin/adapter.py, bin/policy.py, bin/capabilities_mcp.py, .stella/gateway.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-746",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a run's project is not its card's board binding",
+      "message": "An adapter run was not started: {problem}.",
+      "action": "start the run without --project (the card's board binding is used), or bind the card to that project on the board first. See STL-GRD-746 in docs/alert-codes.md.",
+      "cause": "adapter.py start --card takes the project from the card's board binding; a --project that differs, or that the board cannot confirm, is refused.",
+      "check": "`python3 -I bin/gateway.py check --json`; `python3 -I bin/gateway.py lint`; `bash bin/gateway-hooks-selftest.sh`.",
+      "related": "X1 item G2 (design.md, G2; rulings X1-DC-08, X1-DC-09); bin/adapter.py, bin/policy.py, bin/capabilities_mcp.py, .stella/gateway.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-747",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "a coding CLI's call was refused by the gateway",
+      "message": "A worker's tool call was refused by the policy gateway: {problem}.",
+      "action": "see the decision line in the event log; if the PDP route could not be asked, check that the capability server runs (capabilities_mcp.py serve). See STL-GRD-747 in docs/alert-codes.md.",
+      "cause": "The run's gateway mode is not off and its policy hook asked the PDP route: the gateway refused the call, or could not be asked (fail closed).",
+      "check": "`python3 -I bin/gateway.py check --json`; `python3 -I bin/gateway.py lint`; `bash bin/gateway-hooks-selftest.sh`.",
+      "related": "X1 item G2 (design.md, G2; rulings X1-DC-08, X1-DC-09); bin/adapter.py, bin/policy.py, bin/capabilities_mcp.py, .stella/gateway.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-748",
+      "area": "GRD",
+      "severity": "warning",
+      "title": "the gateway PDP route refused a request",
+      "message": "The policy gateway's PDP route refused a request: {problem}.",
+      "action": "the route decides only the kinds the gateway data names it a hook of, with {kind, inputs}; a request from a worker that differs is not decided. See STL-GRD-748 in docs/alert-codes.md.",
+      "cause": "A tools/call of the PDP route asked for a kind the gateway data does not route here, or its arguments are not {kind, inputs}.",
+      "check": "`python3 -I bin/gateway.py check --json`; `python3 -I bin/gateway.py lint`; `bash bin/gateway-hooks-selftest.sh`.",
+      "related": "X1 item G2 (design.md, G2; rulings X1-DC-08, X1-DC-09); bin/adapter.py, bin/policy.py, bin/capabilities_mcp.py, .stella/gateway.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-GRD-749",
+      "area": "GRD",
+      "severity": "critical",
+      "title": "a run that started with the gateway off kept running",
+      "message": "The gateway policy changed, but a run was not stopped: {problem}.",
+      "action": "stop the run named with `python3 -I bin/adapter.py stop --run <run> --reason 'gateway mode change'`. See STL-GRD-749 in docs/alert-codes.md.",
+      "cause": "After an owner apply that turned the gateway on, a running run that started with it off (or hookless under enforce) could not be stopped.",
+      "check": "`python3 -I bin/gateway.py check --json`; `python3 -I bin/gateway.py lint`; `bash bin/gateway-hooks-selftest.sh`.",
+      "related": "X1 item G2 (design.md, G2; rulings X1-DC-08, X1-DC-09); bin/adapter.py, bin/policy.py, bin/capabilities_mcp.py, .stella/gateway.json",
+      "resolvable": false
     }
   ]
 }
