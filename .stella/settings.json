@@ -130,6 +130,59 @@
       "code": "STL-CFG-315",
       "global_id": "5f9fe802-68da-412d-ae97-848e9068fef3",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "key": "GATEWAY_MODE",
+      "label": "Gateway mode for every project without its own (off, audit, enforce)",
+      "type": "enum",
+      "validation": {
+        "values": [
+          "off",
+          "audit",
+          "enforce"
+        ]
+      },
+      "scope": "global",
+      "sensitivity": "identity_critical",
+      "default": "off",
+      "store": {
+        "data": "gateway-policy",
+        "key": "GATEWAY_MODE",
+        "pointer": "/mode/global"
+      },
+      "apply": {
+        "script": "bin/stella-apply.py",
+        "needs_restart": false
+      },
+      "code": "STL-CFG-315",
+      "global_id": "b6479e0b-0d69-4fd3-b434-25a44dc476d1",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "key": "GATEWAY_EVALUATOR",
+      "label": "Gateway evaluator (an id from the gateway's evaluators)",
+      "type": "string",
+      "validation": {
+        "from": {
+          "data": "gateway",
+          "pointer": "/evaluators"
+        }
+      },
+      "scope": "global",
+      "sensitivity": "identity_critical",
+      "default": "cedar",
+      "store": {
+        "data": "gateway-policy",
+        "key": "GATEWAY_EVALUATOR",
+        "pointer": "/evaluator"
+      },
+      "apply": {
+        "script": "bin/stella-apply.py",
+        "needs_restart": false
+      },
+      "code": "STL-CFG-315",
+      "global_id": "b48ab561-3759-4101-a3e2-5c62daa5e8a5",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }
