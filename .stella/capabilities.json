@@ -2777,6 +2777,180 @@
       },
       "global_id": "b61ae89d-3e49-4d7d-89a2-a72aaaca2588",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-langgraph",
+      "kind": "extension",
+      "summary": "Run an agent built on LangGraph as a Stella worker through the AG-UI agent-runtime adapter (proposed integration, its feature flag off)",
+      "keywords": [
+        "agent",
+        "framework",
+        "ag-ui",
+        "agent-runtime",
+        "worker",
+        "adapter",
+        "integration",
+        "langgraph",
+        "langchain"
+      ],
+      "inputs": "an agent-runtime adapters.json entry for the agent",
+      "outputs": "a Stella worker run (trusted run stream, completion evidence)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "proposed",
+      "source": ".stella/extensions/agui-langgraph.json",
+      "triage": {
+        "result": "pending"
+      },
+      "global_id": "7b3290c1-25f6-411e-92ca-3d74c859ab2c",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-crewai",
+      "kind": "extension",
+      "summary": "Run an agent built on CrewAI as a Stella worker through the AG-UI agent-runtime adapter (proposed integration, its feature flag off)",
+      "keywords": [
+        "agent",
+        "framework",
+        "ag-ui",
+        "agent-runtime",
+        "worker",
+        "adapter",
+        "integration",
+        "crewai",
+        "crew"
+      ],
+      "inputs": "an agent-runtime adapters.json entry for the agent",
+      "outputs": "a Stella worker run (trusted run stream, completion evidence)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "proposed",
+      "source": ".stella/extensions/agui-crewai.json",
+      "triage": {
+        "result": "pending"
+      },
+      "global_id": "d6c1f46c-4fe1-4b61-927d-d19c917b9c63",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-mastra",
+      "kind": "extension",
+      "summary": "Run an agent built on Mastra as a Stella worker through the AG-UI agent-runtime adapter (proposed integration, its feature flag off)",
+      "keywords": [
+        "agent",
+        "framework",
+        "ag-ui",
+        "agent-runtime",
+        "worker",
+        "adapter",
+        "integration",
+        "mastra",
+        "typescript"
+      ],
+      "inputs": "an agent-runtime adapters.json entry for the agent",
+      "outputs": "a Stella worker run (trusted run stream, completion evidence)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "proposed",
+      "source": ".stella/extensions/agui-mastra.json",
+      "triage": {
+        "result": "pending"
+      },
+      "global_id": "70570c40-27fe-49fb-b334-970e17002dbc",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-pydantic-ai",
+      "kind": "extension",
+      "summary": "Run an agent built on Pydantic AI as a Stella worker through the AG-UI agent-runtime adapter (proposed integration, its feature flag off)",
+      "keywords": [
+        "agent",
+        "framework",
+        "ag-ui",
+        "agent-runtime",
+        "worker",
+        "adapter",
+        "integration",
+        "pydantic",
+        "pydantic-ai"
+      ],
+      "inputs": "an agent-runtime adapters.json entry for the agent",
+      "outputs": "a Stella worker run (trusted run stream, completion evidence)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "proposed",
+      "source": ".stella/extensions/agui-pydantic-ai.json",
+      "triage": {
+        "result": "pending"
+      },
+      "global_id": "fc652c7e-e7fb-4760-be85-382d3b762dcf",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-google-adk",
+      "kind": "extension",
+      "summary": "Run an agent built on Google ADK as a Stella worker through the AG-UI agent-runtime adapter (proposed integration, its feature flag off)",
+      "keywords": [
+        "agent",
+        "framework",
+        "ag-ui",
+        "agent-runtime",
+        "worker",
+        "adapter",
+        "integration",
+        "adk",
+        "agent-development-kit"
+      ],
+      "inputs": "an agent-runtime adapters.json entry for the agent",
+      "outputs": "a Stella worker run (trusted run stream, completion evidence)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "proposed",
+      "source": ".stella/extensions/agui-google-adk.json",
+      "triage": {
+        "result": "pending"
+      },
+      "global_id": "45b289a8-c3c0-4d5d-ad0f-19d1325bcb86",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-claude-agent-sdk",
+      "kind": "extension",
+      "summary": "Run an agent built on the Claude Agent SDK as a Stella worker through the AG-UI agent-runtime adapter (proposed integration, its feature flag off)",
+      "keywords": [
+        "agent",
+        "framework",
+        "ag-ui",
+        "agent-runtime",
+        "worker",
+        "adapter",
+        "integration",
+        "agent-sdk",
+        "sdk"
+      ],
+      "inputs": "an agent-runtime adapters.json entry for the agent",
+      "outputs": "a Stella worker run (trusted run stream, completion evidence)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "proposed",
+      "source": ".stella/extensions/agui-claude-agent-sdk.json",
+      "triage": {
+        "result": "pending"
+      },
+      "global_id": "55bae943-7bde-48d9-9bd4-868c76c8c62e",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

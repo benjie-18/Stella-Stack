@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "agui-pydantic-ai",
+  "kind": "worker_adapter",
+  "summary": "Agent-runtime adapter integration for agents built on Pydantic AI: the agent runs as a Stella worker over the AG-UI protocol (adapters.json kind agent-runtime). Proposed only; W1's extensions manager installs it.",
+  "hosts": [],
+  "secrets": [],
+  "tools": [],
+  "allowed_roles": [],
+  "risk_class": "write",
+  "enabled": false,
+  "status": "proposed",
+  "source": "https://github.com/pydantic/pydantic-ai",
+  "global_id": "ff2e195c-d55c-4dbb-a223-e1b3ebbc2384",
+  "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+}
