@@ -494,7 +494,7 @@ def changed_lines(card, rel):
         f = frozen(card)
         if not f:
             return None
-        r = ql.git(["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", "-U0", f[1], f[2], "--", rel], f[0], f[3])
+        r = ql.diff(f[0], f[1], f[2], f[3], "-U0", paths=[rel])   # RTF-02: the engine's one diff (text, the copy's attributes not followed)
     except Exception:   # unreadable data, state or copy
         return None
     if r.returncode:

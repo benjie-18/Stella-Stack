@@ -20,8 +20,14 @@ never read. Lines the fold reads (who writes them):
   qa.evidence {path, sha256, round}; qa.finding {fingerprint, round, role, severity, status, static, ...} (same fingerprint and
   round: roles merged, highest severity and strongest status (STRENGTH) kept, each copy's role, repro, evidence and status kept
   in subs, never replaced; a later round starts afresh); qa.finding-confirmed {fingerprint, round}: confirmed;
-  qa.finding-unconfirmed: unconfirmed, only from pending;
-  qa.verdict {round, role, result, hash, evidence}: the last per round and role                                 (B)
+  qa.finding-unconfirmed: unconfirmed, only from pending (or reported judged pending, below);
+  qa.verdict {round, role, slot, result, hash, evidence}: per round, role and slot (a line with no slot is slot 1); a fail or
+  unverified is never replaced by a later line (RTF-01)                                                          (B)
+After the fold a reported finding of the current round whose highest severity blocks at the depth of record is judged again
+(RTF-04): pending when a copy that counts has a repro, else unconfirmed.
+Every command that writes a card's state (here open, raise, trigger, freeze, close; qa_findings evidence, submit, repro,
+verdict) runs under card_lock(card): one lock per card whatever the id's spelling, so close reads the state it decides on
+with no writer in between (RTF-05).
 Card ids compare case-insensitively (same(): one card whatever the spelling); the spelling of the first qa.opened line is the
 card's (s["card"]), and every command writes its lines and paths under it.
 Before any climb the card is on rung 1 (bin/escalate.sh reads a card with no rungs.json entry as 1) and its cap is rounds.normal.
@@ -35,7 +41,7 @@ one alert line, exit 1, and with --json {card, code, problem} on stdout; 2 usage
   freeze --card C --repo PATH --hash H        H a full commit id; refused (STL-QA-103) while the last round is not closed, past
        the cap or after an escalation. The copy: a standalone clone under qa_copies (--no-local --no-checkout, hooks off, no
        config of the builder's repo or the user's, H checked out on a throwaway branch); the builder's repo is only read.
-       Triggers of source diff fire on the diff base..H, rename detection off (match.paths globs on changed paths, both
+       Triggers of source diff fire on the diff base..H (diff(): text, attributes of the copy not followed), rename detection off (match.paths globs on changed paths, both
        sides of a rename, match.words regexes on added lines, both case insensitive); of source fix from round 2 on, when this fix changes more files than the original change
        (base..round 1) or is the second fix attempt; a diff that cannot be computed fires (fail closed). qa.triggered lines
        first, then qa.frozen.
@@ -51,9 +57,10 @@ one alert line, exit 1, and with --json {card, code, problem} on stdout; 2 usage
        or reopened after it (else STL-QA-106, no alert line).
   close --card C                              the open round (else STL-QA-110): refused (STL-QA-109, nothing written) while a
        finding of the round is pending its repro (DG-2). The fix list is qa_findings.merge() of the round's findings that
-       still stand (qa_findings.stands: the evidence of any copy holds). No blocking finding and no slot role's verdict other than pass: qa.passed {round, hash} when every
-       role the plan gives a slot has a trusted pass on the frozen hash with evidence that holds, else STL-QA-110 (the round
-       stays open, DG-1). A blocking finding or a failed verdict fails the round: after round rounds.normal the builder role
+       still stand (qa_findings.stands: confirmed and static ones always, others while the evidence of a copy holds). No
+       blocking finding and no verdict other than pass from any slot: qa.passed {round, hash} when every slot the plan lists
+       has a trusted pass on the frozen hash with evidence that holds, else STL-QA-110 (the round stays open, DG-1). A
+       blocking finding or a failed verdict of any slot fails the round: after round rounds.normal the builder role
        climbs (bin/resolve.py resolve --rung rounds.climb_rung: a served rung, in cooldown too, -> qa.climbed {from_rung,
        to_rung, from_link, to_link, open, reason}, cap rounds.cap_climb, then the rungs.json projection (index qa_rungs) under
        its lock, STL-QA-112 when it cannot be written; no higher rung (STL-MDL-731) -> qa.no-climb, cap rounds.cap_no_climb; any
@@ -61,7 +68,7 @@ one alert line, exit 1, and with --json {card, code, problem} on stdout; 2 usage
        qa.depth-raised {depth: depth_bump.to}; then qa.round-failed {round, open}, or at the cap qa.escalated {round, open} and
        one owner alert (STL-QA-113, the fix list) through bin/alert.sh: the card's QA loop is paused (freeze refuses).
 Python: state(card, d=None) -> the fold; data() -> the served documents; is_done(s, h=None); plan(card, s, d)."""
-import argparse, fnmatch, json, os, re, shutil, subprocess, sys, types
+import argparse, contextlib, fnmatch, json, os, re, shutil, subprocess, sys, types
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -75,6 +82,8 @@ PREFIX = "qa."
 CLOSE = ("qa.passed", "qa.round-failed", "qa.escalated")
 NOT_FIX = ("void", "pending", "unconfirmed")   # finding statuses that are not on the fix list
 STRENGTH = ("void", "unconfirmed", "reported", "pending", "static", "confirmed")   # finding statuses, weakest first
+RESULTS = ("pass", "fail", "unverified")   # verdict results (qa-loop schema), the pass first
+FIRST_SLOT = 1   # a verdict line that names no slot
 SRC_DIFF, SRC_FIX, SRC_OWNER = "diff", "fix", "owner"   # trigger sources (qa-loop schema)
 ATTACK = "attack"   # the role kind extra_attacks adds to
 FIRST_RUNG = 1
@@ -169,11 +178,19 @@ def state(card, d=None):
             f["roles"] += [p["role"]] if isinstance(p.get("role"), str) and p["role"] not in f["roles"] else []
         elif t in ("qa.finding-confirmed", "qa.finding-unconfirmed") and p.get("fingerprint") in s["findings"]:
             f = s["findings"][p["fingerprint"]]
-            if f["round"] == rnd and (t == "qa.finding-confirmed" or f["status"] == NOT_FIX[1]):   # only a pending finding goes unconfirmed
+            if f["round"] == rnd and (t == "qa.finding-confirmed" or f["status"] in (NOT_FIX[1], STRENGTH[2])):   # only a pending (or judged pending) one goes unconfirmed
                 f["status"] = t[len("qa.finding-"):]
         elif t == "qa.verdict" and isinstance(p.get("role"), str):
-            s["verdicts"].setdefault(rnd, {})[p["role"]] = {"result": p.get("result"), "hash": p.get("hash"), "evidence": p.get("evidence")}
+            by = s["verdicts"].setdefault(rnd, {}).setdefault(p["role"], {})
+            slot = p["slot"] if type(p.get("slot")) is int else FIRST_SLOT
+            if by.get(slot, {}).get("result", RESULTS[0]) == RESULTS[0]:   # RTF-01: a fail or unverified is never replaced
+                by[slot] = {"result": p.get("result"), "hash": p.get("hash"), "evidence": p.get("evidence")}
     s["depth"] = hi(s["tier"], raised)
+    blocks = {x["id"]: x["blocks_on"] for x in q["severities"]}
+    for f in s["findings"].values():   # RTF-04: blocking is judged now, from the depth of record and the highest severity
+        b = blocks.get(f["severity"], [])
+        if f["round"] == s["round"] and f["status"] == STRENGTH[2] and (b == "all" or s["depth"] in b):
+            f["status"] = NOT_FIX[1] if any(x.get("repro") is not None and x.get("status") != NOT_FIX[0] for x in f["subs"]) else NOT_FIX[2]
     s["reopened"] = reopened > (s["passed"]["at"] if s["passed"] else -1)
     return s
 
@@ -301,11 +318,16 @@ def make_copy(repo, h, card, n, d):
     return dest, tree
 
 
+def diff(dest, a, b, d, *opts, paths=()):
+    """Every diff the engine reads (RTF-02): text whatever the copy's .gitattributes say (--text beats -diff and binary), no
+    external diff, no textconv, no attributes file of the user's; --no-renames (RT1-06): a renamed file lists its old path too."""
+    return git(["-c", f"core.attributesFile={os.devnull}", "diff", "--text", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color",
+                *opts, a, b, "--", *paths], dest, d)
+
+
 def changed(dest, a, b, d):
     """The paths changed from a to b and the added lines, or None when the diff cannot be computed."""
-    # --no-renames (RT1-06): a renamed file lists its old path too, so a rename cannot hide which file the change took from
-    names = git(["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", a, b, "--"], dest, d)
-    patch = git(["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", "-U0", a, b, "--"], dest, d)
+    names, patch = diff(dest, a, b, d, "--name-only", "-z"), diff(dest, a, b, d, "-U0")
     if names.returncode or patch.returncode:
         return None
     # shortcut: an added line whose text starts with "++ " is read as a file header and not scanned; parse hunks if that matters
@@ -544,14 +566,15 @@ def cmd_close(o, d):
     cur = [x for x in cur if qf.stands(o.card, x, s, d)]   # re-hashed: a changed file voids its copy
     fix = qf.merge(cur, s["depth"], q, qf.exempt(o.card))
     blocking = [x["fingerprint"] for x in fix if x["blocking"]][:CAP]
-    roles = [r for r, e in plan(o.card, s, d)["roles"].items() if e["slots"]]
+    pl = plan(o.card, s, d)["roles"]
+    roles = [r for r, e in pl.items() if e["slots"]]
     v = s["verdicts"].get(n, {})
-    failed = [r for r in roles if r in v and v[r]["result"] != qf.RESULTS[0]]
+    failed = [r for r in roles if any(x["result"] != RESULTS[0] for x in v.get(r, {}).values())]   # RTF-01: any slot's fail
     if not blocking and not failed:
-        good = lambda x: x and x["result"] == qf.RESULTS[0] and x["hash"] == f["hash"] and qf.holds(o.card, x["evidence"], s, d)
-        missing = [r for r in roles if not good(v.get(r))]
+        good = lambda x: x and x["result"] == RESULTS[0] and x["hash"] == f["hash"] and qf.holds(o.card, x["evidence"], s, d)
+        missing = [f"{r} slot {i}" for r, e in pl.items() for i in range(1, len(e["slots"]) + 1) if not good(v.get(r, {}).get(i))]
         if missing:
-            raise Refuse(NOT_CLOSED, f"round {n} is not finished: no trusted pass on the frozen hash with evidence that holds from {', '.join(missing)}")
+            raise Refuse(NOT_CLOSED, f"round {n} is not finished: no trusted pass on the frozen hash with evidence that holds from {', '.join(missing[:CAP])}")
         put(o.card, "qa.passed", {"round": n, "hash": f["hash"]}, f"QA round {n} passed")
         return 0
     reason = f"round {n} failed: " + (f"{len(blocking)} blocking finding(s)" if blocking else f"verdict not pass from {', '.join(failed)}")
@@ -576,6 +599,14 @@ def cmd_close(o, d):
 
 
 CMDS = {"open": cmd_open, "raise": cmd_raise, "trigger": cmd_trigger, "freeze": cmd_freeze, "plan": cmd_plan, "status": cmd_status, "done": cmd_done, "close": cmd_close}
+WRITES = ("open", "raise", "trigger", "freeze", "close")   # the subcommands that write the card's state
+
+
+def card_lock(card, d):
+    """RTF-05: the one lock of a card (any spelling of its id), next to its copies under qa_copies; a plain id only (CARD)."""
+    if not CARD.fullmatch(card):
+        raise Refuse(BAD, "the card id is not a plain id (letters, digits, dot, dash, underscore; at most 64)")
+    return el.locked(os.path.join(el.path(d.idx["qa_copies"]), card.lower() + ".lock"))
 
 
 def main(argv):
@@ -604,7 +635,8 @@ def main(argv):
     o = ap.parse_args(argv)
     try:
         d = data()
-        return CMDS[o.cmd](o, d)
+        with card_lock(o.card, d) if o.cmd in WRITES else contextlib.nullcontext():
+            return CMDS[o.cmd](o, d)
     except (Refuse, el.EventError) as e:
         code, problem = e.code, e.problem
     except sd.DataError as e:

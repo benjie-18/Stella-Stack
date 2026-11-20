@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Hermetic self-test for bin/qa_findings.py (phase Q1 item B: evidence, findings, the mechanical merge). Written test-first.
 # Cases (tests.json ids): AC3-noevidence, AC6-dedupe, AC7-unconfirmed, AC7-medium-light, AC7-base-not-charged, T-MERGE-ORDER,
-#   T-WORKER; with them: evidence whose digest changed after registration is void, an evidence path outside
+#   T-WORKER, RTF-03 (a confirmed finding survives its evidence), RTF-06 (repro order and cap); with them: evidence whose digest changed after registration is void, an evidence path outside
 #   qa_evidence/<card>/<round>/ is refused, a findings file over the size cap or with a shell-string repro is refused.
 # Tier, severity, role and builder ids are read from the copy's data; a card is set up through bin/qa_loop.py open and freeze.
 # ASSUMPTIONS (what design.md leaves open; the builder aligns with them or raises them):
@@ -196,6 +196,33 @@ out = qf.merge(fs, qa["depth_bump"]["to"], qa)
 sys.exit(0 if len(out) == 1 and out[0]["severity"] == sev[0] and sorted(out[0]["roles"]) == sorted({roles[0], roles[1]}) else 1)
 PY
 ok 'python3 -I "$T/dedupe.py" "$R"' "merge() of three copies of one finding (severities ${SEVS[-1]}, ${SEVS[0]}, a middle one; two roles): one entry, severity ${SEVS[0]}, both roles"
+
+# ---- RTF-03: evidence decides admission, not survival: a confirmed (or static) blocking finding stays blocking whatever its evidence file does later ----
+for how in append unreadable delete; do
+  E=$(evf "$CM" "rtf03-$how.log"); reg "$CM" "$E" >/dev/null 2>&1
+  { fnd "cf$how" "$S_HI" "qa-t-cf$how" false '["false"]' "$(arr "$E")"; fnd "st$how" "$S_HI" "qa-t-st$how" true null "$(arr "$E")"; } | mkset "rtf03-$how.json"
+  run "s3$how" SUB "$CM" "$R1" "rtf03-$how.json"; F3=$(fpr "$CM" "cf$how"); run "r3$how" python3 -I "$QF" repro --card "$CM" --fingerprint "${F3:-none}"
+  b3=$(blocking "$CM" "cf$how" >/dev/null && blocking "$CM" "st$how" >/dev/null && echo yes)
+  case $how in append) echo "more" >>"$R/$E" ;; unreadable) chmod 000 "$R/$E" ;; delete) rm -f "$R/$E" ;; esac
+  ok '[ "$b3" = yes ] && lines qa.finding-confirmed "$CM" | jq -e --arg f "$F3" "any(.[]; [.. | strings] | any(. == \$f))" && blocking "$CM" "cf$how" && blocking "$CM" "st$how"' \
+    "RTF-03 evidence file $how after admission: the $S_HI finding its repro confirmed and the static one still block"
+done
+
+# ---- RTF-06: the evidence role's repros run first; more distinct repros than tests.max_repros: the finding stays pending (fail closed) ----
+TS=$(jq -r '[.roles | to_entries[] | select(.value.kind == "evidence") | .key][0] // empty' "$QJ"); AT=$(jq -r '[.roles | to_entries[] | select(.value.kind == "attack") | .key][0] // empty' "$QJ")
+CAPR=$(jq -r '.tests.max_repros // 20' "$QJ")
+crowd() { local i; for i in $(seq 1 "$2"); do fnd "$1" "$S_HI" "qa-t-$1" false "$(arr true "n$i")" "$EJ1"; done | mkset "$1-crowd.json"; }
+crowd crowd "$CAPR"; run sc1 SUB "$CM" "$AT" crowd-crowd.json
+fnd crowd "$S_HI" qa-t-crowd false '["false"]' "$EJ1" | mkset crowd-t.json; run sc2 SUB "$CM" "$TS" crowd-t.json
+F6=$(fpr "$CM" crowd); run rc6 python3 -I "$QF" repro --card "$CM" --fingerprint "${F6:-none}"
+ok '[ -n "$TS" ] && [ -n "$AT" ] && [ -n "$F6" ] && lines qa.finding-confirmed "$CM" | jq -e --arg f "$F6" "any(.[]; [.. | strings] | any(. == \$f))" && blocking "$CM" crowd' \
+  "RTF-06 $CAPR passing repros of $AT submitted first do not crowd out the $TS's failing repro: it runs, qa.finding-confirmed, blocking"
+ed .stella/qa-loop.json '.tests.max_repros = 3'
+crowd over 4; run sc3 SUB "$CM" "$AT" over-crowd.json; F7=$(fpr "$CM" over); u0=$(cnt qa.finding-unconfirmed "$CM")
+run rc7 python3 -I "$QF" repro --card "$CM" --fingerprint "${F7:-none}"
+ok '[ $RC != 0 ] && grep -qs STL-QA-156 "$T/o/rc7.err" && [ "$(cnt qa.finding-unconfirmed "$CM")" = "$u0" ] && status_is "$CM" over pending' \
+  "RTF-06 with tests.max_repros 3 in the data, a finding with 4 distinct passing repros stays pending (STL-QA-156), never unconfirmed"
+ed .stella/qa-loop.json --argjson c "$CAPR" '.tests.max_repros = $c'
 
 # ---- T-WORKER: every command refuses in a worker environment, the trusted log untouched ----
 S0=$(logsum)

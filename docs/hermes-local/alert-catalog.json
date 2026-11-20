@@ -3547,6 +3547,18 @@
       "resolvable": false
     },
     {
+      "code": "STL-QA-156",
+      "area": "QA",
+      "severity": "warning",
+      "title": "QA finding has more repros than the cap",
+      "message": "A finding has more distinct repros than the QA loop data lets run: {problem}. The finding stays pending, so the round cannot close.",
+      "action": "read the finding's copies (qa_findings.py merge, the trusted qa.finding lines): if one role sent many repros, judge the finding yourself or raise tests.max_repros in .stella/qa-loop.json, then run the repro again. See STL-QA-156 in docs/alert-codes.md.",
+      "cause": "The copies of one finding carry more distinct repros than tests.max_repros; the ones that ran (the evidence role's first) all passed, and an unrun one may be the one that fails.",
+      "check": "`jq .tests.max_repros .stella/qa-loop.json`; the trusted qa.finding lines of the card.",
+      "related": "Q1 item B (design.md, rulings DG-1, DG-2, DG-7; RTF-06); bin/qa_findings.py",
+      "resolvable": false
+    },
+    {
       "code": "STL-QA-230",
       "area": "QA",
       "severity": "warning",
