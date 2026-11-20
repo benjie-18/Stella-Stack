@@ -477,7 +477,8 @@ class Stream:
                 tok = {k: max(0, v - prev.get(k, 0)) for k, v in tok.items()}
                 if not any(tok.values()):
                     return
-            self.put({"type": "usage", "name": None, "input": {}, "tokens": tok})
+            m = get(c, s["model"]) if s.get("model") else None   # the model the CLI says served (F3-CVER-03)
+            self.put({"type": "usage", "name": None, "input": {}, "tokens": tok, **({"model": m} if isinstance(m, str) else {})})
 
 
 def read_events(run):

@@ -14,7 +14,8 @@ the fake agent (bin/mock_agent.py); an adapter entry's conformance_briefs {case 
                         the link's connection has redaction patterns, no token-shaped string (the catalog's patterns) shows anywhere
                         and the stream masked none (the run record's masked hits); the run token is allowed
         evidence        adapter evidence: exit 0, still on its branch, a commit, a changed file, everything inside the worktree
-        tool_call       a tool result with ok true in the stream; api: a usage ledger line of the run, outcome ok, with the run's model
+        tool_call       a tool result with ok true in the stream; api: a usage ledger line of the run, outcome ok, with the run's model;
+                        cli-login: the stream's usage lines name a model, each the run's (adapters.json stream.model, F3-CVER-03)
         prefill         the first call's input tokens (the larger of the ledger's input+cache and the stream's first usage) within the
                         role's run-policy prefill_budget_tokens
         observability   records whether tool and skill use show in the stream; fails when the entry's supports claims true and it does not
@@ -257,8 +258,14 @@ def judge_case(ctx, c, wt, outside, wt_base, rid):
         n = sum(e.get("type") == "tool_result" and e.get("ok") is True for e in evs)
         good = [x for x in led if x.get("outcome") == "ok" and x.get("model") == ctx.model]
         api = ctx.ctype == "api"
-        return ended and n >= 1 and (bool(good) or not api), rid, {"tool_results_ok": n, "model": ctx.model, "model_checked": api,
-                                                                   "ledger_calls": len(led), "ledger_models": sorted({str(x.get("model")) for x in led})}
+        # cli-login (F3-CVER-03): no ledger line, so every model the CLI's stream names must be the link's (its id, or a longer name of
+        # it with the CLI's model_prefix, as the model guard reads a --model), and at least one must be named
+        pre = re.escape((ctx.e.get("model_flags") or {}).get("model_prefix") or "")
+        streamed = sorted({e["model"] for e in evs if e.get("type") == "usage" and isinstance(e.get("model"), str)})
+        served = bool(streamed) and all(re.fullmatch(rf"(?:{pre})?{re.escape(ctx.model)}\S*", m) for m in streamed)
+        return ended and n >= 1 and (bool(good) if api else served), rid, {"tool_results_ok": n, "model": ctx.model, "model_checked": True,
+                                                                          "ledger_calls": len(led), "ledger_models": sorted({str(x.get("model")) for x in led}),
+                                                                          "stream_models": streamed}
     if j == "prefill":
         import run_policy
         try:
