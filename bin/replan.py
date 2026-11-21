@@ -11,7 +11,7 @@ CLI (--json: the answer is JSON in any case; on failure a catalog code STL-PLN-4
 alert line, exit 1, and with --json {code, problem} on stdout; 2 usage):
   dispatch --card C --run R    the dispatcher's mechanical trigger. Writes the failure history <planner_runs>/<run>/history/<card>/
        <attempt>.json (open findings, each round's frozen hash against the one before and the files it changed, its findings with
-       their kind, verdicts and close, the tester's evidence paths, counted blocks) and a trusted planner.history {run, card,
+       their kind, verdicts and close, the QA evidence paths, counted blocks) and a trusted planner.history {run, card,
        attempt, path, digest}. Decision, the first that holds: a standing finding of a problem kind (DG-9: qa.finding kind in
        replan.problem_kinds) -> replan; replan.block_limit planner.block lines of a counted kind (replan.block_kinds) since the
        card's last planner.replan -> replan; the base..frozen diff touches a file outside the card's roadmap files globs (or
