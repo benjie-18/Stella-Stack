@@ -8896,6 +8896,27 @@
         "replan"
       ],
       "why": "P1 tests first (items A, E, F): files the new selftests reach through their scratch copy of bin, .stella and docs (test-map.py reach); the planner-role selftest runs the role table's hooks, the planner and replan selftests run the planner tools in a scratch root"
+    },
+    {
+      "globs": [
+        ".stella/planner.json",
+        ".stella/planner-settings.json"
+      ],
+      "targets": [
+        "planner-role"
+      ],
+      "why": "P1 item A (tests first): the planner-role selftest reads the rubric role id from the planner data"
+    },
+    {
+      "globs": [
+        "bin/roadmap-selftest.sh",
+        "bin/fixtures/planner/replay-2026-11-06/roadmap.md"
+      ],
+      "targets": [
+        "planner",
+        "replan"
+      ],
+      "why": "P1 items E and F (tests first): bin/planner-test-lib.sh builds its roadmaps in the format bin/roadmap-selftest.sh and the replay fixture use (named in its header)"
     }
   ]
 }
