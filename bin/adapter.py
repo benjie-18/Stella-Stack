@@ -689,7 +689,7 @@ def cmd_start(a):
                        (f" ({sd.idn(bound) if bound else 'no project'})" if known else " (the board cannot be read to confirm it)"))
         a.project = bound
         import planner_guard   # DG-1 (P1): a builder card of a project with an open planner run starts only when the planner's projection says so
-        why = planner_guard.start_problem(a.card, a.role, lambda: bound)
+        why = planner_guard.start_problem(a.card, a.role)   # it reads the card's board task itself: unreadable refuses
         if why:
             raise Stop(*why)
     a.gateway_mode = gateway_mode(a.project)

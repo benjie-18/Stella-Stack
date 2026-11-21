@@ -4683,7 +4683,7 @@
       "title": "the planner's start projection is unusable",
       "message": "Builder starts are refused: {problem}.",
       "action": "run any planner.py command for an open run to rewrite the projection, or fix the file. See STL-PLN-316 in docs/alert-codes.md.",
-      "cause": "The start projection (index planner_cards) cannot be read or written.",
+      "cause": "The start projection (index planner_cards) or the event log cannot be read, the projection cannot be written, or it is missing or not current for the card's run (a planner line of the run is newer than it).",
       "check": "python3 -I bin/planner.py gate status --run R --json; bash bin/planner-selftest.sh.",
       "related": "P1 item E; bin/planner.py, .stella/planner.json, .stella/planner-settings.json",
       "resolvable": false

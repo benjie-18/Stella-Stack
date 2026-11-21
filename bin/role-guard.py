@@ -245,7 +245,7 @@ def main():
     elif tool == "kanban_claim":   # DG-1 (P1): a builder card of a project with an open plan run is claimed only when startable
         import planner_guard
         card = str(a.get("task_id") or "")
-        why = planner_guard.start_problem(card, rname, lambda: (roles.kanban(b, "show", card).get("task") or {}).get("project"))
+        why = planner_guard.start_problem(card, rname)
         if why:
             roles.log_alert(why[0], problem=why[1][:300])
             refuse(f"[{why[0]}] kanban_claim refused: {why[1]}")
