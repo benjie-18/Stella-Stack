@@ -222,7 +222,7 @@ jq --arg i "$(jq -r .install_id "$MGFX/$(jq -r '.files[] | select(.schema == "in
 fxed routing.json --arg r "$MGR" '.card_roles -= [$r]'
 fxed role-assignments.json --arg r "$MGR" --arg m "$MGW" --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$(jq -r .install_id "$MGFX/.stella/install.json")" \
   --argjson k "$(jq -c '[.link_classes[].id]' "$MGFX/.stella/routing.json")" --arg c "$(jq -r '[.entries[] | select(.type == "cli-login") | .id][0]' "$MGFX/.stella/connections.json")" \
-  '.effort_modes["qa-all"] = {allowed_localities: ["local", "cloud"], no_silent_fallback: false, class_order: $k} | .selection.global = "qa-all"
+  '.effort_modes["qa-all"] = {allowed_localities: ["local", "cloud"], no_silent_fallback: false, based_on: .selection.global, class_order: $k} | .selection.global = "qa-all"
    | .assignments += [{id: "qa-pin", scope: {level: "global"}, role: $r, effort_mode: "qa-all", chain: [{connection: $c, model: $m, parameters: {}}], global_id: $g, install_id: $i}]'
 ok 'STELLA_ROOT=$MGFX python3 -I /workspace/bin/stella_data.py check >"$T/out" 2>&1 && [ -n "$MGP" ] && [ -n "$MGR" ]' "model guard fixture: profile ${MGP:-none} (role ${MGR:-none}) installs the guard and the fixture root passes the data check"
 for c in "claude -p --model opus x" "claude -p --model=haiku x" "claude -p --model opusplan x" "claude -p --model claude-opus-5-5 x" \

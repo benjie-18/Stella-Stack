@@ -1083,7 +1083,7 @@
       },
       "hooks": [
         {
-          "matcher": "^(write_file|patch|execute_code|skill_manage|cronjob_manage)$",
+          "matcher": "^(write_file|patch|execute_code|skill_manage|cronjob_manage|kanban_attach|kanban_attach_url|kanban_attachments|kanban_link|kanban_request_changes|kanban_request_review)$",
           "file": "docs/hermes-local/hooks/default/deny-write.sh",
           "writes": "refused"
         },
@@ -1108,17 +1108,29 @@
         }
       ],
       "catch_all_tools": [
+        "kanban_attach",
+        "kanban_attach_url",
+        "kanban_attachments",
         "kanban_block",
         "kanban_comment",
+        "kanban_complete",
+        "kanban_create",
         "kanban_heartbeat",
+        "kanban_link",
         "kanban_list",
+        "kanban_request_changes",
+        "kanban_request_review",
         "kanban_show",
+        "kanban_unblock",
+        "patch",
         "process_manage",
         "read_file",
         "search_files",
+        "skill_manage",
         "skill_view",
         "skills_list",
-        "terminal"
+        "terminal",
+        "write_file"
       ]
     },
     "rubric": {

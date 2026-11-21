@@ -61,7 +61,7 @@ jq --arg i "$(jq -r '.records[0].install_id // empty' "$PRX")" --arg o "$(jq -r 
     json: .capabilities.json_mode, vision: .capabilities.vision, output_shape: $o, context: {advertised: .capabilities.context_tokens, effective: (.capabilities.context_tokens // 0),
     short_score: 1, points: []}, code: null}]}' "$SH/.stella/connections.json" >"$SH/${PRX#"$FX"/}"
 fxed role-assignments.json --argjson k "$(jq -c '[.link_classes[].id]' "$FX/.stella/routing.json")" --arg cr "$CR" --arg a "${RA:-}" --arg b "${RB:-}" \
-  --argjson ca "$(lk '["haiku"]')" --argjson cc "$(lk '["sonnet", "opus"]')" --argjson cb "$(lk '["opus"]')" '.effort_modes["qa-all"] = {allowed_localities: ["local", "cloud"], no_silent_fallback: false, class_order: $k,
+  --argjson ca "$(lk '["haiku"]')" --argjson cc "$(lk '["sonnet", "opus"]')" --argjson cb "$(lk '["opus"]')" '.effort_modes["qa-all"] = {allowed_localities: ["local", "cloud"], no_silent_fallback: false, based_on: .selection.global, class_order: $k,
     roles: {($a): {active: true, escalation_chain: $ca}, ($cr): {active: true, escalation_chain: $cc}, ($b): {active: true, escalation_chain: $cb}}} | .selection.global = "qa-all"'
 fxed routing.json --arg cr "$CR" --arg a "${RA:-}" --arg b "${RB:-}" '.escalation.purposes = {judge: $a, review: $cr, plan: $b, rescue: $b}'
 rungs() { mkdir -p "$T/sup/state"; jq -n --arg c "$1" --arg r "$2" --argjson n "$3" '{($c): {($r): $n}}' >"$T/sup/state/rungs.json"; }   # rungs <card> <role> <rung>: the card's current rung

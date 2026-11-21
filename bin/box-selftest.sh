@@ -416,7 +416,7 @@ jq --arg i "$(jq -r .install_id "$RX/$(jq -r '.files[] | select(.schema == "inst
     context: {advertised: null, effective: 1048576, short_score: 1, points: []}, code: null}]}' "$RX/.stella/connections.json" >"$pr"
 rxed role-assignments.json --arg r "$RR" --arg g "$(cat /proc/sys/kernel/random/uuid)" --arg i "$IID" --argjson k "$(jq -c '[.link_classes[].id]' "$RX/.stella/routing.json")" \
   --arg c "$(jq -r '[.entries[] | select(.type == "cli-login") | .id][0]' "$RX/.stella/connections.json")" \
-  '.effort_modes["qa-all"] = {allowed_localities: ["local", "cloud"], no_silent_fallback: false, class_order: $k} | .selection.global = "qa-all"
+  '.effort_modes["qa-all"] = {allowed_localities: ["local", "cloud"], no_silent_fallback: false, based_on: .selection.global, class_order: $k} | .selection.global = "qa-all"
    | .assignments += [{id: "qa-pin", scope: {level: "global"}, role: $r, effort_mode: "qa-all", chain: [{connection: $c, model: "model-from-data", parameters: {}}], global_id: $g, install_id: $i}]'
 RXF=$RX/$(jq -r .card_facts "$RX/.stella/data-files.json"); mkdir -p "$RXF"; echo '{"project":"card","carries_secrets":false,"vault_content":false,"apps":[]}' >"$RXF/t_1.json"
 ok 'STELLA_ROOT=$RX python3 -I "$S/stella_data.py" check >"$T/out" 2>&1 && [ -n "$RR" ] && [ "$RW" != null ]' "3.80a the resolver fixture root passes the data check (reviewing role ${RR:-none}, worker kind ${RW:-none})"
