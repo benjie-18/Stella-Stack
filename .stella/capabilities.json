@@ -3185,6 +3185,34 @@
       },
       "global_id": "308cd9b0-2201-40d9-8740-c0aca1c7d93b",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner-rubric",
+      "kind": "command",
+      "summary": "The planner rubric and card size (host only): score reads the rubric role's yes/no answer as untrusted data (anything but a strict true/false per feature counts unsure, one tier up) into points and a tier; extract asks the rubric role through route.py and scores; split judges a roadmap card against the reliable size for its kind and link from the routing stats; report lists tiers the QA raised above the rubric tier and proposes thresholds",
+      "keywords": [
+        "planner",
+        "rubric",
+        "tier",
+        "score",
+        "card size",
+        "split",
+        "tier miss",
+        "report"
+      ],
+      "inputs": "score --features FILE|- [--request-id R] --json | extract --project P --request FILE --json | split --card FILE --kind K --link CONNECTION/MODEL --json | report [--since DATE] --json",
+      "outputs": "JSON (score/extract: {features, unsure, score, tier, reason, request}; split: {split, limit, size, parts}; report: {since, cards, misses, proposal}); one trusted line each (planner.rubric, planner.tier-report); exit 1 with a catalog code (STL-PLN-110..119, STL-CFG-312 in a worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/planner_rubric.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "42e23e8b-3f4c-48c2-bf05-82396faef10b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

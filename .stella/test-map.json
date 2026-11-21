@@ -299,6 +299,16 @@
     },
     "scope-guard": {
       "mark": "hermetic"
+    },
+    "planner-role": {
+      "mark": "shared",
+      "why": "its hooks() runs roles.role_tools, which imports toolsets from the installed hermes-agent under the passwd home, not the scratch HOME (as owner-settings)"
+    },
+    "planner": {
+      "mark": "hermetic"
+    },
+    "replan": {
+      "mark": "hermetic"
     }
   },
   "test_like": [
@@ -316,7 +326,8 @@
     "tests/fixtures/*",
     "docs/hermes-local/hooks/reviewer/test-only-terminal.sh",
     ".claude/agents/*.md",
-    "docs/build-team/*.md"
+    "docs/build-team/*.md",
+    "bin/planner-test-lib.sh"
   ],
   "follow": [
     "*.py",
@@ -8694,6 +8705,250 @@
         "roadmap"
       ],
       "why": "P1 tests first (items C, D, G): the planner-rubric, roadmap and scope-guard selftests run their tools in a scratch root that holds these files and call bin/resolve.py and bin/event_log.py (from reach, the targets test-map.py check named)"
+    },
+    {
+      "globs": [
+        "bin/planner-role-selftest.sh",
+        "docs/hermes-local/roles.json",
+        "docs/hermes-local/hooks/*/*",
+        "bin/roles.py",
+        "bin/role-guard.py"
+      ],
+      "targets": [
+        "planner-role"
+      ],
+      "why": "P1 item A (tests first): the planner-role selftest runs the planner role hooks (roles.hooks_for over roles.json) and bin/role-guard.py on synthetic payloads"
+    },
+    {
+      "globs": [
+        "bin/planner-test-lib.sh",
+        "bin/planner-selftest.sh",
+        "bin/planner.py",
+        "bin/planner_rubric.py",
+        "bin/roadmap.py",
+        "bin/route.py",
+        "bin/resolve.py",
+        "bin/mock_provider.py",
+        "bin/approvals.py",
+        "bin/role-guard.py",
+        "bin/adapter.py",
+        "bin/event_log.py",
+        ".stella/planner.json",
+        ".stella/planner-settings.json"
+      ],
+      "targets": [
+        "planner",
+        "replan"
+      ],
+      "why": "P1 items E and F (tests first): bin/planner-test-lib.sh, the shared harness of the planner and replan selftests, drives planner.py (route with the rubric, plan through route.py on the mock provider behind a resolver wrapper, submit, gate, may-start), the test approver (approvals.py) and the start guard (role-guard.py, adapter.py)"
+    },
+    {
+      "globs": [
+        "bin/replan-selftest.sh",
+        "bin/replan.py",
+        "bin/qa_loop.py",
+        "bin/qa_findings.py",
+        ".stella/qa-loop.json"
+      ],
+      "targets": [
+        "replan"
+      ],
+      "why": "P1 item F (tests first): the replan selftest drives bin/replan.py (dispatch, record-block, replan-diff) over QA loops run through qa_loop.py and qa_findings.py"
+    },
+    {
+      "globs": [
+        ".claude/settings.json",
+        ".claude/skills/stack-rules/SKILL.md",
+        ".stella/adapters.json",
+        ".stella/agent-protocols.json",
+        ".stella/budgets.json",
+        ".stella/capability-sources.json",
+        ".stella/connections.json",
+        ".stella/data-files.json",
+        ".stella/extensions/README.md",
+        ".stella/features.json",
+        ".stella/host-policy.json",
+        ".stella/limit-signals.json",
+        ".stella/model-check.json",
+        ".stella/policy.json",
+        ".stella/prompt-profiles.json",
+        ".stella/protocols.json",
+        ".stella/routing.json",
+        ".stella/run-gateway.json",
+        ".stella/run-policy.json",
+        ".stella/schemas/event.schema.json",
+        ".stella/schemas/probes.schema.json",
+        ".stella/settings.json",
+        ".stella/stuck.json",
+        ".supervisor/limits.env",
+        "SUPERVISOR.md",
+        "bin/agent_runtime.py",
+        "bin/agent_tool.py",
+        "bin/agui_ui.py",
+        "bin/alert-catalog.sh",
+        "bin/alert.sh",
+        "bin/alert_catalog.py",
+        "bin/apply-hermes-local.sh",
+        "bin/box.py",
+        "bin/budget.py",
+        "bin/capabilities.py",
+        "bin/capabilities_mcp.py",
+        "bin/compare.py",
+        "bin/consent.py",
+        "bin/cost.py",
+        "bin/credentials.py",
+        "bin/devices.py",
+        "bin/escalate-drain.sh",
+        "bin/escalate.sh",
+        "bin/escalation-complete.sh",
+        "bin/escalation-discord.sh",
+        "bin/escalation-on-block.sh",
+        "bin/escalation-on-claim.sh",
+        "bin/escalation-on-complete.sh",
+        "bin/escalation-thread.sh",
+        "bin/event_untrusted.py",
+        "bin/false-close-guard.py",
+        "bin/gateway.py",
+        "bin/host_access.py",
+        "bin/kanban-board.sh",
+        "bin/kanban-guard.sh",
+        "bin/ledger.py",
+        "bin/log_filter.py",
+        "bin/model_check.py",
+        "bin/model_proxy.py",
+        "bin/owner-config.sh",
+        "bin/owner_auth.py",
+        "bin/owner_config.py",
+        "bin/policy.py",
+        "bin/probe.py",
+        "bin/prompt.py",
+        "bin/redact_all.py",
+        "bin/register-escalation-hook.sh",
+        "bin/register-toolsets.sh",
+        "bin/run_policy.py",
+        "bin/run_token.py",
+        "bin/settings.py",
+        "bin/stella-apply.py",
+        "bin/stella_data.py",
+        "bin/stuck.py",
+        "bin/triage.py",
+        "bin/worker_env.py",
+        "docs/alert-codes.md",
+        "docs/contract/README.md",
+        "docs/hermes-local/alert-catalog.json",
+        "docs/hermes-local/board.md",
+        "docs/hermes-local/fallback-routing.json"
+      ],
+      "targets": [
+        "planner",
+        "planner-role",
+        "replan"
+      ],
+      "why": "P1 tests first (items A, E, F): files the new selftests reach through their scratch copy of bin, .stella and docs (test-map.py reach); the planner-role selftest runs the role table's hooks, the planner and replan selftests run the planner tools in a scratch root"
+    },
+    {
+      "globs": [
+        ".stella/schemas/test-map.schema.json",
+        ".stella/test-map.json",
+        "bench/tasks/deploy-recovery/repo/deploy.conf",
+        "bench/tasks/deploy-recovery/repo/deploy.sh",
+        "bench/tasks/deploy-recovery/repo/test.sh",
+        "bench/tasks/deploy-recovery/solution/deploy.conf",
+        "bin/hardcode-lint.sh",
+        "bin/model_watch.py",
+        "bin/qa_tests.py",
+        "bin/selftests.sh",
+        "bin/test-map-selftest.sh",
+        "bin/test-map.py",
+        "bin/watchdog.sh",
+        "bin/watchdog_settings.py",
+        "docs/hermes-local/hardcode-allow.json",
+        "docs/hermes-local/watchdog-settings.json",
+        "package.json"
+      ],
+      "targets": [
+        "replan"
+      ],
+      "why": "P1 tests first (items A, E, F): files the new selftests reach through their scratch copy of bin, .stella and docs (test-map.py reach); the planner-role selftest runs the role table's hooks, the planner and replan selftests run the planner tools in a scratch root"
+    },
+    {
+      "globs": [
+        "AGENTS.md",
+        "bin/adapter.py",
+        "bin/approvals.py",
+        "bin/event_log.py",
+        "bin/resolve.py",
+        "bin/route.py"
+      ],
+      "targets": [
+        "planner-role"
+      ],
+      "why": "P1 tests first (items A, E, F): files the new selftests reach through their scratch copy of bin, .stella and docs (test-map.py reach); the planner-role selftest runs the role table's hooks, the planner and replan selftests run the planner tools in a scratch root"
+    },
+    {
+      "globs": [
+        "bin/roles.py",
+        "docs/hermes-local/roles.json",
+        "opencode.json"
+      ],
+      "targets": [
+        "planner",
+        "replan"
+      ],
+      "why": "P1 tests first (items A, E, F): files the new selftests reach through their scratch copy of bin, .stella and docs (test-map.py reach); the planner-role selftest runs the role table's hooks, the planner and replan selftests run the planner tools in a scratch root"
+    },
+    {
+      "globs": [
+        ".stella/planner.json",
+        ".stella/planner-settings.json"
+      ],
+      "targets": [
+        "planner-role"
+      ],
+      "why": "P1 item A (tests first): the planner-role selftest reads the rubric role id from the planner data"
+    },
+    {
+      "globs": [
+        "bin/roadmap-selftest.sh",
+        "bin/fixtures/planner/replay-2026-11-06/roadmap.md"
+      ],
+      "targets": [
+        "planner",
+        "replan"
+      ],
+      "why": "P1 items E and F (tests first): bin/planner-test-lib.sh builds its roadmaps in the format bin/roadmap-selftest.sh and the replay fixture use (named in its header)"
+    },
+    {
+      "globs": [
+        "bin/selftests.sh",
+        "bin/test-map-selftest.sh",
+        "bin/test-map.py",
+        "bin/watchdog.sh",
+        "bin/watchdog_settings.py",
+        "docs/hermes-local/hardcode-allow.json",
+        "docs/hermes-local/watchdog-settings.json",
+        "package.json",
+        ".stella/qa-loop.json",
+        ".stella/schemas/roadmap.schema.json",
+        ".stella/schemas/test-map.schema.json",
+        ".stella/test-map.json",
+        "bench/tasks/deploy-recovery/repo/deploy.conf",
+        "bench/tasks/deploy-recovery/repo/deploy.sh",
+        "bench/tasks/deploy-recovery/repo/test.sh",
+        "bench/tasks/deploy-recovery/solution/deploy.conf",
+        "bin/hardcode-lint.sh",
+        "bin/model_watch.py",
+        "bin/qa_findings.py",
+        "bin/qa_loop.py",
+        "bin/qa_tests.py"
+      ],
+      "targets": [
+        "planner",
+        "roadmap",
+        "scope-guard",
+        "replan"
+      ],
+      "why": "P1 merge glue: these selftests run bin/hardcode-lint.sh / test-map check inside their scratch roots, which reach the lint and test-map files (test-map.py check named them)"
     }
   ]
 }

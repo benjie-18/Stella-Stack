@@ -20,16 +20,16 @@ python3 -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("cr
 echo '{}' >"$H/kanban/boards/$BOARD/board.json"
 printf '#!/usr/bin/env bash\necho "$*" >> "%s/calls"\ncase "$*" in *"config get"*) echo unset;; esac\nexit 0\n' "$A" >"$A/bin/hermes"; chmod +x "$A/bin/hermes"
 mk() { mkdir -p "$1"; printf 'model: x\n' >"$1/config.yaml"; echo '{"approvals": []}' >"$1/shell-hooks-allowlist.json"; }
-# The scratch table: the real one plus role "planner" (assignable, delegates, creates cards, one hook) and profile planner-x.
+# The scratch table: the real one plus role "fake-planner" (assignable, delegates, creates cards, one hook) and profile planner-x.
 uid() { cat /proc/sys/kernel/random/uuid; }
 IID=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import stella_data as s; print(s.install_id())' /workspace/bin)   # FV-01: a role-table record a fixture adds carries a fresh global_id and this install's install_id
-jq --arg g1 "$(uid)" --arg g2 "$(uid)" --arg i "$IID" '.roles.planner = {global_id: $g1, install_id: $i, runs_unboxed: false, assignable: true, may_answer_for_owner: false, workspace: "git-worktree", may_complete: true, may_unblock: false, may_claim: true,
+jq --arg g1 "$(uid)" --arg g2 "$(uid)" --arg i "$IID" '.roles["fake-planner"] = {global_id: $g1, install_id: $i, runs_unboxed: false, assignable: true, may_answer_for_owner: false, workspace: "git-worktree", may_complete: true, may_unblock: false, may_claim: true,
       may_delegate: true, may_create_cards: true, may_review: false, allowed_overrides: [], background_review: false,
       requirements: {tool_calling: true, min_context_tokens: 8000, vision: false, allowed_data_classes: ["public"]},
       platform_toolsets: {cli: ["file", "terminal"]},
       hooks: [{matcher: "^(write_file|patch|skill_manage)$", file: "docs/hermes-local/hooks/reviewer/deny-write.sh"}]}
-    | .profiles["planner-x"] = {global_id: $g2, install_id: $i, role: "planner", soul: "reviewer.md"} | .sandbox.boxed_profiles += ["planner-x"]
-    | .roles.planner.git_identity = {name: "FAKE_GIT_NAME", email: "FAKE_GIT_EMAIL"}' "$RF" >"$T/roles.json"
+    | .profiles["planner-x"] = {global_id: $g2, install_id: $i, role: "fake-planner", soul: "reviewer.md"} | .sandbox.boxed_profiles += ["planner-x"]
+    | .roles["fake-planner"].git_identity = {name: "FAKE_GIT_NAME", email: "FAKE_GIT_EMAIL"}' "$RF" >"$T/roles.json"
 export ROLES_FILE="$T/roles.json"
 for d in $(python3 -c 'import sys; sys.path.insert(0, "/workspace/bin"); import roles; [print(f) for _, f, _, l in roles.profiles(roles.load(), sys.argv[1]) if l]' "$H"); do mk "$d"; done
 ap() { HOME="$A" PATH="$A/bin:$PATH" PROJECTS_DB="$H/projects.db" "${APPLY:-/workspace/bin/apply-hermes-local.sh}" "$@" >"$T/out" 2>&1; echo $?; }
@@ -50,7 +50,7 @@ ok 'grep -q "^- You never complete a card, claim a card, unblock a card or deleg
 ok 'ap --check >/dev/null; ! grep -q "SOUL DRIFT\|MISSING\|NOT APPROVED\|not rendered" "$T/out" && [ "$(grep -c ": SOUL in sync$" "$T/out")" -ge 2 ]' "after apply, --check reports no SOUL or hook drift (each listed SOUL said in sync)"
 # Apply's own SOUL rendering (verifier note; K12): every rendered placeholder filled, the board named from the data.
 ok '(for s in "$H/SOUL.md" "$H"/profiles/*/SOUL.md; do [ ! -e "$s" ] || { grep -q "stella-rules:begin" "$s" && ! grep -q "{{" "$s"; } || exit 1; done) && grep -qF "uses board \`$(python3 -c "import sys; sys.path.insert(0, \"/workspace/bin\"); import roles; print(roles.board())")\`" "$H/SOUL.md"' "apply renders every SOUL with no placeholder left, and the dispatcher SOUL names the board from bin/kanban-board.sh"
-jq --arg g "$(uid)" '.profiles["planner-y"] = {global_id: $g, install_id: .profiles["planner-x"].install_id, role: "planner", soul: "reviewer.md"} | .sandbox.boxed_profiles += ["planner-y"]' "$T/roles.json" >"$T/r2.json"; mk "$H/profiles/planner-y"
+jq --arg g "$(uid)" '.profiles["planner-y"] = {global_id: $g, install_id: .profiles["planner-x"].install_id, role: "fake-planner", soul: "reviewer.md"} | .sandbox.boxed_profiles += ["planner-y"]' "$T/roles.json" >"$T/r2.json"; mk "$H/profiles/planner-y"
 ok '[ "$(ROLES_FILE=$T/r2.json ap --check)" = 1 ] && grep -q "SOUL DRIFT" "$T/out"' "a new assignable profile in the table: --check reports the dispatcher SOUL's worker list as drift"
 rm -rf "$H/profiles/planner-y"
 # The role guard applies the new role's permissions from the table.
@@ -81,7 +81,7 @@ for bad in '.roles.builder.git_identity = {name: "lower", email: "X_MAIL"}' '.ro
 done
 ok '[ "$(ROLES_FILE=$RF python3 /workspace/bin/roles.py field some-unknown-profile may_create_cards)" = false ]' "an unknown profile reads as the fallback role"
 
-# 5. Worker git identity and safe.directory (D48), from data only: the fake role planner names two owner config keys.
+# 5. Worker git identity and safe.directory (D48), from data only: the fake role fake-planner names two owner config keys.
 PH="$H/profiles/planner-x/home"; GC="$PH/.gitconfig"
 rc=$(ap); rc=$(ap --check)
 ok '[ ! -e "$GC" ] && grep -q "^planner-x: git identity NOT SET (FAKE_GIT_NAME and FAKE_GIT_EMAIL" "$T/out" && ! grep -q "git config DRIFT" "$T/out"' "git identity keys unset in the owner config: reported, nothing written, not drift"
@@ -105,8 +105,8 @@ ok '! grep -Eq "@|Fake|FAKE_GIT|WORKER_GIT" /workspace/bin/apply-hermes-local.sh
 # roles.py reviewers lists exactly the profiles whose role has it true, from the table alone.
 exp=$(jq -c '. as $d | [.profiles | to_entries[] | select($d.roles[.value.role].may_review == true) | .key] | sort' "$RF")
 ok '[ "$exp" != "[]" ] && [ "$(ROLES_FILE=$RF python3 $S/roles.py reviewers | jq -c .)" = "$exp" ]' "K8: roles.py reviewers lists exactly the may_review profiles of the real table ($exp)"
-ok '[ "$(python3 $S/roles.py reviewers | jq -c .)" = "$exp" ]' "K8: the scratch table (the real one plus the planner role, may_review false) lists the same reviewers"
-jq '.roles.planner.may_review = true' "$T/roles.json" >"$T/rv.json"
+ok '[ "$(python3 $S/roles.py reviewers | jq -c .)" = "$exp" ]' "K8: the scratch table (the real one plus the fake-planner role, may_review false) lists the same reviewers"
+jq '.roles["fake-planner"].may_review = true' "$T/roles.json" >"$T/rv.json"
 exp2=$(jq -c '. + ["planner-x"] | sort' <<<"$exp")
 ok '[ "$(ROLES_FILE=$T/rv.json python3 $S/roles.py reviewers | jq -c .)" = "$exp2" ]' "K8: a new role with may_review true: its profile is listed, no code change"
 jq '.roles[].may_review = false' "$RF" >"$T/rv0.json"
