@@ -1520,8 +1520,8 @@ def rule_planner(c):
             bad("modes.default is not a mode word of modes.ids")
         if len(set(p["modes"]["ids"].values())) != len(p["modes"]["ids"]):
             bad("modes.ids: a mode word is used twice")
-        if not {p["card_size"]["stats_index_key"], p["model_pick"]["benchmark_index_key"]} <= set(c["idx"]):
-            bad("card_size.stats_index_key or model_pick.benchmark_index_key is not a key of the data index")
+        if not {p["card_size"]["stats_index_key"], p["model_pick"]["prior_index_key"]} <= set(c["idx"]):
+            bad("card_size.stats_index_key or model_pick.prior_index_key is not a key of the data index")
         for sid, s in c["whole"].get("planner-settings", []):
             ms = [s["defaults"]["mode"], *(x["mode"] for k in ("projects", "cards") for x in s[k].values() if "mode" in x)]
             if any(m not in p["modes"]["ids"].values() for m in ms):

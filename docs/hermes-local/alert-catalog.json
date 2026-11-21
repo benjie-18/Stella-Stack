@@ -4241,6 +4241,126 @@
       "check": "`python3 -I bin/planner_rubric.py score --help`.",
       "related": "P1 item C; bin/planner_rubric.py, .stella/planner.json",
       "resolvable": false
+    },
+    {
+      "code": "STL-PLN-200",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "a roadmap.md could not be used",
+      "message": "The roadmap file cannot be used: {problem}.",
+      "action": "fix roadmap.md: it is prose plus exactly one closed json roadmap block, within the size and depth limits of the planner data.",
+      "cause": "The file is unreadable or too large, holds no block or more than one, the block is not JSON or is nested too deeply.",
+      "check": "python3 -I bin/roadmap.py check|lint|pick; bash bin/roadmap-selftest.sh.",
+      "related": "P1 item D; bin/roadmap.py, .stella/schemas/roadmap.schema.json, .stella/planner.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-201",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "a roadmap does not fit its schema",
+      "message": "The roadmap is refused: {problem}.",
+      "action": "fix the block of roadmap.md so it fits .stella/schemas/roadmap.schema.json, then check it again.",
+      "cause": "A field is missing, unknown, the wrong type or out of range, or the project or a tier is not the one of the routing data.",
+      "check": "python3 -I bin/roadmap.py check|lint|pick; bash bin/roadmap-selftest.sh.",
+      "related": "P1 item D; bin/roadmap.py, .stella/schemas/roadmap.schema.json, .stella/planner.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-202",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "a roadmap's phases do not hold together",
+      "message": "The roadmap is refused: {problem}.",
+      "action": "fix the phase and card ids and depends_on so every id is unique, every dependency names a phase and there is no cycle.",
+      "cause": "A phase or card id is used twice, a depends_on names no phase, or the dependencies form a cycle.",
+      "check": "python3 -I bin/roadmap.py check|lint|pick; bash bin/roadmap-selftest.sh.",
+      "related": "P1 item D; bin/roadmap.py, .stella/schemas/roadmap.schema.json, .stella/planner.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-203",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "a roadmap names a VM that does not exist yet",
+      "message": "The roadmap is refused: {problem}.",
+      "action": "set vm to the placeholder of the planner data, or turn the VM feature on first.",
+      "cause": "A phase names a VM while the features entry named in the planner data (roadmap.vm_feature) is not on.",
+      "check": "python3 -I bin/roadmap.py check|lint|pick; bash bin/roadmap-selftest.sh.",
+      "related": "P1 item D; bin/roadmap.py, .stella/schemas/roadmap.schema.json, .stella/planner.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-204",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "a roadmap is not for this request or install",
+      "message": "The roadmap is refused: {problem}.",
+      "action": "rebuild the roadmap from the request: the digest is the sha256 of the request text and the install id is this install's.",
+      "cause": "request.digest does not match request.text, or install_id is another install's.",
+      "check": "python3 -I bin/roadmap.py check|lint|pick; bash bin/roadmap-selftest.sh.",
+      "related": "P1 item D; bin/roadmap.py, .stella/schemas/roadmap.schema.json, .stella/planner.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-205",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "a roadmap's estimate is over its budget",
+      "message": "The roadmap is refused: {problem}.",
+      "action": "lower the estimate or the budget cap, or ask the owner to raise the project's budget in the budgets data.",
+      "cause": "estimate.cost is over budget_cap, or budget_cap is over the project's hard budget in the budgets data.",
+      "check": "python3 -I bin/roadmap.py check|lint|pick; bash bin/roadmap-selftest.sh.",
+      "related": "P1 item D; bin/roadmap.py, .stella/schemas/roadmap.schema.json, .stella/planner.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-206",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "a roadmap names a model link the project may not use",
+      "message": "The roadmap is refused: {problem}.",
+      "action": "use a link that bin/resolve.py serves for that role in this project (its chain or escalation rungs).",
+      "cause": "An assignment or a card builder names a role or link outside the project's preset and overrides, or one that the data policy or a grant excludes.",
+      "check": "python3 -I bin/roadmap.py check|lint|pick; bash bin/roadmap-selftest.sh.",
+      "related": "P1 item D; bin/roadmap.py, .stella/schemas/roadmap.schema.json, .stella/planner.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-207",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "an acceptance check is not checkable",
+      "message": "The acceptance lint refuses the roadmap: {problem}.",
+      "action": "give the check an action, an observe and a numeric threshold with a comparator from the planner data, or mark it owner_confirm.",
+      "cause": "A check has no number threshold, a comparator the lint data lacks, or only a feel word with no threshold and no owner_confirm.",
+      "check": "python3 -I bin/roadmap.py check|lint|pick; bash bin/roadmap-selftest.sh.",
+      "related": "P1 item D; bin/roadmap.py, .stella/schemas/roadmap.schema.json, .stella/planner.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-208",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "an acceptance check has no probe sketch",
+      "message": "The acceptance lint refuses the roadmap: {problem}.",
+      "action": "give the check a numeric threshold, or mark it owner_confirm so the owner confirms it by hand.",
+      "cause": "No probe sketch could be made for the check (no threshold, or the sketch stub is off) and it is not owner_confirm.",
+      "check": "python3 -I bin/roadmap.py check|lint|pick; bash bin/roadmap-selftest.sh.",
+      "related": "P1 item D; bin/roadmap.py, .stella/schemas/roadmap.schema.json, .stella/planner.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-209",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "a model pick could not be made",
+      "message": "The model pick failed: {problem}.",
+      "action": "check the role, the project and the price list; run python3 -I bin/stella_data.py check.",
+      "cause": "The role has no usable link, a link has no price in force, or the routing data cannot be read.",
+      "check": "python3 -I bin/roadmap.py check|lint|pick; bash bin/roadmap-selftest.sh.",
+      "related": "P1 item D; bin/roadmap.py, .stella/schemas/roadmap.schema.json, .stella/planner.json",
+      "resolvable": false
     }
   ]
 }
