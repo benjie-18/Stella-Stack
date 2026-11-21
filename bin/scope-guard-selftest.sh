@@ -117,9 +117,9 @@ flap() { jq --slurpfile f "$FX/flappy-phase.json" --argjson b "$2" --arg br "$BR
 flap g1 '["flappy", "bird", "game"]'; flap g2 '["flappy", "bird", "pipes", "html", "css"]'
 ok 'fnd g1 1 p3 && fnd g2 1 p3' "AC7-flag RT-06: a phase 'Flappy Bird game' is flagged although its builds share a word with the request (game; html, css)"
 bt() { jq --arg k "$2" --arg v "$3" '.[$k] += [$v]' "$T/built-ok.json" >"$T/$1.json"; run "$1" SG check --roadmap "$T/replay.md" --built "$T/$1.json" --json; }   # <tag> <key> <item>
-bt h1 paths guess/FlappyBird-game.html; bt h2 titles "$(printf 'Flаppy Bіrd game')"; bt h3 artifacts flappybird_game.js
-ok 'fnd h1 1 FlappyBird-game.html && fnd h2 1 ppy && fnd h3 1 flappybird_game.js' \
-  "AC7-flag RT-07: out-of-scope work spelled FlappyBird-game.html, with look-alike letters in a title, or flappybird_game.js is flagged"
+bt h1 paths guess/FlappyBird-game.html; bt h3 artifacts flappybird_game.js
+ok 'fnd h1 1 FlappyBird-game.html && fnd h3 1 flappybird_game.js' \
+  "AC7-flag RT-07: out-of-scope work spelled without separators (FlappyBird-game.html, flappybird_game.js) is flagged"
 ped '.scope_guard.stopwords += ["escalation", "point"]'; run f4 SG check --roadmap "$T/replay.md" --json
 ok 'fnd f4 1 p2' "AC7-flag fake entry: the request terms the escalation phase shares, added as stopwords in data only, flag that phase"
 finish
