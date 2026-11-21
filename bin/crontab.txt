@@ -5,3 +5,5 @@
 * * * * * /workspace/bin/escalation-reply-poll.sh >/dev/null 2>&1
 # Q1 C2 scheduled full suite with bisection: the tick runs only when full_suite.interval_s (.stella/qa-loop.json) has passed since the last run; a red run reopens the culprit card
 7,37 * * * * python3 -I /workspace/bin/qa_schedule.py tick --repo /workspace >/dev/null 2>&1
+# P1 C weekly tier-miss report (report.interval_days in .stella/planner.json): rubric tier against the QA tier of record, one trusted planner.tier-report line
+17 6 * * 1 python3 -I /workspace/bin/planner_rubric.py report --json >/dev/null 2>&1

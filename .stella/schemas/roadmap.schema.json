@@ -1,0 +1,418 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Roadmap",
+  "description": "The JSON block of a roadmap.md (P1 item D): the plan of one request, phase by phase. Read by bin/roadmap.py (check, lint, pick); the document is untrusted model output, so every list and string is capped. Ids of roles, connections and models are checked against the routing data by the tool, not named here.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "install_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "project": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "request": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "text",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "tier": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "maxLength": 128
+    },
+    "preset": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "maxLength": 128
+    },
+    "phases": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": {
+        "$ref": "#/$defs/phase"
+      }
+    },
+    "out_of_scope": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      }
+    },
+    "estimate": {
+      "type": "object",
+      "properties": {
+        "tokens": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000000000
+        },
+        "cost": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000000000
+        },
+        "hours": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000000000
+        },
+        "budget_cap": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000000000
+        }
+      },
+      "required": [
+        "tokens",
+        "cost",
+        "hours",
+        "budget_cap"
+      ],
+      "additionalProperties": false
+    },
+    "assignments": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+        "maxLength": 128
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "connection": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "tier": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "connection",
+          "model"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "install_id",
+    "project",
+    "request",
+    "tier",
+    "preset",
+    "phases",
+    "out_of_scope",
+    "estimate",
+    "assignments"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "phase": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "goal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "builds": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          }
+        },
+        "depends_on": {
+          "type": "array",
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+          }
+        },
+        "builder_role": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "maxLength": 128
+        },
+        "qa_tier": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "maxLength": 128
+        },
+        "vm": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "acceptance": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/check"
+          }
+        },
+        "cards": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/card"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "goal",
+        "builds",
+        "depends_on",
+        "builder_role",
+        "qa_tier",
+        "vm",
+        "acceptance",
+        "cards"
+      ],
+      "additionalProperties": false
+    },
+    "check": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "observe": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "threshold": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "comparator": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "value": {
+              "type": [
+                "number",
+                "string"
+              ]
+            }
+          },
+          "required": [
+            "comparator",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "owner_confirm": {
+          "type": "boolean"
+        },
+        "probe": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "steps": {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              }
+            },
+            "assert": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          },
+          "required": [
+            "steps",
+            "assert"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "action",
+        "observe",
+        "threshold",
+        "owner_confirm",
+        "probe"
+      ],
+      "additionalProperties": false
+    },
+    "card": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "kind": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "maxLength": 128
+        },
+        "files": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        },
+        "size": {
+          "type": "object",
+          "properties": {
+            "files": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "changed_lines": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000000
+            },
+            "estimate_hours": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1000000000000
+            }
+          },
+          "required": [
+            "files",
+            "changed_lines",
+            "estimate_hours"
+          ],
+          "additionalProperties": false
+        },
+        "builder": {
+          "type": "object",
+          "properties": {
+            "connection": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "rung": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 64
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            }
+          },
+          "required": [
+            "connection",
+            "model",
+            "rung",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        "checks": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+          },
+          "description": "Ids of the acceptance checks of the card's phase that this card covers."
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "kind",
+        "files",
+        "size",
+        "builder",
+        "checks"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

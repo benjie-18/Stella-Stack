@@ -1,0 +1,55 @@
+{
+ "id": "p3",
+ "title": "Flappy Bird clone",
+ "goal": "A side-scrolling bird that flies between pipes.",
+ "builds": [
+  "flappy",
+  "bird",
+  "clone",
+  "pipes",
+  "gravity"
+ ],
+ "depends_on": [
+  "p1"
+ ],
+ "builder_role": "qa-builder-role",
+ "qa_tier": "qa-tier",
+ "vm": "TBD",
+ "acceptance": [
+  {
+   "id": "a5",
+   "action": "press space once, then advance 30 frames",
+   "observe": "bird y position change in px",
+   "threshold": {
+    "comparator": "qa-comparator",
+    "value": 40
+   },
+   "owner_confirm": false,
+   "probe": null
+  }
+ ],
+ "cards": [
+  {
+   "id": "c3",
+   "title": "flappy bird clone",
+   "kind": "web",
+   "files": [
+    "flappy/*"
+   ],
+   "size": {
+    "files": 1,
+    "changed_lines": 300,
+    "estimate_hours": 2
+   },
+   "builder": {
+    "connection": "qa-connection",
+    "model": "qa-model",
+    "rung": 0,
+    "reason": "the 2026-11-06 drift"
+   },
+   "checks": [
+    "a5"
+   ]
+  }
+ ]
+}

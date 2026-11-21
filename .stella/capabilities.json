@@ -2697,6 +2697,61 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
+      "id": "roadmap",
+      "kind": "command",
+      "summary": "Checks and lints a roadmap.md (the one json roadmap block against its schema, phase order, vm placeholder, estimate and budget caps, every link inside resolve.py's chain or rung walk for the project, numeric acceptance checks with a probe sketch) and picks the start rung of a card by expected cost from routing stats or benchmark priors. Read only, no model call",
+      "keywords": [
+        "roadmap",
+        "planner",
+        "acceptance",
+        "lint",
+        "pick",
+        "model",
+        "rung",
+        "budget"
+      ],
+      "inputs": "check FILE --project P | lint FILE | pick --project P --role R --kind K [--card C] [--critical] (each with --json)",
+      "outputs": "JSON; exit 1 with a catalog code (STL-PLN-200..209, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/roadmap.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "c691740f-aa01-4ece-b7b1-2bd21ac264b1",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "scope-guard",
+      "kind": "command",
+      "summary": "Flags planner drift: a roadmap phase whose builds terms share too few words with the request text (stopwords and thresholds from the planner data), and built work (paths, card titles, artifacts) that matches an out_of_scope entry or no phase; findings in the qa_findings submit format, usable as the validator stub's fixture findings until D1. Read only, no model call",
+      "keywords": [
+        "scope",
+        "guard",
+        "planner",
+        "roadmap",
+        "drift",
+        "out_of_scope",
+        "findings"
+      ],
+      "inputs": "check --roadmap FILE [--built FILE] --json",
+      "outputs": "JSON {findings: [...]}; exit 0 none, 1 findings, 2 refusal with a catalog code (STL-PLN-500..502)",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/scope_guard.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "d47d4549-0c05-4fd1-92de-ebc948c67e48",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
       "id": "qa-roles",
       "kind": "command",
       "summary": "Runs the QA roles of a card's round (host only): run starts every slot of qa_loop.py plan as a process of its own, all at once (one after another under when_local_only), each the stub double bin/qa_stub_role.py (due D1) that registers evidence and submits findings and its verdict through qa_findings.py; refused while the stub-roles features entry is off; diagnose, only while the diagnosis flag is on, writes one brief file under the round's evidence folder and one trusted line, and is not a round",
@@ -3165,6 +3220,140 @@
         "result": "shipped"
       },
       "global_id": "308cd9b0-2201-40d9-8740-c0aca1c7d93b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner-rubric",
+      "kind": "command",
+      "summary": "The planner rubric and card size (host only): score reads the rubric role's yes/no answer as untrusted data (anything but a strict true/false per feature counts unsure, one tier up) into points and a tier; extract asks the rubric role through route.py and scores; split judges a roadmap card against the reliable size for its kind and link from the routing stats; report lists tiers the QA raised above the rubric tier and proposes thresholds",
+      "keywords": [
+        "planner",
+        "rubric",
+        "tier",
+        "score",
+        "card size",
+        "split",
+        "tier miss",
+        "report"
+      ],
+      "inputs": "score --features FILE|- [--request-id R] --json | extract --project P --request FILE --json | split --card FILE --kind K --link CONNECTION/MODEL --json | report [--since DATE] --json",
+      "outputs": "JSON (score/extract: {features, unsure, score, tier, reason, request}; split: {split, limit, size, parts}; report: {since, cards, misses, proposal}); one trusted line each (planner.rubric, planner.tier-report); exit 1 with a catalog code (STL-PLN-110..119, STL-CFG-312 in a worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/planner_rubric.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "42e23e8b-3f4c-48c2-bf05-82396faef10b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "replan",
+      "kind": "command",
+      "summary": "Escalate, then re-plan (host only): dispatch reads a bound card's QA loop and block lines, writes its failure history and decides re-plan, climb (with the history as an untrusted brief), owner, done or retry; record-block records a builder block; replan-diff says whether a new roadmap version is a split inside one phase (no gate) or goes back to the gate; close runs the QA close then dispatch",
+      "keywords": [
+        "replan",
+        "re-plan",
+        "escalate",
+        "failure history",
+        "block",
+        "split",
+        "gate",
+        "dispatch"
+      ],
+      "inputs": "dispatch --card C --run R --json | record-block --card C --kind K --json | replan-diff --run R --old V --new V2 --json | close --card C --json",
+      "outputs": "JSON (dispatch: {action, reason, run, card, attempt, history, brief}; record-block: {card, kind}; replan-diff: {action, reason, run, old, new, digest}; close: {closed, dispatch}); trusted lines planner.history, planner.replan, planner.block, planner.split; exit 1 with a catalog code (STL-PLN-400..405, STL-CFG-312 in a worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/replan.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "286dac51-cd60-48f9-ba77-8ae8b433b74f",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner",
+      "kind": "command",
+      "summary": "The planner engine (host only): route sizes a request with the rubric and picks the behaviour from the owner's mode (Yes, Auto, No) and the tier; a question pass and the owner's answers are approval requests; plan asks the planner role for roadmap.md, submit checks and lints it, commits it on the project's main branch and opens the owner's gate; gate status and edit; bind and may-start are the start guard for builder cards; advance passes phases",
+      "keywords": [
+        "planner",
+        "roadmap",
+        "gate",
+        "mode",
+        "question first",
+        "may start",
+        "start guard",
+        "phase"
+      ],
+      "inputs": "route --project P [--card C] --request FILE | questions --run R --file Q | answers --run R --file A | plan --run R | submit --run R | gate status --run R [--version V] | gate edit --run R --file F | bind --run R --card C --roadmap-card RC | may-start --run R --card C | advance --run R (each --json)",
+      "outputs": "JSON per command (route: {run, mode, mode_source, tier, behavior, gate, question_first, warn}; submit: {version, commit, digest, request | body}; gate status: {status}); one trusted planner.* line per state change; exit 1 with a catalog code (STL-PLN-300..321, STL-CFG-312 in a worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/planner.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "96ff72d7-6d06-478d-a96a-804350cc7835",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner-guard",
+      "kind": "command",
+      "summary": "The planner's start guard: whether a builder card may start, from the planner's start projection (a card bound to an open run starts only when startable; an unbound card of a project with an open run does not)",
+      "keywords": [
+        "planner",
+        "start guard",
+        "claim",
+        "builder",
+        "projection"
+      ],
+      "inputs": "none (imported by the role guard and the adapter)",
+      "outputs": "none or (code, problem): STL-PLN-316, STL-PLN-317",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/planner_guard.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "e6e0ab4e-df8d-4e2e-b009-6d47aea4f512",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner-test-lib",
+      "kind": "tool",
+      "summary": "Test rig: the shared harness the planner and replan selftests source (mock model server, resolver wrapper, test approver, stub board)",
+      "keywords": [
+        "test rig",
+        "planner",
+        "replan",
+        "approver",
+        "mock"
+      ],
+      "inputs": "sourced by bin/planner-selftest.sh and bin/replan-selftest.sh; a scratch root",
+      "outputs": "shell functions only",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/planner-test-lib.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "19c26615-d893-4ffb-8698-ca3296f6f9da",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

@@ -79,6 +79,17 @@
       "graph_first": true,
       "output_style": "patches_only"
     },
+    "planner": {
+      "output_budget_tokens": 8000,
+      "explore_in_subagent": true,
+      "output_style": "compact"
+    },
+    "rubric": {
+      "prefill_budget_tokens": 2000,
+      "output_budget_tokens": 300,
+      "output_style": "verdict_only",
+      "filters": []
+    },
     "reviewer": {
       "output_budget_tokens": 3000,
       "output_style": "structured_findings"

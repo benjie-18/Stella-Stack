@@ -6,7 +6,7 @@ preset, link class, tier, driver, provider or model is named in this file: every
 one function of bin/stella_data.py (reach, policy_allows, route_problems, grant_in_force, link_class, probed, unmet).
 CLI: resolve.py resolve --role R --project P [--card C] [--tier T] [--driver D] [--task ID] [--rung N] [--tokens N] [--json]   (JSON only)
 Import: resolve(ctx) -> the same dict (ctx: {role, project, card, tier, driver, task, rung, tokens}); link_key(link) -> "<connection>/<model>",
-the state file's key; role_view(role, project, card=None) -> what routing gives the role before any link is judged (its
+the state file's key; role_view(role, project, card=None, d=None, tier=None) -> what routing gives the role before any link is judged (its
 docstring has the keys), the one copy of that rule: resolve() reads it there. Both write nothing and alert nothing: a
 fail-closed answer is a stella_data.DataError (Refusal carries its code; any other one is data that `check` refuses, STL-CFG-310).
 Output: {role, project, card, preset {id, source: card|project|global}, policy: project|default (a project the data policy
@@ -57,7 +57,7 @@ Every link is judged by all the rules, in this order; the first that fails names
    machine (reach()); no grant, setting, preset or routing data changes it;
  2 the data policy of the project, and of the default when that is Local only (policy_allows); Local only overrides any
    preset: the class order is the classes that are not hosted, with no last resort and no crossing (an exempt role keeps its own);
- 3 the connection: switched off, a CLI login without terms_ok, an aggregator whose broker entries do not resolve
+ 3 the connection: switched off, an aggregator whose broker entries do not resolve
    (credentials.check, when that module exists), allowed_roles, data_classes_allowed;
  4 the role's requirements against the link's probe record (probed, unmet): no record meets none; then --tokens;
  5 the preset: its allowed localities (the last-resort class is the one exception) and the role's class order; the
@@ -76,7 +76,7 @@ sys.path.insert(0, BIN)   # python3 -I does not add the script folder
 import stella_data as sd
 
 # spelled out: the alert selftest counts a code as used only when a script holds it as a literal
-NO_LINK, UNKNOWN, TERMS, AGGREGATOR, HARD = "STL-MDL-710", "STL-MDL-711", "STL-MDL-712", "STL-MDL-713", "STL-MDL-714"
+NO_LINK, UNKNOWN, AGGREGATOR, HARD = "STL-MDL-710", "STL-MDL-711", "STL-MDL-713", "STL-MDL-714"   # STL-MDL-712 (terms_ok) is retired: terms_ok is never enforced
 UNMET, POLICY, PRIVACY, CROSSING, COOLDOWN = "STL-MDL-715", "STL-MDL-716", "STL-MDL-717", "STL-MDL-718", "STL-MDL-724"
 EXHAUSTED, RUNG_SKIPPED, WORKER, LOG_FAILED = "STL-MDL-731", "STL-MDL-732", "STL-CFG-312", "STL-CFG-318"   # the rung walk (F2b item D)
 WAIVER = "STL-MDL-737"   # a review role answered with no link of another family than the builder (F2b item C)
@@ -200,7 +200,7 @@ def _data(project):
                                  policies=policies, local_only=any(p["mode"] == "local_only" for p in policies), recs=sd.probe_records(rt))
 
 
-def role_view(role, project, card=None, d=None):
+def role_view(role, project, card=None, d=None, tier=None):
     """What routing gives a role in a project (on a card when one is named), before any link is judged. It answers for a role
     the preset turns off and for a role that works a card asked with no card. d: the data resolve() has loaded already.
     {role, project, card, preset {id, source: card|project|global}, local_only, exempt, active,
@@ -211,7 +211,8 @@ def role_view(role, project, card=None, d=None):
        requirements (null: none, always so for an exempt role and under Local only),
      last_resort (null for an exempt role and under Local only),
      pins[] {scope: card|project|global, chain[]}: the owner's, in chain order, preset_pins[], fallbacks[]: the preset's for the role,
-     escalation_chain[]: the preset's rungs for the role (rung N is entry N-1)}"""
+     escalation_chain[]: the preset's rungs for the role (rung N is entry N-1)}
+    tier: a task tier id; an assignment row with that tier (of the preset, else of its based_on line) beats, at its scope, the rows with no tier."""
     d = d or _data(project)
     ra, rt = d.ra, d.rt
     known("role", role, set(d.table["roles"]) - {d.table["fallback_role"]})
@@ -225,9 +226,16 @@ def role_view(role, project, card=None, d=None):
     mode = ra["effort_modes"][preset]
     rp = mode.get("roles", {}).get(role, {"active": True})   # a role the preset does not list follows the preset and is active
     exempt = next((x for x in rt["exempt_roles"] if x["role"] == role), None)
+    # tier rows (tier = a task tier id) come from the preset, else from the first preset up its based_on line that has any for the role
+    line = [preset]
+    while ra["effort_modes"][line[-1]].get("based_on") in ra["effort_modes"] and ra["effort_modes"][line[-1]]["based_on"] not in line:
+        line.append(ra["effort_modes"][line[-1]]["based_on"])
+    tname = next((n for n in line if any(a["role"] == role and a["effort_mode"] == n and "tier" in a for a in ra["assignments"])), None)
     scoped = [(lvl, a) for lvl in ("card", "project", "global") for a in ra["assignments"]
-              if a["role"] == role and a["effort_mode"] == preset and a["scope"]["level"] == lvl
+              if a["role"] == role and a["scope"]["level"] == lvl
+              and ((a["effort_mode"] == preset and "tier" not in a) or (tier is not None and a.get("tier") == tier and a["effort_mode"] == tname))
               and (lvl == "global" or d.alias(a["scope"].get("project")) == d.pid and (lvl == "project" or a["scope"].get("card") == card))]
+    scoped = [(lvl, a) for lvl, a in scoped if "tier" in a or not any(l == lvl and "tier" in b for l, b in scoped)]   # at one scope a tier row beats the row with no tier
     # the class order: an exempt role's own (ruling 1); Local only overrides any preset (B4); else the owner's override, the preset's for the role, the preset's
     if exempt:
         src, order, last, needs = "exempt", exempt["class_order"], None, None
@@ -282,11 +290,8 @@ def resolve(ctx, d=None):
                  for k in dict.fromkeys((*rt["card_facts"]["when_missing"], *rec)) if k not in ("project", "apps") and rec.get(k) is not False]
         for a in rec["apps"] if isinstance(rec.get("apps"), list) else []:
             e = sd.entry(conn, a) if isinstance(a, str) else None
-            terms = [m for m in sd.route_problems(pols, [], e, now, pid) if m["kind"] == "terms"] if e else []
             if e is None or e["kind"] != "app":
                 code, why = UNKNOWN, "it is not an app of the connections catalog"
-            elif terms:
-                code, why = TERMS, f"the app {terms[0]['text']}"
             elif hard and e.get("integration_aggregator") and sd.reach(e) != "local":
                 code, why = HARD, f"the app is a hosted integration aggregator, and {hard[0]}"
             else:
@@ -294,7 +299,7 @@ def resolve(ctx, d=None):
             apps.append({"app": a if isinstance(a, str) else None, "status": "excluded" if code else "usable", "code": code, "reason": why})
 
     # ---- the preset, the class order, the last resort and the pins of the role: role_view(), the one copy of that rule
-    view = role_view(role, project, card, d)
+    view = role_view(role, project, card, d, tier)
     preset, source, exempt, order, last, needs = (view["preset"]["id"], view["preset"]["source"], view["exempt"], view["class_order"],
                                                   view["last_resort"], view["needs_class"])
     mode = ra["effort_modes"][preset]
@@ -348,9 +353,6 @@ def resolve(ctx, d=None):
             return X(POLICY, "the data policy does not allow this connection for the project" + (" (Local only: local links only)" if local_only else ""))
         if not prov["enabled"]:
             return X(POLICY, "the connection is switched off")
-        terms = [m for m in sd.route_problems(pols, [], prov, now, pid) if m["kind"] == "terms"]
-        if terms:
-            return X(TERMS, f"the connection {terms[0]['text']}")
         if prov.get("aggregator"):
             if prov["id"] not in broker:
                 broker[prov["id"]] = brokered(prov)

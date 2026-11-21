@@ -17,6 +17,8 @@ kanban_claim and delegate_task. It reads the role table (bin/roles.py) and names
      time; unreadable = refused (STL-GRD-602).
   4. kanban_comment (A1-01): a role without `may_answer_for_owner` (listed or not), or a profile with no row, names no other card than its own proven
      running card (roles.prove_card). Hermes itself rejects a call without task_id, so the guard lets that through.
+  5. kanban_claim (P1 DG-1): a builder card of a project with an open run of the plan engine is claimed only when its start
+     projection says it may start (bin/planner_guard.py start_problem, the one rule adapter.py start uses too).
 Exit 2 + block JSON refuses; any error refuses."""
 import json, os, re, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -240,6 +242,13 @@ def main():
         why = complete_problem(d, a, profile, b)
         if why:
             refuse(why)
+    elif tool == "kanban_claim":   # DG-1 (P1): a builder card of a project with an open plan run is claimed only when startable
+        import planner_guard
+        card = str(a.get("task_id") or "")
+        why = planner_guard.start_problem(card, rname)
+        if why:
+            roles.log_alert(why[0], problem=why[1][:300])
+            refuse(f"[{why[0]}] kanban_claim refused: {why[1]}")
     elif tool == "kanban_create":
         probs = create_problems(d, a, profile, b)
         if probs:

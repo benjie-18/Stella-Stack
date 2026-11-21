@@ -8,7 +8,7 @@ Every CLI-specific name is data (.stella/adapters.json); a new CLI is a new entr
       1 the entry is active, its binary is on PATH, its version is known; 2 a run with no card: the worktree must lie under the
       conformance scratch root (index key conformance_scratch) and the run is never evidence for a card (DC-06);
       3 the link: --link (it must be in the role's chain) or the resolver's first usable one; its connection type must be one of the
-      entry's conn_types; cli-login only with the connection's terms_ok true and its cli naming this adapter (the CLI runs on its own
+      entry's conn_types; cli-login only with its cli naming this adapter (terms_ok is information, never checked) (the CLI runs on its own
       login, credential_paths are never read); with --card a passing conformance record for (adapter, version, role, link, connection
       type) whose digests match the current data (index key conformance_records, DC-06/07, V2-03); 4 a run token for every run (bin/run_token.py, DC-04); api: the CLI's base URL is the
       model proxy (index key model_proxy_state) and its token variable holds the run token; 5 the per-run folder (index key
@@ -58,7 +58,7 @@ import stella_data as sd
 import worker_env
 
 C = {"data": "STL-GRD-640", "stub": "STL-GRD-641", "binary": "STL-GRD-642", "version": "STL-GRD-643", "untested": "STL-GRD-644", 
-     "link": "STL-GRD-645", "terms": "STL-GRD-646", "conformance": "STL-GRD-647", "scratch": "STL-GRD-648", "box": "STL-GRD-649", 
+     "link": "STL-GRD-645", "conformance": "STL-GRD-647", "scratch": "STL-GRD-648", "box": "STL-GRD-649", 
      "prepare": "STL-GRD-650", "run": "STL-GRD-651", "spawn": "STL-GRD-652", "worktree": "STL-GRD-653", "stop": "STL-GRD-654",
      "cfgcred": "STL-GRD-754", "cfghost": "STL-GRD-755", "cfgscan": "STL-GRD-757",
      "hookless": "STL-GRD-745", "project": "STL-GRD-746", "sweep": "STL-GRD-749"}   # literal: the alert lint finds each sender by its code
@@ -688,6 +688,10 @@ def cmd_start(a):
             raise Stop(C["project"], f"--project {sd.idn(a.project)} is not the board binding of card {a.card}" +
                        (f" ({sd.idn(bound) if bound else 'no project'})" if known else " (the board cannot be read to confirm it)"))
         a.project = bound
+        import planner_guard   # DG-1 (P1): a builder card of a project with an open planner run starts only when the planner's projection says so
+        why = planner_guard.start_problem(a.card, a.role)   # it reads the card's board task itself: unreadable refuses
+        if why:
+            raise Stop(*why)
     a.gateway_mode = gateway_mode(a.project)
     if a.gateway_mode == "enforce" and not hooked(e):
         raise Stop(C["hookless"], f"the policy gateway enforces for this run, and adapter {e['id']} has no policy hook: its actions cannot be decided before they run")
@@ -698,8 +702,6 @@ def cmd_start(a):
     if ctype == "cli-login":
         if prov.get("cli") != e["id"]:
             raise Stop(C["link"], f"connection {conn} is the login of another CLI")
-        if prov.get("terms_ok") is not True:
-            raise Stop(C["terms"], f"connection {conn}: the owner has not set terms_ok, so no agent runs on this login")
     if a.card:
         gate(e, ver, a.role, f"{conn}/{model}", ctype)
     scan_config(e, wt)

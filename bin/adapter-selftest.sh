@@ -252,7 +252,7 @@ stubs)   # T-STUBS-CLI: a stub entry and an active entry with a missing binary f
   run t3 A version --adapter qa-nobin --json
   ok '[ $RC != 0 ] && out t3 | grep >/dev/null -E "$range"' "T-STUBS-CLI version of the missing binary fails closed with a code"
   ;;
-terms)   # T-TERMS: a cli-login link runs only when the connection's terms_ok is true; the CLI's credential file is never read
+terms)   # T-TERMS: terms_ok is never enforced (owner decision 2026-11-20): a cli-login link runs whatever it holds; the CLI's credential file is never read
   go s1 qa-run-c1 "$WT" qa-cli/qa-c1 '[{"op":"say","text":"QA-SAY-C1"}]'
   ok '[ $RC = 0 ] && spawned "$WT" qa-run-c1' "T-TERMS control: terms_ok true, the cli-login run of the fake CLI starts"
   done_ qa-run-c1; d=$?
@@ -260,7 +260,8 @@ terms)   # T-TERMS: a cli-login link runs only when the connection's terms_ok is
   for v in false null; do
     ed .stella/connections.json --argjson v "$v" '(.entries[] | select(.id == "qa-cli") | .terms_ok) = $v'
     go "s-$v" "qa-run-c-$v" "$WT" qa-cli/qa-c1 '[]'
-    ok '[ $RC != 0 ] && out "s-$v" | grep >/dev/null -E "STL-(GRD-6[45][0-9]|CFG-310|MDL-7[0-9][0-9])" && none_ "$WT" "qa-run-c-$v"' "T-TERMS terms_ok $v: the cli-login run is refused with a code and nothing is spawned"
+    ok '[ $RC = 0 ] && spawned "$WT" "qa-run-c-$v"' "T-TERMS terms_ok $v: the cli-login run starts all the same"
+    done_ "qa-run-c-$v"
   done
   ;;
 versions)   # T-VERSIONS: the adapter reports its version; outside tested_versions is flagged with a code

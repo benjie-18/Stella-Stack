@@ -1,0 +1,207 @@
+{
+  "schema_version": 1,
+  "rubric": {
+    "extract_role": "rubric",
+    "features": [
+      {
+        "id": "multi_system",
+        "points": 2,
+        "question": "Does the work touch more than one system or service?"
+      },
+      {
+        "id": "new_dependency",
+        "points": 1,
+        "question": "Does it add a new dependency or tool?"
+      },
+      {
+        "id": "ambiguous",
+        "points": 1,
+        "question": "Is the request ambiguous or open to several readings?"
+      },
+      {
+        "id": "large_work",
+        "points": 1,
+        "question": "Is the work large (more than a few hours or a few files)?"
+      },
+      {
+        "id": "human_gate",
+        "points": 1,
+        "question": "Does it need a human decision or approval on the way?"
+      },
+      {
+        "id": "new_project",
+        "points": 1,
+        "question": "Does it start a new project?"
+      }
+    ],
+    "thresholds": [
+      {
+        "tier": "light",
+        "max_score": 1
+      },
+      {
+        "tier": "medium",
+        "max_score": 3
+      },
+      {
+        "tier": "complex"
+      }
+    ],
+    "unsure": {
+      "raise_tiers": 1
+    },
+    "input_max_bytes": 65536
+  },
+  "tiers": {
+    "light": {
+      "behavior": "direct",
+      "gate": false,
+      "question_tier": "light"
+    },
+    "medium": {
+      "behavior": "card_roadmap",
+      "gate": false,
+      "question_tier": "medium"
+    },
+    "complex": {
+      "behavior": "roadmap_card",
+      "gate": true,
+      "question_tier": "complex"
+    }
+  },
+  "modes": {
+    "ids": {
+      "force": "yes",
+      "rubric": "auto",
+      "skip": "no"
+    },
+    "default": "auto",
+    "force_min_behavior": "card_roadmap"
+  },
+  "local_only_warn": {
+    "presets": [
+      "local_only"
+    ],
+    "tiers": [
+      "medium",
+      "complex"
+    ]
+  },
+  "card_size": {
+    "default_limits": {
+      "files": 8,
+      "changed_lines": 400,
+      "estimate_hours": 4
+    },
+    "min_samples": 5,
+    "max_fail_rate": 0.3,
+    "stats_index_key": "planner_routing_stats"
+  },
+  "model_pick": {
+    "min_samples": 5,
+    "owner_penalty_cost": 2,
+    "exploration": {
+      "flag": "planner-exploration",
+      "share": 0.1
+    },
+    "prior_index_key": "planner_benchmark_priors",
+    "unknown_first_pass": 0.5,
+    "no_card_id": "pick-nocard"
+  },
+  "lint": {
+    "feel_words": [
+      "fast",
+      "slow",
+      "smooth",
+      "nice",
+      "clean",
+      "intuitive",
+      "pretty",
+      "snappy",
+      "responsive",
+      "fun",
+      "feel"
+    ],
+    "comparators": [
+      "<",
+      "<=",
+      ">",
+      ">=",
+      "==",
+      "at least",
+      "at most",
+      "under",
+      "over",
+      "within"
+    ],
+    "owner_confirm_note": "Feel criterion: the owner confirms it by hand."
+  },
+  "replan": {
+    "block_limit": 2,
+    "problem_markers": {
+      "spec": [
+        "spec"
+      ],
+      "test": [
+        "test"
+      ]
+    },
+    "block_kinds": [
+      "capability"
+    ],
+    "problem_kinds": {
+      "spec": "The spec or the roadmap is wrong or unclear.",
+      "test": "The test or the check is wrong."
+    }
+  },
+  "scope_guard": {
+    "stopwords": [
+      "the",
+      "a",
+      "an",
+      "and",
+      "or",
+      "of",
+      "to",
+      "in",
+      "for",
+      "with",
+      "on",
+      "is",
+      "it",
+      "this",
+      "that"
+    ],
+    "min_shared_terms": 1,
+    "min_shared_share": 0.4,
+    "severity": "medium"
+  },
+  "report": {
+    "interval_days": 7,
+    "history_days": 90
+  },
+  "behaviors": [
+    "direct",
+    "card_roadmap",
+    "roadmap_card"
+  ],
+  "roadmap": {
+    "fence": "json roadmap",
+    "max_bytes": 262144,
+    "max_depth": 12,
+    "vm_placeholder": "TBD",
+    "vm_feature": "vm-worker",
+    "probe_stub_feature": "planner-probe-sketch-stub"
+  },
+  "planning": {
+    "role": "planner",
+    "approval_class": "write",
+    "ttl_s": 604800,
+    "roadmap_path": "roadmap.md",
+    "git_identity": {
+      "name": "stella planner",
+      "email": "planner@stella.invalid"
+    },
+    "repo_summary_files": 200
+  }
+}

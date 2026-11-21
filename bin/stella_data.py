@@ -78,7 +78,9 @@ class Coded(str):
         return s
 
 
+TIER_ROWS = "STL-MDL-733"   # a role's tier rows do not cover every task tier, or a preset has none to use
 OFF_REQUIRED, CHAIN_FAILS, BUILTIN_EDIT = "STL-MDL-725", "STL-MDL-726", "STL-MDL-727"   # the preset rule's codes (F2 D1.9)
+PLANNER_DATA = "STL-PLN-100"   # the planner data rule's code (P1 W0)
 QA_DATA = "STL-QA-105"   # the QA loop rule's code (Q1 DG-3); the QA loop tool refuses its plan with the same code
 ENGINE_REFUSED = "STL-MDL-764"   # a candidate of the weekly model check that is no engine pick (F2c F, frozen())
 PROBED = NOROW + "probe records"   # the member of a check line that rests on probe data: no read depends on it, so served() never refuses for it (C-DC-03)
@@ -229,7 +231,7 @@ def jload(path, label=None):
 
 STATE = ("event_log", "backup_dir", "applied_state", "role_table", "owner_key", "approval_store", "event_writer_state", "routing_state",
          "card_facts", "probe_records", "triage_calibration", "benchmark_results", "usage_ledger", "ledger_state", "spans", "budget_state", "model_check_state",
-         "run_tokens", "model_proxy_state", "adapter_runs", "host_presence", "capabilities_mcp_state", "conformance_records", "qa_evidence", "qa_copies", "qa_quarantine", "qa_rungs", "ui_streams", "untrusted_events")   # the index keys that name a path; the last is the agents' stream (untrusted())
+         "run_tokens", "model_proxy_state", "adapter_runs", "host_presence", "capabilities_mcp_state", "conformance_records", "qa_evidence", "qa_copies", "qa_quarantine", "qa_rungs", "planner_runs", "planner_cards", "planner_routing_stats", "planner_benchmark_priors", "ui_streams", "untrusted_events")   # the index keys that name a path; the last is the agents' stream (untrusted())
 
 
 def untrusted(idx):
@@ -801,11 +803,11 @@ def grant_in_force(g, project, now):
 def route_problems(pols, need, prov, now, project=None):
     """Why a link to provider prov may not serve a role that handles the data classes `need`, for a task of `project` (None: no
     project, so only a Stella-wide grant counts) (F1b D6; next to policy_allows, the one routing rule): [{kind, data_class, text}].
-    kind terms: a cli-login link needs terms_ok true. On a link that leaves the machine (by reach(): hosted counts), each class's
+    terms_ok is information only (owner decision 2026-11-20: no terms check; the UI shows it as acknowledged): no kind refuses on it.
+    On a link that leaves the machine (by reach(): hosted counts), each class's
     hosted rule in every data policy: kind never refuses outright (no grant is offered); kind grant needs a privacy grant for that
     class naming this connection (id or global_id) that is in force (grant_in_force)."""
-    out = [] if prov["type"] != "cli-login" or prov.get("terms_ok") is True else \
-        [{"kind": "terms", "data_class": None, "text": "is cli-login, and the owner has not recorded terms_ok true (the provider's terms allow this use)"}]
+    out = []
     if reach(prov) == "local":
         return out
     names = {prov["id"], prov.get("global_id")}
@@ -906,7 +908,7 @@ def unprobed(table, role, prov, model, recs):
 def link_problems(table, role, prov, model, localities=None, mode=None, policies=(), where=None, pols=(), now=None, project=None):
     """Why the link (provider prov, model) may not be listed for `role`, as texts that follow the link's place: the one judge of
     an assignment's chain and of a preset's pins and fallbacks (W1-RT-01; the resolver excludes the same links at run time).
-    The link itself: its connection switched on, the model listed, the connection allowing the role and every data class it handles, a cli-login's terms recorded.
+    The link itself: its connection switched on, the model listed, the connection allowing the role and every data class it handles.
     localities (those of effort mode `mode`; None: not judged): where the link may run, by reach(). The scope, for a caller
     that has one (an assignment; a preset has none, the resolver judges it per project): its policies (project_policies,
     named `where`) and, with the data policies `pols`, the hosted rule of each data class for its project (route_problems)."""
@@ -1096,7 +1098,7 @@ def rule_assignments(c):
             for k in ("project", "card"):
                 if (k in want) != (k in sc):
                     P(rid, f"{aid}: scope.level {lvl} {'needs' if k in want else 'has no'} {k}")
-            key = (lvl, pid, sc.get("card"), a["role"], a["effort_mode"])
+            key = (lvl, pid, sc.get("card"), a["role"], a["effort_mode"], a.get("tier"))
             if key in seen:
                 P(rid, f"{aid}: same scope, role and effort mode as {idn(seen[key])}")
             seen[key] = a["id"]
@@ -1114,7 +1116,7 @@ def rule_assignments(c):
                 prov = entry(conn, ch["connection"])
                 if prov is None or prov["kind"] != "provider":
                     continue   # its x-ref (connections, kind provider) refuses it, naming the field
-                bad = link_problems(table, a["role"], prov, ch["model"], mode and mode["allowed_localities"], a["effort_mode"], policies,
+                bad = link_problems(table, a["role"], prov, ch["model"], mode and mode["allowed_localities"], a["effort_mode"], () if "tier" in a and a["scope"]["level"] == "global" else policies,   # a global tier row (a shipped seed) is no pin: the resolver (rule 2) excludes a link a policy forbids, so a Local only default must not void the file
                                     idn(pid) if listed else "the default", pols, now, pid)
                 for m in bad:
                     P(rid, f"{aid}: chain[{i}]: {m}")
@@ -1180,6 +1182,25 @@ def rule_presets(c):
             for a in ra["assignments"]:
                 for m in order_problems(a.get("class_order", []), classes, f"{idn(a['id'])}: class_order"):
                     P(rid, m)
+            # tier rows (global scope): a role that has them has one for every task tier in a preset, and every preset reaches some (own, else its based_on line)
+            tiers, have = [x["id"] for x in rt["task_tiers"]], {}
+            sel = ra.get("selection", {})
+            used = {sel.get("global"), *sel.get("projects", {}).values(), *sel.get("cards", {}).values()}
+            for a in ra["assignments"]:
+                if "tier" in a and a["scope"]["level"] == "global":
+                    have.setdefault(a["role"], {}).setdefault(a["effort_mode"], set()).add(a["tier"])
+            for r, by_mode in have.items():
+                for pid, mode in ra["effort_modes"].items():
+                    if not (mode.get("builtin") or pid in used):
+                        continue   # shortcut: an unselected custom preset is judged once selected (a selection naming it), not before
+                    line = [pid]
+                    while line[-1] not in by_mode and ra["effort_modes"][line[-1]].get("based_on") in ra["effort_modes"] and ra["effort_modes"][line[-1]]["based_on"] not in line:
+                        line.append(ra["effort_modes"][line[-1]]["based_on"])
+                    if line[-1] not in by_mode:
+                        P(rid, Coded(TIER_ROWS, f"preset {kname(pid)}: role {nm(r, table['roles'], 'a key')} has tier rows in another preset, and this one has none and no based_on preset that does"))
+                for pid, got in by_mode.items():
+                    if got != set(tiers):
+                        P(rid, Coded(TIER_ROWS, f"preset {kname(pid)}: role {nm(r, table['roles'], 'a key')} has tier rows for only some of the task tiers"))
             # effort ids are data (routing effort.levels): every link of every assignment and preset names a known one or none
             links = [(f"{idn(a['id'])}: chain[{i}]", l) for a in ra["assignments"] for i, l in enumerate(a["chain"])] + \
                 [(f"preset {kname(pid)}: role {nm(r, table['roles'], 'a key')}: {f}[{i}]", l) for pid, mode in ra["effort_modes"].items()
@@ -1480,6 +1501,51 @@ def rule_qa_loop(c):
                         continue
                     for m in qa_layer_problems(overlay(q, o), at, rt, rid):
                         P(rid, Coded(QA_DATA, f"{at} merged over the file: {m}"))
+
+
+def rule_planner(c):
+    """Planner data (P1 W0), every line PLANNER_DATA: extract_role is a role of the role table (a missing row is one refusal);
+    the thresholds name each tier once, ascending, the last without max_score (the others with); every tier row and threshold
+    names a task tier of routing (schema x-ref) and every task tier has a threshold and a tier row; rubric feature ids are
+    unique; modes.default is a mode id; mode words are unique; stats_index_key is an index key. The settings' mode words are
+    mode ids of the planner data."""
+    P, table = c["P"], c["table"]
+    roles = set(table["roles"]) - {table["fallback_role"]}
+    for rid, p in c["whole"].get("planner", []):
+        def bad(m):
+            P(rid, Coded(PLANNER_DATA, m))
+        rb = p["rubric"]
+        if rb["extract_role"] not in roles:
+            bad(f"rubric.extract_role: {nm(rb['extract_role'], roles, 'the value')} is not a role in the role table")
+        if len({f["id"] for f in rb["features"]}) != len(rb["features"]):
+            bad("rubric.features: an id is listed twice")
+        th = rb["thresholds"]
+        if len({t["tier"] for t in th}) != len(th):
+            bad("rubric.thresholds: a tier is listed twice")
+        if "max_score" in th[-1] or any("max_score" not in t for t in th[:-1]):
+            bad("rubric.thresholds: the last row has no max_score and every other row has one")
+        caps = [t["max_score"] for t in th if "max_score" in t]
+        if caps != sorted(set(caps)):
+            bad("rubric.thresholds: max_score does not rise from row to row")
+        for _, rt in c["whole"].get("routing", []):
+            for t in rt["task_tiers"]:
+                if t["id"] not in p["tiers"] or t["id"] not in {x["tier"] for x in th}:
+                    bad(f"task tier {idn(t['id'])} of routing has no tier row or no threshold in the planner data")
+        bh = p["behaviors"]
+        if any(t["behavior"] not in bh for t in p["tiers"].values()) or p["modes"]["force_min_behavior"] not in bh:
+            bad("a tier behavior or modes.force_min_behavior is not in behaviors")
+        if "needs_input" in p["replan"]["block_kinds"] or "code" in p["replan"]["problem_kinds"]:
+            bad("replan: block_kinds never lists needs_input and problem_kinds never lists code")
+        if p["modes"]["default"] not in p["modes"]["ids"].values():
+            bad("modes.default is not a mode word of modes.ids")
+        if len(set(p["modes"]["ids"].values())) != len(p["modes"]["ids"]):
+            bad("modes.ids: a mode word is used twice")
+        if not {p["card_size"]["stats_index_key"], p["model_pick"]["prior_index_key"]} <= set(c["idx"]):
+            bad("card_size.stats_index_key or model_pick.prior_index_key is not a key of the data index")
+        for sid, s in c["whole"].get("planner-settings", []):
+            ms = [s["defaults"]["mode"], *(x["mode"] for k in ("projects", "cards") for x in s[k].values() if "mode" in x)]
+            if any(m not in p["modes"]["ids"].values() for m in ms):
+                P(sid, Coded(PLANNER_DATA, "a mode in the planner settings is not a mode word of the planner modes.ids"))
 
 
 def rule_link_classes(c):
@@ -1858,6 +1924,7 @@ RULES = [("data policy and catalog", ("data-policy", "connections"), ("data-poli
          ("presets", ("role-assignments",), ("role-assignments", "routing", "connections", TABLE), rule_presets),
          ("routing", ("routing",), ("routing", TABLE), rule_routing),
          ("qa loop", ("qa-loop",), ("qa-loop", "routing", "role-assignments"), rule_qa_loop),
+         ("planner", ("planner", "planner-settings"), ("planner", "planner-settings", "routing", TABLE), rule_planner),
          ("link classes", ("connections",), ("connections", "routing"), rule_link_classes),
          ("grant scopes", ("grants",), ("grants",), rule_grants),
          ("model check grants", ("grants",), ("grants", "role-assignments"), rule_mc_grants),

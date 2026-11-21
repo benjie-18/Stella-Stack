@@ -255,7 +255,7 @@ V=sk-ant-api03-qafake0123456789abcdef   # lower case on purpose: it fits the id 
 CM=$(jq -r '.entries[] | select(.id == "claude-subscription") | .models[0].id' "$ROOT/.stella/connections.json")
 CHAIN="[{connection:\"claude-subscription\",model:\"$CM\",parameters:{}}]"
 # P1 a chain entry's provider must allow every data class the role handles
-mk p1a; ed p1a connections.json "(.entries[] | select(.id == \"claude-subscription\")) |= (.allowed_roles = $AR | .terms_ok = true | $CAPS)"; ed p1a role-assignments.json ".assignments[0].chain = $CHAIN"   # F1b D6: terms recorded, so the cases judge only the data classes
+mk p1a; ed p1a connections.json "(.entries[] | select(.id == \"claude-subscription\")) |= (.allowed_roles = $AR | .data_policy.data_classes_allowed = [] | .terms_ok = true | $CAPS)"; ed p1a role-assignments.json ".assignments[0].chain = $CHAIN"   # F1b D6: terms recorded, so the cases judge only the data classes
 ok 'refuses p1a check && grep -q "data class" "$T/o"' "84 a chain to a provider that allows none of the role's data classes is refused"
 ed p1a connections.json '(.entries[] | select(.id == "claude-subscription")).data_policy.data_classes_allowed = ["public"]'
 ok 'refuses p1a check' "85 a provider that allows only some of the role's data classes is refused"
@@ -982,13 +982,13 @@ ok 'refuses rn check && grep -q "^STL-CFG-310 .*role-assignments: .*qa-cam-build
 rm -rf "$T/rm"; cp -r "$T/rt0" "$T/rm"; ed rm data-policy.json '.data_classes += ["qa-k"] | .privacy_grants = []'; CLS rm qa-k; ed rm ../docs/hermes-local/roles.json '.roles.builder.requirements.allowed_data_classes -= ["camera"]'
 ed rm data-policy.json ".privacy_grants = [$(GR qa-cloud) | .data_class = \"qa-k\"]"
 ok 'refuses rm check && grep -q "qa-cam-builder: chain\[0\]: .*qa-k.*never" "$T/o" && ! grep -q "global-builder" "$T/o"' "250b a class with no rule row is the most restrictive: refused on a cloud link even with a grant"
-# T-CLI routing: a cli-login link is refused until the owner records terms_ok true
+# T-CLI routing: terms_ok is never enforced (owner decision 2026-11-20): a cli-login link passes whatever it holds
 mk tk; ed tk connections.json "$OPEN"; ed tk role-assignments.json "$QCB"; ed tk role-assignments.json ".assignments[-1] += {$(ids)}"
 ok 'sd tk check >"$T/o" 2>&1' "251 control: a cli-login link whose terms_ok is true passes"
 ed tk connections.json '(.entries[] | select(.id == "claude-subscription")).terms_ok = null'
-ok 'refuses tk check && grep -q "^STL-CFG-310 .*role-assignments: .*qa-cloud-builder: chain\[0\]: .*claude-subscription.*terms_ok" "$T/o"' "251a a cli-login link whose terms_ok is unset is refused"
+ok 'sd tk check >"$T/o" 2>&1' "251a a cli-login link whose terms_ok is unset passes"
 ed tk connections.json '(.entries[] | select(.id == "claude-subscription")).terms_ok = false'
-ok 'refuses tk check && grep -q "qa-cloud-builder: chain\[0\]: .*terms_ok" "$T/o"' "251b a cli-login link whose terms_ok is false is refused"
+ok 'sd tk check >"$T/o" 2>&1' "251b a cli-login link whose terms_ok is false passes"
 # ---- F1b W2 r2 ----
 # W2-CRT-01 an aggregator fronts upstream providers: routing judges it as cloud whatever its locality (grant, hosted never, Local only)
 LH=$(jq -r '.local_hosts[0]' "$ROOT/.stella/data-policy.json"); LO=$(jq -r '[.effort_modes | to_entries[] | select(.value.allowed_localities == ["local"]) | .key][0]' "$ROOT/.stella/role-assignments.json")
