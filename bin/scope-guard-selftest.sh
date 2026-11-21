@@ -110,6 +110,16 @@ jq '.titles += ["escape room puzzle"]' "$T/built-ok.json" >"$T/built-escape.json
 jq '.artifacts += ["flappy-bird-clone.html"]' "$T/built-ok.json" >"$T/built-flappy.json"; run f3 SG check --roadmap "$T/replay.md" --built "$T/built-flappy.json" --json
 ok 'fnd f2 1 "escape room puzzle" && fnd f3 1 "flappy-bird-clone.html"' \
   "AC7-flag built work nobody asked for is flagged: a card title matching no phase term, an artifact matching out_of_scope"
+# ---- red team RT-06/07: a drifted phase that shares a common word; out-of-scope work under another spelling ----
+flap() { jq --slurpfile f "$FX/flappy-phase.json" --argjson b "$2" --arg br "$BR" --arg tier "$TOP" --argjson l "$LK" \
+  '.phases += [$f[0] | .title = "Flappy Bird game" | .builds = $b | .builder_role = $br | .qa_tier = $tier | .cards |= map(.builder = (.builder + $l))]' "$T/replay.json" >"$T/$1.json" 2>/dev/null
+  render "$T/$1.json" "$T/$1.md"; run "$1" SG check --roadmap "$T/$1.md" --json; }   # <tag> <builds terms>
+flap g1 '["flappy", "bird", "game"]'; flap g2 '["flappy", "bird", "pipes", "html", "css"]'
+ok 'fnd g1 1 p3 && fnd g2 1 p3' "AC7-flag RT-06: a phase 'Flappy Bird game' is flagged although its builds share a word with the request (game; html, css)"
+bt() { jq --arg k "$2" --arg v "$3" '.[$k] += [$v]' "$T/built-ok.json" >"$T/$1.json"; run "$1" SG check --roadmap "$T/replay.md" --built "$T/$1.json" --json; }   # <tag> <key> <item>
+bt h1 paths guess/FlappyBird-game.html; bt h3 artifacts flappybird_game.js
+ok 'fnd h1 1 FlappyBird-game.html && fnd h3 1 flappybird_game.js' \
+  "AC7-flag RT-07: out-of-scope work spelled without separators (FlappyBird-game.html, flappybird_game.js) is flagged"
 ped '.scope_guard.stopwords += ["escalation", "point"]'; run f4 SG check --roadmap "$T/replay.md" --json
 ok 'fnd f4 1 p2' "AC7-flag fake entry: the request terms the escalation phase shares, added as stopwords in data only, flag that phase"
 finish
