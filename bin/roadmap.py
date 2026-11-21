@@ -24,7 +24,8 @@ import event_log as el
 import stella_data as sd
 import resolve
 
-BLOCK, SCHEMA, GRAPH, VM, DIGEST, BUDGET, LINK, LINT, NOPROBE, PICK = (f"STL-PLN-{n}" for n in range(200, 210))
+BLOCK, SCHEMA, GRAPH, VM, DIGEST = "STL-PLN-200", "STL-PLN-201", "STL-PLN-202", "STL-PLN-203", "STL-PLN-204"   # literal: the alert suite finds a code by its text
+BUDGET, LINK, LINT, NOPROBE, PICK = "STL-PLN-205", "STL-PLN-206", "STL-PLN-207", "STL-PLN-208", "STL-PLN-209"
 
 
 class Refuse(Exception):
