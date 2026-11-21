@@ -42,7 +42,7 @@
         "properties": {
           "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]*$"},
           "method": {"type": "string", "pattern": "^[A-Z]+$", "description": "Matched exactly. GET, HEAD and OPTIONS are the only methods that are not state-changing."},
-          "path": {"type": "string", "pattern": "^/[^\\s?#]*$", "description": "Matched exactly (a trailing slash or a query string makes another, unknown path)."},
+          "path": {"type": "string", "pattern": "^/[^\\s?#]*$", "description": "Matched exactly (a trailing slash or a query string makes another, unknown path); a part written {name} stands for one whole segment that is an id (loopback_guard.SEGMENT: no slash, no percent sign, never ..), handed to the endpoint as name."},
           "scope": {"enum": ["read", "owner-write"], "description": "read: the API token is enough; owner-write: the API token and an owner proof."},
           "global_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
           "install_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}

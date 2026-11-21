@@ -88,6 +88,9 @@
     },
     "version-pin": {
       "sync_class": "local-only"
+    },
+    "ui-component": {
+      "sync_class": "local-only"
     }
   },
   "class_rules": {

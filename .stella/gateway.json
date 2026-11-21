@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "about": "Policy gateway stack data (X1 G1, hooks X1 G2). Each action kind lists its hook sites: the functions that call gateway.check with it before the action (`gateway.py lint` fails a kind with none). The capabilities MCP server function pdp is the engine-side decision route the coding CLIs' policy hook asks. browser_action and vm_guest are registered by the phases that build them.",
+  "decision_event": "gateway_decision",
+  "default_timeout_s": 10,
+  "logged_string_max": 256,
+  "action_kinds": [
+    {
+      "id": "file_read",
+      "summary": "Read a file (an agent-runtime read tool; a coding CLI's through its policy hook and the PDP route)",
+      "target": "/path",
+      "hooks": [
+        {
+          "file": "bin/agent_runtime.py",
+          "function": "gates"
+        },
+        {
+          "file": "bin/capabilities_mcp.py",
+          "function": "pdp"
+        }
+      ],
+      "global_id": "b75bb0d2-eda3-418c-9ffe-3be338403d0b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "file_write",
+      "summary": "Write or edit a file (an agent-runtime write or edit tool; a coding CLI's through its policy hook and the PDP route)",
+      "target": "/path",
+      "hooks": [
+        {
+          "file": "bin/agent_runtime.py",
+          "function": "gates"
+        },
+        {
+          "file": "bin/capabilities_mcp.py",
+          "function": "pdp"
+        }
+      ],
+      "global_id": "306ec062-82ec-4149-b2bb-fcb6ed0fd843",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "shell",
+      "summary": "Run a shell command (an agent-runtime shell tool, through the gated executor; a coding CLI's through its policy hook and the PDP route)",
+      "target": "/command",
+      "hooks": [
+        {
+          "file": "bin/agent_runtime.py",
+          "function": "gates"
+        },
+        {
+          "file": "bin/capabilities_mcp.py",
+          "function": "pdp"
+        }
+      ],
+      "global_id": "1cac75a9-2b37-4263-9e61-9f77e37192de",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "tool_call",
+      "summary": "Call a tool Stella offered an agent runtime, or a coding CLI's tool of class other or not in its tool map (through its policy hook and the PDP route)",
+      "target": "/tool",
+      "hooks": [
+        {
+          "file": "bin/agent_runtime.py",
+          "function": "gates"
+        },
+        {
+          "file": "bin/capabilities_mcp.py",
+          "function": "pdp"
+        }
+      ],
+      "global_id": "c6b9cb34-8a51-46be-a79c-c71f8caf914c",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "mcp_call",
+      "summary": "A capability tool call through the capabilities MCP server, or a coding CLI's MCP tool (through its policy hook and the PDP route)",
+      "target": "/tool",
+      "hooks": [
+        {
+          "file": "bin/capabilities_mcp.py",
+          "function": "tool_call"
+        },
+        {
+          "file": "bin/capabilities_mcp.py",
+          "function": "pdp"
+        }
+      ],
+      "global_id": "b55ea9d9-12d3-4716-8786-0affee24bbcd",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "network_request",
+      "summary": "A model call the model proxy forwards upstream",
+      "target": "/url",
+      "hooks": [
+        {
+          "file": "bin/model_proxy.py",
+          "function": "forward"
+        }
+      ],
+      "global_id": "14bf39f0-2045-4e06-b9f4-fbe4f625b0be",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "broker_call",
+      "summary": "A credential read through the broker (credentials.get)",
+      "target": "/name",
+      "hooks": [
+        {
+          "file": "bin/credentials.py",
+          "function": "get"
+        }
+      ],
+      "global_id": "39222b04-109b-4792-b6a7-0d772181d3fc",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "host_session",
+      "summary": "A host-access decision (host session action)",
+      "target": "/action",
+      "hooks": [
+        {
+          "file": "bin/host_access.py",
+          "function": "decide"
+        }
+      ],
+      "global_id": "26955e6d-ceed-438d-9fd0-d73ac20d0057",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    }
+  ],
+  "evaluators": [
+    {
+      "id": "cedar",
+      "summary": "Cedar (@cedar-policy/cedar-wasm, pinned in package.json) through bin/cedar_eval.mjs: principal = the role, action = the kind, resource = the input's target, context = the inputs (a null key left out, a non-integer number as the string of its JSON text)",
+      "kind": "subprocess",
+      "argv": [
+        "node",
+        "{stack}/bin/cedar_eval.mjs"
+      ],
+      "request": {
+        "principal": {
+          "type": "Stella::Role",
+          "id": "{role}"
+        },
+        "action": {
+          "type": "Stella::Action",
+          "id": "{kind}"
+        },
+        "resource": {
+          "type": "Stella::Target",
+          "id": "{target}"
+        },
+        "context": "{inputs}",
+        "policies": "{policies}"
+      },
+      "verdict": "/decision",
+      "reason": "/reasons/0",
+      "errors": "/errors",
+      "timeout_s": 10,
+      "status": "approved",
+      "global_id": "5784e2de-acc5-4f0a-8877-f2698f098a49",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    }
+  ]
+}

@@ -520,6 +520,38 @@ One manifest per file (see its README); `enabled` is the disable switch; install
 A card branch may change this file, so its text is bounded by the schema: `id`, `kind`, `version`, `stack_commit` and `date`
 128 characters, `source`, `integrity` and each `with` item 1024, at most 64 `with` items.
 
+### `.stella/gateway.json` and `.stella/gateway-policy.json` (policy gateway, X1 G1)
+`gateway.json` (stack data, a boundary path): `decision_event` (the type of the one trusted line per decision),
+`default_timeout_s`, `action_kinds[]` (`id`, `summary`, optional `target`: a JSON pointer into the action's inputs, `hooks[]`
+{`file`, `function`}: where `gateway.check` is called with that kind) and `evaluators[]` (`id`, `kind` subprocess, `argv`
+with `{stack}`, `request` template, `verdict` and `reason` pointers into the answer, `timeout_s`, `status` approved or off).
+`gateway-policy.json` (owner data: owner-only, ships `mode.global` off): `mode` {`global`, `projects` {project id: mode}}
+(off, audit, enforce), `evaluator` (an evaluator id), `policies[]` (`id`, `kinds[]`, `text` in the evaluator's language).
+*To change a mode or a policy:* `stella-apply.py apply gateway-policy --from <file>` (dry run first; owner proof, backup, one
+event line). `bin/gateway.py check | decide | lint`; a new action kind is registered with its hook, and `lint` fails a kind
+whose hook does not call `gateway.check` with it. The default evaluator is Cedar (`@cedar-policy/cedar-wasm`, pinned exactly in
+package.json and package-lock.json; `npm ci` installs it) through `bin/cedar_eval.mjs`.
+*Hooks (X1 G2):* the agent-runtime gates (`tool_call`, then the offered tool's `gateway_kind`), the capability MCP server's
+tools/call (`mcp_call`), the model proxy's upstream forward (`network_request`), `credentials.get` (`broker_call`) and host
+access decide (`host_session`). A coding CLI's policy hook asks the MCP server's PDP route (tools/call `gateway.decide`, role and
+project from the run token) when `adapter.py start` rendered it with `--gateway` (the run's mode is not off). A run's record keeps
+its start mode (`gateway.mode`); with `--card` its project is the card's board binding. In enforce a coding CLI with no policy
+hook is refused at start; applying this file stops the runs that started with the gateway off (and hookless ones under enforce).
+A tool call's inputs carry its `cwd` and its `path` as the canonical absolute path under that cwd (one spelling per file).
+With the gateway on, the CLI's hook matcher is the entry's `match_all` (every tool reaches the hook) and the PDP route decides
+tools of class other, MCP tools (`mcp_call`) and tools not in the tool map (`tool_call`; refused in enforce); an entry with no
+`match_all` counts as hookless. Per-process path aliases (/proc/self, /proc/thread-self, /proc/<n>, /dev/fd, /dev/std*) are refused,
+never resolved in the engine. An evaluator answer carrying errors (the entry's `errors` pointer; Cedar's diagnostics.errors) is an
+evaluator error: refused in enforce, would-refuse in audit. A run whose start read the mode off re-reads it once its record is
+written and stops itself through the sweep path when the mode has left off (closes the start/apply race).
+*Engine git (X1 last cycle):* every engine git call on a run's worktree pins GIT_DIR / the common dir recorded at start (taken
+before the agent spawns; a linked worktree's gitdir lies outside it), with no system, global or system-attributes config; agents may
+not write `.git` or anything under a `.git` folder. A plain repository (unboxed test adapters only; its own `<wt>/.git` cannot be pinned): every
+filter driver its config names (includes too) is blanked on each engine git call, so a planted filter never runs.
+`logged_string_max`: a longer string input is logged as {`sha256`, `length`} (the evaluator gets it whole). The Cedar runner
+leaves null keys out of the context and passes a non-integer number as the string of its JSON text (`1.5` is `"1.5"`). A stop
+signals a run's process group only while its pid still has the start fingerprint kept in the record (`pid_start`).
+
 ### `.stella/settings.json` (settings registry)
 Every owner-editable setting: `key`, `label`, `type`, `validation`, `scope`, `sensitivity` (plain, identity_critical,
 secret), `default`, `store` (`data`: an index id, `key`), `apply` (script, needs_restart) and the catalog `code` shown on

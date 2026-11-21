@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "about": "Agent-runtime protocols (X1 item A, ruling X1-DC-06): how bin/agent_runtime.py talks to an agent of any framework. One entry per protocol; a second protocol is a new entry, never code. request: the run input template ({thread}, {run}, {messages}, {tools}, {state}, {model}; a string that is one placeholder takes the typed value). messages: templates of the user prompt, an assistant tool call and a tool result. tool: the template of one offered tool (an agent_tools row). events: type = pointer of the event type; map = protocol type -> Stella kind (unmapped types are ignored); pointers = the event fields. ready: pointer of the port in the agent ready line (the agent binds port 0). ui_custom_names: custom events that are generative UI (to bin/agui_ui.py). max_open, max_turn_bytes: open messages and calls per turn and their bytes (over: STL-GRD-712).",
+  "excerpt_chars": 240,
+  "entries": [
+    {
+      "id": "ag-ui",
+      "label": "AG-UI (Agent-User Interaction protocol) over HTTP and server-sent events",
+      "transport": "http-sse",
+      "ready": {
+        "pointer": "/port"
+      },
+      "request": {
+        "method": "POST",
+        "path": "/",
+        "headers": {
+          "Content-Type": "application/json",
+          "Accept": "text/event-stream"
+        },
+        "body": {
+          "threadId": "{thread}",
+          "runId": "{run}",
+          "messages": "{messages}",
+          "tools": "{tools}",
+          "state": "{state}",
+          "context": [],
+          "forwardedProps": {
+            "model": "{model}"
+          }
+        }
+      },
+      "messages": {
+        "user": {
+          "id": "{id}",
+          "role": "user",
+          "content": "{text}"
+        },
+        "assistant_tool_calls": {
+          "id": "{id}",
+          "role": "assistant",
+          "toolCalls": [
+            {
+              "id": "{tool_id}",
+              "type": "function",
+              "function": {
+                "name": "{tool_name}",
+                "arguments": "{args}"
+              }
+            }
+          ]
+        },
+        "tool": {
+          "id": "{id}",
+          "role": "tool",
+          "toolCallId": "{tool_id}",
+          "content": "{result}"
+        }
+      },
+      "tool": {
+        "name": "{name}",
+        "description": "{description}",
+        "parameters": "{parameters}"
+      },
+      "events": {
+        "type": "/type",
+        "map": {
+          "RUN_STARTED": "lifecycle_start",
+          "RUN_FINISHED": "lifecycle_end",
+          "RUN_ERROR": "error",
+          "TEXT_MESSAGE_START": "message_start",
+          "TEXT_MESSAGE_CONTENT": "message_delta",
+          "TEXT_MESSAGE_END": "message_end",
+          "TOOL_CALL_START": "tool_start",
+          "TOOL_CALL_ARGS": "tool_args",
+          "TOOL_CALL_END": "tool_end",
+          "TOOL_CALL_RESULT": "tool_result",
+          "STATE_SNAPSHOT": "state_snapshot",
+          "STATE_DELTA": "state_delta",
+          "MESSAGES_SNAPSHOT": "messages_snapshot",
+          "CUSTOM": "custom",
+          "STEP_STARTED": "step",
+          "STEP_FINISHED": "step"
+        },
+        "pointers": {
+          "message_id": "/messageId",
+          "delta": "/delta",
+          "tool_id": "/toolCallId",
+          "tool_name": "/toolCallName",
+          "args_delta": "/delta",
+          "result": "/content",
+          "state": "/snapshot",
+          "delta_ops": "/delta",
+          "custom_name": "/name",
+          "custom_value": "/value",
+          "error": "/message"
+        }
+      },
+      "ui_custom_names": [
+        "ui"
+      ],
+      "max_turns": 50,
+      "max_open": 16,
+      "max_turn_bytes": 4194304,
+      "ready_timeout_s": 20,
+      "turn_timeout_s": 300,
+      "global_id": "59c7ca25-c353-4f3c-9fbe-6f4b9eb669b6",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    }
+  ]
+}

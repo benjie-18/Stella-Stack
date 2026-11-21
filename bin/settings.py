@@ -57,10 +57,10 @@ def need_owner(what):
 
 
 def store(e):
-    """(index row, store key) of an entry; only env-format files are read and written here."""
+    """(index row, store key) of an entry; an env-format file, or a json file the store's pointer points into."""
     row = sd.row_of(e["store"]["data"])
-    if row["format"] != "env":
-        raise Refuse("STL-CFG-313", f"{e['key']}: its store is not an env-format file")
+    if row["format"] != ("json" if "pointer" in e["store"] else "env"):
+        raise Refuse("STL-CFG-313", f"{e['key']}: its store is not a file of the format its store names")
     return row, e["store"]["key"]
 
 
@@ -68,8 +68,29 @@ def is_owner_file(row):
     return row["owner_only"] or row["path"] in role_table()["owner_settings"]
 
 
-def read_store(row, code="STL-CFG-313"):
-    """(file bytes or None, {key: value}) of an env-format store. code: the catalog code of a store that cannot be read (a change that failed, or for a read, a data file that is invalid)."""
+def pointer_parts(ptr):
+    return [p.replace("~1", "/").replace("~0", "~") for p in ptr.split("/")[1:]]
+
+def read_json_store(row, e, code):
+    """(file bytes or None, {key: stored text} holding the key only when the pointer reaches a value) of a json store, as read_store gives an env one."""
+    try:
+        with open(el.path(row["path"]), "rb") as f:
+            raw = f.read()
+        node = json.loads(raw.decode("utf-8-sig"))
+    except FileNotFoundError:
+        return None, {}
+    except (OSError, ValueError) as err:
+        raise Refuse(code, f"{row['id']} cannot be read as json: {type(err).__name__}")
+    for p in pointer_parts(e["store"]["pointer"]):
+        if not isinstance(node, dict) or p not in node:
+            return raw, {}
+        node = node[p]
+    return raw, {e["store"]["key"]: str(node).lower() if isinstance(node, bool) else str(node)}
+
+def read_store(row, code="STL-CFG-313", e=None):
+    """(file bytes or None, {key: value}) of a store (e: the entry, for a json store). code: the catalog code of a store that cannot be read (a change that failed, or for a read, a data file that is invalid)."""
+    if e is not None and "pointer" in e["store"]:
+        return read_json_store(row, e, code)
     try:
         with open(el.path(row["path"]), "rb") as f:
             raw = f.read()
@@ -109,13 +130,21 @@ def problems(e, value):
     sch = {"type": "string" if e["type"] == "enum" else e["type"], **{a: v[a] for a in ("pattern", "minimum", "maximum") if a in v}}
     if "values" in v:
         sch["enum"] = v["values"]
-    return sd.validate_doc(value, sch)
+    out = sd.validate_doc(value, sch)
+    if not out and "from" in v:   # the value must be the id of an item of a list in another data file (data id + pointer): ids stay in data
+        src = v["from"]
+        node = sd.load(sd.row_of(src["data"])["path"])
+        for p in pointer_parts(src["pointer"]):
+            node = node.get(p, []) if isinstance(node, dict) else []
+        if value not in [i.get("id") for i in node if isinstance(i, dict)]:
+            out = [f"not an id in {src['data']}{src['pointer']}"]
+    return out
 
 
 def current(e):
     """(value or None, where it came from) of an entry; the default when nothing is stored."""
     row, k = store(e)
-    _, cfg = read_store(row)   # T2: a store that does not parse is refused with the one code set uses too (G5: "refused the same way")
+    _, cfg = read_store(row, e=e)   # T2: a store that does not parse is refused with the one code set uses too (G5: "refused the same way")
     if k in cfg:
         return typed_stored(e, cfg[k]), "store"
     if e["default"] is not None and problems(e, e["default"]):   # the registry's own default is refused by its own rules: no value is served
@@ -145,6 +174,20 @@ def do_get(key, as_json):
     return 0
 
 
+def json_candidate(row, e, raw, value):
+    """The json store with `value` at the entry's pointer (indent 2, a final newline); the parent objects must already be there."""
+    if raw is None:
+        raise Refuse("STL-CFG-313", f"{row['id']} does not exist: nothing to set a value in")
+    node = doc = json.loads(raw.decode("utf-8-sig"))
+    *path, last = pointer_parts(e["store"]["pointer"])
+    for p in path:
+        node = node.get(p) if isinstance(node, dict) else None
+    if not isinstance(node, dict):
+        raise Refuse("STL-CFG-313", f"{e['key']}: the pointer does not reach an object in {row['id']}")
+    node[last] = value
+    return (json.dumps(doc, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
 def do_set(key, text, dry, proof):
     need_owner("a settings change")
     # K9: the read of the store, the candidate and the apply are one critical section (a lock of this tool's own): two sets at once are two
@@ -166,23 +209,26 @@ def set_locked(key, text, dry, proof):
         raise Refuse("STL-CFG-315", f"{key}: {bad[0]}"[:200])
     row, k = store(e)
     stored = str(value).lower() if isinstance(value, bool) else str(value)
-    try:
-        newline = oc.line(k, stored)
-    except oc.OwnerConfigError as err:
-        raise Refuse("STL-CFG-315", str(err)[:200])
-    raw, cfg = read_store(row)
+    raw, cfg = read_store(row, e=e)
     if k in cfg and cfg[k] == stored:
         print(f"no change: {key}")
         return 0
-    lines = (raw.decode("utf-8-sig") if raw is not None else "").split("\n")
-    hit = [i for i, l in enumerate(lines) if l.startswith(k + "=")]   # read_store refused a file that holds a key twice: at most one such line
-    if hit:
-        lines[hit[0]] = newline
+    if "pointer" in e["store"]:
+        cand = json_candidate(row, e, raw, value)
     else:
-        if lines[-1] == "":
-            lines.pop()
-        lines += [newline, ""]
-    cand = "\n".join(lines).encode("utf-8")
+        try:
+            newline = oc.line(k, stored)
+        except oc.OwnerConfigError as err:
+            raise Refuse("STL-CFG-315", str(err)[:200])
+        lines = (raw.decode("utf-8-sig") if raw is not None else "").split("\n")
+        hit = [i for i, l in enumerate(lines) if l.startswith(k + "=")]   # read_store refused a file that holds a key twice: at most one such line
+        if hit:
+            lines[hit[0]] = newline
+        else:
+            if lines[-1] == "":
+                lines.pop()
+            lines += [newline, ""]
+        cand = "\n".join(lines).encode("utf-8")
     with tempfile.TemporaryDirectory(prefix="settings-") as d:   # 0700 folder: the candidate holds the owner's values
         src = os.path.join(d, "candidate")
         with open(src, "wb") as f:
@@ -199,7 +245,7 @@ def do_check(as_json):
             row, k = store(e)
             if e["sensitivity"] == SECRET or (is_owner_file(row) and why):
                 continue   # a secret is never read; an owner file is not read for a worker
-            _, cfg = read_store(row, "STL-CFG-310")
+            _, cfg = read_store(row, "STL-CFG-310", e)
             if k in cfg:
                 try:
                     bad = problems(e, typed(e, cfg[k]))

@@ -10,6 +10,7 @@
     "F2c",
     "F3",
     "Q1",
+    "X1",
     "P1",
     "D1",
     "B1",
@@ -460,6 +461,60 @@
       "depends_on": [],
       "flag": "qa-round2-diagnosis",
       "global_id": "f8a7c1fb-a7b0-4894-be15-785a093c718c",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-langgraph",
+      "owner_phase": "X1",
+      "status": "off",
+      "depends_on": [],
+      "flag": "agui-langgraph",
+      "global_id": "7cc707f6-e27b-4c86-8bc5-21e47a8f2a8e",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-crewai",
+      "owner_phase": "X1",
+      "status": "off",
+      "depends_on": [],
+      "flag": "agui-crewai",
+      "global_id": "45641aa6-1b63-4243-9c48-fa21df85eba9",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-mastra",
+      "owner_phase": "X1",
+      "status": "off",
+      "depends_on": [],
+      "flag": "agui-mastra",
+      "global_id": "adb78690-bfd7-4394-b336-c7e6306635e7",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-pydantic-ai",
+      "owner_phase": "X1",
+      "status": "off",
+      "depends_on": [],
+      "flag": "agui-pydantic-ai",
+      "global_id": "b3683360-8b9b-4b62-8fb5-20d4030a469f",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-google-adk",
+      "owner_phase": "X1",
+      "status": "off",
+      "depends_on": [],
+      "flag": "agui-google-adk",
+      "global_id": "26fe1ff4-fbaf-4f92-b306-de2edd69581e",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-claude-agent-sdk",
+      "owner_phase": "X1",
+      "status": "off",
+      "depends_on": [],
+      "flag": "agui-claude-agent-sdk",
+      "global_id": "1fdd16b9-f8ad-47ea-a1eb-035a86ca1963",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

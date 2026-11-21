@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Generative UI component allowlist",
+  "description": "The components an agent's UI event may render (X1 item U, body B3, AC3; bin/agui_ui.py). A widget naming a component not listed, props failing the component's props schema, or an action the component does not list is dropped with one alert (STL-GRD-721..723), never rendered. props is a flat JSON Schema (the stack's subset) of the widget's props: additionalProperties false, every string prop with a maxLength (agui_ui checks both, STL-GRD-720). Each action names the approvals.py approval class it opens and the summary template of that request ({prop} filled with the redacted prop, capped at limits.summary_value_chars): a widget action only ever opens an approval request through `agui_ui.py act`, never answers one. limits: payload_bytes (the largest widget payload, as compact JSON), records_per_run (the read stream of one run holds no more), approval_ttl_s (the ttl of a request act opens). A protected boundary path (X1-DC-07).",
+  "x-one-document": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "limits", "components"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "about": {"type": "string"},
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payload_bytes", "records_per_run", "summary_value_chars", "approval_ttl_s"],
+      "properties": {
+        "payload_bytes": {"type": "integer", "minimum": 64, "maximum": 1048576},
+        "records_per_run": {"type": "integer", "minimum": 1, "maximum": 100000},
+        "summary_value_chars": {"type": "integer", "minimum": 1, "maximum": 1000},
+        "approval_ttl_s": {"type": "integer", "minimum": 1, "maximum": 2592000}
+      }
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "summary", "props", "actions", "global_id", "install_id"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+          "summary": {"type": "string", "minLength": 1, "maxLength": 400},
+          "props": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "additionalProperties", "properties"],
+            "properties": {
+              "type": {"const": "object"},
+              "additionalProperties": {"const": false},
+              "required": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+              "description": {"type": "string"},
+              "properties": {
+                "type": "object",
+                "propertyNames": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"},
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["type"],
+                  "properties": {
+                    "type": {"enum": ["string", "integer", "number", "boolean"]},
+                    "description": {"type": "string"},
+                    "maxLength": {"type": "integer", "minimum": 0},
+                    "minLength": {"type": "integer", "minimum": 0},
+                    "pattern": {"type": "string"},
+                    "enum": {"type": "array", "minItems": 1},
+                    "minimum": {"type": "number"},
+                    "maximum": {"type": "number"}
+                  }
+                }
+              }
+            }
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "approval_class", "summary"],
+              "properties": {
+                "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+                "approval_class": {"type": "string", "description": "An approval class of the approval-request schema (agui_ui checks it, STL-GRD-720)."},
+                "summary": {"type": "string", "minLength": 1, "maxLength": 400, "description": "The approval request's summary: {prop} is the widget's redacted prop, capped; any other text is the data's own."}
+              }
+            }
+          },
+          "global_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+          "install_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+        }
+      }
+    }
+  }
+}

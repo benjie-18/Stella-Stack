@@ -19,14 +19,24 @@ Every CLI-specific name is data (.stella/adapters.json); a new CLI is a new entr
       names only, sandbox.env_unset removed (the entry's own token variable exempt), every worker marker set (DC-03); its output goes
       to the run log (redacted, run tokens masked, each masked hit counted by pattern class into the record's masked) and, parsed by
       the entry's stream pointers, to <run>/events.jsonl (design 3c). At its exit the record keeps the git evidence (final).
+      Policy gateway (X1 G2, DC-08, DC-09): with --card the project is the card's board binding (`hermes kanban show`); a --project
+      that differs, or that the binding cannot confirm, is refused (STL-GRD-746). The run's gateway mode is the owner policy's for
+      that project (no project: the strictest present; unreadable: enforce), kept in the record (gateway {mode, hooked}); in enforce
+      a coding CLI with no policy hook (its actions cannot reach the gateway before they run) is refused (STL-GRD-745); when the
+      mode is not off the rendered hook asks the gateway's PDP route (policy.py hook --gateway, a flag and no secret).
       The run goes on in the background (--wait: in the foreground); the run record is <adapter_runs>/<run>.json.
-  stop --run R [--reason TEXT]                 revokes the run token, then ends the CLI's process group, one event line
+  stop --run R [--reason TEXT]                 revokes the run token, then ends the CLI's process group, one event line; the group is
+                                               signalled only while its pid is still the run's (the /proc start fingerprint kept in the
+                                               record at start, pid_start), else the record is marked ended (exit -1) and nothing is signalled
+                                               (gateway_sweep(): after an owner apply of the gateway policy, stops every running run whose
+                                               start mode was off while its project's mode is not off now, and every hookless one under
+                                               enforce, DC-08; bin/stella-apply.py calls it)
   logs --run R [--follow]                      the run log
   evidence --run R --json                      {exit_code, base, head, branch, on_branch, commits, files_changed, all_inside_worktree,
                                                tool_calls, errors, tokens}, git as it was at the run's exit (commits: base..the branch the
                                                run started on); bin/false-close-guard.py calls card_verdict() (DC-01)
-Every git call on a worktree runs with GIT_SAFE in a clean env (git()); untracked files are read without following links, capped
-(read_cap_bytes).
+Every git call on a worktree runs with GIT_SAFE in a clean env (git()), a run's on the git folder pinned at its start (start refuses a
+worktree whose git folder lies inside it, X1-CRT-01); untracked files are read without following links, capped (read_cap_bytes).
 start, stop, logs and evidence are engine side: they refuse in a worker environment (STL-CFG-312) before reading anything.
 Exit: 0 ok; 1 refused (catalog code STL-GRD-640..654 and its plain message on stderr, {code, problem} on stdout with --json); 2 usage.
 Importers: card_verdict(card), evidence(record), digests(adapter_id, role) (what a conformance record must match)."""
@@ -38,18 +48,23 @@ if __name__ == "__main__" and not sys.flags.isolated:   # run directly: PYTHONPA
     except OSError:
         sys.exit("STL-CFG-310 adapter.py could not restart itself isolated (python3 -I); nothing was started")
 
-import argparse, contextlib, datetime, hashlib, json, pwd, re, select, shutil, signal, stat, subprocess, time, uuid
+import argparse, contextlib, datetime, glob, hashlib, json, pwd, re, select, shutil, signal, stat, subprocess, threading, time, uuid
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)
 import event_log as el
+import redact_all as redact
 import stella_data as sd
 import worker_env
 
 C = {"data": "STL-GRD-640", "stub": "STL-GRD-641", "binary": "STL-GRD-642", "version": "STL-GRD-643", "untested": "STL-GRD-644", 
      "link": "STL-GRD-645", "terms": "STL-GRD-646", "conformance": "STL-GRD-647", "scratch": "STL-GRD-648", "box": "STL-GRD-649", 
-     "prepare": "STL-GRD-650", "run": "STL-GRD-651", "spawn": "STL-GRD-652", "worktree": "STL-GRD-653", "stop": "STL-GRD-654"}   # literal: the alert lint finds each sender by its code
+     "prepare": "STL-GRD-650", "run": "STL-GRD-651", "spawn": "STL-GRD-652", "worktree": "STL-GRD-653", "stop": "STL-GRD-654",
+     "cfgcred": "STL-GRD-754", "cfghost": "STL-GRD-755", "cfgscan": "STL-GRD-757",
+     "hookless": "STL-GRD-745", "project": "STL-GRD-746", "sweep": "STL-GRD-749"}   # literal: the alert lint finds each sender by its code
+SCAN_FILES, SCAN_BYTES = 400, 1 << 20
 ROW, RUNS, RECORDS, SCRATCH = "adapters", "adapter_runs", "conformance_records", "conformance_scratch"
+AGENT = "agent-runtime"   # the adapter kind of X1 item A (bin/agent_runtime.py); an entry with no kind is a coding CLI
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
 VERSION = re.compile(r"\d+(?:\.\d+)+[0-9A-Za-z.+-]*")
 EVENTS, LOG, CFG = "events.jsonl", "run.log", "cfg"
@@ -86,17 +101,40 @@ def entry(aid, d=None):
     return e
 
 
-def git(wt, *a, binary=False, inp=None, cfg=()):
+def git(wt, *a, binary=False, inp=None, cfg=(), pin=None):
     """git as the engine runs it on any worktree (GIT_SAFE), in a clean env: no caller GIT_* variable, no global, system or XDG config
-    (as the test map tool runs git)."""
+    or attributes (as the test map tool runs git). pin: the run's {git_dir, git_common} taken at start (pinned()): git reads that
+    repository whatever the worktree's .git now says, so a gitdir (config, filter drivers) an agent built is never read (X1-CRT-01)."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, HOME=os.devnull, XDG_CONFIG_HOME=os.devnull)
-    r = subprocess.run(["git", *GIT_SAFE, *cfg, "-C", wt, *a], capture_output=True, timeout=120, env=env, input=inp,
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_ATTR_NOSYSTEM="1", HOME=os.devnull, XDG_CONFIG_HOME=os.devnull)
+    if pin is not None:
+        if not (isinstance(pin.get("git_dir"), str) and isinstance(pin.get("git_common"), str)):
+            raise Stop(C["worktree"], f"the run has no git folder pinned at its start, so git is not run in {wt}")
+        env.update(GIT_DIR=pin["git_dir"], GIT_COMMON_DIR=pin["git_common"], GIT_WORK_TREE=wt)
+    # every filter driver the repository's config names (includes too) is blanked for this call: a plain repository's own .git lies in
+    # the worktree, so an agent may have planted one there (X1-CRT-01 residual, owner veto 2026-11-20); reading config runs nothing
+    f = subprocess.run(["git", *GIT_SAFE, "-C", wt, "config", "--includes", "--name-only", "--get-regexp", r"^filter\."], capture_output=True,
+                       timeout=120, env=env, stdin=subprocess.DEVNULL)
+    if f.returncode not in (0, 1):   # 1: no filter key at all
+        raise Stop(C["worktree"], f"git config could not be read in {wt}: the run's git is not trusted")
+    blank = [x for n in sorted({k.split(".", 1)[1].rsplit(".", 1)[0] for k in f.stdout.decode("utf-8", "replace").split() if k.count(".") >= 2})
+             for x in ("-c", f"filter.{n}.clean=", "-c", f"filter.{n}.smudge=", "-c", f"filter.{n}.process=", "-c", f"filter.{n}.required=false")]
+    r = subprocess.run(["git", *GIT_SAFE, *blank, *cfg, "-C", wt, *a], capture_output=True, timeout=120, env=env, input=inp,
                        **({} if inp is not None else {"stdin": subprocess.DEVNULL}))
     if r.returncode:
         raise Stop(C["worktree"], f"git {a[0]} failed in {wt}: {r.stderr.decode('utf-8', 'replace').strip()[-160:]}")
     return r.stdout if binary else r.stdout.decode("utf-8", "replace").strip()
 
+
+def pinned(wt):
+    """{git_dir, git_common} of the worktree wt, read before any agent runs there. A git folder inside the worktree is one an agent could
+    have built or may rewrite: refused, but for a plain repository's own <wt>/.git folder (an unboxed run only: the box takes linked
+    worktrees alone)."""
+    out = dict(zip(("git_dir", "git_common"), (os.path.realpath(x) for x in git(wt, "rev-parse", "--absolute-git-dir", "--path-format=absolute", "--git-common-dir").split("\n"))))
+    own = os.path.join(wt, ".git")
+    if len(out) != 2 or any(inside(x, wt) and not (x == own and os.path.isdir(own) and not os.path.islink(own)) for x in out.values()):
+        raise Stop(C["worktree"], f"the git folder of {sd.idn(wt)} lies inside the worktree (a .git pointer changed?): the run is not started")
+    return out
 
 def version(e):
     """(version, tested) of an entry's installed CLI; Stop when its binary is missing or prints no version."""
@@ -185,10 +223,15 @@ def digests(aid, role):
         t = run_policy.load()
         rp = {**{k: v for k, v in t.items() if k != "roles"}, "roles": {role: t["roles"].get(role)}}
         import roles
-        top = {k: v for k, v in row_doc(ROW).items() if k != "entries"}   # env_keep, run_env, caps: what every run of every adapter gets (RTF-03)
-        return {"adapter": canon(entry(aid)), "policy": canon(policy.render(aid)), "run_policy": canon(rp),
-                "stuck": canon(row_doc("stuck")), "conformance": canon(row_doc("conformance")),
-                "adapters": canon(top), "sandbox": canon(roles.sandbox(roles.load()))}
+        e = entry(aid)
+        top = {k: v for k, v in row_doc(ROW).items() if k != "entries" and (k != "agent_tools" or e.get("kind") == AGENT)}   # env_keep, run_env, caps: what every run of every adapter gets (RTF-03); agent_tools only an agent runtime's
+        out = {"adapter": canon(e), "policy": canon(policy.render(aid)), "run_policy": canon(rp),
+               "stuck": canon(row_doc("stuck")), "conformance": canon(row_doc("conformance")),
+               "adapters": canon(top), "sandbox": canon(roles.sandbox(roles.load()))}
+        if e.get("kind") == AGENT:   # X1-DC-03: a change of its protocol entry voids the record
+            import agent_runtime
+            out["protocol"] = canon(agent_runtime.protocol(e))
+        return out
     except Stop:
         raise
     except Exception as e:
@@ -210,6 +253,35 @@ def gate(e, ver, role, link, ctype):
         raise Stop(C["conformance"], f"adapter {e['id']} {ver} has no passing conformance record for role {role} on link {link} ({ctype})")
     if not any(r.get("digests") == digests(e["id"], role) for r in mine):
         raise Stop(C["conformance"], f"adapter {e['id']} {ver} passed conformance for role {role} on other data (entry, policy or run policy changed since)")
+
+
+def card_project(card):
+    """(known, project) of a card's board binding (DC-09): the board's `show` answer, task.project; (False, None) when it cannot be read."""
+    import roles
+    try:
+        t = roles.kanban(roles.board(), "show", card)["task"]
+        p = t.get("project")
+        return (True, p) if p is None or isinstance(p, str) else (False, None)
+    except Exception:   # an unreadable board confirms nothing
+        return False, None
+
+
+def gateway_mode(project):
+    """The policy gateway mode a run of project starts under: the owner policy's (no project: the strictest present, DC-09); enforce when
+    the policy cannot be read (as gateway.check judges it)."""
+    import gateway
+    try:
+        return gateway.mode_of(gateway.doc(gateway.POL)[1], project)
+    except Exception:
+        return "enforce"
+
+
+def hooked(e):
+    """Whether every action of an entry's runs reaches the gateway before it runs: an agent runtime's are gated engine side, a coding CLI's
+    only through a rendered policy hook whose matcher covers every tool (X1-CRT-03): the entry's match_all placed by a template leaf
+    that is the matcher placeholder itself (policy.render puts it there with the gateway on)."""
+    h = (e.get("policy") or {}).get("hook") or {}
+    return e.get("kind") == AGENT or (isinstance(h.get("match_all"), str) and h["match_all"] != "" and "{matcher}" in sd.leaves(h.get("template")))
 
 
 def scratch_root():
@@ -253,7 +325,7 @@ def pick_link(role, link, project, card):
     return conn, model, prov
 
 
-def box_prefix(role, aid, wt, label, cfg):
+def box_prefix(role, aid, wt, label, cfg, pin):
     """(argv prefix, env) when the role's profile for this adapter is boxed (DC-02), else (None, {}) only for an entry that says unboxed in its
     data (the fake and test adapters); Stop when the plan fails or no boxed profile exists (boxing is the default, never fail-open)."""
     import box, roles
@@ -271,11 +343,11 @@ def box_prefix(role, aid, wt, label, cfg):
             proj = [p["repo"] for p in roles.board_projects(roles.board()) if p["repo"]]
         except Exception:
             proj = []   # no readable board: only the stack's own linked worktrees can be boxed (fail closed for the rest)
-        top = os.path.realpath(os.path.dirname(os.path.realpath(os.path.join(wt, git(wt, "rev-parse", "--git-common-dir")))))
+        top = os.path.realpath(os.path.dirname(pin["git_common"]))
         if top != os.path.realpath(sd.ROOT) and top not in {os.path.realpath(p) for p in proj}:
             # the box hides the stack root's protected paths but walks the worktree's repo: they must be one tree (live finding B)
             raise Stop(C["box"], f"the worktree's repository is neither the stack root nor a project of the board: the run is not started")
-        argv, over = box.box_argv(d, profs[0], {"card": label, "workspace": wt, "branch": git(wt, "rev-parse", "--abbrev-ref", "HEAD")},
+        argv, over = box.box_argv(d, profs[0], {"card": label, "workspace": wt, "branch": git(wt, "rev-parse", "--abbrev-ref", "HEAD", pin=pin)},
                                   hermes_root=root, home=home, roots=proj, stack_root=sd.ROOT)
         # the run config goes in just before the read-only remount of its deepest tmpfs ancestor: its parents can still be made there, and no
         # later tmpfs of the walk covers it (live findings A and F); with no tmpfs ancestor it goes last, where its parents already exist
@@ -363,11 +435,7 @@ class Stream:
         self.run, self.rec, self.s, self.tools = run, rec, e.get("stream") or {}, e.get("tools") or {}
         self.cap, self.rx, self.seq, self.last, self.rcap = a["output_cap"], token_rx, 0, None, a.get("read_cap_bytes", Stream.rcap)
         self.role = rec["role"]
-        self.pats = sd.value_pats()   # the catalog's value patterns; None (unreadable): every line is masked whole (fail closed)
-        try:
-            self.redk = el.redactor()
-        except (sd.DataError, OSError, KeyError, TypeError):
-            self.redk = lambda k: True
+        self.red = redact.redactor(self.count)   # values and keys alike (X1 A-CRT-01); unreadable patterns: every string *** (fail closed)
         d = os.path.join(runs_dir(), run)
         self.log = open(os.path.join(d, LOG), "a", encoding="utf-8")
         self.ev = open(os.path.join(d, EVENTS), "a", encoding="utf-8")
@@ -376,22 +444,6 @@ class Stream:
         if n:
             self.hits = self.hits or {}
             self.hits[k] = self.hits.get(k, 0) + n
-
-    def red(self, x):
-        """event_log's rules (values under redact keys, the catalog's value patterns, values seen under masked keys) and run tokens; each
-        pattern hit is counted by class (run_token, token), so a judge sees a token the masking hid (V2-04)."""
-        if isinstance(x, str):
-            if self.pats is None:
-                return el.MASK
-            x, n = self.rx.subn(el.MASK, x)
-            self.count("run_token", n)
-            for p in self.pats:
-                x, n = p.subn(el.MASK, x)
-                self.count("token", n)
-            return el.scrub(x)
-        if isinstance(x, dict):
-            return {k: el.MASK if self.redk(str(k)) else self.red(v) for k, v in x.items()}
-        return [self.red(v) for v in x] if isinstance(x, list) else x
 
     def filt(self, text):
         try:
@@ -405,8 +457,8 @@ class Stream:
         wt, h = self.rec["worktree"], hashlib.sha256()
         try:
             notes = self.rec.get("notes")   # the working-notes file changes every turn and says nothing about progress
-            h.update(git(wt, "diff", "--binary", *DIFF_SAFE, self.rec["base"], "--", ".", *([f":(exclude,literal){notes}"] if notes else []), binary=True))
-            for f in sorted(x for x in git(wt, "ls-files", "-z", "--others", "--exclude-standard", binary=True).split(b"\0") if x and x.decode("utf-8", "surrogateescape") != notes):
+            h.update(git(wt, "diff", "--binary", *DIFF_SAFE, self.rec["base"], "--", ".", *([f":(exclude,literal){notes}"] if notes else []), binary=True, pin=self.rec))
+            for f in sorted(x for x in git(wt, "ls-files", "-z", "--others", "--exclude-standard", binary=True, pin=self.rec).split(b"\0") if x and x.decode("utf-8", "surrogateescape") != notes):
                 h.update(f + b"\0" + fingerprint(os.path.join(wt, f.decode("utf-8", "surrogateescape")), self.rcap))
         except Stop:
             return None
@@ -494,11 +546,11 @@ def snapshot(rec):
     the tip of the branch the run started on, the files changed against the base. Nothing done after the exit counts."""
     wt, base, br = rec["worktree"], rec.get("base"), rec.get("branch")
     try:
-        head, on = git(wt, "rev-parse", "HEAD"), git(wt, "rev-parse", "--abbrev-ref", "HEAD")
-        tip = git(wt, "for-each-ref", "--format=%(objectname)", "refs/heads/" + br) if br else ""
-        commits = [c for c in git(wt, "rev-list", f"{base}..{tip}").split("\n") if c] if tip else []
-        files = sorted(set(x for x in git(wt, "diff", "--name-only", *DIFF_SAFE, base).split("\n") if x)
-                       | set(x for x in git(wt, "ls-files", "--others", "--exclude-standard").split("\n") if x))
+        head, on = git(wt, "rev-parse", "HEAD", pin=rec), git(wt, "rev-parse", "--abbrev-ref", "HEAD", pin=rec)
+        tip = git(wt, "for-each-ref", "--format=%(objectname)", "refs/heads/" + br, pin=rec) if br else ""
+        commits = [c for c in git(wt, "rev-list", f"{base}..{tip}", pin=rec).split("\n") if c] if tip else []
+        files = sorted(set(x for x in git(wt, "diff", "--name-only", *DIFF_SAFE, base, pin=rec).split("\n") if x)
+                       | set(x for x in git(wt, "ls-files", "--others", "--exclude-standard", pin=rec).split("\n") if x))
     except Stop:
         head, on, commits, files = None, "HEAD", [], []
     return {"head": head, "branch": None if on == "HEAD" else on, "commits": commits, "files": files, "at": now()}
@@ -562,23 +614,83 @@ def cmd_version(a):
     return 0
 
 
+def scan_data(e):
+    """(value patterns, cloud provider hosts) of the connections catalog for the config scan; Stop when the catalog cannot be read."""
+    import route
+    pats = sd.value_pats()
+    try:
+        d = route.data()
+        hosts = sorted({h["host"].lower() for c in d[1].values() if c.get("kind") == "provider" and c.get("locality") != "local"
+                        for h in c.get("hosts") or [] if h["host"] not in d[3]})
+    except (sd.DataError, route.Stop, KeyError, TypeError):
+        pats = None
+    if pats is None:
+        raise Stop(C["cfgscan"], f"adapter {e['id']}: the connections catalog cannot be read, so its config files cannot be scanned")
+    return pats, hosts
+
+
+def scan_config(e, wt):
+    """X1 item C preflight (both kinds): the entry's own config files (config_files globs relative to the worktree, or {home}/...) and its
+    start template must hold no catalog value pattern (a credential) and no host of a cloud provider connection (a direct route around
+    the proxy). Stop with a code before anything is spawned; the refusal names the file, never the value.
+    Limits (a larger entry is refused, never skipped): SCAN_FILES files, SCAN_BYTES per file."""
+    pats, hosts = scan_data(e)
+    home = os.environ.get((e.get("cli_login") or {}).get("home_env") or "HOME", "")
+    todo = []
+    for g in e.get("config_files") or []:
+        for m in sorted(glob.glob(home + g[6:] if g.startswith("{home}") else os.path.join(glob.escape(wt), g))):
+            todo += [os.path.join(t, f) for t, _, fs in os.walk(m) for f in fs] if os.path.isdir(m) and not os.path.islink(m) else [m]
+    # fail closed: whatever cannot be read whole as a plain file (a link, a FIFO, a file over the cap, more files than the cap) refuses the start
+    if len(todo) > SCAN_FILES:
+        raise Stop(C["cfgscan"], f"adapter {e['id']}: its config files match more than {SCAN_FILES} files, so they cannot all be scanned")
+    for p in todo:
+        name = os.path.relpath(p, wt) if inside(p, wt) else "{home}/" + os.path.relpath(p, home)
+        try:
+            fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as f:
+                raw = f.read(SCAN_BYTES + 1) if stat.S_ISREG(os.fstat(fd).st_mode) else None
+        except OSError:
+            raw = None
+        if raw is None or len(raw) > SCAN_BYTES:
+            raise Stop(C["cfgscan"], f"adapter {e['id']}: its config file {sd.idn(name)} is not a plain file of at most {SCAN_BYTES} bytes, so it cannot be scanned")
+        hit(e, pats, hosts, raw.decode("utf-8", "replace"), f"its config file {sd.idn(name)}")
+    hit(e, pats, hosts, json.dumps(e.get("start") or {}), "its start template")
+
+
+def hit(e, pats, hosts, text, where):
+    if any(x.search(text) for x in pats):
+        raise Stop(C["cfgcred"], f"adapter {e['id']}: {where} holds a credential (a value the connections catalog masks); keys reach an agent through the proxy only")
+    if any(h in text.lower() for h in hosts):
+        raise Stop(C["cfghost"], f"adapter {e['id']}: {where} names a provider host of the connections catalog; the agent must reach models through the proxy only")
+
+
 def cmd_start(a):
     d = doc()
     e = entry(a.adapter, d)
     if e.get("status") != "active":
         raise Stop(C["stub"], f"adapter {e['id']} is a stub (status {e.get('status')!r}): it cannot start a run")
     st = e.get("start") or {}
-    if not (st.get("argv") and e.get("stream") and e.get("conn_types")):
+    if not (st.get("argv") and (e.get("stream") or e.get("kind") == AGENT) and e.get("conn_types")):
         raise Stop(C["prepare"], f"adapter {e['id']} has no start argv, stream or conn_types")
     ver, tested = version(e)
     wt = os.path.realpath(a.worktree)
     if not os.path.isdir(wt) or os.path.realpath(git(wt, "rev-parse", "--show-toplevel")) != wt:
         raise Stop(C["worktree"], f"{sd.idn(a.worktree)} is not the top of a git worktree")
+    a.pin = pinned(wt)   # before any agent runs: every later engine git on this worktree reads this repository (X1-CRT-01)
     for k in ("card", "run_id"):
         if getattr(a, k) is not None and not ID.fullmatch(getattr(a, k)):
             raise Stop(C["run"], f"the {k.replace('_', ' ')} is not well formed")
     if not a.card and (not inside(wt, scratch_root()) or wt == scratch_root()):
         raise Stop(C["scratch"], "a run with no card runs only in a worktree under the conformance scratch root")
+    if a.card:   # DC-09: the project is the card's board binding, never the caller's word
+        known, bound = card_project(a.card)
+        if a.project is not None and (not known or a.project != bound):
+            raise Stop(C["project"], f"--project {sd.idn(a.project)} is not the board binding of card {a.card}" +
+                       (f" ({sd.idn(bound) if bound else 'no project'})" if known else " (the board cannot be read to confirm it)"))
+        a.project = bound
+    a.gateway_mode = gateway_mode(a.project)
+    if a.gateway_mode == "enforce" and not hooked(e):
+        raise Stop(C["hookless"], f"the policy gateway enforces for this run, and adapter {e['id']} has no policy hook: its actions cannot be decided before they run")
     conn, model, prov = pick_link(a.role, a.link, a.project, a.card)
     ctype = prov.get("type")
     if ctype not in e["conn_types"]:
@@ -590,12 +702,13 @@ def cmd_start(a):
             raise Stop(C["terms"], f"connection {conn}: the owner has not set terms_ok, so no agent runs on this login")
     if a.card:
         gate(e, ver, a.role, f"{conn}/{model}", ctype)
+    scan_config(e, wt)
     run = a.run_id or "run-" + uuid.uuid4().hex[:12]
     rdir = os.path.join(runs_dir(), run)
     if os.path.lexists(rec_path(run)) or os.path.lexists(rdir):
         raise Stop(C["run"], f"run {run} exists already")
     cfg = os.path.join(rdir, CFG)
-    pre, box_env = box_prefix(a.role, e["id"], wt, a.card or run, cfg)
+    pre, box_env = box_prefix(a.role, e["id"], wt, a.card or run, cfg, a.pin)
     proxy = endpoint("model_proxy_state") if ctype == "api" else None
     if ctype == "api" and not proxy:
         raise Stop(C["prepare"], "the model proxy is not running (no address at index key model_proxy_state)")
@@ -619,29 +732,31 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
     if probs or not e.get("policy"):
         raise Stop(C["prepare"], f"the policy of adapter {e['id']} cannot be generated: {probs[0][1][:140] if probs else 'no policy part'}")
     tr = json.loads(tool([os.path.join(BIN, "run_policy.py"), "translate", "--adapter", e["id"], "--role", a.role], C["prepare"], "translating the run policy"))
-    rend = policy.render(e["id"], wt, stack=sd.ROOT)   # the run's own stack: its hook and its paths exist in the box (live finding I)
-    hk = e["policy"].get("hook")
-    if tr["hook"] and hk:   # the log filter joins the policy hook's list in the generated config (the entry's own hook template and pointer)
-        rend[hk["pointer"]].append(policy.fill(hk["template"], tr["hook"]))
-    settings = policy.merged({}, rend)
     v = {"base_url": proxy or "", "model": model, "token_env": e.get("token_env") or "", "token": token, "worktree": wt}
-    if ctype == "api" and st.get("settings"):
-        merge(settings, policy.fill(st["settings"], v))
-    mc = e.get("mcp") or {}
     url = endpoint("capabilities_mcp_state")
-    gw = sd.load(next(r["path"] for r in sd.rows() if r["id"] == "run-gateway"))["mcp"]
-    mcp_doc = policy.fill(mc["template"], {**v, "url": url, "auth_header": gw["auth_header"], "auth_value": f"{gw['auth_scheme']} {token}"}) \
-        if url and mc.get("template") else {}
-    sfile = os.path.join(cfg, os.path.basename(e["policy"]["target"]["file"]))
-    if mc.get("into") == "settings":
-        merge(settings, mcp_doc)
-        mfile = sfile
-    else:
-        mfile = write_json(os.path.join(cfg, "mcp.json"), mcp_doc)
-    merge(settings, tr["settings"])   # core tools only, compaction, clearing, the log filter hook: each where the entry says the CLI supports it
-    merge(settings, e.get("run_settings") or {})   # the entry's fixed settings for every adapter run, e.g. its own skill loader off (skills come through capability load; F3-CVER-01)
+    settings, sfile, mfile = {}, "", ""
+    if e.get("kind") != AGENT:   # an agent runtime has no CLI config: its tool calls are gated and run engine side (bin/agent_runtime.py)
+        rend = policy.render(e["id"], wt, stack=sd.ROOT, gateway=a.gateway_mode != "off")   # the run's own stack: its hook and its paths exist in the box (live finding I)
+        hk = e["policy"].get("hook")
+        if tr["hook"] and hk:   # the log filter joins the policy hook's list in the generated config (the entry's own hook template and pointer)
+            rend[hk["pointer"]].append(policy.fill(hk["template"], tr["hook"]))
+        settings = policy.merged({}, rend)
+        if ctype == "api" and st.get("settings"):
+            merge(settings, policy.fill(st["settings"], v))
+        mc = e.get("mcp") or {}
+        gw = sd.load(next(r["path"] for r in sd.rows() if r["id"] == "run-gateway"))["mcp"]
+        mcp_doc = policy.fill(mc["template"], {**v, "url": url, "auth_header": gw["auth_header"], "auth_value": f"{gw['auth_scheme']} {token}"}) \
+            if url and mc.get("template") else {}
+        sfile = os.path.join(cfg, os.path.basename(e["policy"]["target"]["file"]))
+        if mc.get("into") == "settings":
+            merge(settings, mcp_doc)
+            mfile = sfile
+        else:
+            mfile = write_json(os.path.join(cfg, "mcp.json"), mcp_doc)
+        merge(settings, tr["settings"])   # core tools only, compaction, clearing, the log filter hook: each where the entry says the CLI supports it
+        merge(settings, e.get("run_settings") or {})   # the entry's fixed settings for every adapter run, e.g. its own skill loader off (skills come through capability load; F3-CVER-01)
+        write_json(sfile, settings)
     write_json(os.path.join(cfg, "run-policy.json"), tr)
-    write_json(sfile, settings)
     attached = None
     if a.card_file:
         try:
@@ -674,15 +789,17 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
     env.update({k: val for k, val in ((re_.get("adapter"), e["id"]), (re_.get("capabilities_url"), url)) if k and val})
     env.update(box_env)
     cmd = (pre or []) + argv
-    base, branch = git(wt, "rev-parse", "HEAD"), git(wt, "rev-parse", "--abbrev-ref", "HEAD")
+    base, branch = git(wt, "rev-parse", "HEAD", pin=a.pin), git(wt, "rev-parse", "--abbrev-ref", "HEAD", pin=a.pin)
     import run_token
     rx = re.compile(re.escape(run_token.gateway()["token"]["prefix"]) + r"[A-Za-z0-9_-]+")
     rec = {"schema_version": 1, "run": run, "role": a.role, "card": a.card, "conformance": not a.card, "project": a.project, "adapter": e["id"],
            "version": ver, "tested": tested, "link": link, "conn_type": ctype, "unattended": True, "background": not a.wait,
-           "boxed": pre is not None, "worktree": wt, "base": base, "branch": None if branch == "HEAD" else branch, "run_dir": rdir, "pid": None, "pgid": None, "started": now(),
+           "boxed": pre is not None, "worktree": wt, **a.pin, "base": base, "branch": None if branch == "HEAD" else branch, "run_dir": rdir, "pid": None, "pgid": None, "started": now(),
            "ended": None, "exit": None, "stopped": None, "notes": tr["notes"]["path"].replace("{card}", a.card or run),   # the notes file stays out of the progress digest (stuck.py)
-           "run_policy": {"applied": tr["applied"], "unsupported": tr["unsupported"], "hook": bool(tr["hook"] and e["policy"].get("hook"))}, "global_id": str(uuid.uuid4()), "install_id": sd.install_id()}
+           "run_policy": {"applied": tr["applied"], "unsupported": tr["unsupported"], "hook": bool(tr["hook"] and e["policy"].get("hook"))},
+           "gateway": {"mode": a.gateway_mode, "hooked": hooked(e)}, "global_id": str(uuid.uuid4()), "install_id": sd.install_id()}
     out = {"run": run, "adapter": e["id"], "version": ver, "tested": tested, "link": link, "conn_type": ctype, "background": not a.wait}
+    agent = {"pre": pre, "prompt": r["text"], "model": model, "core": tr["core_tools"]} if e.get("kind") == AGENT else None
     import ledger   # the run's lease: the link's slots, taken here and held by the CLI's process (as ledger.py hold does: it cannot run with a worker's env)
     try:
         fds = ledger.acquire(conn, model, f"adapter run {run}")
@@ -692,7 +809,7 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
     except ledger.Stop as r:
         raise Stop(r.code, r.problem) from None
     if a.wait:
-        rc = supervise(cmd, wt, env, rec, e, d, rx, fds)
+        rc = supervise(cmd, wt, env, rec, e, d, rx, fds, agent=agent)
         print(json.dumps({**out, "exit": rc}) if a.json else run)
         return 0
     r_, w_ = os.pipe()
@@ -703,7 +820,7 @@ def launch(a, d, e, ver, tested, wt, run, rdir, cfg, conn, model, link, ctype, p
             nul = os.open(os.devnull, os.O_RDWR)
             for fd in (0, 1, 2):
                 os.dup2(nul, fd)
-            supervise(cmd, wt, env, rec, e, d, rx, fds, w_)
+            supervise(cmd, wt, env, rec, e, d, rx, fds, w_, agent=agent)
         except BaseException as x:   # the parent learns it, when the start was not reported yet (a closed pipe: it was)
             with contextlib.suppress(OSError):
                 os.write(w_, json.dumps({"code": C["spawn"], "problem": f"{type(x).__name__} in the supervisor of run {run}"}).encode())
@@ -749,7 +866,7 @@ def st_env(e):
     return [env.get("base_url_env"), env.get("token_env")]
 
 
-def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None):
+def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None, agent=None):
     run = rec["run"]
     try:
         p = subprocess.Popen(cmd, cwd=wt, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
@@ -764,25 +881,51 @@ def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None):
     finally:
         for fd in fds:   # the CLI holds the slots now: they end with its last process
             os.close(fd)
-    update(run, **{**rec, "pid": p.pid, "pgid": p.pid})
+    import roles   # pid_start: the process's /proc start fingerprint, so a stop never signals a group whose pid was recycled
+    update(run, **{**rec, "pid": p.pid, "pgid": p.pid, "pid_start": roles.fingerprint(p.pid)})
     event("adapter.run-started", run, rec["role"], adapter=rec["adapter"], version=rec["version"], card=rec["card"], link=rec["link"],
           conn_type=rec["conn_type"], boxed=rec["boxed"], pid=p.pid)
     if w is not None:
         os.write(w, json.dumps({"pid": p.pid}).encode()); os.close(w)
+    # X1-CVER-02: an owner apply between start's mode read and the record above swept no record of this run; now the record is there,
+    # the mode is read again and the run stops itself through the sweep's own rule (a sweep from now on sees the record)
+    try:
+        why = swept(read_rec(run))
+    except Exception:   # fail closed: a run whose mode cannot be judged again does not run on
+        why = "gateway mode change: the run's record or the gateway policy could not be read again after its start"
+    if why:   # adapter.py stop's own steps, beside the loop below: it reaps the CLI the stop ends (a zombie still counts as running)
+        def selfstop():
+            try:
+                stop(run, why)
+            except Exception:   # never run on
+                with contextlib.suppress(Exception):
+                    os.killpg(p.pid, signal.SIGKILL)
+        stopper = threading.Thread(target=selfstop)
+        stopper.start()
     s = Stream(run, rec, e, {"output_cap": d.get("output_cap", 4000), "read_cap_bytes": d.get("read_cap_bytes", Stream.rcap)}, rx)
     # the stuck watcher (engine side, outside the CLI's process group so a stuck stop does not kill it); a card-less run gets no card block
     watch = subprocess.Popen([sys.executable, "-I", os.path.join(BIN, "stuck.py"), "watch", "--run", run, "--role", rec["role"]] + (["--card", rec["card"]] if rec["card"] else []),
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-    rc = None
+    rc = ax = None
     try:
-        for raw in p.stdout:
-            try:
-                s.line(raw)
-            except Exception as x:   # one bad line never ends the supervisor (RTF-01): the run is still ended, snapshotted and revoked
-                with contextlib.suppress(Exception):
-                    event("adapter.stream-error", run, rec["role"], adapter=rec["adapter"], card=rec["card"], error=type(x).__name__)
-        rc = p.wait()
+        if agent is not None:   # X1 item A: the run loop speaks the entry's protocol; the record's exit is its outcome (DC-05)
+            import agent_runtime
+            rc = agent_runtime.loop(p, s, rec, e, env, d, agent)
+        else:
+            for raw in p.stdout:
+                try:
+                    s.line(raw)
+                except Exception as x:   # one bad line never ends the supervisor (RTF-01): the run is still ended, snapshotted and revoked
+                    with contextlib.suppress(Exception):
+                        event("adapter.stream-error", run, rec["role"], adapter=rec["adapter"], card=rec["card"], error=type(x).__name__)
+            rc = p.wait()
     finally:
+        if agent is not None:   # an agent is a server that never ends by itself: its group ends after the loop; its own status is agent_exit
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                with contextlib.suppress(Exception):
+                    os.killpg(p.pid, sig)
+                    ax = p.wait(timeout=d.get("stop_grace_s", 10))
+                    break
         if rc is None:   # the loop itself failed: end the CLI's group so the run cannot outlive its supervisor
             with contextlib.suppress(Exception):
                 os.killpg(p.pid, signal.SIGKILL)
@@ -793,7 +936,7 @@ def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None):
         except Exception:
             final = None
         try:
-            update(run, ended=now(), exit=rc, final=final, masked=s.hits or {})
+            update(run, ended=now(), exit=rc, final=final, masked=s.hits or {}, **({"agent_exit": ax} if agent is not None else {}))
         finally:
             try:
                 tool([os.path.join(BIN, "run_token.py"), "revoke", "--run", run], C["stop"], "revoking the run token")
@@ -810,19 +953,35 @@ def supervise(cmd, wt, env, rec, e, d, rx, fds, w=None):
         update(run, output_check=json.loads(r.stdout.strip().splitlines()[-1]))
     with contextlib.suppress(Exception):
         event("adapter.run-ended", run, rec["role"], adapter=rec["adapter"], card=rec["card"], exit=rc)
+    if why:   # the supervisor ends with os._exit: the stop's own event line is written first
+        stopper.join()
     return rc
 
 
 def cmd_stop(a):
-    rec = read_rec(a.run)
+    stop(a.run, a.reason)
+    print(json.dumps({"run": a.run, "stopped": True}))
+    return 0
+
+
+def ours(rec):
+    """Whether the run's recorded process is still the one it started: its pid alive with the /proc start fingerprint kept at start."""
+    import roles
+    return isinstance(rec.get("pid_start"), str) and rec["pid_start"] != "" and type(rec.get("pid")) is int and roles.fingerprint(rec["pid"]) == rec["pid_start"]
+
+
+def stop(run, reason=None):
+    rec = read_rec(run)
     pg = rec.get("pgid")
-    update(a.run, stopped=(a.reason or "stopped")[:200])   # before the kill: whoever sees the run ended also sees why
+    update(run, stopped=(reason or "stopped")[:200])   # before the kill: whoever sees the run ended also sees why
     try:   # the token first (RT3-06): a process group that does not end must not keep a live token
-        tool([os.path.join(BIN, "run_token.py"), "revoke", "--run", a.run], C["stop"], "revoking the run token")
+        tool([os.path.join(BIN, "run_token.py"), "revoke", "--run", run], C["stop"], "revoking the run token")
         err = None
     except Stop as x:
         err = x
-    if rec.get("exit") is None and type(pg) is int:
+    if rec.get("exit") is None and type(pg) is int and not ours(rec):   # the recorded group is no longer the run's: nothing is signalled
+        update(run, ended=rec.get("ended") or now(), exit=-1)
+    elif rec.get("exit") is None and type(pg) is int:
         grace = doc().get("stop_grace_s", 10)
         for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, grace)):
             with contextlib.suppress(ProcessLookupError):
@@ -837,12 +996,36 @@ def cmd_stop(a):
                 continue
             break
         else:
-            raise Stop(C["stop"], f"the process group of run {a.run} did not end")
+            raise Stop(C["stop"], f"the process group of run {run} did not end")
     if err:
         raise err
-    event("adapter.run-stopped", a.run, rec.get("role"), reason=(a.reason or "stopped")[:200], card=rec.get("card"))
-    print(json.dumps({"run": a.run, "stopped": True}))
-    return 0
+    event("adapter.run-stopped", run, rec.get("role"), reason=(reason or "stopped")[:200], card=rec.get("card"))
+
+
+def gateway_sweep():
+    """DC-08, after the owner changed the gateway policy: stop every running run whose start mode was off (or not recorded) while its
+    project's mode is not off now, and every hookless one while its project's mode is enforce. [(run, problem or None)] of the runs
+    it stopped or failed to stop."""
+    out = []
+    for r in records():
+        why = swept(r)
+        if why:
+            try:
+                stop(r["run"], why)
+                out.append((r["run"], None))
+            except Exception as x:   # every other run is still stopped; the caller reports this one
+                out.append((r["run"], getattr(x, "problem", type(x).__name__)))
+    return out
+
+def swept(r):
+    """The stop reason of DC-08 for a running run's record r under the gateway policy as it is now, else None."""
+    if r.get("exit") is not None or r.get("stopped") is not None or not isinstance(r.get("run"), str):
+        return None
+    g = r.get("gateway") if isinstance(r.get("gateway"), dict) else {}
+    now_ = gateway_mode(r.get("project"))
+    if now_ != "off" and (g.get("mode", "off") == "off" or (now_ == "enforce" and g.get("hooked") is not True)):
+        return f"gateway mode change: the policy gateway is {now_} for this run's project, it started {g.get('mode', 'with no gateway')}"
+    return None
 
 
 def cmd_logs(a):

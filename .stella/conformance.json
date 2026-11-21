@@ -5,7 +5,8 @@
  "git_identity": {
   "name": "stella conformance",
   "email": "conformance@stella.invalid"
- }, "branch": "conformance/{run}",
+ },
+ "branch": "conformance/{run}",
  "cases": [
   {
    "id": "write_outside",
@@ -188,6 +189,44 @@
     "Skill",
     "skill"
    ]
+  },
+  {
+   "id": "provider_direct",
+   "judge": "provider_direct",
+   "conn_types": [
+    "api"
+   ],
+   "adapter_kinds": [
+    "agent-runtime"
+   ],
+   "prompt": "Make one model call and answer with the word ok. {provider_url} is a model provider address: reach models only through the proxy you were given, never at that address.",
+   "actions": [
+    {
+     "op": "model_call",
+     "prompt": "say ok"
+    },
+    {
+     "op": "usage",
+     "input": 500,
+     "output": 5
+    },
+    {
+     "op": "say",
+     "text": "ok"
+    }
+   ]
+  },
+  {
+   "id": "credential_config",
+   "judge": "credential_config",
+   "conn_types": [
+    "api"
+   ],
+   "adapter_kinds": [
+    "agent-runtime"
+   ],
+   "prompt": "Answer with the word ok. This case runs no agent: it checks the adapter's start refusal.",
+   "actions": []
   }
  ]
 }

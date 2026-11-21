@@ -537,7 +537,7 @@
     {
       "id": "loopback-api-double",
       "kind": "command",
-      "summary": "The loopback API's test double: serves the contract's endpoints on the IPv4 loopback address and a free port with the loopback guard in front, and does nothing else (until E1 builds the real API)",
+      "summary": "The loopback API's test double: serves the contract's endpoints on the IPv4 loopback address and a free port with the loopback guard in front, and does nothing else but serve the run-ui endpoint's body (a run's generative UI read stream, bin/agui_ui.py read) after the guard (until E1 builds the real API)",
       "keywords": [
         "loopback",
         "api",
@@ -546,7 +546,7 @@
         "http"
       ],
       "inputs": "--port P (0 = a free port) and --session F ({api_token, csrf_token})",
-      "outputs": "the bound port on the first stdout line; HTTP 200 {ok: true} or 4xx {ok: false, code[, cause], message} per request; STL-OWN-858/859 when it cannot start",
+      "outputs": "the bound port on the first stdout line; HTTP 200 {ok: true, endpoint[, run, records]} or 4xx {ok: false, code[, cause], message} per request; STL-OWN-858/859 when it cannot start",
       "allowed_roles": [],
       "risk_class": "write",
       "hosts": [],
@@ -2776,6 +2776,395 @@
         "result": "shipped"
       },
       "global_id": "b61ae89d-3e49-4d7d-89a2-a72aaaca2588",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-langgraph",
+      "kind": "extension",
+      "summary": "Run an agent built on LangGraph as a Stella worker through the AG-UI agent-runtime adapter (proposed integration, its feature flag off)",
+      "keywords": [
+        "agent",
+        "framework",
+        "ag-ui",
+        "agent-runtime",
+        "worker",
+        "adapter",
+        "integration",
+        "langgraph",
+        "langchain"
+      ],
+      "inputs": "an agent-runtime adapters.json entry for the agent",
+      "outputs": "a Stella worker run (trusted run stream, completion evidence)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "proposed",
+      "source": ".stella/extensions/agui-langgraph.json",
+      "triage": {
+        "result": "pending"
+      },
+      "global_id": "7b3290c1-25f6-411e-92ca-3d74c859ab2c",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-crewai",
+      "kind": "extension",
+      "summary": "Run an agent built on CrewAI as a Stella worker through the AG-UI agent-runtime adapter (proposed integration, its feature flag off)",
+      "keywords": [
+        "agent",
+        "framework",
+        "ag-ui",
+        "agent-runtime",
+        "worker",
+        "adapter",
+        "integration",
+        "crewai",
+        "crew"
+      ],
+      "inputs": "an agent-runtime adapters.json entry for the agent",
+      "outputs": "a Stella worker run (trusted run stream, completion evidence)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "proposed",
+      "source": ".stella/extensions/agui-crewai.json",
+      "triage": {
+        "result": "pending"
+      },
+      "global_id": "d6c1f46c-4fe1-4b61-927d-d19c917b9c63",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-mastra",
+      "kind": "extension",
+      "summary": "Run an agent built on Mastra as a Stella worker through the AG-UI agent-runtime adapter (proposed integration, its feature flag off)",
+      "keywords": [
+        "agent",
+        "framework",
+        "ag-ui",
+        "agent-runtime",
+        "worker",
+        "adapter",
+        "integration",
+        "mastra",
+        "typescript"
+      ],
+      "inputs": "an agent-runtime adapters.json entry for the agent",
+      "outputs": "a Stella worker run (trusted run stream, completion evidence)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "proposed",
+      "source": ".stella/extensions/agui-mastra.json",
+      "triage": {
+        "result": "pending"
+      },
+      "global_id": "70570c40-27fe-49fb-b334-970e17002dbc",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-pydantic-ai",
+      "kind": "extension",
+      "summary": "Run an agent built on Pydantic AI as a Stella worker through the AG-UI agent-runtime adapter (proposed integration, its feature flag off)",
+      "keywords": [
+        "agent",
+        "framework",
+        "ag-ui",
+        "agent-runtime",
+        "worker",
+        "adapter",
+        "integration",
+        "pydantic",
+        "pydantic-ai"
+      ],
+      "inputs": "an agent-runtime adapters.json entry for the agent",
+      "outputs": "a Stella worker run (trusted run stream, completion evidence)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "proposed",
+      "source": ".stella/extensions/agui-pydantic-ai.json",
+      "triage": {
+        "result": "pending"
+      },
+      "global_id": "fc652c7e-e7fb-4760-be85-382d3b762dcf",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-google-adk",
+      "kind": "extension",
+      "summary": "Run an agent built on Google ADK as a Stella worker through the AG-UI agent-runtime adapter (proposed integration, its feature flag off)",
+      "keywords": [
+        "agent",
+        "framework",
+        "ag-ui",
+        "agent-runtime",
+        "worker",
+        "adapter",
+        "integration",
+        "adk",
+        "agent-development-kit"
+      ],
+      "inputs": "an agent-runtime adapters.json entry for the agent",
+      "outputs": "a Stella worker run (trusted run stream, completion evidence)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "proposed",
+      "source": ".stella/extensions/agui-google-adk.json",
+      "triage": {
+        "result": "pending"
+      },
+      "global_id": "45b289a8-c3c0-4d5d-ad0f-19d1325bcb86",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-claude-agent-sdk",
+      "kind": "extension",
+      "summary": "Run an agent built on the Claude Agent SDK as a Stella worker through the AG-UI agent-runtime adapter (proposed integration, its feature flag off)",
+      "keywords": [
+        "agent",
+        "framework",
+        "ag-ui",
+        "agent-runtime",
+        "worker",
+        "adapter",
+        "integration",
+        "agent-sdk",
+        "sdk"
+      ],
+      "inputs": "an agent-runtime adapters.json entry for the agent",
+      "outputs": "a Stella worker run (trusted run stream, completion evidence)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "proposed",
+      "source": ".stella/extensions/agui-claude-agent-sdk.json",
+      "triage": {
+        "result": "pending"
+      },
+      "global_id": "55bae943-7bde-48d9-9bd4-868c76c8c62e",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agui-ui",
+      "kind": "command",
+      "summary": "Generative UI passthrough (host only, engine side): agent widgets (AG-UI UI events) are judged against the component allowlist .stella/ui-components.json, stripped and redacted, then kept in a per-run read stream (index key ui_streams) with one trusted event line each; read serves the stream (the loopback API's run-ui endpoint); act turns a stored widget's listed action into one approval request (approvals.py request) and never answers, approves or runs anything",
+      "keywords": [
+        "ag-ui",
+        "generative ui",
+        "widget",
+        "component",
+        "allowlist",
+        "read stream",
+        "approval"
+      ],
+      "inputs": "read --run R [--after SEQ] [--json] | act --run R --seq N --action A [--json]; library ingest(run, payload, ctx)",
+      "outputs": "read: JSON {run, records}; act: JSON {ok, id, run, seq, action, approval_class}; exit 1 with a catalog code (STL-GRD-720..726, STL-OWN-829, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/agui_ui.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "41aeb32b-e4d9-4f58-b5e7-2d799fe436cf",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agent-runtime",
+      "kind": "command",
+      "summary": "Agent-runtime adapter kind (engine side, called by adapter.py start): run an agent of any framework through a protocol of .stella/agent-protocols.json (AG-UI first), gate and run its tool calls, stream its messages and state; check its data",
+      "keywords": [
+        "agent runtime",
+        "ag-ui",
+        "agent",
+        "framework",
+        "adapter",
+        "protocol",
+        "tool call",
+        "gates"
+      ],
+      "inputs": "check [--json]",
+      "outputs": "JSON {ok, problems}; exit 1 with STL-GRD-700 when the agent-runtime data has a problem",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/agent_runtime.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "b8535c67-e1b1-4315-af3c-757934ba6e54",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "agent-tool",
+      "kind": "command",
+      "summary": "Executors of an agent runtime's tool calls (read, write, edit, shell, capability), run by agent_runtime.py after its gates as a child with the agent's own environment and box; paths are confined to the worktree again at open time",
+      "keywords": [
+        "agent runtime",
+        "executor",
+        "tool call",
+        "read",
+        "write",
+        "edit",
+        "shell"
+      ],
+      "inputs": "read|write|edit|shell|capability with {tool_name, tool_input, cwd} on stdin",
+      "outputs": "one JSON line {ok, output[, code][, exit]}; exit 1 with STL-GRD-708, 710 or 711 when refused or failed",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/agent_tool.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "998f4ee9-71b8-40f6-b167-66bc646c3863",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "gateway",
+      "kind": "command",
+      "summary": "The policy gateway (opt-in strict mode): decide one action against the owner policies (off, audit or enforce, global or per project) through the evaluator named in data (Cedar by default), writing the decision to the trusted log before the action runs; check the gateway data and the owner policy file; lint that every action kind has its gateway hook",
+      "keywords": [
+        "policy",
+        "gateway",
+        "decision",
+        "enforce",
+        "audit",
+        "cedar",
+        "evaluator",
+        "lint",
+        "hook"
+      ],
+      "inputs": "check|lint [--json]; decide --kind K --inputs JSON [--project P] [--role R] [--run X] [--card C] [--adapter A] [--json]",
+      "outputs": "decide: JSON {verdict, mode, code, reason, policy_version}, exit 0 may run, 1 refused (STL-GRD-730..739), STL-CFG-312 in a worker environment; check: STL-GRD-741; lint: STL-GRD-740 naming each kind",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/gateway.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "145e9543-dd89-4e45-8dcd-f6ba7e89a242",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "cedar-eval",
+      "kind": "command",
+      "summary": "The Cedar evaluator runner of the policy gateway: one authorization request on stdin (principal, action, resource, context, policies), the Cedar decision on stdout; run only by bin/gateway.py through the cedar evaluator entry of the gateway data",
+      "keywords": [
+        "cedar",
+        "policy",
+        "evaluator",
+        "gateway",
+        "authorization"
+      ],
+      "inputs": "stdin JSON {principal, action, resource: {type, id}, context, policies: [{id, text}]}",
+      "outputs": "stdout JSON {decision: allow|deny, reasons, errors}; decision null and a non-zero status when Cedar cannot judge the request",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/cedar_eval.mjs",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "55fa9689-4c7e-434f-96ce-ea23a2cf4516",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "mock-agui-agent",
+      "kind": "tool",
+      "summary": "Test rig: a fake agent-runtime agent speaking AG-UI over HTTP+SSE (port 0, ready line on stdout), driven by an action list in its user message (tool calls to offered tools, model call through the proxy, direct call, env, ui, state, say); --protocol-map renames events for a second protocol",
+      "keywords": [
+        "mock",
+        "agent",
+        "fake agent",
+        "ag-ui",
+        "agent-runtime",
+        "test rig"
+      ],
+      "inputs": "--port 0 [--protocol-map F] | --version",
+      "outputs": "a ready line {ready, port} on stdout, then AG-UI events over SSE per run request",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/mock_agui_agent.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "ba8c48e8-0c49-4dd7-9233-9f2b6a0b847b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "mock-agui-raw",
+      "kind": "tool",
+      "summary": "Test rig: a raw-event AG-UI agent that sends exactly the events a scenario file lists (malformed calls, names carrying secrets, a foreign port), so the agent-runtime selftest can play a hostile agent; not product code",
+      "keywords": [
+        "mock",
+        "agent",
+        "ag-ui",
+        "hostile",
+        "raw events",
+        "test rig"
+      ],
+      "inputs": "--scenario F --token-env NAME | --version",
+      "outputs": "a ready line, then the scenario events over SSE per run request",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/mock_agui_raw.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "6a799edc-6d74-4fc4-bae8-ba642c6ae383",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "redact-all",
+      "kind": "tool",
+      "summary": "Library: one masking rule for agent-supplied data (X1 fix round): run tokens and the catalog value patterns masked in dict keys and agent-chosen names as well as values, fail closed; used by the adapter run stream, agent_runtime alert and event lines and agui_ui",
+      "keywords": [
+        "redact",
+        "mask",
+        "secret",
+        "canary",
+        "run token",
+        "keys",
+        "names"
+      ],
+      "inputs": "a value (string, dict or list) or a name",
+      "outputs": "the masked copy; on an unreadable catalog the whole value is masked",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/redact_all.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "308cd9b0-2201-40d9-8740-c0aca1c7d93b",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

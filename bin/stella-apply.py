@@ -52,7 +52,10 @@ records bytes already in the file (adopt, finish) is judged against the document
 event line names the provider ids used ("auth"). In a worker environment (a row that is not owner-only) the line goes to the
 untrusted stream (bin/event_untrusted.py) instead, and no line is read as proof (logged()). The worker refusal is a second line only (its signals can be cleared by a caller);
 the boundary is the hooks of every role refusing to run this tool at all; see the contract docs.
-Values under redact_keys / secret settings never appear in a diff, event, or message (***)."""
+Values under redact_keys / secret settings never appear in a diff, event, or message (***).
+X1-DC-08: an apply or rollback of the policy gateway's owner row (schema gateway-policy) that ends 0 then stops, through bin/adapter.py
+gateway_sweep, every running adapter run whose start mode was off while its project's mode is not off now (and every hookless one under
+enforce); a run it could not stop is STL-GRD-749 and exit 1 (the change itself stands)."""
 import argparse, contextlib, datetime, difflib, errno, hashlib, json, os, pwd, re, secrets, shutil, signal, stat, subprocess, sys, tempfile
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -393,7 +396,7 @@ def critical(row, old_doc, new_doc, unparsed, pol):
     parse or is not known (unparsed: True or the reason) cannot be told apart: it counts (fail closed)."""
     rid = row["id"]
     want = [p[len(rid) + 1:] for p in pol["identity_critical"] if p == rid or p.startswith(rid + ":/")]
-    want += ["/" + e["store"]["key"] for e in el.registry()["entries"] if e["sensitivity"] == "identity_critical" and e["store"]["data"] == rid]
+    want += [e["store"].get("pointer") or "/" + e["store"]["key"] for e in el.registry()["entries"] if e["sensitivity"] == "identity_critical" and e["store"]["data"] == rid]
     if rid == next((r["id"] for r in sd.rows() if r["schema"] == "settings"), None):   # the registry row, found as el.registry() finds it
         # an entry marked identity_critical before OR after the change is a target: lowering a setting is no way around its phrase
         want += [f"/entries/{i}" for d in (old_doc, new_doc) if isinstance(d, dict) and isinstance(d.get("entries"), list)
@@ -1858,6 +1861,21 @@ def interrupted(sig, frame):
         signal.signal(s, signal.SIG_IGN)
     raise Interrupted(sig)
 
+def gateway_changed(arg):
+    """X1-DC-08 after a change of row arg: when it is the gateway policy, the runs that started with the gateway off (or are hookless under
+    enforce) are stopped (adapter.gateway_sweep). 0, or STL-GRD-749 and 1 when one could not be stopped."""
+    import gateway
+    if sd.row_of(arg.partition("/")[0])["schema"] != gateway.POL:
+        return 0
+    try:
+        import adapter
+        left = [f"{r} ({p})" for r, p in adapter.gateway_sweep() if p]
+    except Exception as e:   # the sweep could not look: say so, never silently
+        left = [f"the run records could not be read ({getattr(e, 'problem', type(e).__name__)})"]
+    if left:
+        return fail("STL-GRD-749", "the gateway policy changed, but a run that started with the gateway off was not stopped: " + "; ".join(left)[:300])
+    return 0
+
 def main(argv):
     if argv[:1] == ["--check"]:   # the requirement text spells check as a flag
         argv = ["check", *argv[1:]]
@@ -1889,9 +1907,9 @@ def main(argv):
     try:
         sweep_stage()
         if o.cmd == "apply":
-            return do_apply(o.id, o.src, o.dry_run)
+            return do_apply(o.id, o.src, o.dry_run) or (0 if o.dry_run else gateway_changed(o.id))
         if o.cmd == "rollback":
-            return do_rollback(o.id)
+            return do_rollback(o.id) or gateway_changed(o.id)
         return do_check(o.id, o.json) if o.cmd == "check" else do_history(o.id, o.json)
     except Told as t:   # undone and told inside the lock
         return t.args[0]
