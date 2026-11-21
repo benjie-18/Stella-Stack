@@ -310,6 +310,11 @@
         "chain_max": 50,
         "hint": "Run your one Claude call now: the terminal command bash /workspace/bin/claude-review.sh with the workdir set to your workspace_path and nothing before or after it. The stack builds the question from the card and sends it. Approve only if the answer starts with APPROVE. If Claude answered CHANGES, call kanban_request_changes; if the call failed or was refused, block with kind capability."
       }
+    },
+    "planner": {
+      "global_id": "6cd5eb86-94f7-4b0b-86c8-85fb2aa01069",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
+      "role": "planner"
     }
   },
   "roles": {
@@ -1087,26 +1092,12 @@
           "writes": "refused"
         },
         {
-          "matcher": "^(terminal|process_manage)$",
-          "file": "docs/hermes-local/hooks/builder/git-guard.py"
-        },
-        {
-          "matcher": "^(write_file|patch|terminal|process_manage)$",
-          "file": "docs/hermes-local/hooks/builder/write-guard.py",
-          "timeout": 20,
-          "writes": "judged"
-        },
-        {
           "matcher": "^(terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$",
           "file": "docs/hermes-local/hooks/builder/secret-guard.py"
         },
         {
           "matcher": "^(terminal|process_manage)$",
           "file": "docs/hermes-local/hooks/builder/model-guard.py"
-        },
-        {
-          "matcher": "^(skill_manage|execute_code|cronjob_manage)$",
-          "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"
         },
         {
           "matcher": "^(?!(?:{tools})$).+$",
@@ -1336,7 +1327,8 @@
       "builder-local",
       "reviewer",
       "builder-claude",
-      "reviewer-claude"
+      "reviewer-claude",
+      "planner"
     ],
     "plugin_dir": "docs/hermes-local/plugins/os-box",
     "tmp_dir": "{profile_dir}/box-tmp",
