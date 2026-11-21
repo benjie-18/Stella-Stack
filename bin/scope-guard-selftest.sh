@@ -120,6 +120,10 @@ bt() { jq --arg k "$2" --arg v "$3" '.[$k] += [$v]' "$T/built-ok.json" >"$T/$1.j
 bt h1 paths guess/FlappyBird-game.html; bt h3 artifacts flappybird_game.js
 ok 'fnd h1 1 FlappyBird-game.html && fnd h3 1 flappybird_game.js' \
   "AC7-flag RT-07: out-of-scope work spelled without separators (FlappyBird-game.html, flappybird_game.js) is flagged"
+# ---- pass 2 mutants G2, G3: one built item each that only one built-work rule flags ----
+bt m2 titles "weather widget"; bt m3 titles "flappy bird guessing game"
+ok 'fnd m2 1 "weather widget"' "AC7-flag mutant G2: built work that shares no word with any phase and none with out_of_scope ('weather widget') is flagged"
+ok 'fnd m3 1 "flappy bird guessing game"' "AC7-flag mutant G3: built work that shares a phase term (game) but names out_of_scope work ('flappy bird guessing game') is flagged"
 ped '.scope_guard.stopwords += ["escalation", "point"]'; run f4 SG check --roadmap "$T/replay.md" --json
 ok 'fnd f4 1 p2' "AC7-flag fake entry: the request terms the escalation phase shares, added as stopwords in data only, flag that phase"
 finish
