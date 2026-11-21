@@ -255,8 +255,8 @@ names `cli` (the CLI's id, a versions.json pin id where one exists), `quota_sour
 reads, so the entry lists no `secrets`: the broker holds nothing for it; `vault_vm`: a leased rotating vault entry, only when the owner allows a CLI login inside VMs) and `terms_ok` (null =
 unset, the default; true or false is the owner's record of the provider's terms); an `api` entry has none of these five.
 `terms_ok` and `credential_store` are `x-owner-only` (`stella_data.py owner-only` lists them): the owner sets them with
-`bin/stella-apply.py apply connections --from <candidate>` (dry run first; `rollback` restores the bytes). Routing refuses a
-`cli-login` link whose `terms_ok` is not true (see role assignments). An `api` provider may be `aggregator: true` (one endpoint fronting
+`bin/stella-apply.py apply connections --from <candidate>` (dry run first; `rollback` restores the bytes). Information only (owner
+decision 2026-11-20): the UI shows it as acknowledged and no rule refuses a `cli-login` link on it. An `api` provider may be `aggregator: true` (one endpoint fronting
 several upstream providers) and then names `broker_entries` {`unified`, `admin`, `upstream[]`}: broker entry names only.
 Routing judges an aggregator (what it is given goes on to its upstreams) and a hosted connection (its provider's cloud keeps
 data) as cloud whatever its `locality`: a class's hosted rule (grant or never), a Local only project and an effort mode that
@@ -359,7 +359,7 @@ effort-mode ids are lower case ASCII like other ids. **Precedence:** the data po
 assignment. An override never widens the data policy: `check` refuses a chain entry the policy forbids for its project
 (its `allowed_providers` name connections by id or `global_id`).
 It also refuses an unknown connection, model, role or mode, an empty chain, and a provider whose locality the mode forbids.
-**Routing** (one rule, `route_problems`, beside the project policy's): a `cli-login` link needs `terms_ok` true. On a link
+**Routing** (one rule, `route_problems`, beside the project policy's): `terms_ok` is not judged (owner decision 2026-11-20). On a link
 whose connection is cloud or `data_policy.hosted`, each data class the role handles (`requirements.allowed_data_classes`)
 follows its `class_rules` `hosted`: `allowed` passes, `never` (and a class with no rule row) is refused outright, `grant`
 needs a `privacy_grants` entry for that class naming the connection (id or `global_id`) that is in force: `granted_at` a
@@ -368,9 +368,9 @@ any other grant grants nothing. F2: one function, `stella_data.grant_in_force(gr
 privacy grants and crossing grants alike: the dates above, plus `scope` (level project holds in that project only and never
 for a task with no project; level global or no scope is Stella-wide) and `revoked_at` (a real date still ahead; any other
 value stops the grant). `route_problems(policies, classes, provider, now, project)` takes the project (a global assignment
-passes none) and returns `[{kind: terms|never|grant, data_class, text}]`: only kind `grant` can be lifted by a grant.
+passes none) and returns `[{kind: never|grant, data_class, text}]`: only kind `grant` can be lifted by a grant.
 A private project never routes to a hosted connection (`policy_allows`). Card app rules are
-F2's: when F2 routes by card, it refuses a `cli-login` app whose `terms_ok` is not true, and a hosted integration aggregator app
+F2's: when F2 routes by card, it refuses a hosted integration aggregator app
 (`integration_aggregator: true`) on a card that carries secrets or belongs to a private project.
 The resolver that applies the precedence is `bin/resolve.py` (F2; see "Model calls, failover and keys"); this file is the data and the validator.
 *To add one:* append an assignment with a new `id`.
@@ -417,7 +417,7 @@ define; a `based_on` that is no preset; a role in a preset or in this file that 
 `when` that is neither `always` nor a trigger; a preset that sets `active: false` for a role `workflow.required_roles` lists as
 `always` or under a trigger that can fire (STL-MDL-725), or for an exempt role; an active role's pin or fallback that the one
 link judge refuses (`stella_data.link_problems()`, which also judges every assignment chain: the connection switched off, not
-listing the role or not allowing every data class it handles, a CLI login without `terms_ok`, the model not listed, the link
+listing the role or not allowing every data class it handles, the model not listed, the link
 outside the preset's `allowed_localities` unless its class is the role's last resort) (STL-MDL-726; an inactive role's links are not
 judged; an `escalation_chain` rung is judged the same way, but in a built-in preset only for its model being listed, so a catalog switch never makes a preset the owner cannot edit invalid, and the resolver skips that rung at
 run time; a `parameters.effort`, a `by_role` role or tier, or an effort id that the routing data does not define; a

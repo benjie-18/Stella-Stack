@@ -920,10 +920,11 @@
       "code": "STL-MDL-712",
       "area": "MDL",
       "severity": "warning",
+      "status": "retired",
       "title": "a CLI login link is refused: terms not recorded",
       "message": "A model link through a logged-in coding CLI was refused because the owner has not recorded that the provider's terms allow this use: {problem}.",
       "action": "if the provider's terms allow it, set terms_ok to true for that connection as the owner (`bin/stella-apply.py apply connections --from <candidate>`, dry run first). See STL-MDL-712 in docs/alert-codes.md.",
-      "cause": "The connection's type is cli-login and its terms_ok is not true (null, the default, counts as not recorded).",
+      "cause": "The connection's type is cli-login and its terms_ok is not true (null, the default, counts as not recorded). Retired 2026-11-20 (owner decision): terms_ok is information only and nothing refuses on it, so this code is no longer sent.",
       "check": "`python3 bin/stella_data.py get connections <id>` (type, terms_ok).",
       "related": "F2 B2, A6; F1b D5; bin/stella_data.py route_problems",
       "resolvable": false
@@ -1167,6 +1168,18 @@
       "cause": "The rung's link fails a rule of the chain (hard exclusion, data policy, Local only, the connection, the role's requirements, the preset's classes and localities) or needs a crossing or privacy grant that is not in force.",
       "check": "the event log (routing.rung-skipped lines: role, preset, rung, link, status, code); the resolver's JSON answer (rung.skipped[]).",
       "related": "F2b item D (design-D.md); bin/resolve.py",
+      "resolvable": false
+    },
+    {
+      "code": "STL-MDL-733",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "a role's tier rows do not cover every task tier",
+      "message": "The role assignments give a role model rows per task tier, and they are incomplete: {problem}. The data is treated as not valid until it is fixed.",
+      "action": "give the role one row for every task tier in that preset (role-assignments.json assignments, tier), or give the preset a based_on preset that has them, then run the check again. See STL-MDL-733 in docs/alert-codes.md.",
+      "cause": "A role has assignment rows with a tier in some presets, and in one preset it covers only some of the routing task tiers; or a preset has none and no based_on preset (itself or further up) that does, so the planner could not choose a model for a tier.",
+      "check": "`python3 bin/stella_data.py check`; `python3 bin/stella_data.py get role-assignments` (assignments, effort_modes based_on); `python3 bin/stella_data.py get routing` (task_tiers).",
+      "related": "P1 item B; bin/stella_data.py rule_presets",
       "resolvable": false
     },
     {
@@ -2770,10 +2783,11 @@
       "code": "STL-GRD-646",
       "area": "GRD",
       "severity": "warning",
+      "status": "retired",
       "title": "a CLI login may not be used by agents yet",
       "message": "A run on a CLI's own login was refused: {problem}.",
       "action": "if the provider's terms allow agent use of this login, set terms_ok on the connection; otherwise use an api link.",
-      "cause": "A cli-login link runs only once the owner has set terms_ok true on its connection. Nothing was started and the login was not touched.",
+      "cause": "A cli-login link runs only once the owner has set terms_ok true on its connection. Nothing was started and the login was not touched. Retired 2026-11-20 (owner decision): terms_ok is information only and no run is refused on it, so this code is no longer sent.",
       "check": "`python3 bin/adapter.py list --json`; `python3 bin/stella_data.py check`; the run record and folder at the index key adapter_runs; `bash bin/adapter-selftest.sh`.",
       "related": "F3 item A; bin/adapter.py, .stella/adapters.json",
       "resolvable": false

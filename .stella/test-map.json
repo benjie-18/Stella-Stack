@@ -9053,6 +9053,15 @@
         "replan"
       ],
       "why": "P1 merge glue: these selftests run bin/hardcode-lint.sh / test-map check inside their scratch roots, which reach the lint and test-map files (test-map.py check named them)"
+    },
+    {
+      "globs": [
+        ".stella/planner.json"
+      ],
+      "targets": [
+        "presets"
+      ],
+      "why": "P1 item B: the presets selftest adds a task tier as data and must give it a planner tier row too (STL-PLN-100)"
     }
   ]
 }

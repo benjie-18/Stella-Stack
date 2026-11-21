@@ -464,6 +464,237 @@
       ],
       "global_id": "bffe5b3f-3dc3-49b7-a494-458a43c8b156",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "global-planner-standard-light",
+      "scope": {
+        "level": "global"
+      },
+      "role": "planner",
+      "effort_mode": "standard",
+      "tier": "light",
+      "chain": [
+        {
+          "connection": "local-model-server",
+          "model": "qwen3.5:9b-64k",
+          "parameters": {}
+        }
+      ],
+      "global_id": "c8b1400e-a8cc-4f76-bc6d-d13effde6825",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "global-planner-standard-medium",
+      "scope": {
+        "level": "global"
+      },
+      "role": "planner",
+      "effort_mode": "standard",
+      "tier": "medium",
+      "chain": [
+        {
+          "connection": "claude-subscription",
+          "model": "sonnet",
+          "parameters": {}
+        },
+        {
+          "connection": "local-model-server",
+          "model": "qwen3.5:9b-64k",
+          "parameters": {}
+        }
+      ],
+      "global_id": "62ffcceb-75b8-459b-a244-b81ccd283aee",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "global-planner-standard-complex",
+      "scope": {
+        "level": "global"
+      },
+      "role": "planner",
+      "effort_mode": "standard",
+      "tier": "complex",
+      "chain": [
+        {
+          "connection": "claude-subscription",
+          "model": "opus",
+          "parameters": {}
+        },
+        {
+          "connection": "local-model-server",
+          "model": "qwen3.5:9b-64k",
+          "parameters": {}
+        }
+      ],
+      "global_id": "954b56d3-9272-4f19-9ec5-82e0781b4303",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "global-planner-eco-light",
+      "scope": {
+        "level": "global"
+      },
+      "role": "planner",
+      "effort_mode": "eco",
+      "tier": "light",
+      "chain": [
+        {
+          "connection": "local-model-server",
+          "model": "qwen3.5:9b-64k",
+          "parameters": {}
+        }
+      ],
+      "global_id": "3b39657f-dba7-4aec-8e5a-4ea0e4644fe1",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "global-planner-eco-medium",
+      "scope": {
+        "level": "global"
+      },
+      "role": "planner",
+      "effort_mode": "eco",
+      "tier": "medium",
+      "chain": [
+        {
+          "connection": "local-model-server",
+          "model": "qwen3.5:9b-64k",
+          "parameters": {}
+        }
+      ],
+      "global_id": "0b323f22-40ed-43ff-9b89-0021619cc9e1",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "global-planner-eco-complex",
+      "scope": {
+        "level": "global"
+      },
+      "role": "planner",
+      "effort_mode": "eco",
+      "tier": "complex",
+      "chain": [
+        {
+          "connection": "claude-subscription",
+          "model": "sonnet",
+          "parameters": {}
+        },
+        {
+          "connection": "local-model-server",
+          "model": "qwen3.5:9b-64k",
+          "parameters": {}
+        }
+      ],
+      "global_id": "af84a0bc-896a-431c-bb9a-ce13c38d2768",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "global-planner-max-light",
+      "scope": {
+        "level": "global"
+      },
+      "role": "planner",
+      "effort_mode": "max",
+      "tier": "light",
+      "chain": [
+        {
+          "connection": "claude-subscription",
+          "model": "sonnet",
+          "parameters": {}
+        }
+      ],
+      "global_id": "8646fec1-9b3c-4aea-9bb8-a1e2a77c0faa",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "global-planner-max-medium",
+      "scope": {
+        "level": "global"
+      },
+      "role": "planner",
+      "effort_mode": "max",
+      "tier": "medium",
+      "chain": [
+        {
+          "connection": "claude-subscription",
+          "model": "sonnet",
+          "parameters": {}
+        }
+      ],
+      "global_id": "dcd5aeb3-ff64-4e51-8fd2-87182eef68e5",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "global-planner-max-complex",
+      "scope": {
+        "level": "global"
+      },
+      "role": "planner",
+      "effort_mode": "max",
+      "tier": "complex",
+      "chain": [
+        {
+          "connection": "claude-subscription",
+          "model": "opus",
+          "parameters": {}
+        }
+      ],
+      "global_id": "b363e709-a445-40ec-a4ae-872488d739b7",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "global-planner-local-only-light",
+      "scope": {
+        "level": "global"
+      },
+      "role": "planner",
+      "effort_mode": "local_only",
+      "tier": "light",
+      "chain": [
+        {
+          "connection": "local-model-server",
+          "model": "qwen3.5:9b-64k",
+          "parameters": {}
+        }
+      ],
+      "global_id": "afe3d1ec-2fc3-4117-a7b1-f8537d1bdf04",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "global-planner-local-only-medium",
+      "scope": {
+        "level": "global"
+      },
+      "role": "planner",
+      "effort_mode": "local_only",
+      "tier": "medium",
+      "chain": [
+        {
+          "connection": "local-model-server",
+          "model": "qwen3.5:9b-64k",
+          "parameters": {}
+        }
+      ],
+      "global_id": "86f768e8-f1ff-4684-9410-fb094093e4ef",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "global-planner-local-only-complex",
+      "scope": {
+        "level": "global"
+      },
+      "role": "planner",
+      "effort_mode": "local_only",
+      "tier": "complex",
+      "chain": [
+        {
+          "connection": "local-model-server",
+          "model": "qwen3.5:9b-64k",
+          "parameters": {}
+        }
+      ],
+      "global_id": "5fbdbe35-0aba-4fe8-8b25-7c34752a57cb",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

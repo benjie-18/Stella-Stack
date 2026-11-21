@@ -73,7 +73,7 @@ TEMPLATE='[.entries[] | select(.kind == "provider" and .locality == "local" and 
 ed five connections.json --argjson m "$MODELS" --argjson ar "$AR" --arg g "$(uuid)" \
   ".entries += [$TEMPLATE + {id: \"qa-pin\", label: \"QA pinned models\", enabled: true, models: \$m, allowed_roles: \$ar, global_id: \$g} | del(.link_class)]"
 ed five role-assignments.json --arg l "$LOCAL" --arg h "$HOSTED" --arg o "$OPT" --arg p "$PINROLE" --argjson pin "$(link qa-good)" --argjson fb "$(link qa-good2)" \
-  "$F = {allowed_localities: [\"local\", \"cloud\"], no_silent_fallback: false, label: \"QA fifth\", builtin: false, based_on: null, class_order: [\$l, \$h], verification_depth: 2,
+  "$F = {allowed_localities: [\"local\", \"cloud\"], no_silent_fallback: false, label: \"QA fifth\", builtin: false, based_on: .selection.global, class_order: [\$l, \$h], verification_depth: 2,
      roles: {(\$o): {active: false}, (\$p): {active: true, class_order: [\$l], pins: [\$pin], fallbacks: [\$fb], escalation_chain: [\$fb]}}}"
 ok 'passes five' "2 a fifth preset as data only is valid: started blank, one optional role off, its own class order, a pin, a fallback and a stored escalation chain"
 mk sel five; ed sel role-assignments.json '.selection.global = "qa-fifth" | .selection.projects["qa-proj"] = "qa-fifth" | .selection.cards["qa-card"] = "qa-fifth"'
@@ -246,6 +246,10 @@ ok 'passes enew' "6z a new effort level added as data only is valid in a rung's 
 # ---- a fake link class and a fake tier, as data only ----
 mk cls five
 ed cls routing.json '.link_classes += [{id: "qa-class", privacy_rank: 0, hosted: false}] | .task_tiers += [{id: "qa-tier"}]'
+# a role with tier rows needs a row for every task tier (STL-MDL-733): the new tier gets copies of the first tier's rows
+ed cls role-assignments.json '[.assignments[] | select(has("tier"))] as $t | $t[0].tier as $x | .assignments += [$t | map(select(.tier == $x)) | to_entries[] | .key as $i | .value | .tier = "qa-tier" | .id += "-qa" | .global_id = "00000000-0000-4000-8000-\(1000 + $i)00000000"]'
+# the planner data (STL-PLN-100) also wants the new tier: its tier row, and a threshold between the first two
+ed cls planner.json '.tiers["qa-tier"] = .tiers[.rubric.thresholds[0].tier] | .rubric.thresholds |= [.[0], {tier: "qa-tier", max_score: (.[0].max_score + 1)}] + .[1:] | .rubric.thresholds[2].max_score |= (if . <= 2 then 3 else . end)'
 ed cls connections.json '(.entries[] | select(.id == "qa-pin")).models[1].link_class = "qa-class"'
 ed cls role-assignments.json --arg l "$LOCAL" "$F.class_order = [[\"qa-class\", \$l]] | $F.needs_class = \"qa-class\" | $F.frontier_when = {tiers: [\"qa-tier\"]}"
 ok 'passes cls' "6 a fake link class and a fake task tier added as data are valid, and a preset uses both"
@@ -294,7 +298,7 @@ eq(kinds(pol(g), [gclass], cloud, now), ["grant"], "route_problems: nor for a ta
 eq(kinds(pol(dict(g, revoked_at="2026-11-10T00:00:00Z")), [gclass], cloud, now, "p1"), ["grant"], "route_problems: a revoked grant grants nothing")
 eq(kinds(pol({k: v for k, v in g.items() if k != "scope"}), [gclass], cloud, now, "p2"), [], "route_problems: a grant with no scope is Stella-wide")
 eq(kinds(pol(g, rule="never"), [gclass], cloud, now, "p1"), ["never"], "route_problems: a class whose rule is never is kind never, whatever the grant")
-eq(kinds(pol(), [gclass], dict(cloud, type="cli-login", terms_ok=None, locality="local"), now), ["terms"], "route_problems: a cli-login link without terms_ok is kind terms")
+eq(kinds(pol(), [gclass], dict(cloud, type="cli-login", terms_ok=None, locality="local"), now), [], "route_problems: a cli-login link without terms_ok raises no problem (owner decision 2026-11-20: terms_ok is never enforced)")
 eq(s.grant_in_force(dict(g, scope={"level": "global"}, expires_at="2026-11-02T00:00:00Z"), "p1", now), False, "grant_in_force: an expired grant is not in force")
 sys.exit(1 if bad else 0)
 PY
@@ -361,9 +365,9 @@ jq '.effort_modes["qa-custom"].verification_depth = 7' "$RAF" >"$T/c/custom2.jso
 ax "$AP" apply role-assignments --from "$T/c/custom2.json" >"$T/o" 2>&1; rc=$?
 ok '[ $rc = 0 ] && jq -e ".effort_modes[\"qa-custom\"].verification_depth == 7" "$RAF" >/dev/null' "12a the custom preset can be changed afterwards (exit $rc)"
 jq --arg b "$B1" '.effort_modes[$b].verification_depth += 1' "$RAF" >"$T/c/b-edit.json"
-# B2: a built-in preset nothing else names, so only the built-in rule can refuse its removal
-B2=$(j '([.assignments[].effort_mode] + [.selection.global]) as $used | [.effort_modes | to_entries[] | select(.value.builtin == true and (.key as $k | $used | index($k)) == null) | .key][0]' "$RAF")
-jq --arg b "$B2" 'del(.effort_modes[$b])' "$RAF" >"$T/c/b-drop.json"
+# B2: a built-in preset nothing else names (its tier rows go with it), so only the built-in rule can refuse its removal
+B2=$(j '([.assignments[] | select(has("tier") | not) | .effort_mode] + [.selection.global]) as $used | [.effort_modes | to_entries[] | select(.value.builtin == true and (.key as $k | $used | index($k)) == null) | .key][0]' "$RAF")
+jq --arg b "$B2" 'del(.effort_modes[$b]) | .assignments |= map(select(.effort_mode != $b))' "$RAF" >"$T/c/b-drop.json"
 jq --arg b "$B1" '.effort_modes[$b].builtin = false' "$RAF" >"$T/c/b-flag.json"
 n=0
 for b in edit drop flag; do

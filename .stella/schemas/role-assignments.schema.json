@@ -259,6 +259,11 @@
           "effort_mode": {
             "type": "string"
           },
+          "tier": {
+            "type": "string",
+            "x-ref": "routing/task_tiers",
+            "description": "Optional task tier (a routing.json task_tiers id): the row serves that tier only and, at the same scope, beats the row of the same role and preset with no tier. A role with tier rows in a preset has one for every tier (`check`); a custom preset with none inherits those of its based_on preset."
+          },
           "chain": {
             "type": "array",
             "items": {

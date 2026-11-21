@@ -78,6 +78,7 @@ class Coded(str):
         return s
 
 
+TIER_ROWS = "STL-MDL-733"   # a role's tier rows do not cover every task tier, or a preset has none to use
 OFF_REQUIRED, CHAIN_FAILS, BUILTIN_EDIT = "STL-MDL-725", "STL-MDL-726", "STL-MDL-727"   # the preset rule's codes (F2 D1.9)
 PLANNER_DATA = "STL-PLN-100"   # the planner data rule's code (P1 W0)
 QA_DATA = "STL-QA-105"   # the QA loop rule's code (Q1 DG-3); the QA loop tool refuses its plan with the same code
@@ -802,11 +803,11 @@ def grant_in_force(g, project, now):
 def route_problems(pols, need, prov, now, project=None):
     """Why a link to provider prov may not serve a role that handles the data classes `need`, for a task of `project` (None: no
     project, so only a Stella-wide grant counts) (F1b D6; next to policy_allows, the one routing rule): [{kind, data_class, text}].
-    kind terms: a cli-login link needs terms_ok true. On a link that leaves the machine (by reach(): hosted counts), each class's
+    terms_ok is information only (owner decision 2026-11-20: no terms check; the UI shows it as acknowledged): no kind refuses on it.
+    On a link that leaves the machine (by reach(): hosted counts), each class's
     hosted rule in every data policy: kind never refuses outright (no grant is offered); kind grant needs a privacy grant for that
     class naming this connection (id or global_id) that is in force (grant_in_force)."""
-    out = [] if prov["type"] != "cli-login" or prov.get("terms_ok") is True else \
-        [{"kind": "terms", "data_class": None, "text": "is cli-login, and the owner has not recorded terms_ok true (the provider's terms allow this use)"}]
+    out = []
     if reach(prov) == "local":
         return out
     names = {prov["id"], prov.get("global_id")}
@@ -907,7 +908,7 @@ def unprobed(table, role, prov, model, recs):
 def link_problems(table, role, prov, model, localities=None, mode=None, policies=(), where=None, pols=(), now=None, project=None):
     """Why the link (provider prov, model) may not be listed for `role`, as texts that follow the link's place: the one judge of
     an assignment's chain and of a preset's pins and fallbacks (W1-RT-01; the resolver excludes the same links at run time).
-    The link itself: its connection switched on, the model listed, the connection allowing the role and every data class it handles, a cli-login's terms recorded.
+    The link itself: its connection switched on, the model listed, the connection allowing the role and every data class it handles.
     localities (those of effort mode `mode`; None: not judged): where the link may run, by reach(). The scope, for a caller
     that has one (an assignment; a preset has none, the resolver judges it per project): its policies (project_policies,
     named `where`) and, with the data policies `pols`, the hosted rule of each data class for its project (route_problems)."""
@@ -1097,7 +1098,7 @@ def rule_assignments(c):
             for k in ("project", "card"):
                 if (k in want) != (k in sc):
                     P(rid, f"{aid}: scope.level {lvl} {'needs' if k in want else 'has no'} {k}")
-            key = (lvl, pid, sc.get("card"), a["role"], a["effort_mode"])
+            key = (lvl, pid, sc.get("card"), a["role"], a["effort_mode"], a.get("tier"))
             if key in seen:
                 P(rid, f"{aid}: same scope, role and effort mode as {idn(seen[key])}")
             seen[key] = a["id"]
@@ -1181,6 +1182,25 @@ def rule_presets(c):
             for a in ra["assignments"]:
                 for m in order_problems(a.get("class_order", []), classes, f"{idn(a['id'])}: class_order"):
                     P(rid, m)
+            # tier rows (global scope): a role that has them has one for every task tier in a preset, and every preset reaches some (own, else its based_on line)
+            tiers, have = [x["id"] for x in rt["task_tiers"]], {}
+            sel = ra.get("selection", {})
+            used = {sel.get("global"), *sel.get("projects", {}).values(), *sel.get("cards", {}).values()}
+            for a in ra["assignments"]:
+                if "tier" in a and a["scope"]["level"] == "global":
+                    have.setdefault(a["role"], {}).setdefault(a["effort_mode"], set()).add(a["tier"])
+            for r, by_mode in have.items():
+                for pid, mode in ra["effort_modes"].items():
+                    if not (mode.get("builtin") or pid in used):
+                        continue   # shortcut: an unselected custom preset is judged once selected (a selection naming it), not before
+                    line = [pid]
+                    while line[-1] not in by_mode and ra["effort_modes"][line[-1]].get("based_on") in ra["effort_modes"] and ra["effort_modes"][line[-1]]["based_on"] not in line:
+                        line.append(ra["effort_modes"][line[-1]]["based_on"])
+                    if line[-1] not in by_mode:
+                        P(rid, Coded(TIER_ROWS, f"preset {kname(pid)}: role {nm(r, table['roles'], 'a key')} has tier rows in another preset, and this one has none and no based_on preset that does"))
+                for pid, got in by_mode.items():
+                    if got != set(tiers):
+                        P(rid, Coded(TIER_ROWS, f"preset {kname(pid)}: role {nm(r, table['roles'], 'a key')} has tier rows for only some of the task tiers"))
             # effort ids are data (routing effort.levels): every link of every assignment and preset names a known one or none
             links = [(f"{idn(a['id'])}: chain[{i}]", l) for a in ra["assignments"] for i, l in enumerate(a["chain"])] + \
                 [(f"preset {kname(pid)}: role {nm(r, table['roles'], 'a key')}: {f}[{i}]", l) for pid, mode in ra["effort_modes"].items()

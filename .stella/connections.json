@@ -169,13 +169,20 @@
         "training_use": null,
         "region": null,
         "zero_retention_available": null,
-        "data_classes_allowed": []
+        "data_classes_allowed": [
+          "public",
+          "internal",
+          "client"
+        ]
       },
       "tos": {
         "status": "unverified",
         "subscription_login_by_agent": "unverified"
       },
-      "allowed_roles": [],
+      "allowed_roles": [
+        "planner",
+        "rubric"
+      ],
       "risk_class": "send",
       "cli": "claude-code",
       "quota_source": [
