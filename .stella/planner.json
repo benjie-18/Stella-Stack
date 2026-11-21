@@ -173,6 +173,7 @@
       "that"
     ],
     "min_shared_terms": 1,
+    "min_shared_share": 0.4,
     "severity": "medium"
   },
   "report": {

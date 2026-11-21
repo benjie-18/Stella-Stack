@@ -5,7 +5,8 @@ CLI (host only: every command refuses in a worker environment, STL-CFG-312; outp
   planner_rubric.py score --features FILE|- [--request-id R] [--json]
       FILE is the rubric role's answer: UNTRUSTED. Only a strict JSON object counts; a feature that is not exactly true or false (missing,
       another type, whole answer too big, not JSON, junk after the object, duplicate keys) is unsure. score = points of the true features;
-      tier = first threshold the score fits; any unsure feature raises it unsure.raise_tiers (capped at the top). Same input, same output.
+      tier = first threshold the score fits, then the higher of: raised unsure.raise_tiers when any feature is unsure, and the tier of
+      the score plus the points of the unsure features (an unsure feature counts as true), capped at the top. Same input, same output.
       One trusted line planner.rubric {request, features, unsure, score, tier, reason}.
   planner_rubric.py extract --project P --request FILE [--request-id R] [--json]
       route.py call --role <rubric.extract_role> with a schema made from the features, then score on the answer. A route failure is a
@@ -90,8 +91,10 @@ def score(doc, raw, request):
     unsure = sorted(k for k, v in feats.items() if v is None)
     pts = sum(f["points"] for f in r["features"] if feats[f["id"]])
     th = r["thresholds"]
-    base = next(i for i, t in enumerate(th) if t.get("max_score") is None or pts <= t["max_score"])
-    tier = th[min(base + (r["unsure"]["raise_tiers"] if unsure else 0), len(th) - 1)]["tier"]
+    at = lambda s: next(i for i, t in enumerate(th) if t.get("max_score") is None or s <= t["max_score"])
+    base = at(pts)
+    worst = at(pts + sum(f["points"] for f in r["features"] if f["id"] in unsure))   # an unsure feature counts as true (RT-01)
+    tier = th[min(max(base + (r["unsure"]["raise_tiers"] if unsure else 0), worst), len(th) - 1)]["tier"]
     reason = f"score {pts} gives {th[base]['tier']}" + (f"; {len(unsure)} unsure, raised to {tier}" if tier != th[base]["tier"] else "")
     out = {"features": feats, "reason": reason, "request": request, "score": pts, "tier": tier, "unsure": unsure}
     try:
@@ -170,7 +173,8 @@ def cmd_split(o, doc):
     for b in stats_buckets(doc):
         try:
             if (b["kind"], b["connection"], b["model"]) == (o.kind, conn, model) and b["n"] >= cs["min_samples"] and b["n"] > 0 \
-                    and b["failed"] / b["n"] <= cs["max_fail_rate"]:
+                    and b["failed"] / b["n"] <= cs["max_fail_rate"] \
+                    and all(b["size"][k] > 0 for k in fields):   # a size <= 0 is no evidence (RT-08)
                 good.append([b["size"][k] for k in fields])
         except (KeyError, TypeError):
             continue   # a malformed bucket is no evidence

@@ -16,7 +16,7 @@ by .stella/schemas/roadmap.schema.json. The file and the block are untrusted mod
         Exploration only behind its features flag and never with --critical. Without --card the resolver is asked with the
         data's no_card_id, a card with no facts record (links that leave the machine are then out); pass --card for the real one.
 Failures: STL-PLN-200..209, a JSON answer {ok: false, code, problem} on stdout, the plain message on stderr, exit 1."""
-import argparse, datetime, hashlib, json, os, random, re, sys
+import argparse, datetime, hashlib, json, math, os, random, re, sys
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
@@ -27,6 +27,8 @@ import resolve
 BLOCK, SCHEMA, GRAPH, VM, DIGEST = "STL-PLN-200", "STL-PLN-201", "STL-PLN-202", "STL-PLN-203", "STL-PLN-204"   # literal: the alert suite finds a code by its text
 BUDGET, LINK, LINT, NOPROBE, PICK = "STL-PLN-205", "STL-PLN-206", "STL-PLN-207", "STL-PLN-208", "STL-PLN-209"
 
+
+SENTINELS = ("a", "dir/b/c.txt", ".hidden")   # a glob that matches all of them matches everything: top level, nested, dotfile
 
 class Refuse(Exception):
     def __init__(self, code, problem):
@@ -46,6 +48,15 @@ def feature_on(fid):
     return any(e.get("id") == fid and e.get("status") == "on" or e.get("flag") == fid and e.get("status") == "on" for e in doc("features")["entries"])
 
 
+def refuse_const(c):
+    raise ValueError(c)   # NaN and Infinity compare false with everything (RT-02)
+
+def finite(s):
+    v = float(s)
+    if not math.isfinite(v):
+        raise ValueError(s)   # 1e999 reads as infinity (RT-03)
+    return v
+
 def depth(x, n=1):
     if isinstance(x, dict):
         x = list(x.values())
@@ -61,6 +72,10 @@ def load(path, pl):
         text = open(path, encoding="utf-8").read()
     except (OSError, UnicodeError) as e:
         raise Refuse(BLOCK, f"the file cannot be read ({type(e).__name__})")
+    # shortcut: any fence-open line of that name (backtick or tilde, any length) must be the one block, and no HTML comment may hide one (RT-05); upgrade if prose needs <!--
+    opens = re.findall(r"^\s*(?:`{3,}|~{3,})\s*" + r"\s+".join(map(re.escape, rm["fence"].split())), text, re.M)
+    if len(opens) != 1 or "<!--" in text:
+        raise Refuse(BLOCK, f"the file must hold exactly one {rm['fence']} fence line and no HTML comment, it holds {len(opens)} fence lines")
     blocks, cur, fence = [], None, "```"
     for line in text.split("\n"):
         s = line.rstrip()
@@ -74,7 +89,7 @@ def load(path, pl):
     if cur is not None or len(blocks) != 1:
         raise Refuse(BLOCK, f"the file must hold exactly one closed {rm['fence']} block, it holds {len(blocks)}" + (" and one that is not closed" if cur is not None else ""))
     try:
-        d = json.loads(blocks[0])
+        d = json.loads(blocks[0], parse_constant=refuse_const, parse_float=finite)
     except (ValueError, RecursionError):
         raise Refuse(BLOCK, "the block is not JSON")
     if depth(d) > rm["max_depth"]:
@@ -117,6 +132,7 @@ def project_cap(project):
 
 
 def cmd_check(a, pl):
+    import qa_loop   # its glob() is the one replan and the QA triggers match with (RT-04)
     d = load(a.file, pl)
     if d["project"] != a.project:
         raise Refuse(SCHEMA, "the roadmap names another project than --project")
@@ -145,7 +161,7 @@ def cmd_check(a, pl):
         acc, cov = [c["id"] for c in p["acceptance"]], {x for c in p["cards"] for x in c["checks"]}
         if len(set(acc)) != len(acc) or cov - set(acc) or set(acc) - cov:
             raise Refuse(GRAPH, f"phase {sd.idn(p['id'], True)}: its acceptance checks and the checks of its cards are not the same ids")
-        if any(re.fullmatch(r"(\./)?(\*+/?)+", g.strip()) for c in p["cards"] for g in c["files"]):
+        if any(re.fullmatch(r"(\./)?(\*+/?)+", g.strip()) or all(qa_loop.glob(s, g.strip()) for s in SENTINELS) for c in p["cards"] for g in c["files"]):
             raise Refuse(GRAPH, f"phase {sd.idn(p['id'], True)}: a card files glob matches everything")
     ph = pl["roadmap"]["vm_placeholder"]
     if not feature_on(pl["roadmap"]["vm_feature"]) and any(p["vm"] != ph for p in d["phases"]):
@@ -244,6 +260,10 @@ def cmd_pick(a, pl):
 
 
 def main(argv):
+    try:   # a worker environment is refused first (STL-CFG-312)
+        el.owner_only()
+    except el.EventError as e:
+        return el.fail(e.code, e.problem)
     ap = argparse.ArgumentParser(prog="roadmap.py", allow_abbrev=False, description=__doc__.split("\n", 1)[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("check", "lint", "pick"):
