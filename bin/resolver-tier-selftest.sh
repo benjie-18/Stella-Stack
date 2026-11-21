@@ -103,6 +103,13 @@ mk nt base; x=$(uuid); ed nt role-assignments --arg r "$R" --arg s "$S" --arg b 
   '.assignments += [(.assignments[] | select(.role == $r and .effort_mode == $s and .tier == $b and .scope.level == "global")) | del(.tier) | .id = "qa-notier" | .global_id = $g]'
 chk nt nt; rs nt nt1 --role "$R" --project qa-proj --tier "$TA"
 ok 'have && [ -n "$TA" ] && passed nt && answered nt1 && [ "$(fp nt1)" = "$LA" ]' "AC8-preset-row 2 at the same scope a (role, preset, tier) row wins over a (role, preset) row with no tier"
+# the row with no tier carries its own chain and class order: at the scope of a tier row neither may reach the answer (pass 2 mutant B1)
+LOC=$(j .class_defaults.local "$RT"); sig() { jq -c '[.chain[] | {connection, model, source, status}]' "$T/o/$1.json" 2>/dev/null; }
+mk nt2 base; x=$(uuid); ed nt2 role-assignments --arg r "$R" --arg s "$S" --arg b "$TB" --arg g "$x" --arg l "$LOC" \
+  '.assignments += [(.assignments[] | select(.role == $r and .effort_mode == $s and .tier == $b and .scope.level == "global")) | del(.tier) | .id = "qa-notier2" | .global_id = $g | .class_order = [$l]]'
+chk nt2 nt2; rs nt2 nt2r --role "$R" --project qa-proj --tier "$TA"; rs nt2 nt2n --role "$R" --project qa-proj
+ok 'have && [ -n "$TA" ] && passed nt2 && answered nt2r && answered sw0 && [ "$(sig nt2r)" = "$(sig sw0)" ] && answered nt2n && [ "$(fp nt2n)" = "$LB" ]' \
+  "AC8-preset-row 2b a row with no tier (its own chain and class_order) at the scope of a tier row leaves the --tier answer's chain exactly as without it; without --tier it is the pin"
 mk pj base; x=$(uuid); ed pj role-assignments --arg r "$R" --arg s "$S" --arg b "$TB" --arg g "$x" \
   '.assignments += [(.assignments[] | select(.role == $r and .effort_mode == $s and .tier == $b and .scope.level == "global")) | del(.tier) | .id = "qa-proj-row" | .scope = {level: "project", project: "qa-proj"} | .global_id = $g]'
 chk pj pj; rs pj pj1 --role "$R" --project qa-proj --tier "$TA"; rs pj pj2 --role "$R" --project qa-other --tier "$TA"
