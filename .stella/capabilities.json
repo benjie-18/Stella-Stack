@@ -2716,6 +2716,25 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
+      "id": "scope-guard",
+      "kind": "command",
+      "summary": "Flags planner drift: a roadmap phase whose builds terms share too few words with the request text (stopwords and thresholds from the planner data), and built work (paths, card titles, artifacts) that matches an out_of_scope entry or no phase; findings in the qa_findings submit format, usable as the validator stub's fixture findings until D1. Read only, no model call",
+      "keywords": ["scope", "guard", "planner", "roadmap", "drift", "out_of_scope", "findings"],
+      "inputs": "check --roadmap FILE [--built FILE] --json",
+      "outputs": "JSON {findings: [...]}; exit 0 none, 1 findings, 2 refusal with a catalog code (STL-PLN-500..502)",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/scope_guard.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "d47d4549-0c05-4fd1-92de-ebc948c67e48",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
       "id": "qa-roles",
       "kind": "command",
       "summary": "Runs the QA roles of a card's round (host only): run starts every slot of qa_loop.py plan as a process of its own, all at once (one after another under when_local_only), each the stub double bin/qa_stub_role.py (due D1) that registers evidence and submits findings and its verdict through qa_findings.py; refused while the stub-roles features entry is off; diagnose, only while the diagnosis flag is on, writes one brief file under the round's evidence folder and one trusted line, and is not a round",
@@ -3212,6 +3231,34 @@
         "result": "shipped"
       },
       "global_id": "42e23e8b-3f4c-48c2-bf05-82396faef10b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "replan",
+      "kind": "command",
+      "summary": "Escalate, then re-plan (host only): dispatch reads a bound card's QA loop and block lines, writes its failure history and decides re-plan, climb (with the history as an untrusted brief), owner, done or retry; record-block records a builder block; replan-diff says whether a new roadmap version is a split inside one phase (no gate) or goes back to the gate; close runs the QA close then dispatch",
+      "keywords": [
+        "replan",
+        "re-plan",
+        "escalate",
+        "failure history",
+        "block",
+        "split",
+        "gate",
+        "dispatch"
+      ],
+      "inputs": "dispatch --card C --run R --json | record-block --card C --kind K --json | replan-diff --run R --old V --new V2 --json | close --card C --json",
+      "outputs": "JSON (dispatch: {action, reason, run, card, attempt, history, brief}; record-block: {card, kind}; replan-diff: {action, reason, run, old, new, digest}; close: {closed, dispatch}); trusted lines planner.history, planner.replan, planner.block, planner.split; exit 1 with a catalog code (STL-PLN-400..405, STL-CFG-312 in a worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/replan.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "286dac51-cd60-48f9-ba77-8ae8b433b74f",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

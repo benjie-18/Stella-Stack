@@ -83,7 +83,7 @@ brief)   # AC6-brief-history
   ;;
 spec)   # AC6-spec-replan
   approved s1; C1=t_0d000011; C2=t_0d000012; card $C1 "$P"; card $C2 "$P"; bind "$RUN" $C1 c1; bind "$RUN" $C2 c2
-  for c in $C1 $C2; do BREPO=$T/r-$c; B=$(mkrepo "$BREPO"); open_ $c "$B"; H=$(step "$BREPO" a.txt r1); frz $c "$BREPO" "$H"; done
+  for x in "$C1 a.txt" "$C2 b.txt"; do read -r c f <<<"$x"; BREPO=$T/r-$c; B=$(mkrepo "$BREPO"); open_ $c "$B"; H=$(step "$BREPO" "$f" r1); frz $c "$BREPO" "$H"; done   # each change stays inside its roadmap card's files (c1 a.txt, c2 b.txt): no scope growth
   fail_round $C1 1 spec; fail_round $C2 1 code
   dispatch d1 $C1; dispatch d2 $C2; mays m1 "$RUN" $C1
   ok 'qlines qa.finding $C1 | jq -e "any(.[]; .kind == \"spec\")" && [ "$(rc d1)" = 0 ] && [ "$(act d1)" = replan ] && [ "$(cnt planner.replan $C1)" = 1 ] && refused m1 PLN' \

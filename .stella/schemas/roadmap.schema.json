@@ -391,6 +391,16 @@
             "reason"
           ],
           "additionalProperties": false
+        },
+        "checks": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+          },
+          "description": "Ids of the acceptance checks of the card's phase that this card covers."
         }
       },
       "required": [
@@ -399,7 +409,8 @@
         "kind",
         "files",
         "size",
-        "builder"
+        "builder",
+        "checks"
       ],
       "additionalProperties": false
     }

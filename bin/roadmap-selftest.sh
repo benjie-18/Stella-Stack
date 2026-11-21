@@ -44,7 +44,7 @@ printf '#!/usr/bin/env bash\necho "[]"\n' >"$T/pb/hermes"; chmod +x "$T/pb/herme
 fails=0; n=0
 # ok <test> <label>: a FAIL line (never a crash) with the case's saved output and expectation under it
 ok() { n=$((n+1)); if ( set -o pipefail; eval "$1" ) >/dev/null 2>&1; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails+1)); [ -s "$T/o/last" ] && tail -n 3 "$T/o/last" | cut -c1-240 | sed "s/^/${QA_DEBUG:+FAIL}     | /"; fi; : >"$T/o/last"; }
-finish() { echo "# $ME: $n cases, $fails failed"; [ "$fails" = 0 ]; exit $?; }
+finish() { echo "# $ME: $n cases, $fails failed"; [ "$fails" = 0 ] && echo "selftest PASS" || echo "selftest FAIL"; [ "$fails" = 0 ]; exit $?; }
 # run <tag> <cmd...>: stdout to o/<tag>.out, stderr to o/<tag>.err, exit code in o/<tag>.rc
 run() { local t=$1; shift; "$@" >"$T/o/$t.out" 2>"$T/o/$t.err"; echo $? >"$T/o/$t.rc"; }
 rc() { cat "$T/o/$1.rc" 2>/dev/null; }
@@ -73,14 +73,14 @@ link() { STELLA_ROOT=$R python3 -I "$R/bin/resolve.py" resolve --role "$BR" --pr
 LK=$(link); LK=${LK:-null}
 REQ="Build a desktop app with a web UI, a backend service and an installer for Windows and Linux."
 acc() { jq -nc --arg i "$1" --arg a "$2" --arg o "$3" --arg c "$C0" --argjson v "${4:-null}" '{id: $i, action: $a, observe: $o, threshold: (if $v == null then null else {comparator: $c, value: $v} end), owner_confirm: false, probe: null}'; }
-card() { jq -nc --arg i "$1" --arg t "$2" --argjson l "$LK" '{id: $i, title: $t, kind: "qa-kind", files: ["src/\($i)/*"], size: {files: 2, changed_lines: 120, estimate_hours: 2},
-  builder: ($l + {rung: 0, reason: "the cheapest link with an accepted first pass"})}'; }
+card() { jq -nc --arg i "$1" --arg t "$2" --argjson l "$LK" --argjson k "$3" '{id: $i, title: $t, kind: "qa-kind", files: ["src/\($i)/*"], size: {files: 2, changed_lines: 120, estimate_hours: 2},
+  builder: ($l + {rung: 0, reason: "the cheapest link with an accepted first pass"}), checks: $k}'; }   # <id> <title> <checks of its phase it covers (DG-5)>
 mkmap() {   # -> the complex request's roadmap document (JSON) on stdout
   jq -n --arg id "$(uuid)" --arg iid "$IID" --arg proj "$PROJ" --arg text "$REQ" --arg dg "$(printf %s "$REQ" | sha256sum | cut -d' ' -f1)" \
     --arg tier "$TOP" --arg preset "$PRESET" --arg br "$BR" --argjson cap "${CAP:-0}" --argjson l "$LK" \
     --argjson a1 "$(acc a1 'GET /health on the backend port' 'HTTP status code' 200)" --argjson a2 "$(acc a2 'load the UI and click Save' 'saved items listed' 1)" \
     --argjson a3 "$(acc a3 'run the installer on a clean VM' 'installer exit code' 0)" \
-    --argjson c1 "$(card c1 'backend service')" --argjson c2 "$(card c2 'web UI')" --argjson c3 "$(card c3 'installer')" \
+    --argjson c1 "$(card c1 'backend service' '["a1"]')" --argjson c2 "$(card c2 'web UI' '["a2"]')" --argjson c3 "$(card c3 'installer' '["a3"]')" \
     '{schema_version: 1, id: $id, install_id: $iid, project: $proj, request: {text: $text, digest: $dg}, tier: $tier, preset: $preset,
       phases: [
         {id: "p1", title: "Backend service", goal: "a backend that answers", builds: ["backend", "service"], depends_on: [], builder_role: $br, qa_tier: $tier, vm: "TBD", acceptance: [$a1], cards: [$c1]},
@@ -115,21 +115,29 @@ ok 'refused v9 && refused v10' "AC5-valid control: a vm other than TBD while the
 { cat "$T/base.md"; printf '\n```json roadmap\n'; cat "$T/base.json"; printf '```\n'; } >"$T/two.md"; run v11 RM check "$T/two.md" --project "$PROJ" --json
 mk nophase 'del(.phases)'; run v12 RM check "$T/nophase.md" --project "$PROJ" --json
 ok 'refused v11 && refused v12' "AC5-valid control: two roadmap blocks, and a block the schema refuses (no phases), are refused"
+# DG-5: cards carry checks; every acceptance check of a phase is covered by a card of that phase, a card names only its phase's checks
+mk uncov --argjson a "$(acc a1b 'GET /version on the backend port' 'HTTP status code' 200)" '.phases[0].acceptance += [$a]'; run v13 RM check "$T/uncov.md" --project "$PROJ" --json
+ok 'refused v13' "AC5-valid control (DG-5): an acceptance check no card of its phase covers is refused"
+mk foreign '.phases[0].cards[0].checks += ["a2"]'; run v14 RM check "$T/foreign.md" --project "$PROJ" --json
+mk nowhere '.phases[0].cards[0].checks += ["a9"]'; run v15 RM check "$T/nowhere.md" --project "$PROJ" --json
+ok 'refused v14 && refused v15' "AC5-valid control (DG-5): a card check id that is not an acceptance id of its phase (another phase's, or none) is refused"
+ok 'for g in "*" "**" "**/*" "./**"; do mk all --arg g "$g" ".phases[1].cards[0].files = [\$g]" && run v16 RM check "$T/all.md" --project "$PROJ" --json && refused v16 || { say "the files glob $g was not refused"; exit 1; }; done' \
+  "AC5-valid control (DG-5): a card files glob that matches everything (*, **, **/*, ./**) is refused"
 
 # ---- AC9-feel-refused / AC9-numeric-ok ----
 FEEL='the game feels good'
-mk feel --argjson a "$(acc f1 'play the game for one minute' "$FEEL")" '.phases[2].acceptance = [$a]'
-mk feelok --argjson a "$(acc f1 'play the game for one minute' "$FEEL" | jq -c '.owner_confirm = true')" '.phases[2].acceptance = [$a]'
+mk feel --argjson a "$(acc f1 'play the game for one minute' "$FEEL")" '.phases[2].acceptance = [$a] | .phases[2].cards[0].checks = [$a.id]'
+mk feelok --argjson a "$(acc f1 'play the game for one minute' "$FEEL" | jq -c '.owner_confirm = true')" '.phases[2].acceptance = [$a] | .phases[2].cards[0].checks = [$a.id]'
 run f1 RM lint "$T/feel.md" --json; run f2 RM lint "$T/feelok.md" --json
 ok '{ pq -e --arg t "$FEEL" "any(.lint.feel_words[]; . as \$w | \$t | test(\$w; \"i\"))" >/dev/null || say "expected a planner lint feel word in: $FEEL"; } && refused f1' \
   "AC9-feel-refused an acceptance check 'the game feels good' with no threshold and no owner-confirm is refused by the lint"
 ok 'okj f2 ".owner_confirm == 1"' "AC9-feel-refused the same check marked owner_confirm passes the lint and is counted owner-confirm (1)"
-mk num --argjson a "$(acc n1 'press space once, then advance 30 frames' 'bird y position change in px' 40)" '.phases[2].acceptance = [$a]'
+mk num --argjson a "$(acc n1 'press space once, then advance 30 frames' 'bird y position change in px' 40)" '.phases[2].acceptance = [$a] | .phases[2].cards[0].checks = [$a.id]'
 run n1 RM lint "$T/num.md" --json; run n2 RM lint "$T/num.md" --json
 ok 'okj n1 ".owner_confirm == 0 and ([.checks[] | select(.id == \"n1\")][0] | .ok == true and .probe != null)" && same n1 n2' \
   "AC9-numeric-ok a numeric check (action, observe, threshold with a data comparator) passes the lint with a probe sketch, the same answer twice"
-mk str --argjson a "$(acc n1 'press space once, then advance 30 frames' 'bird y position change in px' 40 | jq -c '.threshold.value = "40"')" '.phases[2].acceptance = [$a]'
-mk qcmp --argjson a "$(acc n1 'press space once, then advance 30 frames' 'bird y position change in px' 40 | jq -c '.threshold.comparator = "qa~"')" '.phases[2].acceptance = [$a]'
+mk str --argjson a "$(acc n1 'press space once, then advance 30 frames' 'bird y position change in px' 40 | jq -c '.threshold.value = "40"')" '.phases[2].acceptance = [$a] | .phases[2].cards[0].checks = [$a.id]'
+mk qcmp --argjson a "$(acc n1 'press space once, then advance 30 frames' 'bird y position change in px' 40 | jq -c '.threshold.comparator = "qa~"')" '.phases[2].acceptance = [$a] | .phases[2].cards[0].checks = [$a.id]'
 run n3 RM lint "$T/str.md" --json; run n4 RM lint "$T/qcmp.md" --json
 ped '.lint.comparators += ["qa~"]'; run n5 RM lint "$T/qcmp.md" --json
 ok 'refused n3 && refused n4 && okj n5 ".owner_confirm == 0"' \

@@ -4375,6 +4375,114 @@
       "check": "python3 -I bin/roadmap.py check|lint|pick; bash bin/roadmap-selftest.sh.",
       "related": "P1 item D; bin/roadmap.py, .stella/schemas/roadmap.schema.json, .stella/planner.json",
       "resolvable": false
+    },
+    {
+      "code": "STL-PLN-500",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "the scope guard cannot read the roadmap",
+      "message": "The scope guard refuses the roadmap: {problem}.",
+      "action": "fix the roadmap file so that python3 -I bin/roadmap.py check accepts it.",
+      "cause": "The roadmap file is missing, too large, not one closed json block, or fails its schema.",
+      "check": "python3 -I bin/scope_guard.py check --roadmap FILE [--built FILE] --json; bash bin/scope-guard-selftest.sh.",
+      "related": "P1 item G; bin/scope_guard.py, .stella/planner.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-501",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "the scope guard cannot read the built-work file",
+      "message": "The scope guard refuses the built-work file: {problem}.",
+      "action": "give the file the lists paths, titles and artifacts (strings only), under the size cap.",
+      "cause": "The built-work file is missing, too large, not JSON, or has the wrong shape.",
+      "check": "python3 -I bin/scope_guard.py check --roadmap FILE [--built FILE] --json; bash bin/scope-guard-selftest.sh.",
+      "related": "P1 item G; bin/scope_guard.py, .stella/planner.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-502",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "the scope guard failed unexpectedly",
+      "message": "The scope guard failed: {problem}.",
+      "action": "run python3 -I bin/stella_data.py check, then retry.",
+      "cause": "The planner data cannot be read or the guard hit an unexpected error.",
+      "check": "python3 -I bin/scope_guard.py check --roadmap FILE [--built FILE] --json; bash bin/scope-guard-selftest.sh.",
+      "related": "P1 item G; bin/scope_guard.py, .stella/planner.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-400",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "re-plan data cannot be used",
+      "message": "The re-plan step could not run: {problem}. No card was dispatched or re-planned.",
+      "action": "fix .stella/planner.json or .stella/qa-loop.json and run python3 -I bin/stella_data.py check. See STL-PLN-400 in docs/alert-codes.md.",
+      "cause": "The planner or QA loop data is missing, breaks its schema, or names data that does not exist.",
+      "check": "python3 -I bin/replan.py dispatch|record-block|replan-diff|close --json; bash bin/replan-selftest.sh.",
+      "related": "P1 item F; bin/replan.py, .stella/planner.json (replan)",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-401",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "a re-plan argument is not a plain id",
+      "message": "The re-plan step refused its input: {problem}. Nothing was written.",
+      "action": "pass the board card id, the run id, the version and the block kind as plain ids. See STL-PLN-401 in docs/alert-codes.md.",
+      "cause": "A card, run, version or kind with characters other than letters, digits, dot, dash and underscore, or longer than 64.",
+      "check": "python3 -I bin/replan.py dispatch|record-block|replan-diff|close --json; bash bin/replan-selftest.sh.",
+      "related": "P1 item F; bin/replan.py, .stella/planner.json (replan)",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-402",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "the card is not bound to the run",
+      "message": "The card cannot be dispatched: {problem}. Nothing was written.",
+      "action": "bind the card to the run with bin/planner.py bind (the engine does it when it creates the card), then dispatch again. See STL-PLN-402 in docs/alert-codes.md.",
+      "cause": "No trusted planner.card-bound line names this card and run.",
+      "check": "python3 -I bin/replan.py dispatch|record-block|replan-diff|close --json; bash bin/replan-selftest.sh.",
+      "related": "P1 item F; bin/replan.py, .stella/planner.json (replan)",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-403",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "a roadmap version cannot be read",
+      "message": "A roadmap version could not be used: {problem}. Nothing was decided.",
+      "action": "check the run's version folder under the index key planner_runs and the trusted planner lines of the run; plan again with bin/planner.py plan if the file is gone. See STL-PLN-403 in docs/alert-codes.md.",
+      "cause": "No trusted planner line names that run and version, its roadmap.md is missing, unreadable, refused by the roadmap schema, changed after its trusted digest, or does not hold the bound roadmap card.",
+      "check": "python3 -I bin/replan.py dispatch|record-block|replan-diff|close --json; bash bin/replan-selftest.sh.",
+      "related": "P1 item F; bin/replan.py, .stella/planner.json (replan)",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-404",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "a re-plan record was not written",
+      "message": "The re-plan step could not write its record: {problem}. The decision did not take effect.",
+      "action": "check the free space and the permissions of the event log and of the planner_runs folder, then run the command again. See STL-PLN-404 in docs/alert-codes.md.",
+      "cause": "The failure history file or a trusted planner line (history, replan, block, split) could not be written.",
+      "check": "python3 -I bin/replan.py dispatch|record-block|replan-diff|close --json; bash bin/replan-selftest.sh.",
+      "related": "P1 item F; bin/replan.py, .stella/planner.json (replan)",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-405",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "the re-plan step failed",
+      "message": "The re-plan step failed unexpectedly: {problem}. Nothing may have been decided.",
+      "action": "run the command again with --json and report the problem text. See STL-PLN-405 in docs/alert-codes.md.",
+      "cause": "An unexpected error in bin/replan.py (the problem names its type), or the tool could not restart itself isolated.",
+      "check": "python3 -I bin/replan.py dispatch|record-block|replan-diff|close --json; bash bin/replan-selftest.sh.",
+      "related": "P1 item F; bin/replan.py, .stella/planner.json (replan)",
+      "resolvable": false
     }
   ]
 }

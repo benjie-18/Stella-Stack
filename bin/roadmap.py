@@ -24,7 +24,8 @@ import event_log as el
 import stella_data as sd
 import resolve
 
-BLOCK, SCHEMA, GRAPH, VM, DIGEST, BUDGET, LINK, LINT, NOPROBE, PICK = (f"STL-PLN-{n}" for n in range(200, 210))
+BLOCK, SCHEMA, GRAPH, VM, DIGEST = "STL-PLN-200", "STL-PLN-201", "STL-PLN-202", "STL-PLN-203", "STL-PLN-204"   # literal: the alert suite finds a code by its text
+BUDGET, LINK, LINT, NOPROBE, PICK = "STL-PLN-205", "STL-PLN-206", "STL-PLN-207", "STL-PLN-208", "STL-PLN-209"
 
 
 class Refuse(Exception):
@@ -140,6 +141,12 @@ def cmd_check(a, pl):
             raise Refuse(GRAPH, "depends_on has a cycle")
         for k in ready:
             del left[k]
+    for p in d["phases"]:   # DG-5: every acceptance check is covered by a card of its phase, and a card names only checks of its phase
+        acc, cov = [c["id"] for c in p["acceptance"]], {x for c in p["cards"] for x in c["checks"]}
+        if len(set(acc)) != len(acc) or cov - set(acc) or set(acc) - cov:
+            raise Refuse(GRAPH, f"phase {sd.idn(p['id'], True)}: its acceptance checks and the checks of its cards are not the same ids")
+        if any(re.fullmatch(r"(\./)?(\*+/?)+", g.strip()) for c in p["cards"] for g in c["files"]):
+            raise Refuse(GRAPH, f"phase {sd.idn(p['id'], True)}: a card files glob matches everything")
     ph = pl["roadmap"]["vm_placeholder"]
     if not feature_on(pl["roadmap"]["vm_feature"]) and any(p["vm"] != ph for p in d["phases"]):
         raise Refuse(VM, f"vm must be {ph!r} while the {pl['roadmap']['vm_feature']} feature is not on")

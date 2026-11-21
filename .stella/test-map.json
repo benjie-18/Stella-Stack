@@ -8757,6 +8757,15 @@
     },
     {
       "globs": [
+        "bin/replan.py"
+      ],
+      "targets": [
+        "planner"
+      ],
+      "why": "P1 item F: the shared harness bin/planner-test-lib.sh names bin/replan.py, so the planner selftest reaches it (test-map.py reach)"
+    },
+    {
+      "globs": [
         ".claude/settings.json",
         ".claude/skills/stack-rules/SKILL.md",
         ".stella/adapters.json",
