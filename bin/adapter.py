@@ -688,6 +688,10 @@ def cmd_start(a):
             raise Stop(C["project"], f"--project {sd.idn(a.project)} is not the board binding of card {a.card}" +
                        (f" ({sd.idn(bound) if bound else 'no project'})" if known else " (the board cannot be read to confirm it)"))
         a.project = bound
+        import planner_guard   # DG-1 (P1): a builder card of a project with an open planner run starts only when the planner's projection says so
+        why = planner_guard.start_problem(a.card, a.role, lambda: bound)
+        if why:
+            raise Stop(*why)
     a.gateway_mode = gateway_mode(a.project)
     if a.gateway_mode == "enforce" and not hooked(e):
         raise Stop(C["hookless"], f"the policy gateway enforces for this run, and adapter {e['id']} has no policy hook: its actions cannot be decided before they run")

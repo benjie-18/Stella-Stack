@@ -26,7 +26,8 @@ CLI (engine and owner commands: every one refuses in a worker environment, STL-C
   advance --run R                                  phases pass (planner.phase-passed) when each card is bound and qa done on its hash and
         each owner_confirm check has an approved owner confirmation; an empty phase never passes.
 The start projection (index planner_cards, written here only, under its lock, never through a link): {projects: {P: {open_runs}},
-cards: {card: {run, version, phase, startable, reason}}}; start_problem() is the one reader (adapter.py start, role-guard.py claim).
+cards: {card: {run, version, phase, startable, reason}}}; bin/planner_guard.py start_problem() is its one reader (adapter.py start,
+role-guard.py claim).
 Exit: 0 ok; 1 refused (catalog code STL-PLN-300..321 on stderr, {code, problem} on stdout with --json); 2 usage."""
 import os, sys
 
@@ -42,9 +43,10 @@ BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)
 import event_log as el
 import stella_data as sd
+import planner_guard
 
 (DATA, BADIN, NORUN, STOPPED, DIRECT, WARN, QUESTIONS, NOPLAN, ROADMAP, REPO, PENDING, REJECTED, CARD, DEPENDS, BASE, REPLAN,
- PROJ, GUARD, MODEL, WRITE, EDIT, ASK) = (f"STL-PLN-{n}" for n in range(300, 322))
+ PROJ, GUARD, MODEL, WRITE, EDIT, ASK) = (f"STL-PLN-{n}" for n in range(300, 322))   # PROJ, GUARD: planner_guard's too
 RUN = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")   # a project, card or roadmap card id (the approval service's card form)
 ZERO = "0" * 64
@@ -199,8 +201,11 @@ def fold(run):
             s["passed"].add((v, n.get("phase")))
         elif t == "planner.confirm-asked":
             s["confirm"][(v, n.get("phase"), n.get("check"))] = n.get("request")
-        elif t == "planner.split" and type(n.get("to")) is int:   # DG-6 (bin/replan.py): the approval of 'from' carries to 'to'
-            s["split"][n["to"]] = (n.get("from"), i)
+        elif t == "planner.split" and type(n.get("to")) is int and n.get("from") in s["versions"]:   # DG-6 (bin/replan.py): the approval of 'from' carries to 'to'
+            # shortcut: a split version is not committed to the repo on its own; it rides on its from version's commit until replan commits it
+            s["versions"][n["to"]] = {"digest": n.get("digest"), "commit": n.get("commit") or s["versions"][n["from"]].get("commit")}
+            s["split"][n["to"]] = (n["from"], i)
+            s["current"] = n["to"]
         elif t == "planner.replan" and isinstance(n.get("card"), str):
             s["replan"][n["card"].lower()] = i
         elif t == "planner.run-done":
@@ -342,17 +347,9 @@ def sync(run, pl):
 
 def proj_path():
     try:
-        return el.path(sd.load(sd.INDEX)["planner_cards"])
+        return planner_guard.path()
     except (sd.DataError, KeyError, ValueError) as e:
         raise Stop(PROJ, f"the index planner_cards path cannot be used: {str(e)[:120]}") from None
-
-
-def read_proj(p):
-    with os.fdopen(el.open_file(p, os.O_RDONLY), "rb") as f:
-        doc = json.loads(f.read(el.MAX_FILE + 1))
-    if not (isinstance(doc, dict) and isinstance(doc.get("projects"), dict) and isinstance(doc.get("cards"), dict)):
-        raise ValueError("it is not a start projection")
-    return doc
 
 
 def project(run, proj, open_, cards):
@@ -360,7 +357,7 @@ def project(run, proj, open_, cards):
     try:
         el.mkdirs(os.path.dirname(p))
         with el.locked(p + ".lock"):
-            doc = read_proj(p) if os.path.lexists(p) else {"projects": {}, "cards": {}}
+            doc = planner_guard.read(p) if os.path.lexists(p) else {"projects": {}, "cards": {}}
             runs = [x for x in (doc["projects"].get(proj) or {}).get("open_runs", []) if x != run] + ([run] if open_ else [])
             doc["projects"][proj] = {"open_runs": runs}
             doc["cards"] = {k: e for k, e in doc["cards"].items() if not (isinstance(e, dict) and e.get("run") == run)} | cards
@@ -377,37 +374,6 @@ def project(run, proj, open_, cards):
                     os.unlink(tmp)
     except (OSError, ValueError) as e:
         raise Stop(PROJ, f"the start projection was not written ({type(e).__name__}); no builder card of the project starts until it is") from None
-
-
-def start_problem(card, role, project_of):
-    """DG-1, the one start guard of adapter.py start and role-guard.py's kanban_claim: None, or (code, problem) for a card of a
-    builder role. No projection = no project ever used the planner: no change. A card in it starts only when startable; a card of a
-    project with an open run that is not bound to it does not start. project_of() gives the card's board project (None: none) and
-    raises when the binding cannot be read. An unreadable projection refuses (fail closed)."""
-    try:
-        p = proj_path()
-        if not os.path.lexists(p):
-            return None
-        doc = read_proj(p)
-        rows = [r for r in sd.rows() if r["schema"] == "routing" and r["format"] == "json"]
-        builders = sd.load(rows[0]["path"])["builder_roles"]
-    except Exception as e:
-        return PROJ, f"the planner's start projection cannot be read ({type(e).__name__}), so no builder card starts now"
-    if role not in builders:
-        return None
-    e = doc["cards"].get(str(card).lower())
-    if isinstance(e, dict):
-        return None if e.get("startable") is True else (GUARD, f"card {card} belongs to planner run {e.get('run')}: {str(e.get('reason'))[:200]}")
-    busy = {k for k, v in doc["projects"].items() if isinstance(v, dict) and v.get("open_runs")}
-    if not busy:
-        return None
-    try:
-        proj = project_of()
-    except Exception:
-        return GUARD, f"the project of card {card} cannot be read, and a project has an open planner run"
-    if proj in busy:
-        return GUARD, f"project {proj} has an open planner run and card {card} is not bound to its roadmap (planner.py bind)"
-    return None
 
 
 # ---- the commands ----
@@ -445,7 +411,7 @@ def cmd_route(o, pl, ps):
     qf = next(v for v in ((ps["projects"].get(o.project) or {}).get("question_first"), ps["defaults"].get("question_first"), False) if v is not None) is True
     run = str(uuid.uuid4())
     with run_lock(run):
-        rq = put(run, "request.txt", raw=raw)
+        rq = put(run, "request", raw=raw)
         p = subprocess.run([sys.executable, "-I", os.path.join(BIN, "planner_rubric.py"), "extract", "--project", o.project, "--request", rq,
                             "--request-id", run, "--json"], capture_output=True, text=True)
         try:
@@ -519,7 +485,7 @@ def cmd_plan(o, pl, ps):
         ready(s, view, pl)
         r = s["routed"]
         v = max(s["versions"], default=0) + 1
-        _, req = get(run, "request.txt", digest=r["request"])
+        _, req = get(run, "request", digest=r["request"])
         ans = get(run, f"answers-{s['answers']}.txt", digest=s["answers"])[1].decode("utf-8") if s["answers"] else ""
         repo = repo_of(r["project"])
         files = git(repo, "ls-files").splitlines()[:pl["planning"]["repo_summary_files"]]
@@ -560,7 +526,7 @@ def commit_and_gate(s, v, pl, edit_of=None):
     top = git(repo, "rev-parse", "--show-toplevel")
     if os.path.realpath(top) != os.path.realpath(repo) or git(repo, "rev-parse", "--absolute-git-dir") != git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"):
         raise Stop(REPO, "the project's repo path is not its main checkout")
-    if git(repo, "symbolic-ref", "--short", "-q", "HEAD") != main or git(repo, "status", "--porcelain"):   # as merge-card.sh: the main checkout, clean, on main
+    if git(repo, "symbolic-ref", "--short", "-q", "HEAD") != main or git(repo, "status", "--porcelain"):   # as the card merge: the main checkout, clean, on main
         raise Stop(REPO, f"the project's main checkout is not clean on {main}: the roadmap is not committed")
     f = os.path.join(top, rel)
     try:

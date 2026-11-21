@@ -1,6 +1,6 @@
-"""The planner's start guard (phase P1 item E, design check DG-1), stdlib only: the one rule bin/adapter.py start, bin/role-guard.py's
-kanban_claim and bin/planner.py may-start share. It lives apart from planner.py so a hook imports only this and the data tools.
-It reads the start projection (index key planner_cards) that planner.py alone writes, under its lock, never through a link:
+"""The planner's start guard (phase P1 item E, design check DG-1), stdlib only: the one rule the adapter's start, the role guard's
+kanban_claim and the planner's may-start share. A module of its own: a hook loads only it and the data tools, never the engine.
+It reads the start projection (index key planner_cards) that the planner engine alone writes, under its lock, never through a link:
 {projects: {P: {open_runs: [run]}}, cards: {card: {run, version, phase, startable, reason}}}. No projection: no project ever used the
 planner, nothing changes. Refusals: STL-PLN-316 (the projection cannot be read), STL-PLN-317 (the card may not start)."""
 import json, os, sys
@@ -51,5 +51,5 @@ def start_problem(card, role, project_of):
     except Exception:
         return GUARD, f"the project of card {card} cannot be read, and a project has an open planner run"
     if proj in busy:
-        return GUARD, f"project {proj} has an open planner run and card {card} is not bound to its roadmap (planner.py bind)"
+        return GUARD, f"project {proj} has an open planner run and card {card} is not bound to its roadmap (the planner's bind command)"
     return None
