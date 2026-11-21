@@ -46,7 +46,8 @@ import stella_data as sd
 import planner_guard
 
 (DATA, BADIN, NORUN, STOPPED, DIRECT, WARN, QUESTIONS, NOPLAN, ROADMAP, REPO, PENDING, REJECTED, CARD, DEPENDS, BASE, REPLAN,
- PROJ, GUARD, MODEL, WRITE, EDIT, ASK) = (f"STL-PLN-{n}" for n in range(300, 322))   # PROJ, GUARD: planner_guard's too
+ PROJ, GUARD, MODEL, WRITE, EDIT, ASK) = \
+    ("STL-PLN-300", "STL-PLN-301", "STL-PLN-302", "STL-PLN-303", "STL-PLN-304", "STL-PLN-305", "STL-PLN-306", "STL-PLN-307", "STL-PLN-308", "STL-PLN-309", "STL-PLN-310", "STL-PLN-311", "STL-PLN-312", "STL-PLN-313", "STL-PLN-314", "STL-PLN-315", "STL-PLN-316", "STL-PLN-317", "STL-PLN-318", "STL-PLN-319", "STL-PLN-320", "STL-PLN-321")   # literal codes: the alert suite finds senders by literal; PROJ, GUARD: planner_guard's too
 RUN = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")   # a project, card or roadmap card id (the approval service's card form)
 ZERO = "0" * 64

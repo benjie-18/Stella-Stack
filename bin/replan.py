@@ -47,7 +47,7 @@ import qa_loop
 import qa_findings as qf
 import roadmap
 
-DATA, BAD, NOT_BOUND, VERSION, WRITE, FAILED = (f"STL-PLN-{n}" for n in range(400, 406))
+DATA, BAD, NOT_BOUND, VERSION, WRITE, FAILED = ("STL-PLN-400", "STL-PLN-401", "STL-PLN-402", "STL-PLN-403", "STL-PLN-404", "STL-PLN-405")   # literal codes: the alert suite finds senders by literal
 ROADMAP_FILE, HISTORY = "roadmap.md", "history"   # DG-11's file name in a version folder; the history folder of a run
 CLIMB, REPLAN, OWNER, DONE, RETRY, GATE, SPLIT = "climb", "replan", "owner", "done", "retry", "gate", "split"   # answers (design item F)
 GLOB_CHARS = "*?["
