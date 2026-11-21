@@ -74,7 +74,7 @@
       "rubric": "auto",
       "skip": "no"
     },
-    "default": "rubric",
+    "default": "auto",
     "force_min_behavior": "card_roadmap"
   },
   "local_only_warn": {

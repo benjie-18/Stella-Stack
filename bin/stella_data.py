@@ -1516,16 +1516,16 @@ def rule_planner(c):
             bad("a tier behavior or modes.force_min_behavior is not in behaviors")
         if "needs_input" in p["replan"]["block_kinds"] or "code" in p["replan"]["problem_kinds"]:
             bad("replan: block_kinds never lists needs_input and problem_kinds never lists code")
-        if p["modes"]["default"] not in p["modes"]["ids"]:
-            bad("modes.default is not a key of modes.ids")
+        if p["modes"]["default"] not in p["modes"]["ids"].values():
+            bad("modes.default is not a mode word of modes.ids")
         if len(set(p["modes"]["ids"].values())) != len(p["modes"]["ids"]):
             bad("modes.ids: a mode word is used twice")
         if not {p["card_size"]["stats_index_key"], p["model_pick"]["benchmark_index_key"]} <= set(c["idx"]):
             bad("card_size.stats_index_key or model_pick.benchmark_index_key is not a key of the data index")
         for sid, s in c["whole"].get("planner-settings", []):
             ms = [s["defaults"]["mode"], *(x["mode"] for k in ("projects", "cards") for x in s[k].values() if "mode" in x)]
-            if any(m not in p["modes"]["ids"] for m in ms):
-                P(sid, Coded(PLANNER_DATA, "a mode in the planner settings is not a key of the planner modes.ids"))
+            if any(m not in p["modes"]["ids"].values() for m in ms):
+                P(sid, Coded(PLANNER_DATA, "a mode in the planner settings is not a mode word of the planner modes.ids"))
 
 
 def rule_link_classes(c):

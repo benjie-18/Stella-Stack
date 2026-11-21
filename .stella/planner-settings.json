@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "defaults": {
-    "mode": "rubric",
+    "mode": "auto",
     "question_first": false
   },
   "projects": {},
