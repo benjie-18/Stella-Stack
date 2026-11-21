@@ -56,25 +56,25 @@ ok 'pj '"'"'.rubric | (.features | length == 6) and ([.features[].points] | sort
   and ([.features[].id] | sort == (["multi_system","new_dependency","ambiguous","large_work","human_gate","new_project"] | sort))
   and ([.features[] | select(.id == "multi_system")][0].points == 2) and all(.features[]; (.question | type) == "string" and (.question | length) > 0)
   and ([.thresholds[].tier] == $tiers) and ([.thresholds[] | .max_score] == [1,3,null]) and (.thresholds[-1] | has("max_score") | not)
-  and .unsure.raise_tiers == 1 and ($roles | index(.extract_role)) != null'"'"'' \
+  and .unsure.raise_tiers == 1 and (.extract_role as $x | any($roles[]; . == $x))'"'"'' \
   "AC-DATA 3 rubric seed: six features (multi_system 2 points, the rest 1), thresholds over the task tiers in order (<=1, <=3, last open), unsure raises one tier, extract_role is a role"
 ok 'pj '"'"'(.tiers | keys | sort) == ($tiers | sort) and ([$tiers[] as $t | .tiers[$t].behavior] == ["direct","card_roadmap","roadmap_card"])
-  and ([$tiers[] as $t | .tiers[$t].gate] == [false,false,true]) and all(.tiers[]; ($tiers | index(.question_tier)) != null)'"'"'' \
+  and ([$tiers[] as $t | .tiers[$t].gate] == [false,false,true]) and all(.tiers[]; .question_tier as $q | any($tiers[]; . == $q))'"'"'' \
   "AC-DATA 4 tiers seed: one entry per task tier, behaviour direct / card_roadmap / roadmap_card, gate on the last only, question_tier a task tier"
 ok 'pj '"'"'(.modes.ids | to_entries | map(.value) | sort == ["auto","no","yes"]) and .modes.default == "auto"
-  and (.local_only_warn.presets | length >= 1 and all(.[]; ($presets | index(.)) != null))
-  and (.local_only_warn.tiers | length >= 1 and all(.[]; ($tiers | index(.)) != null))'"'"'' \
+  and (.local_only_warn.presets | length >= 1 and all(.[]; . as $x | any($presets[]; . == $x)))
+  and (.local_only_warn.tiers | length >= 1 and all(.[]; . as $x | any($tiers[]; . == $x)))'"'"'' \
   "AC-DATA 5 modes yes/auto/no with default auto; local_only_warn names known presets and task tiers"
 ok 'pj '"'"'.replan.block_limit == 2 and .report.interval_days == 7 and .scope_guard.min_shared_terms == 1
   and all(.card_size.default_limits | (.files, .changed_lines, .estimate_hours); type == "number")
   and (.card_size.min_samples | type == "number") and (.card_size.max_fail_rate | type == "number")
   and (.lint.feel_words | length >= 1) and (.lint.comparators | length >= 1) and (.model_pick.min_samples | type == "number")'"'"'' \
   "AC-DATA 6 replan block_limit 2, weekly report, scope guard min 1 shared term, card_size / lint / model_pick sections present"
-ok 'have && jq -e --slurpfile pl "$ROOT/$PL" "(\$pl[0].modes.ids | to_entries | map(.value)) as \$m | .defaults.question_first == false and (\$m | index(.defaults.mode)) != null and (.projects | type == \"object\") and (.cards | type == \"object\")" "$ROOT/$PS" >/dev/null' \
+ok 'have && jq -e --slurpfile pl "$ROOT/$PL" "(\$pl[0].modes.ids | to_entries | map(.value)) as \$m | .defaults.question_first == false and (.defaults.mode as \$d | any(\$m[]; . == \$d)) and (.projects | type == \"object\") and (.cards | type == \"object\")" "$ROOT/$PS" >/dev/null' \
   "AC-DATA 7 planner-settings defaults: question_first false, mode a planner mode word; projects and cards maps"
 ok 'jq -e --slurpfile pl "$ROOT/$PL" '"'"'(.phase_order) as $po | (.entries | map({key: .id, value: .}) | from_entries) as $e
   | $e.planner.status == "on" and $e["planner-question-first"].status == "on" and $e["planner-exploration"].status == "off"
-  and all("planner-routing-stats-mock","planner-benchmark-priors-mock","planner-probe-sketch-stub","planner-scope-guard-stub","planner-failure-history"; ($po | index($e[.].due_phase)) != null)
+  and all("planner-routing-stats-mock","planner-benchmark-priors-mock","planner-probe-sketch-stub","planner-scope-guard-stub","planner-failure-history"; . as $s | any($po[]; . == $e[$s].due_phase))
   and ($e["planner-vm-field"] != null)
   and ([$pl[0].model_pick.exploration | .. | strings] | any(. as $s | $e[$s].status == "off"))'"'"' "$FT" >/dev/null 2>&1' \
   "AC-DATA 8 features: planner and planner-question-first on, planner-exploration off and named by model_pick.exploration, stubs due at a phase of phase_order, planner-vm-field present"
