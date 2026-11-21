@@ -78,6 +78,7 @@ class Coded(str):
         return s
 
 
+TIER_ROWS = "STL-MDL-733"   # a role's tier rows do not cover every task tier, or a preset has none to use
 OFF_REQUIRED, CHAIN_FAILS, BUILTIN_EDIT = "STL-MDL-725", "STL-MDL-726", "STL-MDL-727"   # the preset rule's codes (F2 D1.9)
 QA_DATA = "STL-QA-105"   # the QA loop rule's code (Q1 DG-3); the QA loop tool refuses its plan with the same code
 ENGINE_REFUSED = "STL-MDL-764"   # a candidate of the weekly model check that is no engine pick (F2c F, frozen())
@@ -1096,7 +1097,7 @@ def rule_assignments(c):
             for k in ("project", "card"):
                 if (k in want) != (k in sc):
                     P(rid, f"{aid}: scope.level {lvl} {'needs' if k in want else 'has no'} {k}")
-            key = (lvl, pid, sc.get("card"), a["role"], a["effort_mode"])
+            key = (lvl, pid, sc.get("card"), a["role"], a["effort_mode"], a.get("tier"))
             if key in seen:
                 P(rid, f"{aid}: same scope, role and effort mode as {idn(seen[key])}")
             seen[key] = a["id"]
@@ -1180,6 +1181,21 @@ def rule_presets(c):
             for a in ra["assignments"]:
                 for m in order_problems(a.get("class_order", []), classes, f"{idn(a['id'])}: class_order"):
                     P(rid, m)
+            # tier rows (global scope): a role that has them has one for every task tier in a preset, and every preset reaches some (own, else its based_on line)
+            tiers, have = [x["id"] for x in rt["task_tiers"]], {}
+            for a in ra["assignments"]:
+                if "tier" in a and a["scope"]["level"] == "global":
+                    have.setdefault(a["role"], {}).setdefault(a["effort_mode"], set()).add(a["tier"])
+            for r, by_mode in have.items():
+                for pid, mode in ra["effort_modes"].items():
+                    line = [pid]
+                    while line[-1] not in by_mode and ra["effort_modes"][line[-1]].get("based_on") in ra["effort_modes"] and ra["effort_modes"][line[-1]]["based_on"] not in line:
+                        line.append(ra["effort_modes"][line[-1]]["based_on"])
+                    if line[-1] not in by_mode:
+                        P(rid, Coded(TIER_ROWS, f"preset {kname(pid)}: role {nm(r, table['roles'], 'a key')} has tier rows in another preset, and this one has none and no based_on preset that does"))
+                for pid, got in by_mode.items():
+                    if got != set(tiers):
+                        P(rid, Coded(TIER_ROWS, f"preset {kname(pid)}: role {nm(r, table['roles'], 'a key')} has tier rows for only some of the task tiers"))
             # effort ids are data (routing effort.levels): every link of every assignment and preset names a known one or none
             links = [(f"{idn(a['id'])}: chain[{i}]", l) for a in ra["assignments"] for i, l in enumerate(a["chain"])] + \
                 [(f"preset {kname(pid)}: role {nm(r, table['roles'], 'a key')}: {f}[{i}]", l) for pid, mode in ra["effort_modes"].items()

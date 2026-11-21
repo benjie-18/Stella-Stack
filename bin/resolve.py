@@ -6,7 +6,7 @@ preset, link class, tier, driver, provider or model is named in this file: every
 one function of bin/stella_data.py (reach, policy_allows, route_problems, grant_in_force, link_class, probed, unmet).
 CLI: resolve.py resolve --role R --project P [--card C] [--tier T] [--driver D] [--task ID] [--rung N] [--tokens N] [--json]   (JSON only)
 Import: resolve(ctx) -> the same dict (ctx: {role, project, card, tier, driver, task, rung, tokens}); link_key(link) -> "<connection>/<model>",
-the state file's key; role_view(role, project, card=None) -> what routing gives the role before any link is judged (its
+the state file's key; role_view(role, project, card=None, d=None, tier=None) -> what routing gives the role before any link is judged (its
 docstring has the keys), the one copy of that rule: resolve() reads it there. Both write nothing and alert nothing: a
 fail-closed answer is a stella_data.DataError (Refusal carries its code; any other one is data that `check` refuses, STL-CFG-310).
 Output: {role, project, card, preset {id, source: card|project|global}, policy: project|default (a project the data policy
@@ -200,7 +200,7 @@ def _data(project):
                                  policies=policies, local_only=any(p["mode"] == "local_only" for p in policies), recs=sd.probe_records(rt))
 
 
-def role_view(role, project, card=None, d=None):
+def role_view(role, project, card=None, d=None, tier=None):
     """What routing gives a role in a project (on a card when one is named), before any link is judged. It answers for a role
     the preset turns off and for a role that works a card asked with no card. d: the data resolve() has loaded already.
     {role, project, card, preset {id, source: card|project|global}, local_only, exempt, active,
@@ -211,7 +211,8 @@ def role_view(role, project, card=None, d=None):
        requirements (null: none, always so for an exempt role and under Local only),
      last_resort (null for an exempt role and under Local only),
      pins[] {scope: card|project|global, chain[]}: the owner's, in chain order, preset_pins[], fallbacks[]: the preset's for the role,
-     escalation_chain[]: the preset's rungs for the role (rung N is entry N-1)}"""
+     escalation_chain[]: the preset's rungs for the role (rung N is entry N-1)}
+    tier: a task tier id; an assignment row with that tier (of the preset, else of its based_on line) beats, at its scope, the rows with no tier."""
     d = d or _data(project)
     ra, rt = d.ra, d.rt
     known("role", role, set(d.table["roles"]) - {d.table["fallback_role"]})
@@ -225,9 +226,16 @@ def role_view(role, project, card=None, d=None):
     mode = ra["effort_modes"][preset]
     rp = mode.get("roles", {}).get(role, {"active": True})   # a role the preset does not list follows the preset and is active
     exempt = next((x for x in rt["exempt_roles"] if x["role"] == role), None)
+    # tier rows (tier = a task tier id) come from the preset, else from the first preset up its based_on line that has any for the role
+    line = [preset]
+    while ra["effort_modes"][line[-1]].get("based_on") in ra["effort_modes"] and ra["effort_modes"][line[-1]]["based_on"] not in line:
+        line.append(ra["effort_modes"][line[-1]]["based_on"])
+    tname = next((n for n in line if any(a["role"] == role and a["effort_mode"] == n and "tier" in a for a in ra["assignments"])), None)
     scoped = [(lvl, a) for lvl in ("card", "project", "global") for a in ra["assignments"]
-              if a["role"] == role and a["effort_mode"] == preset and a["scope"]["level"] == lvl
+              if a["role"] == role and a["scope"]["level"] == lvl
+              and ((a["effort_mode"] == preset and "tier" not in a) or (tier is not None and a.get("tier") == tier and a["effort_mode"] == tname))
               and (lvl == "global" or d.alias(a["scope"].get("project")) == d.pid and (lvl == "project" or a["scope"].get("card") == card))]
+    scoped = [(lvl, a) for lvl, a in scoped if "tier" in a or not any(l == lvl and "tier" in b for l, b in scoped)]   # at one scope a tier row beats the row with no tier
     # the class order: an exempt role's own (ruling 1); Local only overrides any preset (B4); else the owner's override, the preset's for the role, the preset's
     if exempt:
         src, order, last, needs = "exempt", exempt["class_order"], None, None
@@ -294,7 +302,7 @@ def resolve(ctx, d=None):
             apps.append({"app": a if isinstance(a, str) else None, "status": "excluded" if code else "usable", "code": code, "reason": why})
 
     # ---- the preset, the class order, the last resort and the pins of the role: role_view(), the one copy of that rule
-    view = role_view(role, project, card, d)
+    view = role_view(role, project, card, d, tier)
     preset, source, exempt, order, last, needs = (view["preset"]["id"], view["preset"]["source"], view["exempt"], view["class_order"],
                                                   view["last_resort"], view["needs_class"])
     mode = ra["effort_modes"][preset]

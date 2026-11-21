@@ -1170,6 +1170,18 @@
       "resolvable": false
     },
     {
+      "code": "STL-MDL-733",
+      "area": "MDL",
+      "severity": "warning",
+      "title": "a role's tier rows do not cover every task tier",
+      "message": "The role assignments give a role model rows per task tier, and they are incomplete: {problem}. The data is treated as not valid until it is fixed.",
+      "action": "give the role one row for every task tier in that preset (role-assignments.json assignments, tier), or give the preset a based_on preset that has them, then run the check again. See STL-MDL-733 in docs/alert-codes.md.",
+      "cause": "A role has assignment rows with a tier in some presets, and in one preset it covers only some of the routing task tiers; or a preset has none and no based_on preset (itself or further up) that does, so the planner could not choose a model for a tier.",
+      "check": "`python3 bin/stella_data.py check`; `python3 bin/stella_data.py get role-assignments` (assignments, effort_modes based_on); `python3 bin/stella_data.py get routing` (task_tiers).",
+      "related": "P1 item B; bin/stella_data.py rule_presets",
+      "resolvable": false
+    },
+    {
       "code": "STL-MDL-734",
       "area": "MDL",
       "severity": "warning",
