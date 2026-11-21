@@ -103,7 +103,9 @@
       "flag": "planner-exploration",
       "share": 0.1
     },
-    "benchmark_index_key": "planner_benchmark_priors"
+    "prior_index_key": "planner_benchmark_priors",
+    "unknown_first_pass": 0.5,
+    "no_card_id": "pick-nocard"
   },
   "lint": {
     "feel_words": [
@@ -116,7 +118,8 @@
       "pretty",
       "snappy",
       "responsive",
-      "fun"
+      "fun",
+      "feel"
     ],
     "comparators": [
       "<",
@@ -179,5 +182,13 @@
     "direct",
     "card_roadmap",
     "roadmap_card"
-  ]
+  ],
+  "roadmap": {
+    "fence": "json roadmap",
+    "max_bytes": 262144,
+    "max_depth": 12,
+    "vm_placeholder": "TBD",
+    "vm_feature": "vm-worker",
+    "probe_stub_feature": "planner-probe-sketch-stub"
+  }
 }

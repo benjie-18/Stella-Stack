@@ -272,16 +272,29 @@
           ],
           "additionalProperties": false
         },
-        "benchmark_index_key": {
+        "prior_index_key": {
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+        },
+        "unknown_first_pass": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "First-pass rate used when neither the routing stats nor the prior know a (kind, link)."
+        },
+        "no_card_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,40}$",
+          "description": "The card id pick asks the resolver with when no --card is given (a card role needs one; it has no facts record)."
         }
       },
       "required": [
         "min_samples",
         "owner_penalty_cost",
         "exploration",
-        "benchmark_index_key"
+        "prior_index_key",
+        "unknown_first_pass",
+        "no_card_id"
       ],
       "additionalProperties": false
     },
@@ -456,6 +469,53 @@
       "maxItems": 16,
       "uniqueItems": true,
       "description": "Behaviours weakest to strongest; code compares by position."
+    },
+    "roadmap": {
+      "type": "object",
+      "properties": {
+        "fence": {
+          "type": "string",
+          "pattern": "^[a-z]+( [a-z]+)*$",
+          "description": "The info string of the one fenced block of roadmap.md."
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 16777216
+        },
+        "max_depth": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 64
+        },
+        "vm_placeholder": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "The only vm value while the VM feature is not on."
+        },
+        "vm_feature": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "description": "The features entry whose status on lets a phase name a real vm.",
+          "x-ref": "features"
+        },
+        "probe_stub_feature": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "x-ref": "features"
+        }
+      },
+      "required": [
+        "fence",
+        "max_bytes",
+        "max_depth",
+        "vm_placeholder",
+        "vm_feature",
+        "probe_stub_feature"
+      ],
+      "additionalProperties": false,
+      "description": "The roadmap.md format limits (bin/roadmap.py)."
     }
   },
   "required": [
@@ -470,7 +530,8 @@
     "replan",
     "scope_guard",
     "report",
-    "behaviors"
+    "behaviors",
+    "roadmap"
   ],
   "additionalProperties": false
 }
