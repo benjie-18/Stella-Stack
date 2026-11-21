@@ -284,6 +284,15 @@
     },
     "agui-ui": {
       "mark": "hermetic"
+    },
+    "planner-rubric": {
+      "mark": "hermetic"
+    },
+    "roadmap": {
+      "mark": "hermetic"
+    },
+    "scope-guard": {
+      "mark": "hermetic"
     }
   },
   "test_like": [
@@ -8300,6 +8309,172 @@
         "conformance"
       ],
       "why": "X1 last fix cycle (crt-final X1-CRT-04/05): bin/agent-runtime-selftest.sh's new cases run the gateway with the owner file and the real Cedar runner (package.json); the conformance selftest runs that harness"
+    },
+    {
+      "globs": [
+        "bin/planner-rubric-selftest.sh",
+        "bin/planner_rubric.py",
+        ".stella/planner.json",
+        ".stella/schemas/planner.schema.json",
+        ".stella/routing.json",
+        ".stella/role-assignments.json",
+        ".stella/data-files.json"
+      ],
+      "targets": [
+        "planner-rubric"
+      ],
+      "why": "P1 item C (tests first): the planner-rubric selftest runs planner_rubric.py score and split in a scratch root with answer files and mock routing stats as data"
+    },
+    {
+      "globs": [
+        "bin/roadmap-selftest.sh",
+        "bin/roadmap.py",
+        ".stella/schemas/roadmap.schema.json",
+        ".stella/pricing.json",
+        ".stella/connections.json",
+        ".stella/budgets.json",
+        ".stella/planner.json",
+        ".stella/schemas/planner.schema.json",
+        ".stella/routing.json",
+        ".stella/role-assignments.json",
+        ".stella/data-files.json"
+      ],
+      "targets": [
+        "roadmap"
+      ],
+      "why": "P1 item D (tests first): the roadmap selftest runs roadmap.py check, lint and pick on roadmaps written from data, with mock stats, priors and prices"
+    },
+    {
+      "globs": [
+        "bin/scope-guard-selftest.sh",
+        "bin/scope_guard.py",
+        "bin/fixtures/planner/*",
+        "bin/roadmap.py",
+        ".stella/schemas/roadmap.schema.json",
+        ".stella/planner.json",
+        ".stella/schemas/planner.schema.json",
+        ".stella/routing.json",
+        ".stella/role-assignments.json",
+        ".stella/data-files.json"
+      ],
+      "targets": [
+        "scope-guard"
+      ],
+      "why": "P1 item G (tests first): the scope-guard selftest replays the 2026-11-06 request (fixture) through roadmap.py check/lint and scope_guard.py check"
+    },
+    {
+      "globs": [
+        ".claude/settings.json",
+        ".claude/skills/stack-rules/SKILL.md",
+        ".stella/adapters.json",
+        ".stella/agent-protocols.json",
+        ".stella/capability-sources.json",
+        ".stella/features.json",
+        ".stella/host-policy.json",
+        ".stella/limit-signals.json",
+        ".stella/model-check.json",
+        ".stella/policy.json",
+        ".stella/prompt-profiles.json",
+        ".stella/protocols.json",
+        ".stella/run-gateway.json",
+        ".stella/run-policy.json",
+        ".stella/schemas/event.schema.json",
+        ".stella/schemas/probes.schema.json",
+        ".stella/settings.json",
+        ".stella/stuck.json",
+        ".supervisor/limits.env",
+        "SUPERVISOR.md",
+        "bin/adapter.py",
+        "bin/agent_runtime.py",
+        "bin/agent_tool.py",
+        "bin/agui_ui.py",
+        "bin/alert-catalog.sh",
+        "bin/alert.sh",
+        "bin/alert_catalog.py",
+        "bin/apply-hermes-local.sh",
+        "bin/approvals.py",
+        "bin/box.py",
+        "bin/budget.py",
+        "bin/capabilities.py",
+        "bin/capabilities_mcp.py",
+        "bin/compare.py",
+        "bin/consent.py",
+        "bin/cost.py",
+        "bin/credentials.py",
+        "bin/devices.py",
+        "bin/escalate-drain.sh",
+        "bin/escalate.sh",
+        "bin/escalation-complete.sh",
+        "bin/escalation-discord.sh",
+        "bin/escalation-on-block.sh",
+        "bin/escalation-on-claim.sh",
+        "bin/escalation-on-complete.sh",
+        "bin/escalation-thread.sh",
+        "bin/event_log.py",
+        "bin/event_untrusted.py",
+        "bin/false-close-guard.py",
+        "bin/gateway.py",
+        "bin/host_access.py",
+        "bin/kanban-board.sh",
+        "bin/kanban-guard.sh",
+        "bin/ledger.py",
+        "bin/log_filter.py",
+        "bin/model_check.py",
+        "bin/model_proxy.py",
+        "bin/owner-config.sh",
+        "bin/owner_auth.py",
+        "bin/owner_config.py",
+        "bin/policy.py",
+        "bin/probe.py",
+        "bin/prompt.py",
+        "bin/redact_all.py",
+        "bin/register-escalation-hook.sh",
+        "bin/register-toolsets.sh",
+        "bin/resolve.py",
+        "bin/role-guard.py",
+        "bin/roles.py",
+        "bin/route.py",
+        "bin/run_policy.py",
+        "bin/run_token.py",
+        "bin/settings.py",
+        "bin/stella-apply.py",
+        "bin/stella_data.py",
+        "bin/stuck.py",
+        "bin/triage.py",
+        "bin/worker_env.py",
+        "docs/alert-codes.md",
+        "docs/hermes-local/alert-catalog.json",
+        "docs/hermes-local/board.md",
+        "docs/hermes-local/fallback-routing.json",
+        "docs/hermes-local/roles.json",
+        "opencode.json"
+      ],
+      "targets": [
+        "planner-rubric",
+        "roadmap",
+        "scope-guard"
+      ],
+      "why": "P1 tests first (items C, D, G): the planner-rubric, roadmap and scope-guard selftests run their tools in a scratch root that holds these files and call bin/resolve.py and bin/event_log.py (from reach, the targets test-map.py check named)"
+    },
+    {
+      "globs": [
+        ".stella/budgets.json",
+        ".stella/connections.json"
+      ],
+      "targets": [
+        "planner-rubric",
+        "scope-guard"
+      ],
+      "why": "P1 tests first (items C, D, G): the planner-rubric, roadmap and scope-guard selftests run their tools in a scratch root that holds these files and call bin/resolve.py and bin/event_log.py (from reach, the targets test-map.py check named)"
+    },
+    {
+      "globs": [
+        "bin/fixtures/planner/replay-2026-11-06/roadmap.md"
+      ],
+      "targets": [
+        "roadmap"
+      ],
+      "why": "P1 tests first (items C, D, G): the planner-rubric, roadmap and scope-guard selftests run their tools in a scratch root that holds these files and call bin/resolve.py and bin/event_log.py (from reach, the targets test-map.py check named)"
     }
   ]
 }
