@@ -20,6 +20,7 @@ import argparse, datetime, hashlib, json, os, random, re, sys
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)   # python3 -I does not add the script folder
+import event_log as el
 import stella_data as sd
 import resolve
 
@@ -229,6 +230,7 @@ def cmd_pick(a, pl):
         r["expected_cost"] = e = r["round_cost"] * sum((1 - r["p"]) ** j for j in range(kk)) + (1 - r["p"]) ** kk * e
     best = min(rows, key=lambda r: (r["expected_cost"], r["rung"]))
     explored = False
+    # shortcut: exploration (flag off) has no test, it picks the least-sampled rung; give it a case before the flag is turned on
     if not a.critical and feature_on(mp["exploration"]["flag"]) and random.random() < mp["exploration"]["share"]:
         best, explored = min(rows, key=lambda r: (r["samples"], r["rung"])), True
     return {"rung": best["rung"], "link": best["link"], "explored": explored, "rungs": rows}
@@ -254,8 +256,8 @@ def main(argv):
         out = {"check": cmd_check, "lint": cmd_lint, "pick": cmd_pick}[a.cmd](a, doc("planner"))
     except (Refuse, sd.DataError) as e:
         code, why = (e.code, e.problem) if isinstance(e, Refuse) else (getattr(e, "code", None) or PICK, str(e))
-        print(json.dumps({"ok": False, "code": code, "problem": why}))
-        sd.say(code, why)
+        print(json.dumps({"ok": False, "code": code, "problem": el.scrub(why)}))
+        el.say(code, why, alert=True)   # one alert line per refusal, secrets masked (as qa_loop.py)
         return 1
     print(json.dumps(out, indent=2))
     return 0
@@ -265,9 +267,9 @@ if __name__ == "__main__":
     try:
         sys.exit(main(sys.argv[1:]))
     except RecursionError:
-        sd.say(PICK, "a data file is nested too deeply")
+        el.say(PICK, "a data file is nested too deeply", alert=True)
         sys.exit(1)
     except Exception as e:   # never the value: the type only
         print(json.dumps({"ok": False, "code": PICK, "problem": type(e).__name__}))
-        sd.say(PICK, f"{type(e).__name__}, an unexpected failure of roadmap.py")
+        el.say(PICK, f"{type(e).__name__}, an unexpected failure of roadmap.py", alert=True)
         sys.exit(1)
