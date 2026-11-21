@@ -1116,7 +1116,7 @@ def rule_assignments(c):
                 prov = entry(conn, ch["connection"])
                 if prov is None or prov["kind"] != "provider":
                     continue   # its x-ref (connections, kind provider) refuses it, naming the field
-                bad = link_problems(table, a["role"], prov, ch["model"], mode and mode["allowed_localities"], a["effort_mode"], policies,
+                bad = link_problems(table, a["role"], prov, ch["model"], mode and mode["allowed_localities"], a["effort_mode"], () if lvl == "global" else policies,   # a global row serves every project: the resolver (rule 2) excludes a link a policy forbids, so a Local only default must not void the file
                                     idn(pid) if listed else "the default", pols, now, pid)
                 for m in bad:
                     P(rid, f"{aid}: chain[{i}]: {m}")
