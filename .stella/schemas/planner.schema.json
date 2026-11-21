@@ -1,0 +1,476 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Planner",
+  "description": "Planner data (P1 W0): the rubric, the tier behaviours, the mode words, the local-only warning, card size and model pick limits, the lint, replan, scope guard and report settings. Every id is data: tiers are routing task_tiers, presets are role-assignments effort_modes, extract_role is a role table row. Engine data, written only through the apply tool.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "rubric": {
+      "type": "object",
+      "properties": {
+        "extract_role": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+        },
+        "features": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+              },
+              "points": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "question": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              }
+            },
+            "required": [
+              "id",
+              "points",
+              "question"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "thresholds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "properties": {
+              "tier": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+                "x-ref": "routing/task_tiers",
+                "description": "A task tier id of routing.json."
+              },
+              "max_score": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000
+              }
+            },
+            "required": [
+              "tier"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "unsure": {
+          "type": "object",
+          "properties": {
+            "raise_tiers": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8
+            }
+          },
+          "required": [
+            "raise_tiers"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "extract_role",
+        "features",
+        "thresholds",
+        "unsure"
+      ],
+      "additionalProperties": false
+    },
+    "tiers": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+        "x-ref": "routing/task_tiers",
+        "description": "A task tier id of routing.json."
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "behavior": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "gate": {
+            "type": "boolean"
+          },
+          "question_tier": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+            "x-ref": "routing/task_tiers",
+            "description": "A task tier id of routing.json."
+          }
+        },
+        "required": [
+          "behavior",
+          "gate",
+          "question_tier"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "modes": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "description": "Mode id to the mode word an owner types."
+        },
+        "default": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+        },
+        "force_min_behavior": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+        }
+      },
+      "required": [
+        "ids",
+        "default",
+        "force_min_behavior"
+      ],
+      "additionalProperties": false
+    },
+    "local_only_warn": {
+      "type": "object",
+      "properties": {
+        "presets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+            "x-ref": "role-assignments/effort_modes",
+            "description": "A preset id of role-assignments.json."
+          },
+          "uniqueItems": true
+        },
+        "tiers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+            "x-ref": "routing/task_tiers",
+            "description": "A task tier id of routing.json."
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "presets",
+        "tiers"
+      ],
+      "additionalProperties": false
+    },
+    "card_size": {
+      "type": "object",
+      "properties": {
+        "default_limits": {
+          "type": "object",
+          "properties": {
+            "files": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000
+            },
+            "changed_lines": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000
+            },
+            "estimate_hours": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000
+            }
+          },
+          "required": [
+            "files",
+            "changed_lines",
+            "estimate_hours"
+          ],
+          "additionalProperties": false
+        },
+        "min_samples": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "max_fail_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "stats_index_key": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+        }
+      },
+      "required": [
+        "default_limits",
+        "min_samples",
+        "max_fail_rate",
+        "stats_index_key"
+      ],
+      "additionalProperties": false
+    },
+    "model_pick": {
+      "type": "object",
+      "properties": {
+        "min_samples": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "owner_penalty_cost": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "exploration": {
+          "type": "object",
+          "properties": {
+            "flag": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+              "x-ref": "features"
+            },
+            "share": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "flag",
+            "share"
+          ],
+          "additionalProperties": false
+        },
+        "benchmark_index_key": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+        }
+      },
+      "required": [
+        "min_samples",
+        "owner_penalty_cost",
+        "exploration",
+        "benchmark_index_key"
+      ],
+      "additionalProperties": false
+    },
+    "lint": {
+      "type": "object",
+      "properties": {
+        "feel_words": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "comparators": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "owner_confirm_note": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      },
+      "required": [
+        "feel_words",
+        "comparators",
+        "owner_confirm_note"
+      ],
+      "additionalProperties": false
+    },
+    "replan": {
+      "type": "object",
+      "properties": {
+        "block_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "problem_markers": {
+          "type": "object",
+          "properties": {
+            "spec": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "minItems": 1,
+              "maxItems": 64,
+              "uniqueItems": true
+            },
+            "test": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "minItems": 1,
+              "maxItems": 64,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "spec",
+            "test"
+          ],
+          "additionalProperties": false
+        },
+        "block_kinds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "uniqueItems": true,
+          "maxItems": 32,
+          "description": "Block kinds the replan counts (needs_input is never counted)."
+        },
+        "problem_kinds": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": "Finding kinds besides code, with a plain label."
+        }
+      },
+      "required": [
+        "block_limit",
+        "problem_markers",
+        "block_kinds",
+        "problem_kinds"
+      ],
+      "additionalProperties": false
+    },
+    "scope_guard": {
+      "type": "object",
+      "properties": {
+        "stopwords": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "min_shared_terms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "severity": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+        }
+      },
+      "required": [
+        "stopwords",
+        "min_shared_terms",
+        "severity"
+      ],
+      "additionalProperties": false
+    },
+    "report": {
+      "type": "object",
+      "properties": {
+        "interval_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 366
+        },
+        "history_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650
+        }
+      },
+      "required": [
+        "interval_days",
+        "history_days"
+      ],
+      "additionalProperties": false
+    },
+    "behaviors": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+      },
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "description": "Behaviours weakest to strongest; code compares by position."
+    }
+  },
+  "required": [
+    "schema_version",
+    "rubric",
+    "tiers",
+    "modes",
+    "local_only_warn",
+    "card_size",
+    "model_pick",
+    "lint",
+    "replan",
+    "scope_guard",
+    "report",
+    "behaviors"
+  ],
+  "additionalProperties": false
+}

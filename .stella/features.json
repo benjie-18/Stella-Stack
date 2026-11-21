@@ -17,7 +17,8 @@
     "E1",
     "E2",
     "E3",
-    "W1"
+    "W1",
+    "W2"
   ],
   "entries": [
     {
@@ -515,6 +516,115 @@
       "depends_on": [],
       "flag": "agui-claude-agent-sdk",
       "global_id": "1fdd16b9-f8ad-47ea-a1eb-035a86ca1963",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner",
+      "owner_phase": "P1",
+      "status": "on",
+      "depends_on": [],
+      "flag": null,
+      "global_id": "bc71d4d6-5c89-456c-8ebf-2c84caa05524",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner-question-first",
+      "owner_phase": "P1",
+      "status": "on",
+      "depends_on": [
+        "planner"
+      ],
+      "flag": null,
+      "global_id": "4ead7af9-a3fb-4dfd-a031-d84212908783",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner-exploration",
+      "owner_phase": "P1",
+      "status": "off",
+      "depends_on": [
+        "planner"
+      ],
+      "flag": "planner-exploration",
+      "global_id": "8a04e64f-9dac-4dc3-963d-2cb009af4d59",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner-routing-stats-mock",
+      "owner_phase": "P1",
+      "status": "on",
+      "depends_on": [
+        "planner"
+      ],
+      "flag": null,
+      "due_phase": "D1",
+      "replaced_by": "real routing stats (phase D1)",
+      "global_id": "cf815fd0-03c1-430d-b720-195aa2f1c017",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner-benchmark-priors-mock",
+      "owner_phase": "P1",
+      "status": "on",
+      "depends_on": [
+        "planner"
+      ],
+      "flag": null,
+      "due_phase": "W2",
+      "replaced_by": "the benchmark priors of the weekly model check (phase W2)",
+      "global_id": "a5bbdd8e-6a20-476b-b2bf-057793925128",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner-probe-sketch-stub",
+      "owner_phase": "P1",
+      "status": "on",
+      "depends_on": [
+        "planner"
+      ],
+      "flag": null,
+      "due_phase": "D1",
+      "replaced_by": "the tester's probe sketch (phase D1)",
+      "global_id": "761a7c2b-0bd2-41a7-bee7-f97436871e50",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner-scope-guard-stub",
+      "owner_phase": "P1",
+      "status": "on",
+      "depends_on": [
+        "planner"
+      ],
+      "flag": null,
+      "due_phase": "D1",
+      "replaced_by": "the validator's scope check (phase D1)",
+      "global_id": "da28a587-0a0c-4dff-92db-dbe00c45998f",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner-failure-history",
+      "owner_phase": "P1",
+      "status": "on",
+      "depends_on": [
+        "planner"
+      ],
+      "flag": null,
+      "due_phase": "D1",
+      "replaced_by": "the failure-autopsy core (phase D1)",
+      "global_id": "6abbaaf9-c2b7-485e-915d-22234c70df8f",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner-vm-field",
+      "owner_phase": "P1",
+      "status": "on",
+      "depends_on": [
+        "planner"
+      ],
+      "flag": null,
+      "due_phase": "W2",
+      "replaced_by": "the VM phase (TBD; W2 is the placeholder phase_order slot until the owner names it)",
+      "global_id": "2ca10fb2-9064-4ea4-850d-08742e375d3e",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
