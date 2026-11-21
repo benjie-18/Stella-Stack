@@ -172,7 +172,7 @@
     {"kind": "boards", "owner": null},
     {"kind": "presets", "owner": ".stella/role-assignments.json", "path": "effort_modes", "id": "id", "refs": [{"record_kind": "qa-rule", "why": "the QA loop data (.stella/qa-loop.json, Q1) keeps one QA rule per preset (depth cap, extra attacks, reviewer counts), keyed by the preset id: a record of its own kind, not a copy of the preset list"}]},
     {"kind": "link_classes", "owner": ".stella/routing.json", "path": "link_classes", "id": "id"},
-    {"kind": "task_tiers", "owner": ".stella/routing.json", "path": "task_tiers", "id": "id"},
+    {"kind": "task_tiers", "owner": ".stella/routing.json", "path": "task_tiers", "id": "id", "refs": [{"record_kind": "planner", "why": "the planner data (.stella/planner.json, P1) keeps one tier behaviour row per task tier, keyed by the tier id: a record of its own kind, not a copy of the tier list"}]},
     {"kind": "drivers", "owner": ".stella/routing.json", "path": "drivers", "id": "id"},
     {"kind": "triggers", "owner": ".stella/routing.json", "path": "failover.triggers", "id": "id"},
     {"kind": "templates", "owner": null}

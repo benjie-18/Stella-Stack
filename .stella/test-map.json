@@ -285,6 +285,21 @@
     "agui-ui": {
       "mark": "hermetic"
     },
+    "resolver-tier": {
+      "mark": "hermetic"
+    },
+    "planner-data": {
+      "mark": "hermetic"
+    },
+    "planner-rubric": {
+      "mark": "hermetic"
+    },
+    "roadmap": {
+      "mark": "hermetic"
+    },
+    "scope-guard": {
+      "mark": "hermetic"
+    },
     "planner-role": {
       "mark": "shared",
       "why": "its hooks() runs roles.role_tools, which imports toolsets from the installed hermes-agent under the passwd home, not the scratch HOME (as owner-settings)"
@@ -8314,6 +8329,385 @@
     },
     {
       "globs": [
+        "bin/resolver-tier-selftest.sh",
+        "bin/resolve.py",
+        "bin/stella_data.py",
+        ".stella/role-assignments.json",
+        ".stella/schemas/role-assignments.schema.json",
+        ".stella/routing.json"
+      ],
+      "targets": [
+        "resolver-tier"
+      ],
+      "why": "P1 item B (tests first): the resolver-tier selftest edits role assignments (tier rows, custom presets, a fake task tier) in scratch roots and judges them with stella_data.py check and resolve.py resolve"
+    },
+    {
+      "globs": [
+        "bin/planner-data-selftest.sh",
+        ".stella/planner.json",
+        ".stella/planner-settings.json",
+        ".stella/schemas/planner.schema.json",
+        ".stella/schemas/planner-settings.schema.json",
+        ".stella/data-files.json",
+        ".stella/features.json",
+        "bin/stella_data.py"
+      ],
+      "targets": [
+        "planner-data"
+      ],
+      "why": "P1 item W0 (tests first): the planner-data selftest checks the planner data files, their index rows and features entries, and edits them in scratch roots (unknown ids, fake entries) judged by stella_data.py check and get"
+    },
+    {
+      "globs": [
+        ".claude/settings.json",
+        ".claude/skills/stack-rules/SKILL.md",
+        ".stella/adapters.json",
+        ".stella/agent-protocols.json",
+        ".stella/budgets.json",
+        ".stella/capability-sources.json",
+        ".stella/connections.json",
+        ".stella/host-policy.json",
+        ".stella/limit-signals.json",
+        ".stella/model-check.json",
+        ".stella/policy.json",
+        ".stella/prompt-profiles.json",
+        ".stella/protocols.json",
+        ".stella/run-gateway.json",
+        ".stella/run-policy.json",
+        ".stella/schemas/event.schema.json",
+        ".stella/schemas/probes.schema.json",
+        ".stella/settings.json",
+        ".stella/stuck.json",
+        ".supervisor/limits.env",
+        "SUPERVISOR.md",
+        "bin/adapter.py",
+        "bin/agent_runtime.py",
+        "bin/agent_tool.py",
+        "bin/agui_ui.py",
+        "bin/alert-catalog.sh",
+        "bin/alert.sh",
+        "bin/alert_catalog.py",
+        "bin/apply-hermes-local.sh",
+        "bin/approvals.py",
+        "bin/box.py",
+        "bin/budget.py",
+        "bin/capabilities.py",
+        "bin/capabilities_mcp.py",
+        "bin/compare.py",
+        "bin/consent.py",
+        "bin/cost.py",
+        "bin/credentials.py",
+        "bin/devices.py",
+        "bin/escalate-drain.sh",
+        "bin/escalate.sh",
+        "bin/escalation-complete.sh",
+        "bin/escalation-discord.sh",
+        "bin/escalation-on-block.sh",
+        "bin/escalation-on-claim.sh",
+        "bin/escalation-on-complete.sh",
+        "bin/escalation-thread.sh",
+        "bin/event_log.py",
+        "bin/event_untrusted.py",
+        "bin/false-close-guard.py",
+        "bin/gateway.py",
+        "bin/host_access.py",
+        "bin/kanban-board.sh",
+        "bin/kanban-guard.sh",
+        "bin/ledger.py",
+        "bin/log_filter.py",
+        "bin/model_check.py",
+        "bin/model_proxy.py",
+        "bin/owner-config.sh",
+        "bin/owner_auth.py",
+        "bin/owner_config.py",
+        "bin/policy.py",
+        "bin/probe.py",
+        "bin/prompt.py",
+        "bin/redact_all.py",
+        "bin/register-escalation-hook.sh",
+        "bin/register-toolsets.sh",
+        "bin/resolve.py",
+        "bin/role-guard.py",
+        "bin/roles.py",
+        "bin/route.py",
+        "bin/run_policy.py",
+        "bin/run_token.py",
+        "bin/settings.py",
+        "bin/stella-apply.py",
+        "bin/stuck.py",
+        "bin/triage.py",
+        "bin/worker_env.py",
+        "docs/alert-codes.md",
+        "docs/hermes-local/alert-catalog.json",
+        "docs/hermes-local/board.md",
+        "docs/hermes-local/fallback-routing.json",
+        "docs/hermes-local/roles.json"
+      ],
+      "targets": [
+        "planner-data"
+      ],
+      "why": "P1 tests first: the planner-data selftest copies .stella, the role table and its hooks into scratch roots and runs stella_data.py; it reaches the data tool and what it names (from reach, the targets test-map.py check named)"
+    },
+    {
+      "globs": [
+        ".claude/settings.json",
+        ".claude/skills/stack-rules/SKILL.md",
+        ".stella/adapters.json",
+        ".stella/agent-protocols.json",
+        ".stella/budgets.json",
+        ".stella/capability-sources.json",
+        ".stella/connections.json",
+        ".stella/data-files.json",
+        ".stella/features.json",
+        ".stella/host-policy.json",
+        ".stella/limit-signals.json",
+        ".stella/model-check.json",
+        ".stella/policy.json",
+        ".stella/prompt-profiles.json",
+        ".stella/protocols.json",
+        ".stella/run-gateway.json",
+        ".stella/run-policy.json",
+        ".stella/schemas/event.schema.json",
+        ".stella/schemas/probes.schema.json",
+        ".stella/settings.json",
+        ".stella/stuck.json",
+        ".supervisor/limits.env",
+        "SUPERVISOR.md",
+        "bin/adapter.py",
+        "bin/agent_runtime.py",
+        "bin/agent_tool.py",
+        "bin/agui_ui.py",
+        "bin/alert-catalog.sh",
+        "bin/alert.sh",
+        "bin/alert_catalog.py",
+        "bin/apply-hermes-local.sh",
+        "bin/approvals.py",
+        "bin/box.py",
+        "bin/budget.py",
+        "bin/capabilities.py",
+        "bin/capabilities_mcp.py",
+        "bin/compare.py",
+        "bin/consent.py",
+        "bin/cost.py",
+        "bin/credentials.py",
+        "bin/devices.py",
+        "bin/escalate-drain.sh",
+        "bin/escalate.sh",
+        "bin/escalation-complete.sh",
+        "bin/escalation-discord.sh",
+        "bin/escalation-on-block.sh",
+        "bin/escalation-on-claim.sh",
+        "bin/escalation-on-complete.sh",
+        "bin/escalation-thread.sh",
+        "bin/event_log.py",
+        "bin/event_untrusted.py",
+        "bin/false-close-guard.py",
+        "bin/gateway.py",
+        "bin/host_access.py",
+        "bin/kanban-board.sh",
+        "bin/kanban-guard.sh",
+        "bin/ledger.py",
+        "bin/log_filter.py",
+        "bin/model_check.py",
+        "bin/model_proxy.py",
+        "bin/owner-config.sh",
+        "bin/owner_auth.py",
+        "bin/owner_config.py",
+        "bin/policy.py",
+        "bin/probe.py",
+        "bin/prompt.py",
+        "bin/redact_all.py",
+        "bin/register-escalation-hook.sh",
+        "bin/register-toolsets.sh",
+        "bin/role-guard.py",
+        "bin/roles.py",
+        "bin/route.py",
+        "bin/run_policy.py",
+        "bin/run_token.py",
+        "bin/settings.py",
+        "bin/stella-apply.py",
+        "bin/stuck.py",
+        "bin/triage.py",
+        "bin/worker_env.py",
+        "docs/alert-codes.md",
+        "docs/hermes-local/alert-catalog.json",
+        "docs/hermes-local/board.md",
+        "docs/hermes-local/fallback-routing.json",
+        "docs/hermes-local/roles.json"
+      ],
+      "targets": [
+        "resolver-tier"
+      ],
+      "why": "P1 tests first: the resolver-tier selftest copies .stella, the role table and its hooks into scratch roots and runs stella_data.py and resolve.py; it reaches the data tool and what it names (from reach, the targets test-map.py check named)"
+    },
+    {
+      "globs": [
+        "bin/planner-rubric-selftest.sh",
+        "bin/planner_rubric.py",
+        ".stella/planner.json",
+        ".stella/schemas/planner.schema.json",
+        ".stella/routing.json",
+        ".stella/role-assignments.json",
+        ".stella/data-files.json"
+      ],
+      "targets": [
+        "planner-rubric"
+      ],
+      "why": "P1 item C (tests first): the planner-rubric selftest runs planner_rubric.py score and split in a scratch root with answer files and mock routing stats as data"
+    },
+    {
+      "globs": [
+        "bin/roadmap-selftest.sh",
+        "bin/roadmap.py",
+        ".stella/schemas/roadmap.schema.json",
+        ".stella/pricing.json",
+        ".stella/connections.json",
+        ".stella/budgets.json",
+        ".stella/planner.json",
+        ".stella/schemas/planner.schema.json",
+        ".stella/routing.json",
+        ".stella/role-assignments.json",
+        ".stella/data-files.json"
+      ],
+      "targets": [
+        "roadmap"
+      ],
+      "why": "P1 item D (tests first): the roadmap selftest runs roadmap.py check, lint and pick on roadmaps written from data, with mock stats, priors and prices"
+    },
+    {
+      "globs": [
+        "bin/scope-guard-selftest.sh",
+        "bin/scope_guard.py",
+        "bin/fixtures/planner/*",
+        "bin/roadmap.py",
+        ".stella/schemas/roadmap.schema.json",
+        ".stella/planner.json",
+        ".stella/schemas/planner.schema.json",
+        ".stella/routing.json",
+        ".stella/role-assignments.json",
+        ".stella/data-files.json"
+      ],
+      "targets": [
+        "scope-guard"
+      ],
+      "why": "P1 item G (tests first): the scope-guard selftest replays the 2026-11-06 request (fixture) through roadmap.py check/lint and scope_guard.py check"
+    },
+    {
+      "globs": [
+        ".claude/settings.json",
+        ".claude/skills/stack-rules/SKILL.md",
+        ".stella/adapters.json",
+        ".stella/agent-protocols.json",
+        ".stella/capability-sources.json",
+        ".stella/features.json",
+        ".stella/host-policy.json",
+        ".stella/limit-signals.json",
+        ".stella/model-check.json",
+        ".stella/policy.json",
+        ".stella/prompt-profiles.json",
+        ".stella/protocols.json",
+        ".stella/run-gateway.json",
+        ".stella/run-policy.json",
+        ".stella/schemas/event.schema.json",
+        ".stella/schemas/probes.schema.json",
+        ".stella/settings.json",
+        ".stella/stuck.json",
+        ".supervisor/limits.env",
+        "SUPERVISOR.md",
+        "bin/adapter.py",
+        "bin/agent_runtime.py",
+        "bin/agent_tool.py",
+        "bin/agui_ui.py",
+        "bin/alert-catalog.sh",
+        "bin/alert.sh",
+        "bin/alert_catalog.py",
+        "bin/apply-hermes-local.sh",
+        "bin/approvals.py",
+        "bin/box.py",
+        "bin/budget.py",
+        "bin/capabilities.py",
+        "bin/capabilities_mcp.py",
+        "bin/compare.py",
+        "bin/consent.py",
+        "bin/cost.py",
+        "bin/credentials.py",
+        "bin/devices.py",
+        "bin/escalate-drain.sh",
+        "bin/escalate.sh",
+        "bin/escalation-complete.sh",
+        "bin/escalation-discord.sh",
+        "bin/escalation-on-block.sh",
+        "bin/escalation-on-claim.sh",
+        "bin/escalation-on-complete.sh",
+        "bin/escalation-thread.sh",
+        "bin/event_log.py",
+        "bin/event_untrusted.py",
+        "bin/false-close-guard.py",
+        "bin/gateway.py",
+        "bin/host_access.py",
+        "bin/kanban-board.sh",
+        "bin/kanban-guard.sh",
+        "bin/ledger.py",
+        "bin/log_filter.py",
+        "bin/model_check.py",
+        "bin/model_proxy.py",
+        "bin/owner-config.sh",
+        "bin/owner_auth.py",
+        "bin/owner_config.py",
+        "bin/policy.py",
+        "bin/probe.py",
+        "bin/prompt.py",
+        "bin/redact_all.py",
+        "bin/register-escalation-hook.sh",
+        "bin/register-toolsets.sh",
+        "bin/resolve.py",
+        "bin/role-guard.py",
+        "bin/roles.py",
+        "bin/route.py",
+        "bin/run_policy.py",
+        "bin/run_token.py",
+        "bin/settings.py",
+        "bin/stella-apply.py",
+        "bin/stella_data.py",
+        "bin/stuck.py",
+        "bin/triage.py",
+        "bin/worker_env.py",
+        "docs/alert-codes.md",
+        "docs/hermes-local/alert-catalog.json",
+        "docs/hermes-local/board.md",
+        "docs/hermes-local/fallback-routing.json",
+        "docs/hermes-local/roles.json",
+        "opencode.json"
+      ],
+      "targets": [
+        "planner-rubric",
+        "roadmap",
+        "scope-guard"
+      ],
+      "why": "P1 tests first (items C, D, G): the planner-rubric, roadmap and scope-guard selftests run their tools in a scratch root that holds these files and call bin/resolve.py and bin/event_log.py (from reach, the targets test-map.py check named)"
+    },
+    {
+      "globs": [
+        ".stella/budgets.json",
+        ".stella/connections.json"
+      ],
+      "targets": [
+        "planner-rubric",
+        "scope-guard"
+      ],
+      "why": "P1 tests first (items C, D, G): the planner-rubric, roadmap and scope-guard selftests run their tools in a scratch root that holds these files and call bin/resolve.py and bin/event_log.py (from reach, the targets test-map.py check named)"
+    },
+    {
+      "globs": [
+        "bin/fixtures/planner/replay-2026-11-06/roadmap.md"
+      ],
+      "targets": [
+        "roadmap"
+      ],
+      "why": "P1 tests first (items C, D, G): the planner-rubric, roadmap and scope-guard selftests run their tools in a scratch root that holds these files and call bin/resolve.py and bin/event_log.py (from reach, the targets test-map.py check named)"
+    },
+    {
+      "globs": [
         "bin/planner-role-selftest.sh",
         "docs/hermes-local/roles.json",
         "docs/hermes-local/hooks/*/*",
@@ -8502,6 +8896,27 @@
         "replan"
       ],
       "why": "P1 tests first (items A, E, F): files the new selftests reach through their scratch copy of bin, .stella and docs (test-map.py reach); the planner-role selftest runs the role table's hooks, the planner and replan selftests run the planner tools in a scratch root"
+    },
+    {
+      "globs": [
+        ".stella/planner.json",
+        ".stella/planner-settings.json"
+      ],
+      "targets": [
+        "planner-role"
+      ],
+      "why": "P1 item A (tests first): the planner-role selftest reads the rubric role id from the planner data"
+    },
+    {
+      "globs": [
+        "bin/roadmap-selftest.sh",
+        "bin/fixtures/planner/replay-2026-11-06/roadmap.md"
+      ],
+      "targets": [
+        "planner",
+        "replan"
+      ],
+      "why": "P1 items E and F (tests first): bin/planner-test-lib.sh builds its roadmaps in the format bin/roadmap-selftest.sh and the replay fixture use (named in its header)"
     }
   ]
 }

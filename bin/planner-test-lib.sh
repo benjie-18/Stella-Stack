@@ -17,8 +17,10 @@
 #  P3 planner.py bind --run R --card <board card> --roadmap-card <roadmap card id> --json writes planner.card-bound (DG-1 names the
 #     line, not the command).
 #  P4 trusted planner.* lines are found by type and by the run id (or card id) anywhere in the line.
-#  P5 roadmap.md (design item D): a threshold is a string "<comparator> <number>"; vm is the literal TBD; request.digest is the
-#     sha256 hex of the request file's bytes.
+#  P5 roadmap.md follows bin/roadmap-selftest.sh (item D's tests, its D1-D4 and D8): threshold {comparator: <planner
+#     lint.comparators[0]>, value}, vm "TBD", request.digest = sha256 hex of request.text, a card builder link at rung 0, estimate under
+#     the project's budget cap; plus DG-5's cards checks: [acceptance ids]. The replay fixture (bin/fixtures/planner/replay-2026-11-06)
+#     is not reused: these flows need two cards in phase 1 with their own files.
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 T=$(mktemp -d "${TMPDIR:-/tmp}/$ME.XXXXXX"); T=$(cd "$T" && pwd -P)
@@ -160,14 +162,16 @@ rubric() {  # all|none: the rubric role's answer, every data feature true (score
   RUB_ANS=$(pj -c --arg v "$1" '[.rubric.features[].id | {(.): ($v == "all")}] | add + {reasoning: "fixture"}'); mock; }
 
 # ---- the roadmap the planner model answers (design item D's fenced block; this fixture's ids: phases p1, p2 (p3); cards c1, c2, c3) ----
-blink() { python3 -I "$R/bin/resolve.py" resolve --role "$BR" --project "$P" --card t_0b0000ff --json 2>/dev/null | jq -c '[.chain[]? | {connection, model}][0]' 2>/dev/null | grep . || echo '{"connection": "none", "model": "none"}'; }
+blink() { python3 -I "$R/bin/resolve.py" resolve --role "$BR" --project "$P" --card t_0b0000ff --json 2>/dev/null | jq -c '[.chain[]? | select(.status == "usable") | {connection, model}][0]' 2>/dev/null | grep . || echo '{"connection": "none", "model": "none"}'; }
+C0=$(pj '.lint.comparators[0] // empty')   # threshold comparator and the project's budget cap, as bin/roadmap-selftest.sh reads them
+CAP=$(jq -r --arg p "$P" '[.budgets[] | select(.scope == "project" and (.key == $p or .key == "*"))] | sort_by(.key == "*") | .[0].hard.amount // empty' "$R/$(p budgets)" 2>/dev/null)
 roadmap() {  # <request file> <variant: base|phase|split|edit> -> prints roadmap.md (its tier: RMTIER, default the top tier)
   local bl; bl=$(blink)
   jq -n --arg id "$(cat /proc/sys/kernel/random/uuid)" --arg iid "$IID" --arg p "$P" --rawfile rq "$1" --arg dg "$(sha "$1")" --arg tier "${RMTIER:-$COMPLEX}" \
-    --arg pre "$SEL" --arg br "$BR" --arg qt "$MEDIUM" --argjson bl "$bl" --arg pr "$PR" --arg v "$2" '
+    --arg pre "$SEL" --arg br "$BR" --arg qt "$MEDIUM" --argjson bl "$bl" --arg pr "$PR" --arg v "$2" --arg c0 "$C0" --argjson cap "${CAP:-0}" '
     def card(i; f; ch): {id: i, title: ("card " + i), kind: "code", files: f, size: {files: 1, changed_lines: 20, estimate_hours: 1},
-      checks: ch, builder: ($bl + {rung: 1, reason: "fixture"})};
-    def acc(i): {id: i, action: "run the game page check", observe: "the page answers within the limit, seconds", threshold: "<= 2", owner_confirm: false, probe: null};
+      checks: ch, builder: ($bl + {rung: 0, reason: "fixture"})};
+    def acc(i): {id: i, action: "run the game page check", observe: "the page answers within the limit, seconds", threshold: {comparator: $c0, value: 2}, owner_confirm: false, probe: null};
     {schema_version: 1, id: $id, install_id: $iid, project: $p, request: {text: $rq, digest: $dg}, tier: $tier, preset: $pre,
      phases: ([
       {id: "p1", title: "Guessing game core", goal: "the game logic", builds: ["guessing", "game"], depends_on: [], builder_role: $br, qa_tier: $qt, vm: "TBD",
@@ -177,8 +181,8 @@ roadmap() {  # <request file> <variant: base|phase|split|edit> -> prints roadmap
        builder_role: $br, qa_tier: $qt, vm: "TBD", acceptance: [acc("a3")], cards: [card("c3"; ["c.txt"]; ["a3"])]}]
       + (if $v == "phase" then [{id: "p3", title: "Escalation point", goal: "a new phase", builds: ["escalation"], depends_on: ["p2"], builder_role: $br,
           qa_tier: $qt, vm: "TBD", acceptance: [acc("a4")], cards: [card("c4"; ["d.txt"]; ["a4"])]}] else [] end)),
-     out_of_scope: ["other games"], estimate: {tokens: 1000, cost: 0, hours: 3, budget_cap: 0},
-     assignments: {($pr): {connection: "st-a", model: "st-a-plan"}}}' >"$T/rm.json"
+     out_of_scope: ["other games"], estimate: {tokens: 1000, cost: ($cap / 10), hours: 3, budget_cap: ($cap / 2)},
+     assignments: {($pr): {connection: "st-a", model: "st-a-plan"}, ($br): $bl}}' >"$T/rm.json"
   printf '# Roadmap\n\nA fixture roadmap.\n\n```json roadmap\n%s\n```\n' "$(cat "$T/rm.json")"; }
 plan_answer() { PLAN_ANS=$(roadmap "$1" "$2"); mock; }   # <request file> <variant>
 
@@ -189,7 +193,7 @@ proof() { python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1]); impo
 PAY='def pay: [., .detail, .new] | map(select(type == "object")) | add;'
 lines() { proof | jq -c --arg t "$1" --arg k "$2" "$PAY"' [.[] | select(.type == $t and (tostring | contains($k))) | pay]'; }   # <type> <run or card id>: payloads
 cnt() { lines "$1" "$2" | jq length; }
-mkreq() { printf '%s\n' "$2" >"$T/$1.txt"; echo "$T/$1.txt"; }   # <name> <text>: a request file
+mkreq() { printf '%s' "$2" >"$T/$1.txt"; echo "$T/$1.txt"; }   # <name> <text>: a request file (its bytes are request.text, so their sha256 is request.digest)
 SIMPLE=$(mkreq simple "Fix the typo in notes.txt: 'teh' should read 'the'.")
 CPLX=$(mkreq complex "Build a number guessing game for the browser with a server, a score database and an installer for Windows.")
 settings() { ed "$PS" "$@"; }   # <jq args and filter> on the planner owner settings (a scratch copy)

@@ -1,0 +1,1 @@
+Build a small HTML/CSS guessing game with an escalation point.

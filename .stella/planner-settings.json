@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "mode": "auto",
+    "question_first": false
+  },
+  "projects": {},
+  "cards": {}
+}

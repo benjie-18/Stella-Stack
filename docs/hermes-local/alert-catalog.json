@@ -4145,6 +4145,18 @@
       "check": "`python3 bin/agent_runtime.py check`; the run record and its events.jsonl at the index key adapter_runs; `bash bin/agent-runtime-selftest.sh`.",
       "related": "X1 item A; bin/agent_runtime.py, bin/agent_tool.py, .stella/agent-protocols.json, .stella/adapters.json",
       "resolvable": false
+    },
+    {
+      "code": "STL-PLN-100",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "the planner data is refused",
+      "message": "The planner data cannot be used: {problem}. Planning is off until it is fixed.",
+      "action": "fix .stella/planner.json or .stella/planner-settings.json (or the routing, preset or role data they name), then run bin/stella_data.py check. See STL-PLN-100 in docs/alert-codes.md.",
+      "cause": "The rubric names a role that is not in the role table, thresholds that do not rise or a tier without a threshold, a mode or tier or preset id that is not one of the routing, preset or planner data, or an index key or feature that does not exist.",
+      "check": "python3 -I bin/stella_data.py check; .stella/planner.json; .stella/planner-settings.json.",
+      "related": "P1 item W0 (design.md, Data); .stella/planner.json",
+      "resolvable": false
     }
   ]
 }
