@@ -4361,6 +4361,42 @@
       "check": "python3 -I bin/roadmap.py check|lint|pick; bash bin/roadmap-selftest.sh.",
       "related": "P1 item D; bin/roadmap.py, .stella/schemas/roadmap.schema.json, .stella/planner.json",
       "resolvable": false
+    },
+    {
+      "code": "STL-PLN-500",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "the scope guard cannot read the roadmap",
+      "message": "The scope guard refuses the roadmap: {problem}.",
+      "action": "fix the roadmap file so that python3 -I bin/roadmap.py check accepts it.",
+      "cause": "The roadmap file is missing, too large, not one closed json block, or fails its schema.",
+      "check": "python3 -I bin/scope_guard.py check --roadmap FILE [--built FILE] --json; bash bin/scope-guard-selftest.sh.",
+      "related": "P1 item G; bin/scope_guard.py, .stella/planner.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-501",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "the scope guard cannot read the built-work file",
+      "message": "The scope guard refuses the built-work file: {problem}.",
+      "action": "give the file the lists paths, titles and artifacts (strings only), under the size cap.",
+      "cause": "The built-work file is missing, too large, not JSON, or has the wrong shape.",
+      "check": "python3 -I bin/scope_guard.py check --roadmap FILE [--built FILE] --json; bash bin/scope-guard-selftest.sh.",
+      "related": "P1 item G; bin/scope_guard.py, .stella/planner.json",
+      "resolvable": false
+    },
+    {
+      "code": "STL-PLN-502",
+      "area": "PLN",
+      "severity": "warning",
+      "title": "the scope guard failed unexpectedly",
+      "message": "The scope guard failed: {problem}.",
+      "action": "run python3 -I bin/stella_data.py check, then retry.",
+      "cause": "The planner data cannot be read or the guard hit an unexpected error.",
+      "check": "python3 -I bin/scope_guard.py check --roadmap FILE [--built FILE] --json; bash bin/scope-guard-selftest.sh.",
+      "related": "P1 item G; bin/scope_guard.py, .stella/planner.json",
+      "resolvable": false
     }
   ]
 }
