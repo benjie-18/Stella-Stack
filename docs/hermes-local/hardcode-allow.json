@@ -22,6 +22,8 @@
     {"file": "docs/spec/**", "why": "the owner's plan documents (git-ignored prose)"}
   ],
   "plain_words": [
+    {"word": "planner", "why": "a common word of the language (one who plans); also the planner data file and its record kind (P1)"},
+    {"word": "rubric", "why": "a common word of the language (a scoring guide); also the planner data key rubric (P1)"},
     {"word": "default", "why": "the root profile's name, which the agent runtime owns (Hermes's own word), and a common word"},
     {"word": "builder", "why": "a common word of the language (the worker that builds); the role table names it, the profiles are builder-claude and builder-local, which are counted"},
     {"word": "dispatcher", "why": "a common word of the language (the one that sends work on)"},
