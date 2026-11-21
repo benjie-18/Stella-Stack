@@ -153,6 +153,7 @@
     "bin/agui_ui.py",
     "bin/redact_all.py",
     "bin/planner.py",
+    "bin/planner_guard.py",
     "bin/planner_rubric.py",
     "bin/roadmap.py",
     "bin/replan.py",

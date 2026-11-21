@@ -523,6 +523,66 @@
       ],
       "additionalProperties": false,
       "description": "The roadmap.md format limits (bin/roadmap.py)."
+    },
+    "planning": {
+      "type": "object",
+      "description": "The planner engine (bin/planner.py, P1 item E): the role whose model plans (a role table row; its model per tier comes from the role assignments), the approval class and lifetime of its owner requests (gate, question pass, local-only warning, owner confirmations), the file name of the roadmap at the top of the project repo, the identity of the engine's commit, and how many tracked file names of the repo the planning call gets as data.",
+      "properties": {
+        "role": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "description": "A role of the role table."
+        },
+        "approval_class": {
+          "type": "string",
+          "pattern": "^[a-z][a-z_]*$",
+          "description": "An approval_class of the approval-request schema."
+        },
+        "ttl_s": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 7776000
+        },
+        "roadmap_path": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "description": "One file name at the top of the project repo."
+        },
+        "git_identity": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "email": {
+              "type": "string",
+              "pattern": "^[^@\\s]+@[^@\\s]+$",
+              "maxLength": 120
+            }
+          },
+          "required": [
+            "name",
+            "email"
+          ],
+          "additionalProperties": false
+        },
+        "repo_summary_files": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5000
+        }
+      },
+      "required": [
+        "role",
+        "approval_class",
+        "ttl_s",
+        "roadmap_path",
+        "git_identity",
+        "repo_summary_files"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
@@ -538,7 +598,8 @@
     "scope_guard",
     "report",
     "behaviors",
-    "roadmap"
+    "roadmap",
+    "planning"
   ],
   "additionalProperties": false
 }

@@ -191,5 +191,16 @@
     "vm_placeholder": "TBD",
     "vm_feature": "vm-worker",
     "probe_stub_feature": "planner-probe-sketch-stub"
+  },
+  "planning": {
+    "role": "planner",
+    "approval_class": "write",
+    "ttl_s": 604800,
+    "roadmap_path": "roadmap.md",
+    "git_identity": {
+      "name": "stella planner",
+      "email": "planner@stella.invalid"
+    },
+    "repo_summary_files": 200
   }
 }
