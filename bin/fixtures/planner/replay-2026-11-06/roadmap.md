@@ -75,7 +75,11 @@ copy's data; the phases, acceptance checks and out-of-scope list are the planner
       "model": "qa-model",
       "rung": 0,
       "reason": "small known pattern"
-     }
+     },
+     "checks": [
+      "a1",
+      "a2"
+     ]
     }
    ]
   },
@@ -134,7 +138,11 @@ copy's data; the phases, acceptance checks and out-of-scope list are the planner
       "model": "qa-model",
       "rung": 0,
       "reason": "small known pattern"
-     }
+     },
+     "checks": [
+      "a3",
+      "a4"
+     ]
     }
    ]
   }

@@ -46,7 +46,10 @@
     "model": "qa-model",
     "rung": 0,
     "reason": "the 2026-11-06 drift"
-   }
+   },
+   "checks": [
+    "a5"
+   ]
   }
  ]
 }
