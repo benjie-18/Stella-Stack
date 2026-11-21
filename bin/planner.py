@@ -5,7 +5,8 @@ tiers, behaviours, roles, presets, the approval class, the roadmap file name, in
 the fold of those lines and of the approval lines (bin/approvals.py), never a file of record. Request text, questions, answers, the
 planning model's roadmap and an owner edit are UNTRUSTED data: size-capped, schema-checked (bin/roadmap.py), never run.
 CLI (engine and owner commands: every one refuses in a worker environment, STL-CFG-312; output JSON with --json):
-  route --project P [--card C] --request FILE      mode (settings: card > project > default), rubric tier (planner_rubric.py extract),
+  route --project P [--card C] --request FILE      P: the board project's slug or id, recorded as its slug (task.project's form);
+        mode (settings: card > project > default), rubric tier (planner_rubric.py extract),
         behaviour: skip -> the first of the data's behaviors (direct), rubric -> the tier's, force -> the stronger of the tier's and
         modes.force_min_behavior. A Local only preset (local_only_warn) on a listed tier asks the owner first. planner.routed.
   questions --run R --file Q                       the planner's questions: one approval request (the owner's submission is its
@@ -26,8 +27,9 @@ CLI (engine and owner commands: every one refuses in a worker environment, STL-C
   advance --run R                                  phases pass (planner.phase-passed) when each card is bound and qa done on its hash and
         each owner_confirm check has an approved owner confirmation; an empty phase never passes.
 The start projection (index planner_cards, written here only, under its lock, never through a link): {projects: {P: {open_runs}},
-cards: {card: {run, version, phase, startable, reason}}}; bin/planner_guard.py start_problem() is its one reader (adapter.py start,
-role-guard.py claim).
+cards: {card: {run, version, phase, startable, reason}}, stamps: {run: [seq, mac] of the newest trusted line of the run folded}}; every
+command that writes a line of a run syncs it (bin/replan.py too); bin/planner_guard.py start_problem() is its one reader (adapter.py
+start, role-guard.py claim) and counts it for a run only while that stamp is the run's newest planner line in the log.
 Exit: 0 ok; 1 refused (catalog code STL-PLN-300..321 on stderr, {code, problem} on stdout with --json); 2 usage."""
 import os, sys
 
@@ -46,7 +48,8 @@ import stella_data as sd
 import planner_guard
 
 (DATA, BADIN, NORUN, STOPPED, DIRECT, WARN, QUESTIONS, NOPLAN, ROADMAP, REPO, PENDING, REJECTED, CARD, DEPENDS, BASE, REPLAN,
- PROJ, GUARD, MODEL, WRITE, EDIT, ASK) = (f"STL-PLN-{n}" for n in range(300, 322))   # PROJ, GUARD: planner_guard's too
+ PROJ, GUARD, MODEL, WRITE, EDIT, ASK) = \
+    ("STL-PLN-300", "STL-PLN-301", "STL-PLN-302", "STL-PLN-303", "STL-PLN-304", "STL-PLN-305", "STL-PLN-306", "STL-PLN-307", "STL-PLN-308", "STL-PLN-309", "STL-PLN-310", "STL-PLN-311", "STL-PLN-312", "STL-PLN-313", "STL-PLN-314", "STL-PLN-315", "STL-PLN-316", "STL-PLN-317", "STL-PLN-318", "STL-PLN-319", "STL-PLN-320", "STL-PLN-321")   # literal codes: the alert suite finds senders by literal; PROJ, GUARD: planner_guard's too
 RUN = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")   # a project, card or roadmap card id (the approval service's card form)
 ZERO = "0" * 64
@@ -174,7 +177,7 @@ def fold(run):
          "passed": set(), "confirm": {}, "replan": {}, "split": {}, "done": False, "P": P}
     for i, x in enumerate(P):
         t, n = str(x.get("type", "")), x.get("new") if isinstance(x.get("new"), dict) else {}
-        if not t.startswith("planner.") or n.get("run", x.get("what")) != run:
+        if not t.startswith(planner_guard.PREFIX) or planner_guard.run_of(x) != run:
             continue
         v = n.get("version")
         if t == "planner.routed" and s["routed"] is None:
@@ -201,7 +204,7 @@ def fold(run):
             s["passed"].add((v, n.get("phase")))
         elif t == "planner.confirm-asked":
             s["confirm"][(v, n.get("phase"), n.get("check"))] = n.get("request")
-        elif t == "planner.split" and type(n.get("to")) is int and n.get("from") in s["versions"]:   # DG-6 (bin/replan.py): the approval of 'from' carries to 'to'
+        elif t == "planner.split" and type(n.get("to")) is int and n.get("from") == s["current"] is not None:   # DG-6 (bin/replan.py): the approval of the current 'from' carries to 'to'
             # shortcut: a split version is not committed to the repo on its own; it rides on its from version's commit until replan commits it
             s["versions"][n["to"]] = {"digest": n.get("digest"), "commit": n.get("commit") or s["versions"][n["from"]].get("commit")}
             s["split"][n["to"]] = (n["from"], i)
@@ -254,14 +257,22 @@ def git(repo, *a, **k):
         raise Stop(REPO, e.problem) from None
 
 
-def repo_of(project):
-    """The project's repo from its board binding (the projects the adapter's DC-09 binding reads)."""
+def board_row(project):
+    """The project's row {id, slug, repo} of the board binding (the projects the adapter's DC-09 binding reads), by slug or id."""
     import roles
     try:
         rows = roles.board_projects(roles.board())
     except Exception as e:   # an unreadable binding confirms nothing
         raise Stop(REPO, f"the board's project bindings cannot be read ({type(e).__name__})") from None
-    repo = next((p["repo"] for p in rows if project in (p["slug"], p["id"]) and p["repo"]), None)
+    row = next((p for p in rows if project in (p["slug"], p["id"])), None)
+    if row is None:
+        raise Stop(REPO, f"project {sd.idn(project)} is not a project of the board")
+    return row
+
+
+def repo_of(project):
+    """The project's repo from its board binding."""
+    repo = board_row(project)["repo"]
     if not repo or not os.path.isdir(repo):
         raise Stop(REPO, f"project {sd.idn(project)} has no repo bound to the board")
     return repo
@@ -341,7 +352,8 @@ def sync(run, pl):
             except Stop as e:
                 why = (e.code, e.problem)
             cards[k] = {"run": run, "version": b.get("version"), "phase": b.get("phase"), "startable": why is None, "reason": why[1][:200] if why else "may start"}
-        project(run, r["project"], not (s["stopped"] or s["done"]), cards)
+        last = next((x for x in reversed(s["P"]) if str(x.get("type", "")).startswith(planner_guard.PREFIX) and planner_guard.run_of(x) == run), None)
+        project(run, r["project"], not (s["stopped"] or s["done"]), cards, planner_guard.stamp(last or {}))
     return s, view
 
 
@@ -352,7 +364,7 @@ def proj_path():
         raise Stop(PROJ, f"the index planner_cards path cannot be used: {str(e)[:120]}") from None
 
 
-def project(run, proj, open_, cards):
+def project(run, proj, open_, cards, stamp):
     p = proj_path()
     try:
         el.mkdirs(os.path.dirname(p))
@@ -361,6 +373,7 @@ def project(run, proj, open_, cards):
             runs = [x for x in (doc["projects"].get(proj) or {}).get("open_runs", []) if x != run] + ([run] if open_ else [])
             doc["projects"][proj] = {"open_runs": runs}
             doc["cards"] = {k: e for k, e in doc["cards"].items() if not (isinstance(e, dict) and e.get("run") == run)} | cards
+            doc.setdefault("stamps", {})[run] = stamp   # the newest trusted line of the run these rows were folded from (planner_guard)
             tmp = f"{p}.{os.getpid()}.new"
             try:
                 with os.fdopen(el.open_file(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL), "w", encoding="utf-8") as f:
@@ -400,6 +413,7 @@ def cmd_route(o, pl, ps):
     raw = read_capped(o.request, pl["rubric"]["input_max_bytes"], "the request file")
     if not ID.fullmatch(o.project) or (o.card is not None and not ID.fullmatch(o.card)):
         raise Stop(BADIN, "--project and --card are plain ids")
+    o.project = board_row(o.project)["slug"]   # CRT-846d43e-3: the one form the board's task.project uses (cards are made with the slug)
     ids = pl["modes"]["ids"]
     key = {**{w: k for k, w in ids.items()}, **{k: k for k in ids}}
     picks = (("card", (ps["cards"].get(o.card) or {}).get("mode") if o.card else None), ("project", (ps["projects"].get(o.project) or {}).get("mode")),
@@ -501,6 +515,7 @@ def cmd_plan(o, pl, ps):
             raise Stop(MODEL, f"the planner's answer is larger than {pl['roadmap']['max_bytes']} bytes")
         put(run, str(v), "roadmap.md", raw=text)
         line("planner.planned", run, {"version": v, "digest": sha(text), "source": "plan"}, f"planner run {run}: version {v} planned")
+        sync(run, pl)   # the start projection follows every line of the run (planner_guard's stamp)
     return {"run": run, "version": v, "digest": sha(text)}
 
 
@@ -544,11 +559,12 @@ def commit_and_gate(s, v, pl, edit_of=None):
     out = {"run": run, "version": v, "commit": commit, "digest": sha(raw), "owner_confirm": lint["owner_confirm"]}
     if r.get("gate"):
         e = d["estimate"]
-        summary = (f"Roadmap of planner run {run}, version {v} (project {r['project']}, tier {d['tier']}). Phases: " +
-                   "; ".join(f"{p['id']} {p['title']} ({len(p['cards'])} cards, after {', '.join(p['depends_on']) or 'nothing'})" for p in d["phases"]) +
+        q = lambda x: json.dumps(x, ensure_ascii=False)   # CRT-846d43e-7: the planner's text is quoted, never spliced into the engine's sentences
+        summary = (f"Roadmap of planner run {run}, version {v} (project {r['project']}, tier {q(d['tier'])}). Phases (titles as the planner wrote them): " +
+                   "; ".join(f"{q(p['id'])} {q(p['title'])} ({len(p['cards'])} cards, after {q(p['depends_on'])})" for p in d["phases"]) +
                    f". Checks the owner confirms by hand: {lint['owner_confirm']}. Assignments: " +
-                   ", ".join(f"{k}: {x['connection']}/{x['model']}" for k, x in d["assignments"].items()) +
-                   f". Estimate: {e['tokens']} tokens, cost {e['cost']} of a cap of {e['budget_cap']}, {e['hours']} hours." +
+                   q({k: f"{x['connection']}/{x['model']}" for k, x in d["assignments"].items()}) +
+                   f". Estimate: {q(e['tokens'])} tokens, cost {q(e['cost'])} of a cap of {q(e['budget_cap'])}, {q(e['hours'])} hours." +
                    (f" This is the owner's edit of version {edit_of}; that version's request no longer counts." if edit_of else ""))
         rid = ask(pl, run, r.get("card") or run, "planner.gate", f"planner:{run}", raw, summary)
         old = s["versions"].get(edit_of, {}).get("request") if edit_of else None

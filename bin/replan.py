@@ -17,14 +17,16 @@ alert line, exit 1, and with --json {code, problem} on stdout; 2 usage):
        card's last planner.replan -> replan; the base..frozen diff touches a file outside the card's roadmap files globs (or
        cannot be read: fail closed) -> replan; the newest close of the QA loop climbed -> climb; escalated at the cap -> owner;
        done -> done; else retry. replan writes planner.replan {run, card, reason} (DG-7: bin/planner.py's start guard refuses the
-       card while it is newer than the run's latest approved or split version). Answer {action, reason, run, card, attempt,
+       card while it is newer than the run's latest approved or split version; the start projection is synced right after, under the
+       run's lock: bin/planner.py sync). Answer {action, reason, run, card, attempt,
        history (absolute path), brief}: brief = the history as a fenced block marked untrusted (backticks escaped in the JSON).
   record-block --card C --kind K   one trusted planner.block {card, kind} (DG-8: the board's block hook calls it; any plain kind is
        recorded, only replan.block_kinds count).
   replan-diff --run R --old V --new V2   DG-6: split when the two versions differ only in the cards of one phase, the old cards
        that left are replaced by new ones whose files globs stay inside theirs, whose checks are the same ids and whose builder
-       links are builder links of the old version -> one trusted planner.split {run, from, to, digest} (the approval of the old
-       version carries to the new); anything else -> gate (bin/planner.py submit opens the gate on the new version). Answer
+       links are builder links of the old version -> one trusted planner.split {run, from, to (integers), digest} (the approval of
+       the old version carries to the new, which becomes current; the old version must be the run's current one, else STL-PLN-403);
+       anything else -> gate (bin/planner.py submit opens the gate on the new version). Answer
        {action: split|gate, reason, run, old, new, digest}.
   close --card C               DG-10: bin/qa_loop.py close, then dispatch for the card's newest bound run (none bound: no
        dispatch). The engine's one entry after a QA round; no agent calls it. Answer {closed: [qa lines], dispatch}.
@@ -47,7 +49,7 @@ import qa_loop
 import qa_findings as qf
 import roadmap
 
-DATA, BAD, NOT_BOUND, VERSION, WRITE, FAILED = (f"STL-PLN-{n}" for n in range(400, 406))
+DATA, BAD, NOT_BOUND, VERSION, WRITE, FAILED = ("STL-PLN-400", "STL-PLN-401", "STL-PLN-402", "STL-PLN-403", "STL-PLN-404", "STL-PLN-405")   # literal codes: the alert suite finds senders by literal
 ROADMAP_FILE, HISTORY = "roadmap.md", "history"   # DG-11's file name in a version folder; the history folder of a run
 CLIMB, REPLAN, OWNER, DONE, RETRY, GATE, SPLIT = "climb", "replan", "owner", "done", "retry", "gate", "split"   # answers (design item F)
 GLOB_CHARS = "*?["
@@ -232,6 +234,7 @@ def dispatch(card, run):
             f"failure history {n} of card {card}: {action}")
         if action == REPLAN:
             put("planner.replan", card, {"run": run, "card": card, "reason": reason}, f"re-plan card {card}: {reason}"[:200])
+        follow(run, pl)
     return {"action": action, "reason": reason, "run": run, "card": card, "attempt": n, "history": el.path(rel), "brief": brief(card, n, hist)}
 
 
@@ -277,6 +280,8 @@ def split_of(old, new):
 
 def replan_diff(run, v_old, v_new):
     pl, d, env = ctx()
+    if not (v_old.isdigit() and v_new.isdigit()):
+        raise Stop(BAD, "the versions are whole numbers (bin/planner.py's)")
     with run_lock(run, d):
         lines = el.proof_lines()
         (old, _), (new, dg) = version(run, v_old, lines, env, d, pl), version(run, v_new, lines, env, d, pl)
@@ -284,10 +289,28 @@ def replan_diff(run, v_old, v_new):
         out = {"run": run, "old": v_old, "new": v_new, "digest": dg}
         if why:
             return {**out, "action": GATE, "reason": why}
-        line = {"run": run, "from": v_old, "to": v_new, "digest": dg}
+        line = {"run": run, "from": int(v_old), "to": int(v_new), "digest": dg}   # integers: the versions bin/planner.py folds (CRT-846d43e-6)
         if not any({k: p.get(k) for k in line} == line for _, p in pays(lines, env, "planner.split")):   # once per pair and digest
+            import planner
+            try:
+                cur = planner.fold(run)["current"]
+            except planner.Stop as e:
+                raise Stop(e.code, e.problem) from None
+            if cur != line["from"]:   # only the current version's approval carries (an edited or superseded one's never does)
+                raise Stop(VERSION, f"version {v_old} of run {run} is not its current version ({cur}): a split comes from the current version")
             put("planner.split", run, line, f"run {run}: version {v_new} splits a phase of {v_old}, the approval carries")
+            follow(run, pl)
     return {**out, "action": SPLIT, "reason": "one phase's cards split inside their files, checks and builder links"}
+
+
+def follow(run, pl):
+    """The start projection follows the run's new lines (bin/planner.py sync, under the run's lock held here; DG-7). If it fails, the
+    projection is not current for the run, and bin/planner_guard.py refuses the run's cards until a planner.py command syncs."""
+    import planner
+    try:
+        planner.sync(run, pl)
+    except planner.Stop as e:
+        raise Stop(e.code, e.problem) from None
 
 
 # ---- record-block (DG-8), close (DG-10) ----
