@@ -16,6 +16,7 @@
     {"file": "docs/contract/**", "why": "prose: the contract documents"},
     {"file": "bench/tasks/**", "why": "fixtures: small projects the benchmark hands to a model; their words are test data"},
     {"file": "tests/fixtures/**", "why": "fixtures: test inputs"},
+    {"file": "bin/planner-test-lib.sh", "why": "the shared library the P1 planner and replan selftests source (not a suite selftest itself): its role, channel and tier names are fixture data"},
     {"file": "node_modules/**", "why": "installed packages, not the stack (not tracked; a walk of a tree without git would meet them)"},
     {"file": ".scratch/**", "why": "scratch work trees and copies, not the stack (not tracked)"},
     {"file": "docs/spec/**", "why": "the owner's plan documents (git-ignored prose)"}
@@ -126,6 +127,7 @@
     {"file": "bin/selftests.sh", "literal": "#alerts", "count": 1, "phase": "to place (F1 W5 r2: the suite lists selftests by name, and the names contain reviewer-claude; the list belongs in the test map, and the #alerts word is a comment)"},
     {"file": "bin/selftests.sh", "literal": "reviewer", "count": 1, "phase": "to place (F1 W5 r2: the suite lists selftests by name, and the names contain reviewer-claude; the list belongs in the test map, and the #alerts word is a comment)"},
     {"file": "bin/selftests.sh", "literal": "reviewer-claude", "count": 1, "phase": "to place (F1 W5 r2: the suite lists selftests by name, and the names contain reviewer-claude; the list belongs in the test map, and the #alerts word is a comment)"},
+    {"file": "bin/selftests.sh", "literal": "planner", "count": 2, "phase": "to place (P1: the suite lists selftests by name, and the names planner-role and planner contain the planner role id; the list belongs in the test map)"},
     {"file": "docs/hermes-local/hooks/default/read-only-terminal.py", "literal": "red-team", "count": 1, "phase": "to place (F1 W5 r3: a comment that cites a red-team review finding by its id (F5RT-01); not a role-name use: reword the comment to the id)"},
     {"file": "docs/hermes-local/plugins/os-box/__init__.py", "literal": "red-team", "count": 1, "phase": "to place (F1 W5 r3: one comment that cites a red-team review finding by its id (S6O-06); not a role-name use: reword the comment to the id)"},
     {"file": "docs/hermes-local/review-prompt.txt", "literal": "reviewer", "count": 1, "phase": "to place (F1 W5 r2: English role noun in the prompt text (the reviewer role); the prompt is not data the lint can fill)"},
