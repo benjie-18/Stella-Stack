@@ -124,6 +124,24 @@ ok 'refused v14 && refused v15' "AC5-valid control (DG-5): a card check id that 
 ok 'for g in "*" "**" "**/*" "./**"; do mk all --arg g "$g" ".phases[1].cards[0].files = [\$g]" && run v16 RM check "$T/all.md" --project "$PROJ" --json && refused v16 || { say "the files glob $g was not refused"; exit 1; }; done' \
   "AC5-valid control (DG-5): a card files glob that matches everything (*, **, **/*, ./**) is refused"
 
+# ---- red team RT-02..05: numbers that are no numbers, match-all globs in other spellings, a decoy block ----
+mk nan '.estimate.cost = 999999999999 | .estimate.budget_cap = 424242.5'; sed -i 's/424242.5/NaN/' "$T/nan.json"; render "$T/nan.json" "$T/nan.md"
+run v17 RM check "$T/nan.md" --project "$PROJ" --json
+ok '{ grep -q "\"budget_cap\": NaN" "$T/nan.md" || say "fixture: no NaN budget_cap"; } && refused v17' "AC5-valid RT-02: an estimate with budget_cap NaN (cost 999999999999, over the project's cap) is refused"
+ok 'for v in Infinity NaN; do mk inf --argjson a "$(acc f9 "play one round of the game" "the game feels fun, in points" 4242.5)" ".phases[0].acceptance = [\$a] | .phases[0].cards[0].checks = [\"f9\"]" &&
+  sed -i "s/4242.5/$v/" "$T/inf.json" && render "$T/inf.json" "$T/inf.md" && grep -q "\"value\": $v" "$T/inf.md" && run v18 RM check "$T/inf.md" --project "$PROJ" --json &&
+  run v19 RM lint "$T/inf.md" --json && refused v18 && refused v19 || { say "threshold $v not refused by check and lint"; exit 1; }; done' \
+  "AC9-numeric-ok RT-03: a feel check with a threshold of Infinity or NaN is no numeric check: check and lint refuse it"
+ok 'for g in "?*" "*?" "**/?*"; do mk all2 --arg g "$g" ".phases[1].cards[0].files = [\$g]" && run v20 RM check "$T/all2.md" --project "$PROJ" --json && refused v20 || { say "the files glob $g was not refused"; exit 1; }; done' \
+  "AC5-valid RT-04: a files glob that matches everything in another spelling (?*, *?, **/?*) is refused"
+B3=$(printf '\140\140\140'); B4=$(printf '\140\140\140\140')
+jq '.phases[0].title = "DECOY phase the reader sees" | .estimate.cost = 0' "$T/base.json" >"$T/decoy.json"
+{ printf '# Roadmap\n\nThe plan:\n\n~~~json roadmap\n'; cat "$T/decoy.json"; printf '~~~\n\n<!--\n%sjson roadmap\n' "$B3"; cat "$T/base.json"; printf '%s\n-->\n' "$B3"; } >"$T/hid.md"
+{ printf '# Roadmap\n\n%sjson roadmap\n' "$B4"; cat "$T/decoy.json"; printf '%s\n\n<!--\n%sjson roadmap\n' "$B4" "$B3"; cat "$T/base.json"; printf '%s\n-->\n' "$B3"; } >"$T/hid4.md"
+run v21 RM check "$T/hid.md" --project "$PROJ" --json; run v22 RM lint "$T/hid.md" --json; run v23 RM check "$T/hid4.md" --project "$PROJ" --json; run v24 RM lint "$T/hid4.md" --json
+ok 'refused v21 && refused v22 && refused v23 && refused v24' \
+  "AC5-valid RT-05: a decoy roadmap in a ~~~ or a 4-backtick fence, with the real block inside an HTML comment, is refused by check and lint"
+
 # ---- AC9-feel-refused / AC9-numeric-ok ----
 FEEL='the game feels good'
 mk feel --argjson a "$(acc f1 'play the game for one minute' "$FEEL")" '.phases[2].acceptance = [$a] | .phases[2].cards[0].checks = [$a.id]'

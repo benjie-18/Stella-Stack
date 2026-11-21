@@ -66,8 +66,9 @@ PR() { python3 -I "$R/bin/planner_rubric.py" "$@"; }
 FEATS=$(pq -c '[.rubric.features[].id]'); NF=$(pq '.rubric.features | length'); NF=${NF:-0}
 ans() { pq -c --argjson t "$1" '[.rubric.features[].id] | map({key: ., value: (. as $i | $t | index($i) != null)}) | from_entries'; }   # <true ids>: an answer
 pts() { pq --argjson t "$1" '[.rubric.features[] | select(.id as $i | $t | index($i)) | .points] | add // 0'; }               # <true ids>: their points
-want() { pq -r --argjson s "$1" --argjson u "$2" '.rubric as $r | ($r.thresholds | map(.max_score == null or $s <= .max_score) | index(true)) as $b
-  | ($r.thresholds | length) as $l | $r.thresholds[[if $u > 0 then $b + ($r.unsure.raise_tiers // 1) else $b end, $l - 1] | min].tier'; }   # <score> <unsure count>: the tier
+want() { pq -r --argjson s "$1" --argjson u "$2" --argjson p "${3:-0}" '.rubric as $r | def at($x): ($r.thresholds | map(.max_score == null or $x <= .max_score) | index(true));
+  ($r.thresholds | length) as $l | (if $u > 0 then [at($s) + ($r.unsure.raise_tiers // 1), at($s + $p)] | max else at($s) end) as $i
+  | $r.thresholds[[$i, $l - 1] | min].tier'; }   # <score> <unsure count> [unsure points]: the tier (ruling RT-01: one up, or what the unsure points reach)
 
 ok 'pq -e "(.rubric.features | length) >= 2 and (.rubric.thresholds | length) >= 2 and (.rubric.thresholds[-1].max_score == null)
   and .rubric.unsure.raise_tiers >= 1 and .rubric.thresholds[0].tier == \"$LOW\" and .rubric.thresholds[-1].tier == \"$TOP\"" || say "expected planner data with rubric features, thresholds from $LOW to $TOP and unsure.raise_tiers in $PJ"' \
@@ -102,14 +103,23 @@ pq -c '[.rubric.features[].id] as $f | [$f[] | {key: ., value: false}] | from_en
 FL=$(pq -r '.rubric.features[-1].id // empty')
 run u1 PR score --features "$T/a-prose.txt" --json; run u2 PR score --features "$T/a-junk.txt" --json
 run u3 PR score --features "$T/a-missing.json" --json; run u4 PR score --features "$T/a-nonbool.json" --json
-ok 'okj u1 --argjson f "${FEATS:-[]}" --arg t "$U1" "(.unsure | sort) == (\$f | sort) and .score == 0 and .tier == \$t" && okj u2 --argjson f "${FEATS:-[]}" --arg t "$U1" "(.unsure | sort) == (\$f | sort) and .tier == \$t"' \
-  "AC2-unsure-up a non-JSON answer, and a JSON object with junk after it, make every feature unsure and move the tier one up ($U1)"
-ok 'okj u3 --arg l "$FL" --arg t "$U1" ".unsure == [\$l] and .score == 0 and .tier == \$t" && [ "$U1" != "$LOW" ]' \
-  "AC2-unsure-up a missing feature counts unsure and moves the lowest tier up to $U1"
-ok 'okj u4 --arg f "$F1" --arg t "$U1" ".unsure == [\$f] and .score == 0 and .tier == \$t"' "AC2-unsure-up a feature answered with a non-bool counts unsure (its points not added) and moves the tier up"
+ok 'okj u1 --argjson f "${FEATS:-[]}" --arg t "$TOP" "(.unsure | sort) == (\$f | sort) and .score == 0 and .tier == \$t" && okj u2 --argjson f "${FEATS:-[]}" --arg t "$TOP" "(.unsure | sort) == (\$f | sort) and .tier == \$t"' \
+  "AC2-unsure-up a non-JSON answer, and a JSON object with junk after it, make every feature unsure and move the tier up to what their points reach ($TOP)"
+U3=$(want 0 1 "$(pts "[\"$FL\"]")"); U4=$(want 0 1 "$(pts "[\"$F1\"]")")
+ok 'okj u3 --arg l "$FL" --arg t "$U3" ".unsure == [\$l] and .score == 0 and .tier == \$t" && [ "$U3" != "$LOW" ]' \
+  "AC2-unsure-up a missing feature counts unsure and moves the lowest tier up to $U3"
+ok 'okj u4 --arg f "$F1" --arg t "$U4" ".unsure == [\$f] and .score == 0 and .tier == \$t"' "AC2-unsure-up a feature answered with a non-bool counts unsure (its points not added) and moves the tier up"
 FO=$(pq -r --argjson m "$MULTI" '[.rubric.features[].id | select(. as $i | $m | index($i) | not)][0] // empty')
 ans "$MULTI" | jq -c --arg o "$FO" 'del(.[$o])' >"$T/a-multi-missing.json" 2>/dev/null; run u5 PR score --features "$T/a-multi-missing.json" --json
 ok '{ [ -n "$FO" ] || say "expected a rubric feature outside the top-tier answer $MULTI"; } && okj u5 --arg o "$FO" --arg t "$TOP" ".unsure == [\$o] and .tier == \$t"' "AC2-unsure-up the raise is capped: a top-tier answer with a missing feature stays at the top tier ($TOP)"
+
+# RT-01 (red team, High): an answer the rubric cannot use must not skip the owner gate: every feature unsure -> the top tier
+pq -c '[.rubric.features[].id] | map({(.): "yes"}) | add' >"$T/a-yes.json"
+{ printf '{'; pq -r '[.rubric.features[].id | "\"" + . + "\": true"] | join(", ")' | tr -d '\n'; printf ', "%s": true}\n' "$F1"; } >"$T/a-dup.json"
+printf 'I cannot classify this request.' >"$T/a-refusal.txt"
+run x1 PR score --features "$T/a-yes.json" --json; run x2 PR score --features "$T/a-dup.json" --json; run x3 PR score --features "$T/a-refusal.txt" --json
+ok 'for x in x1 x2 x3; do okj $x --arg t "$TOP" ".tier == \$t and (.unsure | length) == $NF" || exit 1; done; pq -e --arg t "$TOP" ".tiers[\$t].gate == true" >/dev/null || say "expected the gate on the top tier $TOP in the planner data"' \
+  "AC2-unsure-up RT-01: every feature \"yes\", a duplicate key, or a refusal text: all unsure, and the tier is the top one, which has the gate"
 
 # ---- AC9-split: reliable size of (kind, link) from the routing stats; data alone changes the answer ----
 SK=$(pq -r '.card_size.stats_index_key // empty'); SREL=$(jq -r --arg k "$SK" '.[$k] // empty' "$IX" 2>/dev/null)
@@ -142,9 +152,17 @@ ok 'okj p4 ".split == false" && okj p5 ".split == true and .limit == {files: 1, 
 ped '.card_size.default_limits = {files: 1000, changed_lines: 100000, estimate_hours: 1000} | .card_size.min_samples = 30'; stats 15 20; run p6 PR split --card "$CARD" --kind "$K" --link "$LINK" --json
 ok 'okj p6 ".split == false"' "AC9-split min_samples raised in data above every bucket's count: the default limits decide (no split)"
 
+# RT-08 (red team): a reliable bucket with a size field <= 0 is no evidence, so the default limits decide
+ped '.card_size.min_samples = 10 | .card_size.default_limits = {files: 1000, changed_lines: 100000, estimate_hours: 4}'
+jq -n --arg k "$K" --arg c "$CONN" --arg m "$MODEL" '{schema_version: 1, first_pass: [], size_buckets: [{kind: $k, connection: $c, model: $m, n: 50, failed: 0,
+  size: {files: 20, changed_lines: 800, estimate_hours: 0}}]}' >"$SF"
+jq '.size = {files: 2, changed_lines: 100, estimate_hours: 500}' "$CARD" >"$T/card-500h.json"; run p7 PR split --card "$T/card-500h.json" --kind "$K" --link "$LINK" --json
+ok 'okj p7 ".split == true and .limit == {files: 1000, changed_lines: 100000, estimate_hours: 4} and .parts == 125"' \
+  "AC9-split RT-08: a reliable bucket with estimate_hours 0 is no evidence: a 500-hour card is split by the default limits (125 parts)"
+
 # ---- fake entry: a rubric feature added as data only ----
 ped --argjson m "$(pq '.rubric.thresholds[-2].max_score + 1')" '.rubric.features += [{id: "qa_fake_feature", points: $m, question: "Does the request need the qa fake thing?"}]'
 jq -c '. + {qa_fake_feature: true}' "$A0" >"$T/a-fake.json" 2>/dev/null; run k1 PR score --features "$T/a-fake.json" --json; run k2 PR score --features "$A0" --json
 ok 'okj k1 --arg t "$TOP" ".tier == \$t and .unsure == [] and .features.qa_fake_feature == true"' "AC2-multi-system fake entry: a feature added as data only scores its points (top tier)"
-ok 'okj k2 --arg t "$U1" ".unsure == [\"qa_fake_feature\"] and .tier == \$t"' "AC2-unsure-up fake entry: an answer that lacks the data-only feature counts it unsure and moves the tier up"
+ok 'okj k2 --arg t "$TOP" ".unsure == [\"qa_fake_feature\"] and .tier == \$t"' "AC2-unsure-up fake entry: an answer that lacks the data-only feature counts it unsure, and the tier is what its points reach ($TOP)"
 finish
