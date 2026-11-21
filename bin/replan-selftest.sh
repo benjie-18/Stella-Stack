@@ -3,6 +3,7 @@
 # Every section runs in its own scratch root (bash replan-selftest.sh <section>); no argument runs them all.
 # Sections -> checks (tests.json ids):
 #   brief  AC6-brief-history     spec  AC6-spec-replan     block  AC6-block-twice     diff  AC6-phase-gate     split  AC6-split-nogate
+#   splitgate  AC6-phase-gate (pass-2 mutants F3, F4: what is not a split gates)
 #   (added in the CRT-846d43e fix cycle: block CRT-846d43e-1, split CRT-846d43e-6)
 # Each section has a planner run whose roadmap the test approver approved (bin/planner-test-lib.sh: harness and CLI assumptions),
 # board cards bound to its roadmap cards, and a QA loop per card driven as bin/qa-loop-selftest.sh drives it (a scratch builder
@@ -16,7 +17,7 @@
 #     the new version comes from planner.py plan after the trusted planner.replan line; a gated version opens its gate on submit.
 set -u
 ME=replan-selftest
-SECTIONS="brief spec block diff split"
+SECTIONS="brief spec block diff split splitgate"
 if [ $# = 0 ]; then
   f=0; for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || f=$((f+1)); done
   [ $f = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($f sections)"; [ $f = 0 ]; exit
@@ -134,6 +135,18 @@ split)   # AC6-split-nogate
   run df2 RP replan-diff --run "$RUN" --old "$V1" --new "$V3" --json
   ok '[ -n "$V3" ] && refused df2 PLN && [ "$(cnt planner.split "$RUN")" = 1 ]' \
     "CRT-846d43e-6 a split from a version that is no longer current ($V1; the current one is $V2) is refused: no second planner.split line"
+  ;;
+splitgate)   # AC6-phase-gate: a "split" that changes the cards of two phases, or whose new cards cover other checks, is no split (DG-6)
+  approved u1; C1=t_0d000051; card $C1 "$P"; bind "$RUN" $C1 c1; B=$(mkrepo "$T/r-$C1"); open_ $C1 "$B"
+  blocks $C1 "$BK" "$LIM"; dispatch d1 $C1
+  plan_answer "$CPLX" split2; run p2 PLN plan --run "$RUN" --json; V2=$(jv p2 '.version // empty')
+  run df RP replan-diff --run "$RUN" --old "$V1" --new "$V2" --json
+  ok '[ "$(act d1)" = replan ] && [ "$(rc p2)" = 0 ] && [ -n "$V2" ] && [ "$(rc df)" = 0 ] && gated df && [ "$(cnt planner.split "$RUN")" = 0 ]' \
+    "AC6-phase-gate c1 and c3 split in the same re-plan (two phases' cards changed, each inside its files and checks): replan-diff $V1 -> $V2 says gate, no planner.split line"
+  plan_answer "$CPLX" splitck; run p3 PLN plan --run "$RUN" --json; V3=$(jv p3 '.version // empty')
+  run df3 RP replan-diff --run "$RUN" --old "$V1" --new "$V3" --json
+  ok '[ "$(rc p3)" = 0 ] && [ -n "$V3" ] && [ "$(rc df3)" = 0 ] && gated df3 && [ "$(cnt planner.split "$RUN")" = 0 ] && [ "$(gstat "$RUN")" = approved ]' \
+    "AC6-phase-gate c1 split into c1a (check a1) and c1b (check a2: c1 covered a1 only): replan-diff $V1 -> $V3 says gate, no planner.split line, the approved version stays current"
   ;;
 esac
 finish

@@ -94,6 +94,8 @@ gate)   # AC5-committed, AC5-gate-wait, AC5-no-builder-before, AC5-approve
   mays m0 "$RUN" t_0c000010; claim k0 t_0c000010; claim k0q t_0c000012; start a0 t_0c000010
   ok '[ "$(rc bind-t_0c000010)" = 0 ] && refused m0 PLN && [ "$(rc k0)" = 2 ] && coded k0 PLN && [ "$(rc k0q)" = 0 ] && [ -n "$ADP" ] && refused a0 PLN' \
     "AC5-no-builder-before before approval: may-start refused, a builder's kanban_claim refused by role-guard, adapter.py start refused (each coded STL-PLN); a card of a project with no run is claimed"
+  card t_0c000013 "$P"; claim k0u t_0c000013   # pass-2 mutant E4: a card bound to no roadmap, of the project whose run is open
+  ok '[ "$(rc k0u)" = 2 ] && coded k0u PLN' "AC5-no-builder-before a builder card of the same project that is bound to no roadmap card is refused too (kanban_claim, coded STL-PLN)"
   decide "$GREQ" approved; mays m1 "$RUN" t_0c000010; mays m2 "$RUN" t_0c000011; claim k1 t_0c000010
   ok '[ "$(gstat "$RUN")" = approved ] && [ "$(rc m1)" = 0 ] && [ "$(rc k1)" = 0 ] && refused m2 PLN' \
     "AC5-approve the test approver approves: gate approved, a phase-1 card may start (may-start, claim), a card of phase 2 (depends on phase 1, not passed) is still refused"

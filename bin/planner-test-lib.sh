@@ -165,7 +165,7 @@ rubric() {  # all|none: the rubric role's answer, every data feature true (score
 blink() { python3 -I "$R/bin/resolve.py" resolve --role "$BR" --project "$P" --card t_0b0000ff --json 2>/dev/null | jq -c '[.chain[]? | select(.status == "usable") | {connection, model}][0]' 2>/dev/null | grep . || echo '{"connection": "none", "model": "none"}'; }
 C0=$(pj '.lint.comparators[0] // empty')   # threshold comparator and the project's budget cap, as bin/roadmap-selftest.sh reads them
 CAP=$(jq -r --arg p "$P" '[.budgets[] | select(.scope == "project" and (.key == $p or .key == "*"))] | sort_by(.key == "*") | .[0].hard.amount // empty' "$R/$(p budgets)" 2>/dev/null)
-roadmap() {  # <request file> <variant: base|phase|split|edit> -> prints roadmap.md (its tier: RMTIER, default the top tier)
+roadmap() {  # <request file> <variant: base|phase|split|split2 (phases p1 and p2 split)|splitck (c1 split into cards of other checks)|edit> -> prints roadmap.md (its tier: RMTIER, default the top tier)
   local bl; bl=$(blink)
   jq -n --arg id "$(cat /proc/sys/kernel/random/uuid)" --arg iid "$IID" --arg p "$P" --rawfile rq "$1" --arg dg "$(sha "$1")" --arg tier "${RMTIER:-$COMPLEX}" \
     --arg pre "$SEL" --arg br "$BR" --arg qt "$MEDIUM" --argjson bl "$bl" --arg pr "$PR" --arg v "$2" --arg c0 "$C0" --argjson cap "${CAP:-0}" '
@@ -176,9 +176,11 @@ roadmap() {  # <request file> <variant: base|phase|split|edit> -> prints roadmap
      phases: ([
       {id: "p1", title: "Guessing game core", goal: "the game logic", builds: ["guessing", "game"], depends_on: [], builder_role: $br, qa_tier: $qt, vm: "TBD",
        acceptance: [acc("a1"), acc("a2")],
-       cards: ((if $v == "split" then [card("c1a"; ["a.txt"]; ["a1"]), card("c1b"; ["a.txt"]; ["a1"])] else [card("c1"; ["a.txt"]; ["a1"])] end) + [card("c2"; ["b.txt"]; ["a2"])])},
+       cards: ((if $v == "split" or $v == "split2" then [card("c1a"; ["a.txt"]; ["a1"]), card("c1b"; ["a.txt"]; ["a1"])]
+         elif $v == "splitck" then [card("c1a"; ["a.txt"]; ["a1"]), card("c1b"; ["a.txt"]; ["a2"])] else [card("c1"; ["a.txt"]; ["a1"])] end) + [card("c2"; ["b.txt"]; ["a2"])])},
       {id: "p2", title: (if $v == "edit" then "Installer (owner edit)" else "Installer" end), goal: "install it", builds: ["installer"], depends_on: ["p1"],
-       builder_role: $br, qa_tier: $qt, vm: "TBD", acceptance: [acc("a3")], cards: [card("c3"; ["c.txt"]; ["a3"])]}]
+       builder_role: $br, qa_tier: $qt, vm: "TBD", acceptance: [acc("a3")],
+       cards: (if $v == "split2" then [card("c3a"; ["c.txt"]; ["a3"]), card("c3b"; ["c.txt"]; ["a3"])] else [card("c3"; ["c.txt"]; ["a3"])] end)}]
       + (if $v == "phase" then [{id: "p3", title: "Escalation point", goal: "a new phase", builds: ["escalation"], depends_on: ["p2"], builder_role: $br,
           qa_tier: $qt, vm: "TBD", acceptance: [acc("a4")], cards: [card("c4"; ["d.txt"]; ["a4"])]}] else [] end)),
      out_of_scope: ["other games"], estimate: {tokens: 1000, cost: ($cap / 10), hours: 3, budget_cap: ($cap / 2)},
