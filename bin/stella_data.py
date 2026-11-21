@@ -1496,7 +1496,7 @@ def rule_planner(c):
             P(rid, Coded(PLANNER_DATA, m))
         rb = p["rubric"]
         if rb["extract_role"] not in roles:
-            bad(f"rubric.extract_role: {nm(rb['extract_role'], roles, 'the value')} is not an assignable role in the role table")
+            bad(f"rubric.extract_role: {nm(rb['extract_role'], roles, 'the value')} is not a role in the role table")
         if len({f["id"] for f in rb["features"]}) != len(rb["features"]):
             bad("rubric.features: an id is listed twice")
         th = rb["thresholds"]

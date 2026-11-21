@@ -8917,6 +8917,38 @@
         "replan"
       ],
       "why": "P1 items E and F (tests first): bin/planner-test-lib.sh builds its roadmaps in the format bin/roadmap-selftest.sh and the replay fixture use (named in its header)"
+    },
+    {
+      "globs": [
+        "bin/selftests.sh",
+        "bin/test-map-selftest.sh",
+        "bin/test-map.py",
+        "bin/watchdog.sh",
+        "bin/watchdog_settings.py",
+        "docs/hermes-local/hardcode-allow.json",
+        "docs/hermes-local/watchdog-settings.json",
+        "package.json",
+        ".stella/qa-loop.json",
+        ".stella/schemas/roadmap.schema.json",
+        ".stella/schemas/test-map.schema.json",
+        ".stella/test-map.json",
+        "bench/tasks/deploy-recovery/repo/deploy.conf",
+        "bench/tasks/deploy-recovery/repo/deploy.sh",
+        "bench/tasks/deploy-recovery/repo/test.sh",
+        "bench/tasks/deploy-recovery/solution/deploy.conf",
+        "bin/hardcode-lint.sh",
+        "bin/model_watch.py",
+        "bin/qa_findings.py",
+        "bin/qa_loop.py",
+        "bin/qa_tests.py"
+      ],
+      "targets": [
+        "planner",
+        "roadmap",
+        "scope-guard",
+        "replan"
+      ],
+      "why": "P1 merge glue: these selftests run bin/hardcode-lint.sh / test-map check inside their scratch roots, which reach the lint and test-map files (test-map.py check named them)"
     }
   ]
 }
