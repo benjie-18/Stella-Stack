@@ -140,6 +140,11 @@ def cmd_check(a, pl):
             raise Refuse(GRAPH, "depends_on has a cycle")
         for k in ready:
             del left[k]
+    for p in d["phases"]:   # DG-5: a card's checks are acceptance ids of its phase, and no check of the phase is left uncovered
+        # shortcut: checks is optional while the item D and G fixtures carry none; make it required once they do (then every phase is judged)
+        acc, named = {c["id"] for c in p["acceptance"]}, {x for c in p["cards"] for x in c.get("checks", [])}
+        if not named <= acc or any("checks" in c for c in p["cards"]) and acc - named:
+            raise Refuse(GRAPH, f"phase {sd.idn(p['id'][:64], True)}: a card's checks name no acceptance check of the phase, or a check no card covers")
     ph = pl["roadmap"]["vm_placeholder"]
     if not feature_on(pl["roadmap"]["vm_feature"]) and any(p["vm"] != ph for p in d["phases"]):
         raise Refuse(VM, f"vm must be {ph!r} while the {pl['roadmap']['vm_feature']} feature is not on")

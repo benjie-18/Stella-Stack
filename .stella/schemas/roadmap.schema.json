@@ -334,6 +334,15 @@
             "maxLength": 300
           }
         },
+        "checks": {
+          "type": "array",
+          "maxItems": 64,
+          "description": "DG-5: the acceptance check ids of its phase this card builds; once any card of a phase lists checks, every check of the phase must be covered (bin/roadmap.py check).",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+          }
+        },
         "size": {
           "type": "object",
           "properties": {
