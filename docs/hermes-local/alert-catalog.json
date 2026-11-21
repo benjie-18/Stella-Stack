@@ -4380,7 +4380,7 @@
       "severity": "warning",
       "title": "the scope guard cannot read the built-work file",
       "message": "The scope guard refuses the built-work file: {problem}.",
-      "action": "give the file {paths, titles, artifacts}, each a list of strings, under the size cap.",
+      "action": "give the file the lists paths, titles and artifacts (strings only), under the size cap.",
       "cause": "The built-work file is missing, too large, not JSON, or has the wrong shape.",
       "check": "python3 -I bin/scope_guard.py check --roadmap FILE [--built FILE] --json; bash bin/scope-guard-selftest.sh.",
       "related": "P1 item G; bin/scope_guard.py, .stella/planner.json",
