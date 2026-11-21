@@ -2697,6 +2697,25 @@
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     },
     {
+      "id": "roadmap",
+      "kind": "command",
+      "summary": "Checks and lints a roadmap.md (the one json roadmap block against its schema, phase order, vm placeholder, estimate and budget caps, every link inside resolve.py's chain or rung walk for the project, numeric acceptance checks with a probe sketch) and picks the start rung of a card by expected cost from routing stats or benchmark priors. Read only, no model call",
+      "keywords": ["roadmap", "planner", "acceptance", "lint", "pick", "model", "rung", "budget"],
+      "inputs": "check FILE --project P | lint FILE | pick --project P --role R --kind K [--card C] [--critical] (each with --json)",
+      "outputs": "JSON; exit 1 with a catalog code (STL-PLN-200..209, STL-CFG-312 worker environment)",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/roadmap.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "c691740f-aa01-4ece-b7b1-2bd21ac264b1",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
       "id": "qa-roles",
       "kind": "command",
       "summary": "Runs the QA roles of a card's round (host only): run starts every slot of qa_loop.py plan as a process of its own, all at once (one after another under when_local_only), each the stub double bin/qa_stub_role.py (due D1) that registers evidence and submits findings and its verdict through qa_findings.py; refused while the stub-roles features entry is off; diagnose, only while the diagnosis flag is on, writes one brief file under the round's evidence folder and one trusted line, and is not a round",
@@ -3165,6 +3184,34 @@
         "result": "shipped"
       },
       "global_id": "308cd9b0-2201-40d9-8740-c0aca1c7d93b",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner-rubric",
+      "kind": "command",
+      "summary": "The planner rubric and card size (host only): score reads the rubric role's yes/no answer as untrusted data (anything but a strict true/false per feature counts unsure, one tier up) into points and a tier; extract asks the rubric role through route.py and scores; split judges a roadmap card against the reliable size for its kind and link from the routing stats; report lists tiers the QA raised above the rubric tier and proposes thresholds",
+      "keywords": [
+        "planner",
+        "rubric",
+        "tier",
+        "score",
+        "card size",
+        "split",
+        "tier miss",
+        "report"
+      ],
+      "inputs": "score --features FILE|- [--request-id R] --json | extract --project P --request FILE --json | split --card FILE --kind K --link CONNECTION/MODEL --json | report [--since DATE] --json",
+      "outputs": "JSON (score/extract: {features, unsure, score, tier, reason, request}; split: {split, limit, size, parts}; report: {since, cards, misses, proposal}); one trusted line each (planner.rubric, planner.tier-report); exit 1 with a catalog code (STL-PLN-110..119, STL-CFG-312 in a worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/planner_rubric.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "42e23e8b-3f4c-48c2-bf05-82396faef10b",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]

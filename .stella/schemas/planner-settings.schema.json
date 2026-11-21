@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Planner settings",
+  "description": "Owner settings of the planner (P1 W0): the default mode and question-first, per project and per card. Owner-only. Precedence: card, project, default for mode; project, default for question_first.",
+  "x-one-document": true,
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "defaults": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+        },
+        "question_first": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "mode",
+        "question_first"
+      ],
+      "additionalProperties": false
+    },
+    "projects": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "question_first": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "cards": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "defaults",
+    "projects",
+    "cards"
+  ],
+  "additionalProperties": false
+}

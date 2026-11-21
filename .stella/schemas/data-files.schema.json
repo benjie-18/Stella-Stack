@@ -249,6 +249,26 @@
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
       "description": "The card rungs file escalate.sh reads ({card: {role: rung}}, 1 when absent; F2b item E). The QA loop writes it after a trusted qa.climbed line, which stays the record; a protected state path."
     },
+    "planner_runs": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The planner engine folder (P1): <dir>/<run>/<version>/roadmap.md and the run files, written on the host only by bin/planner.py. A protected state path, not a data file."
+    },
+    "planner_cards": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The planner card projection (P1, DG-1): {projects: {P: {open_runs}}, cards: {card: {run, version, phase, startable, reason}}}, written only by bin/planner.py under its lock. The start guard reads it. A protected state path."
+    },
+    "planner_routing_stats": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The routing stats the planner reads for card size and model pick (P1; a mock file until D1 replaces it, feature planner-routing-stats-mock). A protected state path."
+    },
+    "planner_benchmark_priors": {
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+      "description": "The benchmark priors the planner reads for model pick (P1; a mock file until W2 replaces it, feature planner-benchmark-priors-mock). A protected state path."
+    },
     "ui_streams": {
       "type": "string",
       "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
@@ -286,7 +306,11 @@
     "qa_evidence",
     "qa_copies",
     "qa_quarantine",
-    "qa_rungs"
+    "qa_rungs",
+    "planner_runs",
+    "planner_cards",
+    "planner_routing_stats",
+    "planner_benchmark_priors"
   ],
   "additionalProperties": false
 }

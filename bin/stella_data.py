@@ -80,6 +80,7 @@ class Coded(str):
 
 TIER_ROWS = "STL-MDL-733"   # a role's tier rows do not cover every task tier, or a preset has none to use
 OFF_REQUIRED, CHAIN_FAILS, BUILTIN_EDIT = "STL-MDL-725", "STL-MDL-726", "STL-MDL-727"   # the preset rule's codes (F2 D1.9)
+PLANNER_DATA = "STL-PLN-100"   # the planner data rule's code (P1 W0)
 QA_DATA = "STL-QA-105"   # the QA loop rule's code (Q1 DG-3); the QA loop tool refuses its plan with the same code
 ENGINE_REFUSED = "STL-MDL-764"   # a candidate of the weekly model check that is no engine pick (F2c F, frozen())
 PROBED = NOROW + "probe records"   # the member of a check line that rests on probe data: no read depends on it, so served() never refuses for it (C-DC-03)
@@ -230,7 +231,7 @@ def jload(path, label=None):
 
 STATE = ("event_log", "backup_dir", "applied_state", "role_table", "owner_key", "approval_store", "event_writer_state", "routing_state",
          "card_facts", "probe_records", "triage_calibration", "benchmark_results", "usage_ledger", "ledger_state", "spans", "budget_state", "model_check_state",
-         "run_tokens", "model_proxy_state", "adapter_runs", "host_presence", "capabilities_mcp_state", "conformance_records", "qa_evidence", "qa_copies", "qa_quarantine", "qa_rungs", "ui_streams", "untrusted_events")   # the index keys that name a path; the last is the agents' stream (untrusted())
+         "run_tokens", "model_proxy_state", "adapter_runs", "host_presence", "capabilities_mcp_state", "conformance_records", "qa_evidence", "qa_copies", "qa_quarantine", "qa_rungs", "planner_runs", "planner_cards", "planner_routing_stats", "planner_benchmark_priors", "ui_streams", "untrusted_events")   # the index keys that name a path; the last is the agents' stream (untrusted())
 
 
 def untrusted(idx):
@@ -1498,6 +1499,51 @@ def rule_qa_loop(c):
                         P(rid, Coded(QA_DATA, f"{at} merged over the file: {m}"))
 
 
+def rule_planner(c):
+    """Planner data (P1 W0), every line PLANNER_DATA: extract_role is a role of the role table (a missing row is one refusal);
+    the thresholds name each tier once, ascending, the last without max_score (the others with); every tier row and threshold
+    names a task tier of routing (schema x-ref) and every task tier has a threshold and a tier row; rubric feature ids are
+    unique; modes.default is a mode id; mode words are unique; stats_index_key is an index key. The settings' mode words are
+    mode ids of the planner data."""
+    P, table = c["P"], c["table"]
+    roles = set(table["roles"]) - {table["fallback_role"]}
+    for rid, p in c["whole"].get("planner", []):
+        def bad(m):
+            P(rid, Coded(PLANNER_DATA, m))
+        rb = p["rubric"]
+        if rb["extract_role"] not in roles:
+            bad(f"rubric.extract_role: {nm(rb['extract_role'], roles, 'the value')} is not a role in the role table")
+        if len({f["id"] for f in rb["features"]}) != len(rb["features"]):
+            bad("rubric.features: an id is listed twice")
+        th = rb["thresholds"]
+        if len({t["tier"] for t in th}) != len(th):
+            bad("rubric.thresholds: a tier is listed twice")
+        if "max_score" in th[-1] or any("max_score" not in t for t in th[:-1]):
+            bad("rubric.thresholds: the last row has no max_score and every other row has one")
+        caps = [t["max_score"] for t in th if "max_score" in t]
+        if caps != sorted(set(caps)):
+            bad("rubric.thresholds: max_score does not rise from row to row")
+        for _, rt in c["whole"].get("routing", []):
+            for t in rt["task_tiers"]:
+                if t["id"] not in p["tiers"] or t["id"] not in {x["tier"] for x in th}:
+                    bad(f"task tier {idn(t['id'])} of routing has no tier row or no threshold in the planner data")
+        bh = p["behaviors"]
+        if any(t["behavior"] not in bh for t in p["tiers"].values()) or p["modes"]["force_min_behavior"] not in bh:
+            bad("a tier behavior or modes.force_min_behavior is not in behaviors")
+        if "needs_input" in p["replan"]["block_kinds"] or "code" in p["replan"]["problem_kinds"]:
+            bad("replan: block_kinds never lists needs_input and problem_kinds never lists code")
+        if p["modes"]["default"] not in p["modes"]["ids"].values():
+            bad("modes.default is not a mode word of modes.ids")
+        if len(set(p["modes"]["ids"].values())) != len(p["modes"]["ids"]):
+            bad("modes.ids: a mode word is used twice")
+        if not {p["card_size"]["stats_index_key"], p["model_pick"]["prior_index_key"]} <= set(c["idx"]):
+            bad("card_size.stats_index_key or model_pick.prior_index_key is not a key of the data index")
+        for sid, s in c["whole"].get("planner-settings", []):
+            ms = [s["defaults"]["mode"], *(x["mode"] for k in ("projects", "cards") for x in s[k].values() if "mode" in x)]
+            if any(m not in p["modes"]["ids"].values() for m in ms):
+                P(sid, Coded(PLANNER_DATA, "a mode in the planner settings is not a mode word of the planner modes.ids"))
+
+
 def rule_link_classes(c):
     """DC-03: a link class that is not hosted never labels a link that leaves the machine (by reach(): cloud, a hosted
     connection, an aggregator). The locality rules read reach() alone; this keeps the label from saying otherwise."""
@@ -1874,6 +1920,7 @@ RULES = [("data policy and catalog", ("data-policy", "connections"), ("data-poli
          ("presets", ("role-assignments",), ("role-assignments", "routing", "connections", TABLE), rule_presets),
          ("routing", ("routing",), ("routing", TABLE), rule_routing),
          ("qa loop", ("qa-loop",), ("qa-loop", "routing", "role-assignments"), rule_qa_loop),
+         ("planner", ("planner", "planner-settings"), ("planner", "planner-settings", "routing", TABLE), rule_planner),
          ("link classes", ("connections",), ("connections", "routing"), rule_link_classes),
          ("grant scopes", ("grants",), ("grants",), rule_grants),
          ("model check grants", ("grants",), ("grants", "role-assignments"), rule_mc_grants),

@@ -539,6 +539,31 @@
       "record_kind": "setting",
       "global_id": "5d660e90-2cfb-4580-922a-0825f7e5d670",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner",
+      "path": ".stella/planner.json",
+      "record_kind": "planner",
+      "schema": "planner",
+      "format": "json",
+      "owner_only": false,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "191091b7-44bd-43bb-becb-e59e6c8e94e1",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner-settings",
+      "path": ".stella/planner-settings.json",
+      "schema": "planner-settings",
+      "format": "json",
+      "owner_only": true,
+      "redact_keys": [],
+      "list_key": null,
+      "id_field": "schema_version",
+      "global_id": "16dd7ea8-ecf2-46cf-837e-c1869976b2d7",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ],
   "spans": ".supervisor/logs/spans.jsonl",
@@ -556,5 +581,9 @@
   "qa_copies": ".supervisor/qa/copies",
   "qa_quarantine": ".supervisor/state/qa-quarantine.json",
   "qa_rungs": ".supervisor/state/rungs.json",
+  "planner_runs": ".supervisor/state/planner-runs",
+  "planner_cards": ".supervisor/state/planner-cards.json",
+  "planner_routing_stats": ".supervisor/state/planner-routing-stats.json",
+  "planner_benchmark_priors": ".supervisor/state/planner-benchmark-priors.json",
   "ui_streams": ".supervisor/state/ui-streams"
 }
