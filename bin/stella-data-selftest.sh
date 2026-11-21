@@ -255,7 +255,7 @@ V=sk-ant-api03-qafake0123456789abcdef   # lower case on purpose: it fits the id 
 CM=$(jq -r '.entries[] | select(.id == "claude-subscription") | .models[0].id' "$ROOT/.stella/connections.json")
 CHAIN="[{connection:\"claude-subscription\",model:\"$CM\",parameters:{}}]"
 # P1 a chain entry's provider must allow every data class the role handles
-mk p1a; ed p1a connections.json "(.entries[] | select(.id == \"claude-subscription\")) |= (.allowed_roles = $AR | .terms_ok = true | $CAPS)"; ed p1a role-assignments.json ".assignments[0].chain = $CHAIN"   # F1b D6: terms recorded, so the cases judge only the data classes
+mk p1a; ed p1a connections.json "(.entries[] | select(.id == \"claude-subscription\")) |= (.allowed_roles = $AR | .data_policy.data_classes_allowed = [] | .terms_ok = true | $CAPS)"; ed p1a role-assignments.json ".assignments[0].chain = $CHAIN"   # F1b D6: terms recorded, so the cases judge only the data classes
 ok 'refuses p1a check && grep -q "data class" "$T/o"' "84 a chain to a provider that allows none of the role's data classes is refused"
 ed p1a connections.json '(.entries[] | select(.id == "claude-subscription")).data_policy.data_classes_allowed = ["public"]'
 ok 'refuses p1a check' "85 a provider that allows only some of the role's data classes is refused"
