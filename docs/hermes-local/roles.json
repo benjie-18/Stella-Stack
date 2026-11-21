@@ -56,7 +56,8 @@
     "bin/qa_tests.py",
     "bin/qa_schedule.py",
     "bin/qa_roles.py",
-    "bin/qa_stub_role.py"
+    "bin/qa_stub_role.py",
+    "bin/planner_rubric.py"
   ],
   "owner_commands_by_name": [
     "bin/merge-card.sh"
@@ -145,7 +146,8 @@
     "bin/agent_runtime.py",
     "bin/agent_tool.py",
     "bin/agui_ui.py",
-    "bin/redact_all.py"
+    "bin/redact_all.py",
+    "bin/planner_rubric.py"
   ],
   "write_tools": [
     "write_file",

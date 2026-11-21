@@ -83,13 +83,20 @@
             "raise_tiers"
           ],
           "additionalProperties": false
+        },
+        "input_max_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 1048576,
+          "description": "Largest rubric answer, request file or card file planner_rubric.py reads (bytes); a longer answer counts every feature unsure."
         }
       },
       "required": [
         "extract_role",
         "features",
         "thresholds",
-        "unsure"
+        "unsure",
+        "input_max_bytes"
       ],
       "additionalProperties": false
     },
