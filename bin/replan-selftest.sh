@@ -3,6 +3,7 @@
 # Every section runs in its own scratch root (bash replan-selftest.sh <section>); no argument runs them all.
 # Sections -> checks (tests.json ids):
 #   brief  AC6-brief-history     spec  AC6-spec-replan     block  AC6-block-twice     diff  AC6-phase-gate     split  AC6-split-nogate
+#   (added in the CRT-846d43e fix cycle: block CRT-846d43e-1, split CRT-846d43e-6)
 # Each section has a planner run whose roadmap the test approver approved (bin/planner-test-lib.sh: harness and CLI assumptions),
 # board cards bound to its roadmap cards, and a QA loop per card driven as bin/qa-loop-selftest.sh drives it (a scratch builder
 # repo, findings, repros, verdicts through bin/qa_findings.py, qa.* lines planted only through bin/qa_loop.py / qa_findings.py).
@@ -95,12 +96,16 @@ block)   # AC6-block-twice
   approved k1; C1=t_0d000021; C2=t_0d000022; C3=t_0d000023
   for c in $C1 $C2 $C3; do card $c "$P"; B=$(mkrepo "$T/r-$c"); open_ $c "$B"; done
   bind "$RUN" $C1 c1; bind "$RUN" $C2 c2; bind "$RUN" $C3 c3
+  claim k0 $C1; cp "$R/$(ix .planner_cards)" "$T/proj-before.json"   # CRT-846d43e-1: the start projection as it was before the re-plan
   blocks $C1 "$BK" "$LIM"; blocks $C2 "$BK" $((${LIM:-0} - 1)); blocks $C3 needs_input "$LIM"
   dispatch d1 $C1; dispatch d2 $C2; dispatch d3 $C3
   ok '[ "$(rc blk-$C1-1)" = 0 ] && [ "$(cnt planner.block $C1)" = "$LIM" ] && [ "$(rc d1)" = 0 ] && [ "$(act d1)" = replan ] && [ "$(cnt planner.replan $C1)" = 1 ]' \
     "AC6-block-twice a builder blocked $LIM times (kind $BK, trusted planner.block lines): dispatch says replan, one trusted planner.replan line"
   ok '[ "$(rc d2)" = 0 ] && [ "$(act d2)" != replan ] && [ "$(rc d3)" = 0 ] && [ "$(act d3)" != replan ] && [ "$(cnt planner.replan $C2)" = 0 ] && [ "$(cnt planner.replan $C3)" = 0 ]' \
     "AC6-block-twice (controls) blocked $((${LIM:-0} - 1)) time(s), or $LIM times as needs_input (not counted): no re-plan"
+  claim k1 $C1; cp "$T/proj-before.json" "$R/$(ix .planner_cards)"; claim k2 $C1
+  ok '[ "$(rc k0)" = 0 ] && [ "$(rc k1)" = 2 ] && coded k1 PLN && [ "$(rc k2)" = 2 ] && coded k2 PLN' \
+    "CRT-846d43e-1 the card under re-plan (DG-7): a builder's kanban_claim, allowed before, is refused right after dispatch (no planner.py call in between), and still refused with the projection from before the re-plan put back (not current)"
   ;;
 diff)   # AC6-phase-gate
   approved g1; C1=t_0d000031; card $C1 "$P"; bind "$RUN" $C1 c1; B=$(mkrepo "$T/r-$C1"); open_ $C1 "$B"
@@ -122,6 +127,13 @@ split)   # AC6-split-nogate
     "AC6-split-nogate c1 split into c1a and c1b inside phase p1 (files and checks inside c1's, the same builder link): replan-diff says split, one trusted planner.split {run, from, to, digest}"
   ok '[ -n "$V2" ] && [ "$(cnt planner.gate-opened "$RUN")" = 1 ] && [ "$(gstat "$RUN")" = approved ] && [ "$(rc m2)" = 0 ]' \
     "AC6-split-nogate no new gate: still one planner.gate-opened line, the gate stays approved, an unchanged card of the phase may start"
+  N=t_0d000043; card $N "$P"; run gs2 PLN gate status --run "$RUN" --version "$V2" --json; bind "$RUN" $N c1a; mays m3 "$RUN" $N; mays m4 "$RUN" $C1
+  ok 'J gs2 ".status == \"approved\"" && [ "$(rc bind-$N)" = 0 ] && [ "$(rc m3)" = 0 ] && refused m4 PLN' \
+    "CRT-846d43e-6 the split version $V2 becomes current and carries the approval: gate status approved, a card binds to its new roadmap card c1a and may start; the card of the replaced c1 may not"
+  plan_answer "$CPLX" split; run p3 PLN plan --run "$RUN" --json; V3=$(jv p3 '.version // empty')
+  run df2 RP replan-diff --run "$RUN" --old "$V1" --new "$V3" --json
+  ok '[ -n "$V3" ] && refused df2 PLN && [ "$(cnt planner.split "$RUN")" = 1 ]' \
+    "CRT-846d43e-6 a split from a version that is no longer current ($V1; the current one is $V2) is refused: no second planner.split line"
   ;;
 esac
 finish

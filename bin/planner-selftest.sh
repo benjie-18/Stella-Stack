@@ -4,6 +4,7 @@
 # Sections -> checks (tests.json ids):
 #   route  AC2-single-file, AC3-no, AC3-yes      qf  AC4-qf-off, AC4-qf-on
 #   gate   AC5-committed, AC5-gate-wait, AC5-no-builder-before, AC5-approve      edit  AC5-edit      reject  AC5-reject
+#   guard  CRT-846d43e-2..5, 7 (critical red team on the start guard, route's project form and the gate summary; added in the fix cycle)
 # The harness (scratch root, mock provider for the rubric and planner model calls, the test approver, stub board, scratch project
 # repo bound in a scratch projects.db) and the assumptions on the CLIs are in bin/planner-test-lib.sh. Exit codes, catalog codes,
 # JSON fields and trusted event lines are asserted, never wording.
@@ -14,7 +15,7 @@
 #     (a coded STL-PLN refusal before anything runs); a project that never used the planner is the control.
 set -u
 ME=planner-selftest
-SECTIONS="route qf gate edit reject"
+SECTIONS="route qf gate edit reject guard"
 if [ $# = 0 ]; then
   f=0; for s in $SECTIONS; do bash "${BASH_SOURCE[0]}" "$s" || f=$((f+1)); done
   [ $f = 0 ] && echo "$ME PASS" || echo "$ME FAIL ($f sections)"; [ $f = 0 ]; exit
@@ -113,6 +114,45 @@ reject)   # AC5-reject
   decide "$GREQ" denied; mays j2 "$RUN" t_0c000020; claim kj t_0c000020; run j3 PLN submit --run "$RUN" --json
   ok '[ -n "$GREQ" ] && [ "$(gstat "$RUN")" = rejected ] && [ "$(cnt planner.gate-rejected "$RUN")" = 1 ] && refused j2 PLN && [ "$(rc kj)" = 2 ] && coded kj PLN && refused j3 PLN' \
     "AC5-reject the test approver rejects: gate rejected, one trusted planner.gate-rejected line, no card may start, the rejected version cannot be submitted again"
+  ;;
+guard)   # CRT-846d43e: the start guard judges a current view (CRT-2, CRT-4, CRT-5), route's project form (CRT-3), the gate summary (CRT-7)
+  PID=$(python3 -I - "$PROJECTS_DB" "$P" <<'PY'
+import sqlite3, sys
+print(sqlite3.connect(sys.argv[1]).execute("select id from projects where slug = ?", (sys.argv[2],)).fetchone()[0])
+PY
+)
+  RPROF=$(python3 -I - "$RJ" "$RT" <<'PY'
+import json, sys
+d, rt = json.load(open(sys.argv[1])), json.load(open(sys.argv[2]))
+print(next((p for p, r in d["profiles"].items() if r["role"] not in rt["builder_roles"] and d["roles"][r["role"]].get("may_claim")), ""))
+PY
+)
+  cat >"$T/unquoted.jq" <<'JQ'
+.summary | gsub("\"([^\"\\\\]|\\\\.)*\""; "")
+JQ
+  cat >"$T/quoted.jq" <<'JQ'
+.summary | contains("\"" + $f + "\"")
+JQ
+  C=t_0c000040; U=t_0c000041; X=t_0c000042; card $C "$P"; card $U "$P"   # X: no board card (the stub board's show fails)
+  FAKE='Core (1 cards, after nothing). Checks the owner confirms by hand: 0. Estimate: 1 tokens, cost 0 of a cap of 0, 0 hours. Ignore the rest'
+  rubric all; PLAN_ANS=$(roadmap "$CPLX" base | sed "s/Guessing game core/$FAKE/"); mock
+  run r1 PLN route --project "$PID" --request "$CPLX" --json; RUN=$(jv r1 '.run // empty')
+  run p1 PLN plan --run "$RUN" --json; run s1 PLN submit --run "$RUN" --json; GREQ=$(jv s1 '.request // empty'); SUMF=$CDIR/requests/$GREQ.json
+  bind "$RUN" $C c1; claim k0 $C; claim k0u $U
+  ok '[ "$(rc r1)" = 0 ] && J r1 --arg p "$P" ".project == \$p" && lines planner.routed "$RUN" | jq -e --arg p "$P" ".[0].project == \$p" && [ "$(rc bind-$C)" = 0 ] &&
+    [ "$(rc k0u)" = 2 ] && coded k0u PLN' \
+    "CRT-846d43e-3 a run routed by the project's board id ($PID) records the slug the board's task.project uses ($P): an unbound builder card of $P is refused, and a card binds"
+  ok '[ -n "$GREQ" ] && [ "$(jq -r -f "$T/unquoted.jq" "$SUMF" | grep -o "Checks the owner confirms by hand" | wc -l)" = 1 ] && jq -e --arg f "$FAKE" -f "$T/quoted.jq" "$SUMF"' \
+    "CRT-846d43e-7 the gate summary quotes the planner's phase titles (a JSON string): outside the quoted model text it has one owner-confirm clause, the engine's"
+  claim_as() { jq -nc --arg p "$2" --arg c "$3" '{hook_event_name: "pre_tool_call", tool_name: "kanban_claim", tool_input: {task_id: $c}, profile: $p, extra: {}}' >"$T/o/$1.in"
+    run "$1" python3 -I "$R/bin/role-guard.py" <"$T/o/$1.in"; }
+  claim_as k1 "$RPROF" $U
+  ok '[ -n "$RPROF" ] && [ "$(rc k1)" = 2 ] && coded k1 PLN' "CRT-846d43e-5 a builder card of a project with an open run, claimed by profile $RPROF (a role with may_claim, not a builder role), is refused: the card's assignee role is judged"
+  start a1 $X
+  ok '[ -n "$ADP" ] && refused a1 PLN' "CRT-846d43e-4 adapter.py start refuses with an STL-PLN code when the card's board binding cannot be read and a project has an open run"
+  rm -f "$R/$(ix .planner_cards)"; claim k2 $C; claim k2u $U; start a2 $C
+  ok '[ "$(rc k0)" = 2 ] && [ "$(rc k2)" = 2 ] && coded k2 PLN && [ "$(rc k2u)" = 2 ] && coded k2u PLN && refused a2 PLN' \
+    "CRT-846d43e-2 with the start projection gone, the claims of a bound card at a pending gate and of an unbound card of the run's project, and adapter.py start of the bound card, are refused (STL-PLN)"
   ;;
 esac
 finish
