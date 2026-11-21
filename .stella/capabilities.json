@@ -3330,6 +3330,31 @@
       },
       "global_id": "e6e0ab4e-df8d-4e2e-b009-6d47aea4f512",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "planner-test-lib",
+      "kind": "tool",
+      "summary": "Test rig: the shared harness the planner and replan selftests source (mock model server, resolver wrapper, test approver, stub board)",
+      "keywords": [
+        "test rig",
+        "planner",
+        "replan",
+        "approver",
+        "mock"
+      ],
+      "inputs": "sourced by bin/planner-selftest.sh and bin/replan-selftest.sh; a scratch root",
+      "outputs": "shell functions only",
+      "allowed_roles": [],
+      "risk_class": "read",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/planner-test-lib.sh",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "19c26615-d893-4ffb-8698-ca3296f6f9da",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }
