@@ -36,7 +36,12 @@
     {"text": "stella-recover.ps1", "why": "the recovery script's file name in docs/", "phase": "permanent (file name)"}
   ],
   "allow": [
-    {"file": "bin/role-guard.py", "text": "a.get(\"reviewer\")", "why": "the argument name of Hermes's kanban_request_review tool (tools/kanban_tools.py), not a profile name", "phase": "permanent (Hermes API)"}
+    {"file": "bin/role-guard.py", "text": "a.get(\"reviewer\")", "why": "the argument name of Hermes's kanban_request_review tool (tools/kanban_tools.py), not a profile name", "phase": "permanent (Hermes API)"},
+    {"file": "bin/stella-apply.py", "text": "the planner's own candidate rules", "why": "an English word in a comment (the model-check candidate planner, the box's mount planner), not the planner role id", "phase": "permanent (plain English in a comment)"},
+    {"file": "bin/stella_data.py", "text": "the planner's own candidate rules", "why": "an English word in a comment (the model-check candidate planner, the box's mount planner), not the planner role id", "phase": "permanent (plain English in a comment)"},
+    {"file": "bin/stella_data.py", "text": "the planner's data", "why": "an English word in a comment (the model-check candidate planner, the box's mount planner), not the planner role id", "phase": "permanent (plain English in a comment)"},
+    {"file": "docs/hermes-local/plugins/os-box/__init__.py", "text": "mount planner", "why": "an English word in a comment (the model-check candidate planner, the box's mount planner), not the planner role id", "phase": "permanent (plain English in a comment)"},
+    {"file": "bin/model_check.py", "text": "the planner's, and the engine proof's", "why": "an English word in a comment (the model-check candidate planner, the box's mount planner), not the planner role id", "phase": "permanent (plain English in a comment)"}
   ],
   "baseline": [
     {"file": "bin/alert.sh", "literal": "#alerts", "count": 5, "phase": "session 2, A7 (channel name in help text and the ALERT_TARGET default)"},

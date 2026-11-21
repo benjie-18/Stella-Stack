@@ -38,7 +38,8 @@
     "config/owner.env"
   ],
   "owner_data": [
-    ".stella/schemas"
+    ".stella/schemas",
+    ".stella/planner-settings.json"
   ],
   "owner_commands": [
     "bin/approvals.py",
@@ -56,7 +57,12 @@
     "bin/qa_tests.py",
     "bin/qa_schedule.py",
     "bin/qa_roles.py",
-    "bin/qa_stub_role.py"
+    "bin/qa_stub_role.py",
+    "bin/planner.py",
+    "bin/planner_rubric.py",
+    "bin/roadmap.py",
+    "bin/replan.py",
+    "bin/scope_guard.py"
   ],
   "owner_commands_by_name": [
     "bin/merge-card.sh"
@@ -145,7 +151,13 @@
     "bin/agent_runtime.py",
     "bin/agent_tool.py",
     "bin/agui_ui.py",
-    "bin/redact_all.py"
+    "bin/redact_all.py",
+    "bin/planner.py",
+    "bin/planner_rubric.py",
+    "bin/roadmap.py",
+    "bin/replan.py",
+    "bin/scope_guard.py",
+    ".stella/planner.json"
   ],
   "write_tools": [
     "write_file",
@@ -987,6 +999,148 @@
         "allowed_data_classes": [
           "public",
           "internal"
+        ]
+      },
+      "may_answer_for_owner": false,
+      "assignable": false,
+      "workspace": "none",
+      "may_complete": false,
+      "may_unblock": false,
+      "may_claim": false,
+      "may_delegate": false,
+      "may_create_cards": false,
+      "may_review": false,
+      "allowed_overrides": [],
+      "background_review": false,
+      "config": {
+        "kanban.auto_decompose": false
+      },
+      "hooks": [
+        {
+          "matcher": "^(terminal|process_manage)$",
+          "file": "docs/hermes-local/hooks/builder/git-guard.py"
+        },
+        {
+          "matcher": "^(write_file|patch|terminal|process_manage)$",
+          "file": "docs/hermes-local/hooks/builder/write-guard.py",
+          "timeout": 20,
+          "writes": "judged"
+        },
+        {
+          "matcher": "^(terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$",
+          "file": "docs/hermes-local/hooks/builder/secret-guard.py"
+        },
+        {
+          "matcher": "^(terminal|process_manage)$",
+          "file": "docs/hermes-local/hooks/builder/model-guard.py"
+        },
+        {
+          "matcher": "^(skill_manage|execute_code|cronjob_manage)$",
+          "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"
+        }
+      ]
+    },
+    "planner": {
+      "global_id": "b5d94941-b92f-4b19-b9c7-09a081728865",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
+      "runs_unboxed": false,
+      "requirements": {
+        "tool_calling": true,
+        "min_context_tokens": 32000,
+        "vision": false,
+        "allowed_data_classes": [
+          "public",
+          "internal",
+          "client"
+        ]
+      },
+      "may_answer_for_owner": false,
+      "assignable": true,
+      "workspace": "read-parent-worktree",
+      "may_complete": false,
+      "may_unblock": false,
+      "may_claim": false,
+      "may_delegate": false,
+      "may_create_cards": false,
+      "may_review": false,
+      "allowed_overrides": [],
+      "background_review": false,
+      "config": {
+        "kanban.auto_decompose": false
+      },
+      "platform_toolsets": {
+        "cli": [
+          "file",
+          "skills",
+          "terminal"
+        ]
+      },
+      "hooks": [
+        {
+          "matcher": "^(write_file|patch|execute_code|skill_manage|cronjob_manage)$",
+          "file": "docs/hermes-local/hooks/default/deny-write.sh",
+          "writes": "refused"
+        },
+        {
+          "matcher": "^(terminal|process_manage)$",
+          "file": "docs/hermes-local/hooks/default/read-only-terminal.py",
+          "writes": "refused"
+        },
+        {
+          "matcher": "^(terminal|process_manage)$",
+          "file": "docs/hermes-local/hooks/builder/git-guard.py"
+        },
+        {
+          "matcher": "^(write_file|patch|terminal|process_manage)$",
+          "file": "docs/hermes-local/hooks/builder/write-guard.py",
+          "timeout": 20,
+          "writes": "judged"
+        },
+        {
+          "matcher": "^(terminal|process_manage|read_file|search_files|vision_analyze|skill_view)$",
+          "file": "docs/hermes-local/hooks/builder/secret-guard.py"
+        },
+        {
+          "matcher": "^(terminal|process_manage)$",
+          "file": "docs/hermes-local/hooks/builder/model-guard.py"
+        },
+        {
+          "matcher": "^(skill_manage|execute_code|cronjob_manage)$",
+          "file": "docs/hermes-local/hooks/builder/deny-skill-manage.sh"
+        },
+        {
+          "matcher": "^(?!(?:{tools})$).+$",
+          "file": "docs/hermes-local/hooks/default/deny-unknown-tool.sh",
+          "writes": "refused",
+          "catch_all": true
+        }
+      ],
+      "catch_all_tools": [
+        "kanban_block",
+        "kanban_comment",
+        "kanban_heartbeat",
+        "kanban_list",
+        "kanban_show",
+        "process_manage",
+        "read_file",
+        "search_files",
+        "skill_view",
+        "skills_list",
+        "terminal"
+      ]
+    },
+    "rubric": {
+      "global_id": "700cd544-f035-4582-b33a-53e998e1feb4",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6",
+      "runs_unboxed": false,
+      "requirements": {
+        "tool_calling": false,
+        "min_context_tokens": 4000,
+        "vision": false,
+        "allowed_data_classes": [
+          "public",
+          "internal",
+          "client"
         ]
       },
       "may_answer_for_owner": false,
