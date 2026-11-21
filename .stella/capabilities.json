@@ -3232,6 +3232,34 @@
       },
       "global_id": "42e23e8b-3f4c-48c2-bf05-82396faef10b",
       "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
+    },
+    {
+      "id": "replan",
+      "kind": "command",
+      "summary": "Escalate, then re-plan (host only): dispatch reads a bound card's QA loop and block lines, writes its failure history and decides re-plan, climb (with the history as an untrusted brief), owner, done or retry; record-block records a builder block; replan-diff says whether a new roadmap version is a split inside one phase (no gate) or goes back to the gate; close runs the QA close then dispatch",
+      "keywords": [
+        "replan",
+        "re-plan",
+        "escalate",
+        "failure history",
+        "block",
+        "split",
+        "gate",
+        "dispatch"
+      ],
+      "inputs": "dispatch --card C --run R --json | record-block --card C --kind K --json | replan-diff --run R --old V --new V2 --json | close --card C --json",
+      "outputs": "JSON (dispatch: {action, reason, run, card, attempt, history, brief}; record-block: {card, kind}; replan-diff: {action, reason, run, old, new, digest}; close: {closed, dispatch}); trusted lines planner.history, planner.replan, planner.block, planner.split; exit 1 with a catalog code (STL-PLN-400..405, STL-CFG-312 in a worker environment)",
+      "allowed_roles": [],
+      "risk_class": "write",
+      "hosts": [],
+      "secrets": [],
+      "status": "approved",
+      "source": "bin/replan.py",
+      "triage": {
+        "result": "shipped"
+      },
+      "global_id": "286dac51-cd60-48f9-ba77-8ae8b433b74f",
+      "install_id": "49bd8c3a-02ae-497f-aba3-5bd96c1e7df6"
     }
   ]
 }

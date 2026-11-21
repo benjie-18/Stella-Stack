@@ -13,8 +13,9 @@ CLI (on failure a catalog code STL-QA-150..155 and its plain message on stderr, 
 {card, code, problem} on stdout; 2 usage). --round must be the card's current round, frozen and not closed.
   evidence --card C --round N --file F        qa.evidence {path (root-relative), sha256, round}
   submit   --card C --round N --role R --file J   J: {"findings": [...]} or the list itself; each {check, file, lines: [a, b],
-           test, severity, repro: argv|null, evidence: [paths]|null, static: bool}; other keys (a role-assigned id, a detail text)
-           are ignored. One qa.finding {fingerprint, round, role, status, ...} per finding. status: void (no evidence that holds;
+           test, severity, repro: argv|null, evidence: [paths]|null, static: bool, kind?}; other keys (a role-assigned id, a detail
+           text) are ignored. kind (DG-9): one of the planner data's replan.problem_kinds keys, else (missing, unknown, or the
+           planner data refused) "code"; recorded in the line, read by the re-plan dispatch. One qa.finding {fingerprint, round, role, status, ...} per finding. status: void (no evidence that holds;
            counts for nothing, and a void copy of a finding the round already has is not written), static, pending (blocking
            at the card's depth, not static, with a repro), unconfirmed (the same with no repro), reported (not blocking, not
            static); a same-round resubmission never lowers the status the round already has (STRENGTH).
@@ -47,6 +48,7 @@ RESULTS = qa_loop.RESULTS
 REVIEWER, SRC_VERDICT, EVIDENCE = "review", "verdict", "evidence"   # role kinds (qa-loop schema): a review fail fires the triggers of source verdict; the evidence role's repros run first
 # shortcut: input caps in code (as bin/qa_tests.py has them), move to qa-loop.json when an owner needs to tune them
 MAX_FINDINGS, MAX_TEXT, MAX_PATH, MAX_EVIDENCE, MAX_ARGV, MAX_ARG = 200, 200, 400, 20, 64, 2000
+CODE_KIND = "code"   # DG-9: the kind of a finding that names no problem kind of the planner data
 
 
 class Refuse(Exception):
@@ -160,13 +162,23 @@ def argv_of(x):
     return list(x)
 
 
-def finding_of(x, sev):
+def problem_kinds():
+    """DG-9: the planner data's replan.problem_kinds keys; none when that data cannot be used (every finding is then of CODE_KIND)."""
+    try:
+        row = next(r for r in sd.rows() if r["schema"] == "planner" and r["format"] == "json")
+        return set(sd.checked(sd.load(row["path"]), row["path"], row["schema"])["replan"]["problem_kinds"])
+    except (sd.DataError, StopIteration, KeyError, TypeError):
+        return set()
+
+
+def finding_of(x, sev, kinds=()):
     """The checked finding (only its own keys); Refuse on any shape problem."""
     if not isinstance(x, dict):
         raise Refuse(BAD, "a finding must be an object")
     f = {"check": text(x.get("check"), MAX_TEXT, "check"), "file": text(x.get("file"), MAX_PATH, "file"), "lines": x.get("lines"),
          "test": text(x.get("test"), MAX_TEXT, "test"), "severity": x.get("severity"), "static": x.get("static"),
-         "repro": None if x.get("repro") is None else argv_of(x["repro"]), "evidence": x.get("evidence")}
+         "repro": None if x.get("repro") is None else argv_of(x["repro"]), "evidence": x.get("evidence"),
+         "kind": x["kind"] if isinstance(x.get("kind"), str) and x["kind"] in kinds else CODE_KIND}
     if os.path.isabs(f["file"]) or os.path.normpath(f["file"]) != f["file"] or f["file"].split(os.sep)[0] == "..":
         raise Refuse(BAD, "a finding's file must be a normalised path inside the repository (relative, no ..)")
     ln = f["lines"]
@@ -205,7 +217,8 @@ def cmd_submit(o, d):
     if not isinstance(v, list) or not 0 < len(v) <= MAX_FINDINGS:
         raise Refuse(BAD, f'the findings file must hold {{"findings": [...]}} or a list of 1 to {MAX_FINDINGS} findings')
     sev = [x["id"] for x in d.qa["severities"]]
-    fs = [finding_of(x, sev) for x in v]   # every finding checked before any line is written
+    kinds = problem_kinds()
+    fs = [finding_of(x, sev, kinds) for x in v]   # every finding checked before any line is written
     out, seen = [], {}
     rank = lambda x: sev.index(x) if x in sev else len(sev)
     for f in fs:
