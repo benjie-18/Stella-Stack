@@ -1083,7 +1083,7 @@
       },
       "hooks": [
         {
-          "matcher": "^(write_file|patch|execute_code|skill_manage|cronjob_manage|kanban_attach|kanban_attach_url|kanban_attachments|kanban_link|kanban_request_changes|kanban_request_review)$",
+          "matcher": "^(write_file|patch|execute_code|skill_manage|cronjob_manage|kanban_attach|kanban_attach_url|kanban_attachments|kanban_link|kanban_request_changes|kanban_request_review|kanban_create|kanban_complete|kanban_unblock)$",
           "file": "docs/hermes-local/hooks/default/deny-write.sh",
           "writes": "refused"
         },
