@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Hermetic self-test for the resolver (F2 W3; bin/resolve.py). In scratch roots (STELLA_ROOT = a temp folder with a copy of
 # .stella/, the role table and its hooks) a fake catalog is made from the shipped entries with jq: a local link, a link of each
-# hosted class, an aggregator, two CLI logins (terms recorded, terms not), and a preset of every class. Each rule of the
+# hosted class, an aggregator, two CLI logins (terms_ok true, terms_ok null; both serve), and a preset of every class. Each rule of the
 # resolver is shown with its code; the fake-entry test adds a provider, a link class, a preset, a role, a driver and a task
 # tier as data only and resolves them with the resolver's file unchanged. No class, tier, role, driver or shipped preset is
 # named here: every id is read from the shipped data, and the codes from the resolver. The alert log goes to a temp folder
@@ -68,11 +68,11 @@ TIER=$(j '.task_tiers[0].id' "$RT"); FACT=$(j '[.card_facts.when_missing | to_en
 GCLASS=$(j '[.class_rules | to_entries[] | select(.value.hosted == "grant") | .key][0] // empty' "$POL")
 NCLASS=$(j '[.class_rules | to_entries[] | select(.value.hosted == "never") | .key][0] // empty' "$POL")
 IID=$(j .install_id "$ROOT/$(p install)")
-read -r C_NOLINK C_UNKNOWN C_TERMS C_AGG C_HARD C_UNMET C_POLICY C_PRIV C_CROSS C_COOL < <(python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import resolve as r
-print(r.NO_LINK, r.UNKNOWN, r.TERMS, r.AGGREGATOR, r.HARD, r.UNMET, r.POLICY, r.PRIVACY, r.CROSSING, r.COOLDOWN)' "$BIN")
+read -r C_NOLINK C_UNKNOWN C_AGG C_HARD C_UNMET C_POLICY C_PRIV C_CROSS C_COOL < <(python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import resolve as r
+print(r.NO_LINK, r.UNKNOWN, r.AGGREGATOR, r.HARD, r.UNMET, r.POLICY, r.PRIVACY, r.CROSSING, r.COOLDOWN)' "$BIN")
 ok '[ -n "$LOCAL" ] && [ -n "$FREE" ] && [ -n "$FRONT" ] && [ -n "$NR" ] && [ -n "$NR2" ] && [ -n "$CR" ] && [ -n "$ER" ] && [ -n "$ENGINE" ] && [ -n "$WORKER" ] && [ -n "$FACT" ] && [ -n "$GCLASS" ] && [ -n "$NCLASS" ]' \
   "0a the shipped data gives the ids this test needs (three link classes, roles of each kind, both kinds of driver, a card fact, a grant class, a never class)"
-ok 'for c in "$C_NOLINK" "$C_UNKNOWN" "$C_TERMS" "$C_AGG" "$C_HARD" "$C_UNMET" "$C_POLICY" "$C_PRIV" "$C_CROSS" "$C_COOL"; do jq -e --arg c "$c" ".alerts[] | select(.code == \$c and (.message | contains(\"{problem}\")))" "$ROOT/docs/hermes-local/alert-catalog.json" >/dev/null || exit 1; done' \
+ok 'for c in "$C_NOLINK" "$C_UNKNOWN" "$C_AGG" "$C_HARD" "$C_UNMET" "$C_POLICY" "$C_PRIV" "$C_CROSS" "$C_COOL"; do jq -e --arg c "$c" ".alerts[] | select(.code == \$c and (.message | contains(\"{problem}\")))" "$ROOT/docs/hermes-local/alert-catalog.json" >/dev/null || exit 1; done' \
   "0b every code of the resolver is a row of the alert catalog"
 RA=$ROOT/$(p role-assignments)   # the shipped presets whose last resort is the local class, and a class that leaves the machine (read from the data, not named)
 P_LASTLOCAL=$(jq -r --arg l "$LOCAL" '[.effort_modes | to_entries[] | select(.value.last_resort == $l) | .key][0] // empty' "$RA")
@@ -152,8 +152,8 @@ mk bad base; ed bad role-assignments '.selection.global = "qa-zz"'; rs bad u6 --
 ok 'closed u6 STL-CFG-310' "3c data that check refuses (an unknown preset is selected) fails closed with one line"
 
 # ---- 4: the connection rules ----
-ok 'J b "$(ent qa-cli-no) | length == 2 and all(.status == \"excluded\" and .code == \"$C_TERMS\")" && J b "$(ent qa-cli) | length == 2 and all(.status == \"usable\")"' \
-  "4 a CLI login whose terms are not recorded is excluded with $C_TERMS; the one with terms_ok true is usable"
+ok 'J b "$(ent qa-cli-no) | length == 2 and all(.status == \"usable\")" && J b "$(ent qa-cli) | length == 2 and all(.status == \"usable\")"' \
+  "4 a CLI login whose terms are not recorded is usable like the one with terms_ok true (terms_ok is never enforced)"
 ok 'J b "$(ent qa-agg) | length == 2 and all(.status == \"excluded\" and .code == \"$C_AGG\" and .link_class == \"$FREE\")"' \
   "4a an aggregator is excluded with $C_AGG while the shipped credentials do not resolve its broker entries"
 mk cb base; cp -r "$BIN" "$T/cb/bin"; cp "$ROOT/docs/hermes-local/alert-catalog.json" "$T/cb/$(dirname "$RJREL")/"
@@ -352,8 +352,8 @@ facts ap qa-a3 "$(jq -c --arg k "$FACT" '.apps = ["qa-app-int"] | .[$k] = true' 
 for c in a1 a2 a3 a4; do rs ap "ap-$c" --role "$CR" --project qa-proj --card "qa-$c"; done
 ok 'passes ap && [ "$(rc ap-a1)" = 0 ] && J ap-a1 ".apps == [{app: \"qa-app-ok\", status: \"usable\", code: null, reason: null}, {app: \"qa-app-int\", status: \"usable\", code: null, reason: null}]"' \
   "11 a clean card: a CLI login app with terms_ok and a hosted integration aggregator app are both usable, exit 0"
-ok '[ "$(rc ap-a2)" = 1 ] && J ap-a2 "[.apps[] | [.app, .code]] == [[\"qa-app-ok\", null], [\"qa-app-no\", \"$C_TERMS\"]] and .code == \"$C_TERMS\" and any(.chain[]; .status == \"usable\")" && grep -q "^$C_TERMS " "$T/o/ap-a2.err"' \
-  "11a a CLI login app without terms_ok is refused with $C_TERMS: exit 1 though a link is usable"
+ok '[ "$(rc ap-a2)" = 0 ] && J ap-a2 "[.apps[] | [.app, .code]] == [[\"qa-app-ok\", null], [\"qa-app-no\", null]] and any(.chain[]; .status == \"usable\")"' \
+  "11a a CLI login app without terms_ok is usable like the one with terms_ok (terms_ok is never enforced): exit 0"
 ok '[ "$(rc ap-a3)" = 1 ] && J ap-a3 ".apps == [{app: \"qa-app-int\", status: \"excluded\", code: \"$C_HARD\", reason: .apps[0].reason}] and (.apps[0].reason | length > 0)"' \
   "11b a hosted integration aggregator app on a card whose fact holds is refused with $C_HARD"
 ok '[ "$(rc ap-a4)" = 1 ] && J ap-a4 "[.apps[] | .code] == [\"$C_UNKNOWN\", \"$C_UNKNOWN\"]"' "11c an app id the catalog does not hold, or that is no app, is refused with $C_UNKNOWN"

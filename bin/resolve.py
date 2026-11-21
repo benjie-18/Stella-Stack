@@ -57,7 +57,7 @@ Every link is judged by all the rules, in this order; the first that fails names
    machine (reach()); no grant, setting, preset or routing data changes it;
  2 the data policy of the project, and of the default when that is Local only (policy_allows); Local only overrides any
    preset: the class order is the classes that are not hosted, with no last resort and no crossing (an exempt role keeps its own);
- 3 the connection: switched off, a CLI login without terms_ok, an aggregator whose broker entries do not resolve
+ 3 the connection: switched off, an aggregator whose broker entries do not resolve
    (credentials.check, when that module exists), allowed_roles, data_classes_allowed;
  4 the role's requirements against the link's probe record (probed, unmet): no record meets none; then --tokens;
  5 the preset: its allowed localities (the last-resort class is the one exception) and the role's class order; the
@@ -76,7 +76,7 @@ sys.path.insert(0, BIN)   # python3 -I does not add the script folder
 import stella_data as sd
 
 # spelled out: the alert selftest counts a code as used only when a script holds it as a literal
-NO_LINK, UNKNOWN, TERMS, AGGREGATOR, HARD = "STL-MDL-710", "STL-MDL-711", "STL-MDL-712", "STL-MDL-713", "STL-MDL-714"
+NO_LINK, UNKNOWN, AGGREGATOR, HARD = "STL-MDL-710", "STL-MDL-711", "STL-MDL-713", "STL-MDL-714"   # STL-MDL-712 (terms_ok) is retired: terms_ok is never enforced
 UNMET, POLICY, PRIVACY, CROSSING, COOLDOWN = "STL-MDL-715", "STL-MDL-716", "STL-MDL-717", "STL-MDL-718", "STL-MDL-724"
 EXHAUSTED, RUNG_SKIPPED, WORKER, LOG_FAILED = "STL-MDL-731", "STL-MDL-732", "STL-CFG-312", "STL-CFG-318"   # the rung walk (F2b item D)
 WAIVER = "STL-MDL-737"   # a review role answered with no link of another family than the builder (F2b item C)
@@ -290,11 +290,8 @@ def resolve(ctx, d=None):
                  for k in dict.fromkeys((*rt["card_facts"]["when_missing"], *rec)) if k not in ("project", "apps") and rec.get(k) is not False]
         for a in rec["apps"] if isinstance(rec.get("apps"), list) else []:
             e = sd.entry(conn, a) if isinstance(a, str) else None
-            terms = [m for m in sd.route_problems(pols, [], e, now, pid) if m["kind"] == "terms"] if e else []
             if e is None or e["kind"] != "app":
                 code, why = UNKNOWN, "it is not an app of the connections catalog"
-            elif terms:
-                code, why = TERMS, f"the app {terms[0]['text']}"
             elif hard and e.get("integration_aggregator") and sd.reach(e) != "local":
                 code, why = HARD, f"the app is a hosted integration aggregator, and {hard[0]}"
             else:
@@ -356,9 +353,6 @@ def resolve(ctx, d=None):
             return X(POLICY, "the data policy does not allow this connection for the project" + (" (Local only: local links only)" if local_only else ""))
         if not prov["enabled"]:
             return X(POLICY, "the connection is switched off")
-        terms = [m for m in sd.route_problems(pols, [], prov, now, pid) if m["kind"] == "terms"]
-        if terms:
-            return X(TERMS, f"the connection {terms[0]['text']}")
         if prov.get("aggregator"):
             if prov["id"] not in broker:
                 broker[prov["id"]] = brokered(prov)

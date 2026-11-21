@@ -391,7 +391,7 @@
             "null"
           ],
           "x-owner-only": true,
-          "description": "cli-login: the owner's record that the provider's terms allow this use. null (unset) is the default; the owner sets it through the apply contract. Routing refuses a cli-login link whose terms_ok is not true."
+          "description": "cli-login: the owner's record that the provider's terms allow this use. null (unset) is the default; the owner sets it through the apply contract. Information only (owner decision 2026-11-20): the UI shows it as acknowledged; nothing refuses a link on it."
         },
         "aggregator": {
           "type": "boolean",
