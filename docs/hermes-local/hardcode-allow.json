@@ -16,6 +16,7 @@
     {"file": "docs/contract/**", "why": "prose: the contract documents"},
     {"file": "bench/tasks/**", "why": "fixtures: small projects the benchmark hands to a model; their words are test data"},
     {"file": "tests/fixtures/**", "why": "fixtures: test inputs"},
+    {"file": "bin/planner-test-lib.sh", "why": "the shared library the P1 planner and replan selftests source (not a suite selftest itself): its role, channel and tier names are fixture data"},
     {"file": "node_modules/**", "why": "installed packages, not the stack (not tracked; a walk of a tree without git would meet them)"},
     {"file": ".scratch/**", "why": "scratch work trees and copies, not the stack (not tracked)"},
     {"file": "docs/spec/**", "why": "the owner's plan documents (git-ignored prose)"}
@@ -36,7 +37,12 @@
     {"text": "stella-recover.ps1", "why": "the recovery script's file name in docs/", "phase": "permanent (file name)"}
   ],
   "allow": [
-    {"file": "bin/role-guard.py", "text": "a.get(\"reviewer\")", "why": "the argument name of Hermes's kanban_request_review tool (tools/kanban_tools.py), not a profile name", "phase": "permanent (Hermes API)"}
+    {"file": "bin/role-guard.py", "text": "a.get(\"reviewer\")", "why": "the argument name of Hermes's kanban_request_review tool (tools/kanban_tools.py), not a profile name", "phase": "permanent (Hermes API)"},
+    {"file": "bin/stella-apply.py", "text": "the planner's own candidate rules", "why": "an English word in a comment (the model-check candidate planner, the box's mount planner), not the planner role id", "phase": "permanent (plain English in a comment)"},
+    {"file": "bin/stella_data.py", "text": "the planner's own candidate rules", "why": "an English word in a comment (the model-check candidate planner, the box's mount planner), not the planner role id", "phase": "permanent (plain English in a comment)"},
+    {"file": "bin/stella_data.py", "text": "the planner's data", "why": "an English word in a comment (the model-check candidate planner, the box's mount planner), not the planner role id", "phase": "permanent (plain English in a comment)"},
+    {"file": "docs/hermes-local/plugins/os-box/__init__.py", "text": "mount planner", "why": "an English word in a comment (the model-check candidate planner, the box's mount planner), not the planner role id", "phase": "permanent (plain English in a comment)"},
+    {"file": "bin/model_check.py", "text": "the planner's, and the engine proof's", "why": "an English word in a comment (the model-check candidate planner, the box's mount planner), not the planner role id", "phase": "permanent (plain English in a comment)"}
   ],
   "baseline": [
     {"file": "bin/alert.sh", "literal": "#alerts", "count": 5, "phase": "session 2, A7 (channel name in help text and the ALERT_TARGET default)"},
@@ -121,6 +127,7 @@
     {"file": "bin/selftests.sh", "literal": "#alerts", "count": 1, "phase": "to place (F1 W5 r2: the suite lists selftests by name, and the names contain reviewer-claude; the list belongs in the test map, and the #alerts word is a comment)"},
     {"file": "bin/selftests.sh", "literal": "reviewer", "count": 1, "phase": "to place (F1 W5 r2: the suite lists selftests by name, and the names contain reviewer-claude; the list belongs in the test map, and the #alerts word is a comment)"},
     {"file": "bin/selftests.sh", "literal": "reviewer-claude", "count": 1, "phase": "to place (F1 W5 r2: the suite lists selftests by name, and the names contain reviewer-claude; the list belongs in the test map, and the #alerts word is a comment)"},
+    {"file": "bin/selftests.sh", "literal": "planner", "count": 2, "phase": "to place (P1: the suite lists selftests by name, and the names planner-role and planner contain the planner role id; the list belongs in the test map)"},
     {"file": "docs/hermes-local/hooks/default/read-only-terminal.py", "literal": "red-team", "count": 1, "phase": "to place (F1 W5 r3: a comment that cites a red-team review finding by its id (F5RT-01); not a role-name use: reword the comment to the id)"},
     {"file": "docs/hermes-local/plugins/os-box/__init__.py", "literal": "red-team", "count": 1, "phase": "to place (F1 W5 r3: one comment that cites a red-team review finding by its id (S6O-06); not a role-name use: reword the comment to the id)"},
     {"file": "docs/hermes-local/review-prompt.txt", "literal": "reviewer", "count": 1, "phase": "to place (F1 W5 r2: English role noun in the prompt text (the reviewer role); the prompt is not data the lint can fill)"},

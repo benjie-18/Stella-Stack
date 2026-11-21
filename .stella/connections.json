@@ -73,7 +73,9 @@
         "router",
         "voice",
         "look",
-        "proposer"
+        "proposer",
+        "planner",
+        "rubric"
       ],
       "risk_class": "read",
       "global_id": "d80849c2-33a3-4d6c-b2fb-3ec8a71bfe64",
